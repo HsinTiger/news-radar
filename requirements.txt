@@ -4,7 +4,7 @@
 
 # ===== 核心 (Milestone 1) =====
 feedparser==6.0.11        # RSS 解析
-httpx==0.27.2             # 異步 HTTP client（取代 requests，原生支援 async）
+httpx==0.28.1             # 異步 HTTP client（取代 requests，原生支援 async）
 trafilatura==1.12.2       # 網頁正文抽取（純化成 markdown）
 beautifulsoup4==4.12.3    # 抓 og:image 等 meta 標籤
 pydantic==2.9.2           # 結構化資料驗證
