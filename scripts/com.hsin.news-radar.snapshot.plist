@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  News Radar · 每週 DB snapshot LaunchAgent
+  ================================================================
+  安裝步驟：見 scripts/INSTALL_LAUNCHAGENT.md
+  手動觸發：launchctl start com.hsin.news-radar.snapshot
+  查看 log： ~/news_radar_snapshots/_logs/YYYYMMDD_HHMMSS.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hsin.news-radar.snapshot</string>
+
+    <!-- 每週日 10:30 AM（本地時間）跑一次 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>        <!-- 0 = Sunday -->
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- 如果排程時間 Mac 正好是睡眠 / 關機，醒來後補跑 -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 實際要跑的 shell script：
+         PATH_TO_REPO 安裝時會被 INSTALL 腳本替換成你的實際路徑 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>PATH_TO_REPO/scripts/weekly_snapshot.sh</string>
+    </array>
+
+    <!-- 工作目錄（snapshot 會用到 git clone，要有寫入權限）-->
+    <key>WorkingDirectory</key>
+    <string>PATH_TO_REPO</string>
+
+    <!-- launchd 自己的 stdout/stderr 也收起來（備援 log）-->
+    <key>StandardOutPath</key>
+    <string>/tmp/news-radar-snapshot.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/news-radar-snapshot.err.log</string>
+
+    <!-- 繼承使用者的 PATH（有 gh / git / sqlite3） -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- 不要 always on；只在時間到才跑 -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
