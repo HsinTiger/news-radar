@@ -1,0 +1,92 @@
+科技商業國際新聞自動化流程研究
+├── FB粉絲專頁調研報告.md
+├── news_radar
+│   ├── .env
+│   ├── .env.example
+│   ├── AGENT_WORKLOG.md
+│   ├── README.md
+│   ├── archive
+│   │   └── 2026
+│   │       └── 04
+│   │           └── 19
+│   │               ├── 100152_NASA_Shuts_Off_Instrument_on_Voyager_1_to_Keep_Spacecraft_O.md
+│   │               └── 101427_Zero-Copy_GPU_Inference_from_WebAssembly_on_Apple_Silicon.md
+│   ├── assets
+│   ├── config
+│   │   ├── analyst_feedback.json
+│   │   ├── config.yaml
+│   │   ├── news_radar_soul.md
+│   │   ├── platforms
+│   │   │   ├── fb.md
+│   │   │   ├── ig.md
+│   │   │   └── threads.md
+│   │   └── strategic_directives.md
+│   ├── db
+│   │   ├── news_radar.db
+│   │   └── schema.sql
+│   ├── docs
+│   │   ├── META_API_SETUP.md
+│   │   ├── NEXT_STEPS.md
+│   │   └── architecture.md
+│   ├── drafts
+│   │   ├── 20260418_Amazon_$11.8B_收.md
+│   │   ├── 20260418_Amazon_收購_Globalstar這是一場對_Apple_的供應鏈突擊.md
+│   │   ├── 20260418_Claude_Opus_4.7.md
+│   │   ├── 20260418_亞馬遜收購_Globalsta.md
+│   │   ├── 20260419_202616_Servers_Satellites_and_Stars.md
+│   │   ├── 20260419_AI_滲透_RANNVIDIA_與_SoftBank_30_頻譜效率25ms_延.md
+│   │   ├── 20260419_NASA_Shuts_Off_Instrument_on_Voyager_1.md
+│   │   ├── 20260419_NVIDIA_Grace_Blackwell_滲透邊緣AI_基地台重塑_5G電信.md
+│   │   ├── 20260419_NVIDIA_Grace_Blackwell_滲透電信AI-RAN_革命如何重塑.md
+│   │   ├── 20260419_NVIDIA_與_SoftBank_攜手_AI-RAN數據背後的真實代價.md
+│   │   └── 20260419_Zero-Copy_GPU_Inference_from_WebAssembl.md
+│   ├── drafts_for_review.csv
+│   ├── logs
+│   │   ├── autopilot.log
+│   │   ├── autopilot_419.log
+│   │   ├── execution_log.jsonl
+│   │   └── first_post_20260419.log
+│   ├── project_structure_tree.txt
+│   ├── requirements.txt
+│   ├── run_harvest.py
+│   ├── run_pipeline.py
+│   ├── run_reflect.py
+│   ├── scratch
+│   │   ├── audit_api.py
+│   │   ├── audit_real_post.py
+│   │   ├── force_publish.py
+│   │   ├── list_models.py
+│   │   ├── publish_amazon.py
+│   │   ├── publish_nvidia.py
+│   │   ├── seed_metrics.py
+│   │   ├── test_all.py
+│   │   ├── test_hybrid_publish.py
+│   │   ├── test_yt_rss.py
+│   │   └── verify_m51.py
+│   ├── src
+│   │   ├── __init__.py
+│   │   ├── analyst.py
+│   │   ├── cleaner.py
+│   │   ├── composer.py
+│   │   ├── csv_decisions.py
+│   │   ├── db.py
+│   │   ├── edit_diff.py
+│   │   ├── engagement.py
+│   │   ├── exchange_threads_token.py
+│   │   ├── export_drafts.py
+│   │   ├── fetcher.py
+│   │   ├── find_ig_id.py
+│   │   ├── image_manager.py
+│   │   ├── publisher.py
+│   │   ├── reflector.py
+│   │   ├── schema.py
+│   │   ├── scorer.py
+│   │   ├── token_utils.py
+│   │   ├── verify_fb_token.py
+│   │   ├── verify_ig.py
+│   │   └── verify_threads.py
+│   ├── state
+│   │   └── last_harvest.txt
+│   └── strategic_directives.md
+├── user_concern.md
+└── 起始研究過程.txt

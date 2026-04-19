@@ -1,0 +1,86 @@
+# ============================================================
+# News Radar · .gitignore  (main branch = 純程式碼)
+# ------------------------------------------------------------
+# 原則：
+#   - 秘鑰一律不入庫（用 GitHub Actions Secrets）
+#   - runtime 產物（DB、logs、archive）不在 main branch，活在 state branch
+#   - OS / IDE / venv 噪音一律擋掉
+# ============================================================
+
+# --- 秘鑰 / 本機設定 ---
+.env
+.env.local
+.env.*.local
+# macOS / OneDrive duplicate（常見型態："xxx 2"）
+.env 2
+.env.local 2
+
+# --- Python runtime ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- venv ---（不加斜線 → 同時擋目錄與 symlink）
+.venv
+.venv*
+venv
+venv*
+env/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- runtime 產物（這些活在 state branch，不污染 main）---
+news_radar.db
+news_radar.db-journal
+news_radar.db-wal
+news_radar.db-shm
+# 整個 data/ 都是運行期 / 策略性內容 → 不入 main
+# 唯一例外：data/01_harvest/schema.sql（結構定義，要可 code review）
+data/*
+!data/01_harvest
+data/01_harvest/*
+!data/01_harvest/schema.sql
+logs/
+archive/
+scratch/
+state/last_harvest.txt
+
+# --- 根目錄的 scratch 測試 / 策略檔 ---
+test_fb.py
+test_parse.py
+test_playwright.py
+strategic_directives.md
+
+# --- Meta 驗證臨時產物 ---
+fb_dom.html
+*_dom.html
+drafts_for_review.csv
+
+# --- 診斷報告（會被 make diag 重新產生）---
+data/01_harvest/diagnostic_report.md
+data/01_harvest/feeds_health.md
+
+# --- Playwright / Puppeteer 快取 ---
+.playwright/
+playwright-report/
+test-results/
+
+# --- 其他 ---
+*.log
+tmp/
+.tmp/
+AGENT_WORKLOG.md

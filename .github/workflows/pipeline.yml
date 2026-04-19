@@ -1,0 +1,213 @@
+name: News Radar · Pipeline
+
+# ------------------------------------------------------------
+# 每 30 分鐘跑一次 run_pipeline.py（取代本機 --loop）
+# DB / logs / archive 存在 orphan `state` branch，每次 run 都 force-push
+# 蓋掉上一份（避免 state branch 無限膨脹）。主 branch 只放程式碼。
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    # cron 用 UTC；*/30 = 每 30 分鐘
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: false
+        default: "normal"
+        type: choice
+        options:
+          - normal        # 一般 cycle（可能 harvest 可能不，看節流）
+          - harvest-now   # 強制 harvest 一次（忽略節流）
+          - publish-now   # 強制 harvest + 放寬門檻，立即推出一篇
+
+concurrency:
+  # 同時只有一個 pipeline run，避免兩個 cron 撞同一個 DB
+  group: news-radar-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # 需要 push 回 state branch
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      # --------------------------------------------------------
+      # 1. Checkout 程式碼（main）
+      # --------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # 2. Checkout state branch 到 _state/（第一次跑時不存在，允許失敗）
+      # --------------------------------------------------------
+      - name: Checkout state branch
+        id: state_checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      # --------------------------------------------------------
+      # 3. 裝 Python
+      # --------------------------------------------------------
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --------------------------------------------------------
+      # 4. 從 state branch 復原 DB / logs / last_harvest.txt
+      # --------------------------------------------------------
+      - name: Restore runtime state
+        run: |
+          mkdir -p data/01_harvest logs state archive
+          if [ -d _state ] && [ -n "$(ls -A _state 2>/dev/null)" ]; then
+            if [ -f _state/data/01_harvest/news_radar.db ]; then
+              cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+              echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
+            else
+              echo "[restore] state branch 沒有 DB，pipeline 會 init 新的一份"
+            fi
+            if [ -d _state/logs ]; then
+              cp -r _state/logs/. logs/ 2>/dev/null || true
+              echo "[restore] logs 復原：$(ls logs | wc -l) 個檔案"
+            fi
+            if [ -f _state/state/last_harvest.txt ]; then
+              cp _state/state/last_harvest.txt state/last_harvest.txt
+              echo "[restore] last_harvest.txt = $(cat state/last_harvest.txt)"
+            fi
+            if [ -d _state/archive ]; then
+              cp -r _state/archive/. archive/ 2>/dev/null || true
+            fi
+          else
+            echo "[restore] state branch 空 / 首次執行，從零開始"
+          fi
+
+      # --------------------------------------------------------
+      # 5. 跑 pipeline（依 mode 決定 flag）
+      # --------------------------------------------------------
+      - name: Run pipeline
+        id: run
+        env:
+          # Meta App
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          # Facebook Page
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          # Instagram
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          # Threads
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_APP_ID: ${{ secrets.THREADS_APP_ID }}
+          THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
+          # LLM
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 時區：台北
+          TZ: Asia/Taipei
+          # 關閉 pip 警告
+          PYTHONUNBUFFERED: "1"
+        run: |
+          MODE="${{ inputs.mode || 'normal' }}"
+          echo "[run] mode=$MODE"
+          case "$MODE" in
+            harvest-now)
+              python run_pipeline.py --harvest-now
+              ;;
+            publish-now)
+              python run_pipeline.py --publish-now
+              ;;
+            *)
+              python run_pipeline.py
+              ;;
+          esac
+
+      # --------------------------------------------------------
+      # 6. 把 DB / logs / archive force-push 回 orphan state branch
+      #    （永遠只保留最新一份，避免 branch 無限肥大）
+      # --------------------------------------------------------
+      - name: Persist state
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          # 用 orphan commit 模式：每次都從零開一個新的 state commit
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+
+          # 把 runtime artifacts 複製進來
+          mkdir -p data/01_harvest logs state archive
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          if [ -d "$GITHUB_WORKSPACE/logs" ]; then
+            cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
+          if [ -d "$GITHUB_WORKSPACE/archive" ]; then
+            cp -r "$GITHUB_WORKSPACE/archive/." archive/ 2>/dev/null || true
+          fi
+
+          # 寫一份 LAST_RUN.txt 方便之後 debug
+          cat > LAST_RUN.txt <<EOF
+          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_id: ${RUN_ID}
+          run_url: ${RUN_URL}
+          commit: ${COMMIT}
+          EOF
+
+          # 讀當前 DB size 寫進 marker（人肉追蹤用）
+          if [ -f data/01_harvest/news_radar.db ]; then
+            echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] 無變化，跳過推送"
+            exit 0
+          fi
+          git commit -q -m "state: run ${RUN_ID} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Force-push 蓋掉舊的 state branch（orphan 模式）
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            state
+
+      # --------------------------------------------------------
+      # 7. 把本次 run 的 logs 上傳成 artifact（Actions 內保留 14 天）
+      #    好處：即使 state branch 蓋掉了，最近 14 天的 run 還能回溯
+      # --------------------------------------------------------
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-${{ github.run_id }}
+          path: |
+            logs/
+            data/01_harvest/news_radar.db
+          retention-days: 14
+          if-no-files-found: warn

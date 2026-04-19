@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Anthropic launches Claude Sonnet 4.6 with bigger context window</title>
+<meta property="og:image" content="https://example.com/og-claude-4-6.png">
+<meta property="og:title" content="Anthropic launches Claude Sonnet 4.6">
+</head>
+<body>
+<header><nav>Home · Blog · About</nav></header>
+<article>
+<h1>Anthropic launches Claude Sonnet 4.6 with bigger context window</h1>
+<p class="byline">By Simon Willison · April 18 2026</p>
+
+<p>Anthropic today announced Claude Sonnet 4.6, a new flagship model that
+extends the context window to 1,000,000 tokens while keeping the same
+per-token pricing as the previous generation. The update ships alongside
+a revamped Claude Code CLI, a long-running background agent mode, and a
+set of developer-facing tools that let you pipe skill files directly
+into the system prompt.</p>
+
+<p>The context window bump is the headline number, but the more
+interesting change is the new batching API which reduces the
+observed latency for multi-turn agent workflows. Anthropic claims a
+40% reduction in wall-clock time for a 50-turn coding session.</p>
+
+<p>Benchmarks released with the launch show Sonnet 4.6 matching or
+beating GPT-5 on SWE-bench Verified, GAIA and MMLU, while coming in
+at roughly half the output token cost of Claude Opus 4.6. For agent
+builders this is a meaningful re-pricing of the mid-tier model slot.</p>
+
+<p>Jensen Huang, interviewed on CNBC Television earlier this week,
+said NVIDIA's latest Blackwell clusters were explicitly sized to serve
+long-context models of this class. He put the unit economics at
+&quot;roughly 40 percent better tokens-per-watt than Hopper&quot; for
+prompts over 200k tokens.</p>
+
+<p>Anthropic is pairing the release with a new developer tier that
+bundles 1M tokens of free evaluation credit for teams building on the
+Claude Agent SDK. The company expects most shipping agents will move
+to Sonnet 4.6 within 90 days.</p>
+</article>
+<footer>© 2026 Example Blog</footer>
+</body>
+</html>

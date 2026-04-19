@@ -1,0 +1,167 @@
+name: News Radar · Reflect (Daily)
+
+# ------------------------------------------------------------
+# 每天台北時間 00:00（UTC 16:00）跑一次 run_reflect.py
+# 會：
+#   1. 抓互動數據（engagement）
+#   2. 掃 drafts / CSV 回饋
+#   3. 呼叫 LLM append 到 soul.md
+# 結束後 commit soul.md 變動回 main branch，DB / logs 回 state branch
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: "0 16 * * *"   # UTC 16:00 = Asia/Taipei 00:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run（只印 prompt，不呼叫 LLM、不改 soul）"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      skip_engagement:
+        description: "略過 Meta 互動 API（rate limit 時用）"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+concurrency:
+  # 不能和 pipeline 並行寫同一個 DB
+  group: news-radar-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  reflect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout state branch
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore runtime state
+        run: |
+          mkdir -p data/01_harvest logs
+          if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
+          else
+            echo "[restore] 沒有 DB → reflect 無資料可反思，結束"
+            exit 0
+          fi
+          if [ -d _state/logs ]; then
+            cp -r _state/logs/. logs/ 2>/dev/null || true
+          fi
+
+      - name: Run reflect
+        env:
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TZ: Asia/Taipei
+          PYTHONUNBUFFERED: "1"
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            FLAGS="$FLAGS --dry-run"
+          fi
+          if [ "${{ inputs.skip_engagement }}" = "true" ]; then
+            FLAGS="$FLAGS --skip-engagement"
+          fi
+          echo "[reflect] flags=$FLAGS"
+          python run_reflect.py $FLAGS
+
+      # soul.md 如果有更新，commit 回 main（讓人類可 review diff）
+      - name: Commit soul.md changes to main
+        if: inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet -- config/soul.md assets/soul.md 2>/dev/null; then
+            echo "[soul] 無變動"
+            exit 0
+          fi
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+          git add -A config/ assets/ 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "reflect: soul.md updated by daily reflector (run ${{ github.run_id }})"
+            git push
+          fi
+
+      # DB 更新也要回 state branch（engagement stats 有寫回）
+      - name: Persist state
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+
+          mkdir -p data/01_harvest logs state archive
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          if [ -d "$GITHUB_WORKSPACE/logs" ]; then
+            cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
+
+          cat > LAST_RUN.txt <<EOF
+          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_id: ${RUN_ID}
+          kind: reflect
+          EOF
+
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -q -m "state: reflect run ${RUN_ID}"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            state
+
+      - name: Upload reflect logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reflect-logs-${{ github.run_id }}
+          path: |
+            logs/
+            config/soul.md
+            assets/soul.md
+          retention-days: 30
+          if-no-files-found: warn

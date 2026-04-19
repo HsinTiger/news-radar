@@ -1,0 +1,429 @@
+# ==========================================================
+# News Radar · 主設定檔
+# 修改這個檔案不用改 Python 程式碼，是「管線的儀表板」
+# ==========================================================
+
+# ---------- 1. 訊號源 (RSS Feeds) ----------
+# 原則：只放「官方 / 第一手 / 高含金量」訊號源，寧少勿多
+# 2026-04-19 清理 #1：移除 Anthropic(404) / Mistral(404) / TSMC(403) / The Information(paywall)
+#                    補 Simon Willison / Hugging Face / TechCrunch AI / HackerNews 擴增今日素材量
+# 2026-04-19 清理 #2 (Phase 8.10 Kill-the-X)：
+#   決策：放棄「RSSHub 公開實例抓 X/Twitter」路線 — rsshub.app 把 Twitter 路由整組 404。
+#   一併撤掉其他結構性失能的 feed：
+#     * OpenAI Blog：feed 活著但 30 篇文章全 HTTP 403（Cloudflare 站層擋）
+#     * Bloomberg Technology：全 HTTP 403
+#     * WSJ Tech：全 HTTP 401（paywall）
+#     * FRED Economic News：DNS/網路層死透（DEAD_FEED）
+#   補上 Wall Street 訊號：Howard Marks / Peter Zeihan「不靠 X」的官方管道。
+#   Ray Dalio / Bill Ackman 只在 LinkedIn 發文、目前無穩定 RSS，暫略。
+#
+# 2026-04-19 擴充 #3 (Phase 8.15 Crypto Industry Expansion)：
+#   策略位移：從「純科技 / 商業」頻道延伸到「科技 / 商業 / 加密貨幣產業」。
+#   編輯方針：只收 **產業事件 / 協議升級 / 監管 / 機構動向**，
+#            不收 alpha / 價格預測 / 年化收益攻略 / 買賣信號。
+#   第一批新增 7 個源：4 家新聞型（CoinDesk / The Block / Decrypt / Cointelegraph）
+#                    + 2 家機構研究（a16z crypto / Paradigm）+ 1 家社群長文（Bankless）
+#   同步解鎖 must_exclude_any 的 `crypto` 與 `web3`（NFT 保留，alpha/meme 氣味過重）。
+#   同步加裝 alpha-filter 排除詞（price prediction / yield farming / shitcoin 等）。
+#   同步擴充 must_include_any 的產業關鍵字（Bitcoin / Ethereum / stablecoin / Coinbase
+#   / MiCA / spot ETF / Chainalysis / CFTC …）。沒加這批關鍵字，新源會全數卡在
+#   "no_keyword_match" — 等於白加源。
+#   子字串匹配陷阱要避開：ETF → Netflix、SEC → second、airdrop → Apple AirDrop、
+#   DeFi → define、Circle → virtuous circle。白名單一律用多字片語或長獨特詞。
+#
+# source_type（Phase 8.8 新增）：告訴下游 cleaner 該套什麼字數門檻。
+#   article  — 傳統長文部落格 / 媒體稿（預設）
+#   social   — Reddit、X/Twitter、Threads 等 UGC，預填 RSS summary、字數門檻最低
+#   video    — YouTube 影片（只能拿到 description）
+#   forum    — Hacker News / Lobsters 這類「標題 + 外連」社群
+feeds:
+
+  # === 頂級 AI 模型商官方 blog ===
+  # 註：OpenAI Blog 於 Phase 8.10 移除（feed 200 但文章層 403，抓不到正文）
+  - name: Google DeepMind
+    url: https://deepmind.google/blog/rss.xml
+    tier: primary
+    language: en
+    tags: [ai, research]
+
+  # === 雲端 / 半導體 / 基礎建設 ===
+  - name: AWS News
+    url: https://aws.amazon.com/blogs/aws/feed/
+    tier: secondary
+    language: en
+    tags: [cloud, infra]
+
+  - name: NVIDIA Blog
+    url: https://blogs.nvidia.com/feed/
+    tier: primary
+    language: en
+    tags: [gpu, ai-chip]
+
+  # === 策略 / 分析 / KOL ===
+  - name: Stratechery
+    url: https://stratechery.com/feed/
+    tier: primary
+    language: en
+    tags: [analysis, strategy]
+
+  - name: Simon Willison's Blog
+    url: https://simonwillison.net/atom/everything/
+    tier: primary
+    language: en
+    tags: [ai, agent, llm, tooling]
+
+  # === AI 社群熱點 ===
+  - name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    tier: secondary
+    language: en
+    tags: [ai, model, open-source]
+
+  - name: TechCrunch AI
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+    tier: secondary
+    language: en
+    tags: [ai, industry, funding]
+
+  - name: Hacker News Front Page
+    url: https://hnrss.org/frontpage?count=30
+    tier: secondary
+    language: en
+    source_type: forum
+    tags: [tech, community, signal]
+
+  # === 深度與前沿社群 ===
+  - name: r/Singularity
+    url: https://old.reddit.com/r/singularity/new/.rss
+    tier: primary
+    language: en
+    source_type: social
+    tags: [ai, agi, discussion]
+
+  - name: r/LocalLLaMA
+    url: https://old.reddit.com/r/LocalLLaMA/new/.rss
+    tier: secondary
+    language: en
+    source_type: social
+    tags: [ai, open-source, models]
+
+  - name: r/MachineLearning
+    url: https://old.reddit.com/r/MachineLearning/new/.rss
+    tier: secondary
+    language: en
+    source_type: social
+    tags: [ai, research, papers]
+
+  # === 華爾街長文派（Phase 8.10：X 路線被否決後補上的替代訊號）===
+  # 背景：Phase 8.10 原想透過 RSSHub 公開實例抓 Ray Dalio / Bill Ackman / Howard
+  # Marks / Jensen / Sam Altman 等 17 個 X 帳號，實跑發現 rsshub.app 把 Twitter
+  # 路由整組 301 到 google.com/404 — routes 應該早就 deprecated 了。
+  #
+  # 三個已驗證的替代路徑（都不靠 X，直接打官方源頭）：
+  #   * Howard Marks Memos：art19 podcast RSS（The Memo by Howard Marks）
+  #     每 1-2 月一篇深度 memo，訊號密度遠高於任何人的 X 發言。
+  #   * Peter Zeihan：zeihan.com WordPress feed — daily video + newsletter。
+  #   * Ray Dalio / Bill Ackman：目前只在 LinkedIn 發文，LinkedIn 無穩定 RSS，略過。
+  #
+  # 若未來真的要補 X 路線，兩個可行路徑（不要再用 rsshub.app 公開實例）：
+  #   (A) 自架 RSSHub (Docker) — ~$5/月 VPS，1-2 小時架起來
+  #   (B) rss.app SaaS — $5-10/月，5 分鐘設定
+  - name: Howard Marks Memos (podcast)
+    # art19 標準 RSS pattern 是 rss.art19.com（不是 feeds.art19.com，第一次寫錯過）
+    url: https://rss.art19.com/the-memo-by-howard-marks
+    tier: primary
+    language: en
+    tags: [finance, credit, oaktree, memo]
+
+  - name: Peter Zeihan
+    url: https://zeihan.com/feed/
+    tier: secondary
+    language: en
+    tags: [geopolitics, macro]
+
+  # === 加密貨幣產業 (Phase 8.15) ===
+  # 編輯方針：產業事件 / 協議升級 / 監管 / 機構動向 — 不收 alpha / 價格預測。
+  # 下列 RSS 路徑為常見官方 pattern；首次 harvest 跑起來若某一條回非 200 或 parse 失敗，
+  # 在 logs/ 會被捕捉成 DEAD_FEED，再進 config 裡改或移除。
+  - name: CoinDesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml
+    tier: primary
+    language: en
+    tags: [crypto, news, industry]
+
+  - name: The Block
+    url: https://www.theblock.co/rss.xml
+    tier: primary
+    language: en
+    source_type: rss_summary
+    tags: [crypto, news, institutional]
+    # Phase 8.15 首次 harvest 確認：RSS 本身 200，但所有文章頁 Cloudflare 403。
+    # 改用 rss_summary 模式：fetcher 從 RSS <description> 預填 clean_markdown，
+    # run_harvest.py 自動跳過 fetch_html。字數門檻降為 60（rss_summary 專屬）。
+    # 代價：每篇只有 80-200 字的 summary，無法支撐深度分析，但足夠 scorer 判斷訊號。
+
+  - name: Decrypt
+    url: https://decrypt.co/feed
+    tier: secondary
+    language: en
+    tags: [crypto, news]
+
+  - name: Cointelegraph
+    url: https://cointelegraph.com/rss
+    tier: secondary
+    language: en
+    tags: [crypto, news]
+    # 備註：Cointelegraph 價格/行情評論偏多，依賴 must_exclude_any 的 alpha 過濾詞過濾
+
+  # 以下 4 個源 Phase 8.15 首次 + 二次 harvest 確認失效，撤下（2026-04-19）：
+  #   * a16z crypto (a16zcrypto.com/feed/)：404，網站未公開 RSS
+  #   * Paradigm Research (paradigm.xyz/feed.xml)：404，網站未公開 RSS
+  #   * Bankless (bankless.substack.com/feed)：400 → (www.bankless.com/rss)：404
+  #     Bankless 這幾年換平台太多次，主站無穩定統一 RSS。放棄。
+  #
+  # 後續路徑：等有 headless-browser fetcher 或使用者自架 RSSHub 後，再補 VC / 研究類源。
+
+# ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
+# 文章/影音必須命中至少一個關鍵字才進入處理流程
+keywords:
+  must_include_any:
+    # 華爾街大佬與財經巨頭
+    - Jamie Dimon
+    - Ray Dalio
+    - Bill Ackman
+    - Howard Marks
+    - Stanley Druckenmiller
+    - Jerome Powell
+    - Fed
+    - "Wall Street"
+    # 科技圈 CEO 與領袖
+    - Musk
+    - Elon
+    - "Sam Altman"
+    - "Satya Nadella"
+    - "Sundar Pichai"
+    - "Mark Zuckerberg"
+    - "Tim Cook"
+    - "Jensen Huang"
+    - "Lisa Su"
+    - "Peter Thiel"
+    - "Marc Andreessen"
+    - Karpathy
+    - Sutskever
+    - LeCun
+    # 軍工、國防與地緣政治
+    - Palantir
+    - "Alex Karp"
+    - Anduril
+    - "Palmer Luckey"
+    - "Peter Zeihan"
+    - "geopolitics"
+    - "defense"
+    - "Lockheed Martin"
+    - "military"
+    # 關鍵論壇與媒體關鍵字
+    - "World Economic Forum"
+    - WEF
+    - Davos
+    - "Milken Institute"
+    - CNBC
+    - WSJ
+    - Bloomberg
+    - interview
+    - CEO
+    # AI 模型與技術前哨
+    - Mistral
+    - Grok
+    - xAI
+    - Sora
+    - Midjourney
+    - "Apple Intelligence"
+    - AGI
+    - breakthrough
+    - benchmark
+    - leak
+    # 企業與產業鏈
+    - Anthropic
+    - OpenAI
+    - Claude
+    - GPT
+    - Gemini
+    - LLaMA
+    - agentic
+    - acquisition
+    - moat
+    - TSMC
+    - CoWoS
+    - HBM
+    - NVIDIA
+    # 人物與趨勢 (M7 Expansion)
+    - Musk
+    - Elon
+    - Sam Altman
+    - Trump
+    - Jensen Huang
+    - Karpathy
+    - Sutskever
+    - LeCun
+    # 模型與技術前哨 (M7 Expansion)
+    - Mistral
+    - Grok
+    - xAI
+    - Sora
+    - Midjourney
+    - Apple Intelligence
+    - AGI
+    - breakthrough
+    - benchmark
+    - leak
+    # 開發者工具
+    - "developer tool"
+    - coding agent
+    - "design tool"
+    - SaaS
+    - enterprise
+    # 加密貨幣產業 (Phase 8.15)
+    # 規則：用多字片語或長獨特詞，避免子字串陷阱
+    # （ETF→Netflix / SEC→second / DeFi→define / Circle→virtuous circle）
+    - Bitcoin
+    - Ethereum
+    - stablecoin
+    - Coinbase
+    - Binance
+    - Kraken
+    - Tether
+    - USDC
+    - MiCA
+    - "spot ETF"
+    - "Bitcoin ETF"
+    - "ETF flows"
+    - "ETF approval"
+    - "crypto regulation"
+    - "digital asset"
+    - tokenization
+    - Solana
+    - Chainlink
+    - Chainalysis
+    - OFAC
+    - CFTC
+    - Grayscale
+    - blockchain
+    - "proof of stake"
+    - "proof of work"
+    - "DeFi protocol"
+    - "layer 2"
+    - "Ethereum upgrade"
+
+  # 若命中以下關鍵字，自動 Drop（雜訊過濾）
+  # Phase 8.15：移除 `crypto` 與 `web3`（不然新增的幣圈源整批進不來）
+  # 同步加上一組 alpha-filter 排除詞，把價格預測 / 年化收益攻略 / 投機氣味濾掉
+  must_exclude_any:
+    # 保留的舊排除詞（NFT / meme / celebrity / fan art / giveaway 仍視為雜訊）
+    - NFT
+    - meme
+    - celebrity
+    - "fan art"
+    - giveaway
+    # Phase 8.15 新增：幣圈 alpha / 投機 / KOL 含糊文氣味
+    # （注意：airdrop 會誤殺 Apple AirDrop，不放；ETF/SEC/DeFi 子字串陷阱太重，也不放排除）
+    - "price prediction"
+    - "price target"
+    - "yield farm"
+    - "yield farming"
+    - shitcoin
+    - "pump and dump"
+    - "rug pull"
+    - degen
+    - APY
+    - shill
+    - FUD
+    - "moon soon"
+    - "to the moon"
+    - "get rich"
+    - "100x"
+    - "1000x"
+
+
+# ---------- 3. 過濾閾值 (Filter Thresholds) ----------
+# min_word_count 分級（Phase 8.9）：
+#   不同 source_type 的「有效訊號」密度本質不同，用單一門檻會誤殺 YouTube / Reddit。
+#   cleaner 會依 item.source_type 取對應門檻；找不到 key 時 fallback 到 `default`。
+#   (向後相容：若這個欄位仍為 int，cleaner 會當作所有 source_type 的 default)
+filters:
+  min_word_count:
+    default: 100              # 兜底值
+    article: 200              # 傳統 blog / 媒體稿：要求較高
+    social:   40              # Reddit / 社群：RSS summary 常在 60-200 字
+    video:    30              # YouTube description：極短也接受
+    forum:    60              # HN / Lobsters：介於兩者之間
+    rss_summary: 60           # Phase 8.15b：RSS 活但文章頁被擋的源（如 The Block）
+  max_age_hours: 168          # 放寬至 7 天，確保今日素材充足
+  duplicate_similarity: 0.85
+
+
+# ---------- 4. 審核與信心分 (Review & Confidence) ----------
+review:
+  auto_publish_threshold: 0.85   # ≥ 此分數自動發布（初期建議暫時設 1.01 即全部手動）
+  manual_review_threshold: 0.65  # < 此分數直接 Drop，不浪費你的眼睛
+  initial_mode: manual_only      # manual_only / hybrid / auto_high_confidence
+
+  # 信心分權重（加總必須 = 1.0）
+  score_weights:
+    has_specific_numbers: 0.25
+    official_source: 0.30
+    structure_complete: 0.25
+    novelty_vs_recent: 0.20
+
+
+# ---------- 5. 發文排程 (Publishing Schedule) ----------
+# 採「排程 + jitter」避免被演算法當成機器人
+schedule:
+  timezone: Asia/Taipei
+  publishing_slots:
+    - "08:30"   # 早間通勤
+    - "12:30"   # 午休
+    - "21:00"   # 晚間
+  jitter_minutes: 15          # 實際發文時間 ±15 分鐘內隨機
+  max_posts_per_day: 3
+  min_interval_minutes: 90    # 兩篇之間至少間隔 90 分鐘
+
+
+# ---------- 6. 平台設定 (Platform Config) ----------
+platforms:
+  facebook:
+    enabled: true
+    attach_link: true
+    attach_og_image: true
+
+  threads:
+    enabled: true
+    attach_link: true           # Threads 支援 link preview
+    max_chars: 500
+
+
+# ---------- 7. LLM 設定 ----------
+llm:
+  # 主模型（低成本 + 免費額度高）
+  primary:
+    provider: gemini
+    model: gemini-2.0-flash
+    max_output_tokens: 2048
+
+  # 高階模型（只在 reflector 週迭代時用）
+  premium:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    max_output_tokens: 4096
+
+  # Token 預算警戒
+  daily_token_budget: 20000   # 超過此量會 alert
+  weekly_token_budget: 100000
+
+
+# ---------- 8. 路徑 ----------
+paths:
+  db: "db/news_radar.db"
+  state: "state/workflow_state.json"
+  log: "logs/execution_log.jsonl"
+  drafts: "drafts"
+  soul: "config/news_radar_soul.md"

@@ -1,0 +1,160 @@
+-- News Radar · SQLite Schema
+-- 沿用 alpha_pipeline 的「id + content + timestamp」基底風格
+-- 一張表存原始素材 (news_items)、一張表存 AI 草稿 (drafts)、一張表存發布紀錄 (publish_log)
+
+-- ============ 1. 原始新聞素材 ============
+CREATE TABLE IF NOT EXISTS news_items (
+    id              TEXT PRIMARY KEY,         -- sha1(url)
+    feed_name       TEXT NOT NULL,
+    feed_tier       TEXT NOT NULL,            -- primary / secondary
+    source_type     TEXT DEFAULT 'article',   -- article / social / video / forum
+    url             TEXT UNIQUE NOT NULL,
+    title           TEXT NOT NULL,
+    published_at    TEXT NOT NULL,            -- ISO8601
+    fetched_at      TEXT NOT NULL,
+    language        TEXT,
+    raw_html        TEXT,                     -- 原始 HTML (debug 用，可日後 vacuum)
+    clean_markdown  TEXT,                     -- trafilatura 清洗後
+    word_count      INTEGER,
+    og_image_url    TEXT,
+    og_video_url    TEXT,                     -- Phase 8.16：影片/音訊 URL（可能是直鏈或 embed）
+    og_video_is_direct INTEGER DEFAULT 0,     -- 1 = .mp4/.mov/.webm 等可直丟 Meta Graph API
+    tags            TEXT,                     -- JSON array
+    status          TEXT DEFAULT 'fetched',   -- fetched / scored / drafted / published / dropped
+    drop_reason     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_status ON news_items(status);
+CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at);
+
+
+-- ============ 2. AI 產出草稿 ============
+CREATE TABLE IF NOT EXISTS drafts (
+    id                   TEXT PRIMARY KEY,        -- sha1(news_id + persona_version)
+    news_id              TEXT NOT NULL,
+    persona_version      TEXT NOT NULL,           -- 對應 news_radar_soul.md 的版本
+    title                TEXT,
+    hook                 TEXT,
+    framework            TEXT,
+    validation           TEXT,
+    macro_insight        TEXT,
+    ending_question      TEXT,
+    hashtags             TEXT,                    -- JSON array
+    image_url            TEXT,
+    full_text            TEXT,                    -- 組裝後的完整貼文
+    confidence_score     REAL,                    -- 0.0 ~ 1.0
+    score_breakdown      TEXT,                    -- JSON (各維度分數)
+    llm_provider         TEXT,
+    llm_model            TEXT,
+    input_tokens         INTEGER,
+    output_tokens        INTEGER,
+    cached_tokens        INTEGER,
+    cost_usd             REAL,
+    generated_at         TEXT NOT NULL,
+    status               TEXT DEFAULT 'pending_review',
+                          -- pending_review / approved / rejected / auto_approved / published
+    reviewer_action      TEXT,                    -- approved_as_is / edited / rejected
+    final_text           TEXT,                    -- 若有編輯則記錄最終版（reflector 用）
+    FOREIGN KEY (news_id) REFERENCES news_items(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
+CREATE INDEX IF NOT EXISTS idx_drafts_score ON drafts(confidence_score);
+
+
+-- ============ 3. 發布紀錄 ============
+CREATE TABLE IF NOT EXISTS publish_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id        TEXT NOT NULL,
+    platform        TEXT NOT NULL,            -- facebook / threads
+    platform_post_id TEXT,                    -- 平台回傳的 ID
+    posted_at       TEXT NOT NULL,
+    success         INTEGER NOT NULL,         -- 1 / 0
+    error_message   TEXT,
+    FOREIGN KEY (draft_id) REFERENCES drafts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_publish_draft ON publish_log(draft_id);
+
+
+-- ============ 4. Token 用量追蹤（每日聚合）============
+CREATE TABLE IF NOT EXISTS token_usage_daily (
+    date             TEXT PRIMARY KEY,        -- YYYY-MM-DD
+    provider         TEXT,
+    model            TEXT,
+    total_input      INTEGER DEFAULT 0,
+    total_output     INTEGER DEFAULT 0,
+    total_cached     INTEGER DEFAULT 0,
+    total_cost_usd   REAL DEFAULT 0.0,
+    call_count       INTEGER DEFAULT 0
+);
+
+
+-- ============ 5. 發布後互動數據（Milestone 3 Reflector）============
+-- 每次 run_reflect.py 都會抓一次 FB / IG / Threads 最新互動數，append-only
+-- Reflector 會取每個貼文「最新一筆」作為學習訊號
+CREATE TABLE IF NOT EXISTS engagement_stats (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id         TEXT NOT NULL,
+    platform         TEXT NOT NULL,            -- facebook / threads / instagram
+    platform_post_id TEXT NOT NULL,
+    fetched_at       TEXT NOT NULL,            -- ISO8601
+    likes            INTEGER DEFAULT 0,
+    comments         INTEGER DEFAULT 0,
+    shares           INTEGER DEFAULT 0,        -- FB/IG shares
+    saves            INTEGER DEFAULT 0,        -- IG saves
+    reposts          INTEGER DEFAULT 0,        -- Threads reposts
+    quotes           INTEGER DEFAULT 0,        -- Threads quotes
+    replies          INTEGER DEFAULT 0,        -- Threads replies
+    views            INTEGER DEFAULT 0,        -- Threads views / FB impressions
+    reach            INTEGER DEFAULT 0,        -- 去重曝光 (FB/IG)
+    raw_json         TEXT,                      -- 原始 API 回傳
+    FOREIGN KEY (draft_id) REFERENCES drafts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_engagement_draft ON engagement_stats(draft_id);
+CREATE INDEX IF NOT EXISTS idx_engagement_post  ON engagement_stats(platform, platform_post_id);
+
+
+-- ============ 5.1 平台專屬變體（Milestone 3.1）============
+-- 每個 draft_id 會展開成 3 列（facebook / instagram / threads），
+-- publisher 會直接拿對應 row 的 full_text 發文，不再做字數截斷。
+CREATE TABLE IF NOT EXISTS platform_drafts (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id          TEXT NOT NULL,
+    platform          TEXT NOT NULL,          -- facebook / instagram / threads
+    title             TEXT,
+    body              TEXT,                   -- 正文（不含 hashtag）
+    hashtags          TEXT,                   -- JSON array
+    full_text         TEXT NOT NULL,          -- 組好、可直接發佈的完整文字（含 hashtag）
+    final_text        TEXT,                   -- 人工編輯後的版本（給 Reflector）
+    reviewer_action   TEXT,                   -- approved_as_is / edited / rejected
+    char_count        INTEGER,
+    appendix_version  TEXT,                   -- 對應 platform appendix 的版本
+    created_at        TEXT NOT NULL,
+    UNIQUE (draft_id, platform),
+    FOREIGN KEY (draft_id) REFERENCES drafts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_drafts_draft ON platform_drafts(draft_id);
+CREATE INDEX IF NOT EXISTS idx_platform_drafts_platform ON platform_drafts(platform);
+
+
+-- ============ 6. 反思紀錄（Reflector 每次執行留痕）============
+CREATE TABLE IF NOT EXISTS reflection_events (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    ran_at                TEXT NOT NULL,
+    signals_summary       TEXT,               -- JSON 統計：{"edits":n,"csv":m,"engagement":k}
+    samples_used          INTEGER DEFAULT 0,
+    soul_version_before   TEXT,
+    soul_version_after    TEXT,
+    patch_markdown        TEXT,               -- 追加到 soul.md Ⅸ. Iteration Log 的內容
+    rules_added_json      TEXT,               -- JSON array
+    rationale             TEXT,
+    input_tokens          INTEGER DEFAULT 0,
+    output_tokens         INTEGER DEFAULT 0,
+    cost_usd              REAL DEFAULT 0.0,
+    status                TEXT DEFAULT 'completed'  -- completed / skipped_low_samples / failed
+);
+
+CREATE INDEX IF NOT EXISTS idx_reflection_ran_at ON reflection_events(ran_at);
