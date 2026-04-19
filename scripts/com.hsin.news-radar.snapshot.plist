@@ -7,6 +7,9 @@
   安裝步驟：見 scripts/INSTALL_LAUNCHAGENT.md
   手動觸發：launchctl start com.hsin.news-radar.snapshot
   查看 log： ~/news_radar_snapshots/_logs/YYYYMMDD_HHMMSS.log
+
+  重要：腳本必須位於 ~/bin/（或其他非 OneDrive/iCloud 位置），
+       因為 macOS TCC 會擋 launchd 存取 CloudStorage 底下的檔案。
 -->
 <plist version="1.0">
 <dict>
@@ -24,21 +27,18 @@
         <integer>30</integer>
     </dict>
 
-    <!-- 如果排程時間 Mac 正好是睡眠 / 關機，醒來後補跑 -->
+    <!-- 不在 load 時跑；只在排程時間觸發 -->
     <key>RunAtLoad</key>
     <false/>
 
     <!-- 實際要跑的 shell script：
-         PATH_TO_REPO 安裝時會被 INSTALL 腳本替換成你的實際路徑 -->
+         HOME_DIR 安裝時會被 INSTALL 腳本替換成 $HOME。
+         腳本必須位於 ~/bin/ 而非 OneDrive，否則 TCC 會擋。 -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>PATH_TO_REPO/scripts/weekly_snapshot.sh</string>
+        <string>HOME_DIR/bin/news_radar_weekly_snapshot.sh</string>
     </array>
-
-    <!-- 工作目錄（snapshot 會用到 git clone，要有寫入權限）-->
-    <key>WorkingDirectory</key>
-    <string>PATH_TO_REPO</string>
 
     <!-- launchd 自己的 stdout/stderr 也收起來（備援 log）-->
     <key>StandardOutPath</key>
