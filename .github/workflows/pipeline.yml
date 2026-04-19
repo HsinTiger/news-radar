@@ -40,14 +40,14 @@ jobs:
       # 1. Checkout 程式碼（main）
       # --------------------------------------------------------
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # --------------------------------------------------------
       # 2. Checkout state branch 到 _state/（第一次跑時不存在，允許失敗）
       # --------------------------------------------------------
       - name: Checkout state branch
         id: state_checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
         with:
           ref: state
@@ -57,7 +57,7 @@ jobs:
       # 3. 裝 Python
       # --------------------------------------------------------
       - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -203,7 +203,7 @@ jobs:
       # --------------------------------------------------------
       - name: Upload logs as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pipeline-logs-${{ github.run_id }}
           path: |

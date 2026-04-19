@@ -42,17 +42,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout state branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
         with:
           ref: state
           path: _state
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload reflect logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: reflect-logs-${{ github.run_id }}
           path: |
