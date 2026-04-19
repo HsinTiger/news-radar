@@ -12,7 +12,10 @@ pyyaml==6.0.2             # config.yaml 解析
 python-dotenv==1.0.1      # .env 載入
 
 # ===== AI 處理 (Milestone 2) =====
-google-generativeai==0.8.3   # Gemini API
+# 兩個 Gemini SDK 並存：新版（google-genai）給 scorer/composer/analyst/reflector；
+# 舊版（google-generativeai）給 competitor_agent。等 competitor_agent 遷移後可以刪掉舊版。
+google-genai==1.73.1         # 新版 SDK，用法：from google import genai
+google-generativeai==0.8.3   # 舊版 SDK，用法：import google.generativeai as genai
 anthropic==0.39.0            # Claude API（週反思迭代用）
 
 # ===== 審核 UI (Milestone 2) =====
