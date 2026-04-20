@@ -243,10 +243,21 @@ async def _try_claude_cli(
     timeout_s: int,
 ) -> LLMResult[T]:
     """試呼叫 claude CLI。
+
+    用官方支援的旗標組合（見 https://code.claude.com/docs/en/cli-reference）：
+    - `-p` / `--print`：non-interactive 模式
+    - `--output-format json`：回傳 envelope JSON（含 result / usage / total_cost_usd）
+    - `--system-prompt <text>`：乾淨地指定 system instruction（取代 default）
+    - `--bare`：跳過 hook / skill / plugin / MCP 自動探索，scripted call 啟動更快
+    - `--no-session-persistence`：不把 session 存進 ~/.claude/sessions，避免污染
+    - user prompt 透過 argv 傳，非 stdin（docs 的 canonical form）
+
+    實作細節：
     - 用 asyncio.create_subprocess_exec 避免 block event loop
-    - stdin 傳 prompt，非 argv（避免 shell 特殊字元）
-    - --output-format json 拿到 envelope，解出 result text
-    - result text 再抽 JSON blob，validate 成 response_model
+    - stdin 關閉（不需要 pipe 資料進去）
+    - envelope.result 再走 _extract_json_blob 抽 JSON，避免舊版 CLI 或
+      skill 干擾時模型在 result 裡加 markdown fence / 前後閒聊
+    - 若使用者 CLI 版本太舊不支援新旗標 → 子程序會 exit != 0，走 error path
     """
     if not _claude_cli_available():
         return LLMResult(
@@ -254,20 +265,20 @@ async def _try_claude_cli(
             raw_error=f"`{CLAUDE_CLI_BIN}` not found on PATH",
         )
 
-    # 組合 prompt：system 和 user prompt 合併
-    # Claude CLI 沒有獨立的 --system flag（跨版本差異），直接把 system 當前綴
-    combined_prompt = f"{system.strip()}\n\n---\n\n{prompt.strip()}"
-
     args = [
         CLAUDE_CLI_BIN,
-        "-p",              # print mode (non-interactive)
+        "-p",
         "--output-format", "json",
+        "--system-prompt", system.strip(),
+        "--bare",
+        "--no-session-persistence",
+        prompt.strip(),  # user prompt as positional argv
     ]
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
-            stdin=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -279,7 +290,7 @@ async def _try_claude_cli(
 
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(input=combined_prompt.encode("utf-8")),
+            proc.communicate(),
             timeout=timeout_s,
         )
     except asyncio.TimeoutError:

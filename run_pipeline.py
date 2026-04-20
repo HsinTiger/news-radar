@@ -413,22 +413,20 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
 
     # 1. AI 評分
     score_data = await score_news(title, content)
-    
+
     if not score_data:
-        # --- 應變邏輯：如果主編 AI 配額用盡，執行強行發布 (M6.1 Fallback) ---
-        print(f" ⚠️  [Pipeline] AI 評分模組失效 (可能是 429 配額問題)，啟動『暴力發布模式』...")
-        from src.scorer import NewsScore
-        score_data = NewsScore(
-            confidence_score=1.0,  # 強制過關
-            score_breakdown={
-                "data_density": 0.8, 
-                "strategic_signal": 0.8, 
-                "news_novelty": 0.8, 
-                "persona_fit": 1.0
-            },
-            editorial_note="[緊急代班] 強化數據深度，從底層邏輯反思科技與產業的連動。"
+        # Phase 8.19：徹底移除『暴力發布模式』。
+        # scorer.py 已內建 Gemini → Claude CLI 雙路徑；若仍回 None，代表
+        # (1) 雲端 Gemini quota 用盡 且 (2) 本機 Claude CLI 不可用。
+        # 舊邏輯會強塞 confidence_score=1.0 讓每一篇新聞不分品質都 auto-approve，
+        # 這跟 composer 的 emergency template 一樣是 quality-crushing footgun。
+        # 正確做法是 skip，news_item 保留 `scored` 以外的 status 讓下一輪再試。
+        print(
+            f" ⚠️  [Pipeline] AI 評分雙路徑皆失敗 → skip 本篇（不評分、不入 queue）。"
+            f"下一輪 Gemini quota 恢復後會重試。"
         )
-    
+        return "skipped_no_llm"
+
     score = score_data.confidence_score
     print(f" ↳ AI 評分: {score:.2f} | 主編指令: {score_data.editorial_note[:60]}")
 
