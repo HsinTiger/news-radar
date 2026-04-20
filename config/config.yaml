@@ -183,6 +183,61 @@ feeds:
   #
   # 後續路徑：等有 headless-browser fetcher 或使用者自架 RSSHub 後，再補 VC / 研究類源。
 
+  # === Phase 8.20 新增：對齊 3 位 KOL 訊號風格 ===
+  # 新加 feed 都標 `# UNVERIFIED` 附註。Hsin 首次跑 scripts/audit_feeds.py --urls-only
+  # 後，把驗證 OK 的註解改成 `# VERIFIED YYYY-MM-DD`，驗失敗的整條移除或改路徑。
+  # 挑源原則（回應 Hsin 2026-04-21 的訊號豐富度要求）：
+  #   - 蕭上農風格（供應鏈／半導體深度）→ SemiAnalysis / TechNews.tw
+  #   - 游庭皓風格（市場數據／台美股）→ Calculated Risk / The Diff
+  #   - IEO 風格（宏觀／政策／地緣）→ Marginal Revolution / Not Boring
+
+  # 供應鏈／半導體深度（蕭上農風格）
+  - name: SemiAnalysis (Dylan Patel)
+    url: https://semianalysis.com/feed/
+    tier: primary
+    language: en
+    tags: [semiconductor, supply-chain, ai-chip, research]
+    # UNVERIFIED 2026-04-21 — substack-style WordPress feed，部分文章付費
+    # 仍有免費摘要可撈；若 harvest dead 就改成 substack 路徑重試
+
+  - name: TechNews 科技新報
+    url: https://technews.tw/feed/
+    tier: primary
+    language: zh
+    tags: [taiwan, semiconductor, supply-chain, ai]
+    # UNVERIFIED 2026-04-21 — 台灣科技媒體，WordPress 標準 RSS pattern
+    # 供應鏈、台積電、科技政策中文第一線
+
+  # 市場數據／個股解析（游庭皓風格）
+  - name: Calculated Risk
+    url: https://www.calculatedriskblog.com/feeds/posts/default
+    tier: secondary
+    language: en
+    tags: [macro, us-housing, labor-market, economy]
+    # UNVERIFIED 2026-04-21 — Blogger feed，Bill McBride 宏觀數據長期追蹤
+
+  - name: The Diff (Byrne Hobart)
+    url: https://diff.substack.com/feed
+    tier: primary
+    language: en
+    tags: [strategy, finance, tech-business, deep-analysis]
+    # UNVERIFIED 2026-04-21 — substack，部分文章付費但 RSS 有摘要
+
+  # 宏觀／政策／地緣（IEO 風格）
+  - name: Marginal Revolution
+    url: https://marginalrevolution.com/feed
+    tier: secondary
+    language: en
+    tags: [economics, policy, macro, global]
+    # UNVERIFIED 2026-04-21 — Tyler Cowen，經濟學家每日觀察
+
+  - name: Not Boring (Packy McCormick)
+    url: https://www.notboring.co/feed
+    tier: secondary
+    language: en
+    tags: [strategy, venture, tech-business]
+    # UNVERIFIED 2026-04-21 — substack，VC / 戰略觀察，類 Stratechery 但更新頻率高
+
 # ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
 # 文章/影音必須命中至少一個關鍵字才進入處理流程
 keywords:
