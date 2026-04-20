@@ -118,8 +118,11 @@ pill 會進入一個類目導航頁。
   - ✅ 公司財報 → 公司＋事件 (`#特斯拉財報` 而不是 `#電動車`)
   - ✅ 地緣主題 → 國家／區域／衝突名 (`#紅海航運` 而不是 `#地緣政治`)
 - **與 hashtags 的關係**：`primary_topic_tag` 會由 `finalize_variant` 自動放到
-  `hashtags` 的第一個位置，並做去重。其餘 1–2 個 hashtags 擔任補充標籤的角色，
-  不會成為主題 pill。
+  `hashtags` 的第一個位置，並做去重。
+- **Phase 8.19c（2026-04-21）起，Threads 變體硬性只保留 1 個 hashtag**——
+  就是 `primary_topic_tag` 自己。Threads 的設計與 IG / FB 不同，多餘的
+  hashtag 不會變成可點擊分類，只是文末噪音；所以 composer 在組裝 full_text
+  時會把 `hashtags[1:]` 全部丟棄。prompt 層也已同步要求 LLM 只產出 1 個。
 - **長期用途**：reflector / scorer 會單獨追蹤『哪些 primary_topic_tag 帶來最多
   impression / click-through』，用於之後優化選詞策略。
 

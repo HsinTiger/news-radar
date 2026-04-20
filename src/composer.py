@@ -81,10 +81,14 @@ PLATFORM_LIMITS = {
 }
 
 # 平台 hashtag 建議數量（上下限都是寬鬆指引）
+# Phase 8.19c（2026-04-21）：Threads 改為硬性只留 1 個 hashtag。
+# 理由：Threads 的 hashtags[0] 會升級為貼文頂部的 topic pill，那條就是主題
+# 分類；額外 hashtag 不會被 Threads 視為可點擊標籤，只會讓末段看起來像 IG
+# 風格的「標籤牆」，干擾敘事節奏。所以 Threads 只保留 primary_topic_tag。
 PLATFORM_HASHTAG_RANGE = {
     "fb": (3, 5),
     "ig": (5, 10),
-    "threads": (1, 3),
+    "threads": (1, 1),
 }
 
 
@@ -116,19 +120,27 @@ def load_soul_bundle() -> Tuple[str, Dict[str, str]]:
 
 def assemble_full_text(variant: PlatformVariant, platform: str = "fb") -> str:
     """把 PlatformVariant 組裝成最終發文字串。
-    - title 當作第一行 / hook。
+    - title 當作第一行 / hook（Threads 例外，見下）。
     - body 接著，段落之間空一行。
     - hashtags 置於末尾。
-    - [NEW] Threads 專屬：在 hashtags 前增加額外空行，確保呼吸感。
+    - Threads 專屬：在 hashtags 前增加額外空行，確保呼吸感。
+    - [Phase 8.19c, 2026-04-21] Threads 不再把 title 當作獨立首行，
+      因為 LLM 常把 title 跟 body 第一句寫成同一句，造成實際貼文第一行
+      重複兩次。Threads 平台本來就沒有「標題」的 UI 概念；由 body 自己
+      開場即可。如果 title 內容真的跟 body 第一句不一樣，可在 body
+      開頭保留 hook；這一致性由 prompt 層強制。
+    - [Phase 8.19c, 2026-04-21] Threads 只保留第一個 hashtag (primary_topic_tag)。
+      其餘 hashtag 在 Threads 上不會成為可點擊分類，只是視覺噪音，
+      直接丟掉。
     """
     parts: List[str] = []
-    if variant.title:
+    if variant.title and platform != "threads":
         parts.append(variant.title.strip())
     if variant.body:
         parts.append(variant.body.strip())
-    
+
     if variant.hashtags:
-        cleaned = []
+        cleaned: List[str] = []
         body_lower = (variant.body or "").lower()
         for h in variant.hashtags:
             h2 = (h or "").strip()
@@ -138,7 +150,11 @@ def assemble_full_text(variant: PlatformVariant, platform: str = "fb") -> str:
                 h2 = "#" + h2
             if h2.lower() not in body_lower:
                 cleaned.append(h2)
-        
+
+        # Threads：只留第一個（primary_topic_tag），其餘丟棄。
+        if platform == "threads" and cleaned:
+            cleaned = cleaned[:1]
+
         if cleaned:
             hashtag_str = " ".join(cleaned)
             # 針對 Threads，在標籤前加上一個空白字元，避免 API 吞掉第一個 '#'
@@ -263,7 +279,7 @@ def _build_system_instruction(soul: str, appendices: dict) -> str:
         "",
         "=== 輸出硬性要求 ===",
         "🔥🔥🔥 [最高優先級] 所有產出內容（包含正文、標題與標籤）必須全數翻譯並轉化為流暢的『繁體中文 (zh-TW)』，絕對禁止原文照貼或中英夾雜。 🔥🔥🔥",
-        f"- Threads 變體：總字元 ≤ {PLATFORM_LIMITS['threads']}，目標 420–480。hashtags 1–3 個。",
+        f"- Threads 變體：總字元 ≤ {PLATFORM_LIMITS['threads']}，目標 420–480。hashtags 只要 1 個——就是 primary_topic_tag，不要再多。Threads 不靠 hashtag 做分類，多餘的 hashtag 只是雜訊。另外：Threads 的 `title` 欄位只會被用來做後端記錄，不會出現在實際貼文中，所以 body 必須獨立開場、不能假設 title 會被讀到。",
         f"- FB 變體：總字元 ≤ {PLATFORM_LIMITS['fb']}，目標 700–900。hashtags 3–5 個。",
         f"- IG 變體：總字元 ≤ {PLATFORM_LIMITS['ig']}，目標 600–900。hashtags 5–10 個。",
         "- 撰寫規範：",
@@ -271,6 +287,9 @@ def _build_system_instruction(soul: str, appendices: dict) -> str:
         "  2. 寫作流暢度必須達到『資深科技記者播報』的連貫水準，資訊必須自行咀嚼吸收後陳述。",
         "  3. 絕對禁止使用『這說明了兩件事』、『拆解兩層邏輯』等網路碎文的八股條列結構。",
         "  4. 必須在文體中保持冷靜且具同理心的第三人稱敘事，提供客觀深度的商業洞察，絕對避免使用『我的反思』或『我認為』這類主觀且制式化的寫法。",
+        "  5. 🎯『不下結論，只推導』原則：全文結構必須是『背景事實 → 關鍵數據／定價 → 誰影響誰 → 趨勢延伸』，最後一段不寫『這對投資人意味著…』、『我們可以期待…』、『結論是…』，而是把最後一筆關鍵事實（例如市佔、併購結果、定價差距、政策期限）放好，讓讀者自己推導。可以引用當事人原話、可以標出時間線，但不要替讀者做總結。",
+        "  6. 必須具體點名主角：公司名、產品代號、人名、法案縮寫、價格百分比、地區——抽象形容詞（『重大突破』、『產業洗牌』）單獨出現時必須換成數據或專名。",
+        "  7. 允許引用外部原文的直接引語（加上角括號與出處人名／職稱），用來承擔判斷性敘述；自家的敘事層只做事實串接與因果標記，不做價值判斷。",
         "- 每個 hashtag 都必須以 `#` 開頭，不得有空格。",
         "- 三個變體的 char_count 欄位必須回填實際字元數（含空白、標點、hashtag）。",
         "- 每個變體都必須填 `primary_topic_tag`：選一個『最能代表本貼文被發現／分類』的 hashtag",
