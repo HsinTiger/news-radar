@@ -50,8 +50,9 @@ git log --oneline -5
 
 ```bash
 cd ~/Library/CloudStorage/OneDrive-*/*/*/科技商業國際新聞自動化流程研究/news_radar
-# 如果有 .git/index.lock 殘留，先清掉（沙箱有時會留）
-rm -f .git/index.lock .git/HEAD.lock
+# 沙箱在夜班時碰到權限鎖不掉的 .git lock 檔（只能 mv 不能 rm），
+# 留了一堆 .bak* / .x* / .y* / .stale 後綴的空檔。清掉不痛不癢：
+rm -f .git/index.lock* .git/HEAD.lock*
 # 推上去
 git push origin main
 ```
