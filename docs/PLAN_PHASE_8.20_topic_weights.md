@@ -146,13 +146,26 @@ final_score = clip(base_score.confidence_score * weight, 0.0, 2.0)
 ## Ⅳ. Rollout 順序 + 進度
 
 - ✅ **Step 1（done 2026-04-21 01:00）**：`src/topic_taxonomy.py` 建立、`schema.sql` 新增 4 個 news_items 欄位 + `topic_weights` / `topic_weight_history` 兩張表、`src/db.py::init_db` 加 migration + seed（冪等）、`tests/unit/test_topic_taxonomy.py` 8 個測試全綠。
-- ⏳ **Step 2（下一棒，約 1 小時）**：
-  - `config/topic_keywords.yaml`（關鍵字快速通道）
-  - `src/topic_classifier.py`（keyword fast-path + LLM fallback，回 `TopicClassification`）
-  - 整合進 `scorer.py::score_news`：分類 → 查 weight → 算 weighted_score → 寫 DB
-  - 同時寫一個 `scripts/backfill_topic_classifier.py`，把現有 news_items（目前只有 3 筆已發布 + 2 筆 pending_review）打分類
-- ⏳ **Step 3（30 分鐘）**：`run_pipeline.py` / `run_publish_queue.py` 排序改讀 `weighted_score`（目前是 `confidence_score`）
+- ✅ **Step 2（done 2026-04-21 overnight）**：
+  - `config/topic_keywords.yaml` 建立（10 類的代表性關鍵字清單）
+  - `src/topic_classifier.py`：keyword fast-path（免 LLM、conf=0.6）+ LLM fallback（走 llm_brain.call_for_json）+ orchestrator（保證永遠回 `other` 落地）
+  - `src/topic_classifier.compute_weighted_score(base, weight)`：clip 到 [0.0, 2.0]
+  - 整合點改在 `run_pipeline.py::process_item`（不動 scorer.py，保留 scorer 的純評分責任）：scoring 通過門檻後 → classify → get_topic_weight → compute_weighted_score → `dbmod.set_news_topic` + `bump_topic_sample_count`
+  - `src/db.py`：新增 `set_news_topic` / `get_topic_weight` / `bump_topic_sample_count` helpers
+  - `scripts/backfill_topic_classifier.py`（冪等；預設只跑 miss，可 --force 或 --llm）
+  - `tests/unit/test_topic_classifier.py`：keyword path + compute_weighted_score 共 12 條全綠
+- ✅ **Step 3（done 2026-04-21 overnight）**：
+  - `get_pending_items` 改排序：`COALESCE(weighted_score, 0) DESC, published_at DESC`（第一輪 NULL 時行為與舊版同）
+  - `pick_fallback_any_approved` 改排序：同上，讓 2h lower-bound fallback 優先挑高權重類別
+  - `pick_freshest_queued` **刻意不動**：Phase 8.18 freshness-first 契約不因 weight 而動搖；weight 只在『queue 空或處理 pending』時發聲
+  - `tests/unit/test_pick_fallback_weighted.py` 3 條全綠
 - ⏳ **Step 4（延後 2 週）**：等累積 ≥ 每類 5 篇真實發文，再上 `src/reflector_topic.py` 做週一 back-prop。在那之前權重保持 seed 值。
+
+**Phase 8.20 附帶守門員（2026-04-21 overnight）**：
+- `src/content_quality_guard.py` + `src/local_notify.py`：攔下『【系統代班速報】』系列 emergency_template
+- 雙整合點共用同一個純函式 checker（compose-time 防線 + publish-time 防線）
+- Mac 本機通知由 publisher 在攔下時自行觸發 `osascript display notification`
+- 9 條測試全綠（7 unit + 2 integration shape）
 
 ---
 

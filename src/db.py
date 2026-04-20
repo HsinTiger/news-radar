@@ -198,6 +198,62 @@ def update_status(conn: sqlite3.Connection, news_id: str, status: str) -> None:
     conn.commit()
 
 
+# ---------- Phase 8.20：topic 分類 + 加權分數 ----------
+
+def set_news_topic(
+    conn: sqlite3.Connection,
+    news_id: str,
+    category_id: str,
+    confidence: float,
+    rationale: str,
+    weighted_score: float,
+) -> None:
+    """scorer / run_pipeline 算完 topic 後寫這四個欄位。與 update_status 解耦，
+    因為即便 status 已經是 'scored' / 'drafted'，主題分類還是可以補寫。"""
+    conn.execute(
+        """
+        UPDATE news_items
+           SET topic_category  = ?,
+               topic_confidence = ?,
+               topic_rationale  = ?,
+               weighted_score   = ?
+         WHERE id = ?
+        """,
+        (category_id, confidence, rationale, weighted_score, news_id),
+    )
+    conn.commit()
+
+
+def get_topic_weight(
+    conn: sqlite3.Connection, category_id: str, default: float = 1.0
+) -> float:
+    """讀 topic_weights 表的當前 weight。查不到或壞資料 → 回 default（1.0）。
+    Back-prop 會持續 UPDATE 這個值，所以每次 pipeline 都應該現讀現算。"""
+    row = conn.execute(
+        "SELECT weight FROM topic_weights WHERE category_id = ?",
+        (category_id,),
+    ).fetchone()
+    if row is None:
+        return default
+    try:
+        return float(row[0])
+    except (TypeError, ValueError):
+        return default
+
+
+def bump_topic_sample_count(
+    conn: sqlite3.Connection, category_id: str, delta: int = 1
+) -> None:
+    """每次該類別有 draft 寫進 DB，就 +1。供 back-prop 判斷『樣本夠不夠』。"""
+    conn.execute(
+        "UPDATE topic_weights "
+        "SET sample_count = COALESCE(sample_count, 0) + ? "
+        "WHERE category_id = ?",
+        (delta, category_id),
+    )
+    conn.commit()
+
+
 def insert_draft(conn: sqlite3.Connection, draft: Draft) -> None:
     conn.execute(
         """
@@ -265,9 +321,21 @@ def list_recent_titles(conn: sqlite3.Connection, limit: int = 30) -> List[str]:
 
 
 def get_pending_items(conn: sqlite3.Connection) -> List[sqlite3.Row]:
-    """Milestone 2 用：取所有還沒進 AI 處理的項目"""
+    """Milestone 2 用：取所有還沒進 AI 處理的項目。
+
+    Phase 8.20 Step 3：排序規則改為「topic weight desc → freshness desc」。
+      - 第一輪 pending items 的 weighted_score 皆為 NULL（還沒 classify），
+        SQLite COALESCE 會退回 0 → 排序純粹依 published_at DESC，與舊行為一致。
+      - 若腳本中斷後重跑、或 backfill 腳本先跑過一輪，已分類的 item 會被先挑，
+        把高權重類別（AI 三兄弟、供應鏈、財報）推前面處理。
+    """
     return conn.execute(
-        "SELECT * FROM news_items WHERE status='fetched' ORDER BY published_at DESC"
+        """
+        SELECT * FROM news_items
+         WHERE status='fetched'
+         ORDER BY COALESCE(weighted_score, 0) DESC,
+                  published_at DESC
+        """
     ).fetchall()
 
 
@@ -459,7 +527,13 @@ def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
 def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     """2h lower bound degradation：過了兩小時還沒發，queue 又空，
     放寬條件挑 status='approved' 的（含 queue_status='stale' 的）硬發一則，
-    避免頻道沉默超過 2h。"""
+    避免頻道沉默超過 2h。
+
+    Phase 8.20 Step 3：freshness-first 為主，但若有多筆同樣等候中，優先挑
+    `weighted_score` 高的（例如 AI 新品 1.70 * 0.85 = 1.445 > 非 AI 1.20 * 0.85 = 1.02）。
+    `pick_freshest_queued` 維持純 published_at DESC，不動（Phase 8.18 契約）——
+    只有在『queue 空、走 fallback』的情境才讓 topic weight 發聲。
+    """
     return conn.execute(
         """
         SELECT d.*,
@@ -468,12 +542,15 @@ def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row
                n.url          AS news_url,
                n.og_image_url,
                n.og_video_url,
-               n.og_video_is_direct
+               n.og_video_is_direct,
+               n.topic_category,
+               n.weighted_score
         FROM drafts d
         JOIN news_items n ON d.news_id = n.id
         WHERE d.status IN ('approved', 'auto_approved')
           AND (d.queue_status IS NULL OR d.queue_status IN ('queued', 'stale'))
-        ORDER BY n.published_at DESC
+        ORDER BY COALESCE(n.weighted_score, 0) DESC,
+                 n.published_at DESC
         LIMIT 1
         """
     ).fetchone()

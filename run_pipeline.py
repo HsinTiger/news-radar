@@ -32,6 +32,7 @@ from src.content_quality_guard import (
     format_issues,
     has_blocking_issues,
 )
+from src.topic_classifier import classify_topic, compute_weighted_score
 from src.publisher import publish_to_fb, publish_to_threads, publish_to_ig
 from src.token_utils import refresh_threads_token
 from src.analyst import run_analysis_cycle
@@ -439,6 +440,27 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         print(f" ↳ [Dropped] 分數低於門檻 ({MIN_SCORE_THRESHOLD})")
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped"
+
+    # --- Phase 8.20：主題分類 + 加權分數 ---
+    # 這步跑在 media gating 前是刻意的：就算沒圖發不成 IG/Threads，我們依然
+    # 想把 topic 寫進 news_items（給 back-prop reflector 將來算訊號覆蓋率用）。
+    topic_cls = await classify_topic(title, content)
+    topic_weight = dbmod.get_topic_weight(conn, topic_cls.category_id, default=1.0)
+    weighted = compute_weighted_score(score, topic_weight)
+    print(
+        f" ↳ [Topic] {topic_cls.category_id} "
+        f"(conf={topic_cls.confidence:.2f}, weight={topic_weight:.2f}) "
+        f"→ weighted_score={weighted:.2f}"
+    )
+    dbmod.set_news_topic(
+        conn,
+        news_id,
+        category_id=topic_cls.category_id,
+        confidence=topic_cls.confidence,
+        rationale=topic_cls.rationale,
+        weighted_score=weighted,
+    )
+    dbmod.bump_topic_sample_count(conn, topic_cls.category_id)
 
     # --- Milestone 5.1: 媒介門檻校驗 (Media Gating) ---
     from src.image_manager import check_media_accessibility, find_mirror_image

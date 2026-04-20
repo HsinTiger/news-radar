@@ -1,0 +1,185 @@
+# News Radar · Topic Keyword Fast-Path（Phase 8.20 Step 2）
+# =========================================================
+# 第一層 classifier：若標題或前 500 字命中任一關鍵字 → 直接歸類（省 LLM call）。
+#
+# 規則：
+#   - 一篇文章可能命中多類，以 order（越上面優先）決定歸類。
+#     → 所以把『最具體的類別』放最上面（ai_model > supply_chain > tech_product_launch）。
+#   - 關鍵字匹配是大小寫不敏感、且會去除空白後比對。
+#   - 詞句間用純字串 contains 比對；不是 regex（避免 escape 地獄）。
+#   - 命中 keyword path 時，classifier 回 confidence=0.6（保守值），讓 LLM 在
+#     模棱兩可時還是有機會被叫一次（例如 run_pipeline 看到 <0.7 時再打 LLM）。
+#
+# 調整規則：
+#   - 新增/刪除 category 時，同步更新 src/topic_taxonomy.py 與 schema.sql seed。
+#   - 關鍵字寧嚴不寬——寬了會把下一篇誤導到錯誤類別，進而污染 back-prop。
+#
+# 最後更新：2026-04-21 Cowork Claude overnight
+
+ai_model:
+  # 基礎模型本體被當成產品的消息。先列具體產品名、再列通用詞。
+  - "GPT-5"
+  - "GPT-4"
+  - "Claude Opus"
+  - "Claude Sonnet"
+  - "Claude Haiku"
+  - "Gemini Ultra"
+  - "Gemini 2"
+  - "Gemini Pro"
+  - "Llama 3"
+  - "Llama 4"
+  - "Mistral"
+  - "DeepSeek"
+  - "Qwen"
+  - "Grok"
+  - "基礎模型"
+  - "大型語言模型"
+  - "foundation model"
+  - "LLM 發表"
+  - "multimodal model"
+  - "開源模型"
+
+ai_agent:
+  # 自主系統 / coding agent / research agent
+  - "AI Agent"
+  - "AI agent"
+  - "Claude Code"
+  - "Devin"
+  - "Manus"
+  - "Agent SDK"
+  - "coding agent"
+  - "research agent"
+  - "autonomous agent"
+  - "agentic"
+  - "SWE-bench"
+  - "tool use"
+  - "自主代理"
+
+ai_application:
+  # AI 包裝成應用層產品
+  - "Perplexity"
+  - "Cursor"
+  - "Canva AI"
+  - "Notion AI"
+  - "Copilot"
+  - "Midjourney"
+  - "Stable Diffusion"
+  - "Runway"
+  - "ChatGPT Plus"
+  - "企業導入 AI"
+  - "AI 應用"
+  - "AI 助理"
+  - "垂直 AI"
+
+supply_chain:
+  # 半導體 / 封測 / 電池 / 材料
+  - "台積電"
+  - "TSMC"
+  - "三星電子"
+  - "中芯"
+  - "SMIC"
+  - "HBM"
+  - "CoWoS"
+  - "GaN"
+  - "EUV"
+  - "封測"
+  - "晶圓"
+  - "基板"
+  - "先進封裝"
+  - "稀土"
+  - "鎵"
+  - "供應鏈"
+  - "產業鏈"
+  - "Nvidia 供應鏈"
+  - "ASML"
+  - "Applied Materials"
+
+earnings:
+  # 營收 / 財報
+  - "月營收"
+  - "法說會"
+  - "法說"
+  - "財報"
+  - "Q1 營收"
+  - "Q2 營收"
+  - "Q3 營收"
+  - "Q4 營收"
+  - "毛利率"
+  - "EPS"
+  - "業績指引"
+  - "guidance"
+  - "earnings"
+  - "上修財測"
+  - "下修財測"
+  - "年增率"
+  - "季增率"
+
+tw_stocks:
+  # 台股
+  - "台股"
+  - "加權指數"
+  - "櫃買"
+  - "櫃買指數"
+  - "三大法人"
+  - "外資買超"
+  - "外資賣超"
+  - "主力買超"
+  - "主力賣超"
+  - "台股 ETF"
+  - "0050"
+  - "00878"
+  - "借券"
+  - "融資餘額"
+
+us_stocks:
+  # 美股 / 指數
+  - "S&P 500"
+  - "Nasdaq"
+  - "道瓊"
+  - "Dow Jones"
+  - "NYSE"
+  - "FOMC"
+  - "Fed 升息"
+  - "Fed 降息"
+  - "美股"
+  - "科技七雄"
+  - "Magnificent Seven"
+  - "10-year Treasury"
+  - "VIX"
+
+tech_product_launch:
+  # 非 AI 的科技新品
+  - "iPhone 17"
+  - "iPhone 18"
+  - "Apple Watch"
+  - "Vision Pro"
+  - "MacBook"
+  - "iPad Pro"
+  - "Model Y"
+  - "Cybertruck"
+  - "Tesla 新車"
+  - "PS6"
+  - "PlayStation"
+  - "Xbox"
+  - "Switch 2"
+  - "Galaxy S"
+  - "Pixel"
+
+policy_geopolitics:
+  # 法案 / 制裁 / 貿易協定
+  - "CHIPS 法案"
+  - "CHIPS Act"
+  - "對中制裁"
+  - "出口管制"
+  - "Entity List"
+  - "AI Act"
+  - "歐盟 AI"
+  - "貿易協定"
+  - "關稅"
+  - "301 條款"
+  - "地緣政治"
+  - "技術出口"
+  - "FTC"
+  - "反壟斷"
+
+# 注意：other 不定義 keywords — 若全部都 miss，classifier 會回 other（含低信心）
