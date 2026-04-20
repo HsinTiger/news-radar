@@ -411,21 +411,28 @@ platforms:
 
 
 # ---------- 7. LLM 設定 ----------
+# ⚠️ Phase 8.19（2026-04-20）：以下 `primary` / `premium` block **已不被任何程式讀取**。
+#   - scorer.py / composer.py / reflector.py 都硬編 "gemini-flash-latest"，再由
+#     src/llm_brain.py 的 Gemini → Claude CLI 雙路徑兜底。
+#   - 要改模型直接改 llm_brain.py 的 `DEFAULT_GEMINI_MODEL` / 各 caller 的 gemini_model 參數。
+#   - 本區塊暫留作「這裡以前有設定什麼」的歷史紀錄；之後 Phase 8.20 若真要 config-driven
+#     模型切換再重構這個 block 接入 llm_brain。
+# daily_token_budget / weekly_token_budget 也沒被程式讀——真正的 budget 是免費額度，
+#   不是軟性警戒線；保留作為未來做 monitoring 時的目標閾值。
 llm:
-  # 主模型（低成本 + 免費額度高）
+  # === 以下 DEPRECATED（Phase 8.19 起不再被讀取）===
   primary:
     provider: gemini
     model: gemini-2.0-flash
     max_output_tokens: 2048
 
-  # 高階模型（只在 reflector 週迭代時用）
   premium:
     provider: anthropic
     model: claude-sonnet-4-6
     max_output_tokens: 4096
 
-  # Token 預算警戒
-  daily_token_budget: 20000   # 超過此量會 alert
+  # Token 預算警戒（目前無程式實作；未來接入 monitoring 時可作目標閾值）
+  daily_token_budget: 20000
   weekly_token_budget: 100000
 
 
