@@ -55,11 +55,15 @@ CREATE TABLE IF NOT EXISTS drafts (
                           -- pending_review / approved / rejected / auto_approved / published
     reviewer_action      TEXT,                    -- approved_as_is / edited / rejected
     final_text           TEXT,                    -- 若有編輯則記錄最終版（reflector 用）
+    -- Phase 8.18：雲本混合架構 —— publish queue 的兩個欄位（與 status 正交）
+    publish_at           TEXT,                    -- composer 寫入的預期發佈時間（ISO8601，freshness-first 下只當 stale 判定用）
+    queue_status         TEXT,                    -- NULL / queued / published / stale / failed (publisher 獨占改動)
     FOREIGN KEY (news_id) REFERENCES news_items(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 CREATE INDEX IF NOT EXISTS idx_drafts_score ON drafts(confidence_score);
+CREATE INDEX IF NOT EXISTS idx_drafts_queue_status ON drafts(queue_status);
 
 
 -- ============ 3. 發布紀錄 ============

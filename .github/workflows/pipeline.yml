@@ -1,15 +1,20 @@
-name: News Radar · Pipeline
+name: News Radar · Publish Queue
 
 # ------------------------------------------------------------
-# 每 30 分鐘跑一次 run_pipeline.py（取代本機 --loop）
-# DB / logs / archive 存在 orphan `state` branch，每次 run 都 force-push
-# 蓋掉上一份（避免 state branch 無限膨脹）。主 branch 只放程式碼。
+# Phase 8.18 雲本混合架構 —— Cloud 端「發稿」工作流
+# 每小時整點（UTC）跑一次 run_publish_queue.py：
+#   1. 從 state branch 拉回 DB（內含 Mac compose 好的 queued drafts）
+#   2. 依 cadence 規則 + freshness-first 挑一筆發 FB / IG / Threads
+#   3. 把更新後的 DB 推回 state branch
+# **不呼叫任何 LLM**——brain work 留在 Mac（composer / scorer 在 Mac 端跑）。
+# 這條工作流需要的 secrets 只有 Meta tokens（7 個），不需要 Gemini / Anthropic key。
 # ------------------------------------------------------------
 
 on:
   schedule:
-    # cron 用 UTC；*/30 = 每 30 分鐘
-    - cron: "*/30 * * * *"
+    # UTC 整點每小時。Cadence 1h upper bound 保證實際不會每小時都發，
+    # run_publish_queue.py 自己會 honour min_interval。
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -18,33 +23,28 @@ on:
         default: "normal"
         type: choice
         options:
-          - normal        # 一般 cycle（可能 harvest 可能不，看節流）
-          - harvest-now   # 強制 harvest 一次（忽略節流）
-          - publish-now   # 強制 harvest + 放寬門檻，立即推出一篇
+          - normal        # 正常 cadence：1h upper / 2h lower
+          - force         # 忽略 cadence，強制發一篇
+          - dry-run       # 只選稿、印要發的內容，不呼叫 API
 
 concurrency:
-  # 同時只有一個 pipeline run，避免兩個 cron 撞同一個 DB
-  group: news-radar-pipeline
+  # 與 Mac compose 的 push state branch 可能撞——state branch 是 force-push orphan 模式，
+  # 撞了就是覆蓋，不會資料污染。但本 workflow 自己要 serialize 以免連續兩個 run 撞。
+  group: news-radar-publish-queue
   cancel-in-progress: false
 
 permissions:
-  contents: write        # 需要 push 回 state branch
+  contents: write
 
 jobs:
-  cycle:
+  publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     steps:
-      # --------------------------------------------------------
-      # 1. Checkout 程式碼（main）
-      # --------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v5
 
-      # --------------------------------------------------------
-      # 2. Checkout state branch 到 _state/（第一次跑時不存在，允許失敗）
-      # --------------------------------------------------------
       - name: Checkout state branch
         id: state_checkout
         uses: actions/checkout@v5
@@ -53,9 +53,6 @@ jobs:
           ref: state
           path: _state
 
-      # --------------------------------------------------------
-      # 3. 裝 Python
-      # --------------------------------------------------------
       - name: Setup Python 3.11
         uses: actions/setup-python@v6
         with:
@@ -67,41 +64,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # --------------------------------------------------------
-      # 4. 從 state branch 復原 DB / logs / last_harvest.txt
-      # --------------------------------------------------------
-      - name: Restore runtime state
+      - name: Restore DB from state branch
         run: |
           mkdir -p data/01_harvest logs state archive
-          if [ -d _state ] && [ -n "$(ls -A _state 2>/dev/null)" ]; then
-            if [ -f _state/data/01_harvest/news_radar.db ]; then
-              cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
-              echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
-            else
-              echo "[restore] state branch 沒有 DB，pipeline 會 init 新的一份"
-            fi
-            if [ -d _state/logs ]; then
-              cp -r _state/logs/. logs/ 2>/dev/null || true
-              echo "[restore] logs 復原：$(ls logs | wc -l) 個檔案"
-            fi
-            if [ -f _state/state/last_harvest.txt ]; then
-              cp _state/state/last_harvest.txt state/last_harvest.txt
-              echo "[restore] last_harvest.txt = $(cat state/last_harvest.txt)"
-            fi
-            if [ -d _state/archive ]; then
-              cp -r _state/archive/. archive/ 2>/dev/null || true
-            fi
+          if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
           else
-            echo "[restore] state branch 空 / 首次執行，從零開始"
+            echo "[restore] state branch 沒有 DB → queue 必定空，run_publish_queue 會直接 exit 0"
+          fi
+          if [ -d _state/logs ]; then
+            cp -r _state/logs/. logs/ 2>/dev/null || true
+          fi
+          if [ -d _state/archive ]; then
+            cp -r _state/archive/. archive/ 2>/dev/null || true
           fi
 
-      # --------------------------------------------------------
-      # 5. 跑 pipeline（依 mode 決定 flag）
-      # --------------------------------------------------------
-      - name: Run pipeline
+      - name: Run publish queue
         id: run
         env:
-          # Meta App
+          # Meta App（refresh_threads_token 會用到）
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           # Facebook Page
@@ -115,32 +97,26 @@ jobs:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_APP_ID: ${{ secrets.THREADS_APP_ID }}
           THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
-          # LLM
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # 時區：台北
           TZ: Asia/Taipei
-          # 關閉 pip 警告
           PYTHONUNBUFFERED: "1"
+          # **注意**：不傳 GEMINI_API_KEY / ANTHROPIC_API_KEY。
+          # Phase 8.18 契約：Cloud 端不呼叫 LLM，所以不需要 brain 的 API key。
         run: |
           MODE="${{ inputs.mode || 'normal' }}"
           echo "[run] mode=$MODE"
           case "$MODE" in
-            harvest-now)
-              python run_pipeline.py --harvest-now
+            force)
+              python run_publish_queue.py --force
               ;;
-            publish-now)
-              python run_pipeline.py --publish-now
+            dry-run)
+              python run_publish_queue.py --dry-run
               ;;
             *)
-              python run_pipeline.py
+              python run_publish_queue.py
               ;;
           esac
 
-      # --------------------------------------------------------
-      # 6. 把 DB / logs / archive force-push 回 orphan state branch
-      #    （永遠只保留最新一份，避免 branch 無限肥大）
-      # --------------------------------------------------------
       - name: Persist state
         if: always()
         env:
@@ -150,14 +126,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ github.sha }}
         run: |
-          # 用 orphan commit 模式：每次都從零開一個新的 state commit
           STATE_DIR="$(mktemp -d)"
           cd "$STATE_DIR"
           git init -q -b state
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
 
-          # 把 runtime artifacts 複製進來
           mkdir -p data/01_harvest logs state archive
           if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
             cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
@@ -165,22 +139,21 @@ jobs:
           if [ -d "$GITHUB_WORKSPACE/logs" ]; then
             cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
           fi
-          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
-            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
-          fi
           if [ -d "$GITHUB_WORKSPACE/archive" ]; then
             cp -r "$GITHUB_WORKSPACE/archive/." archive/ 2>/dev/null || true
           fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
 
-          # 寫一份 LAST_RUN.txt 方便之後 debug
           cat > LAST_RUN.txt <<EOF
           last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           run_id: ${RUN_ID}
           run_url: ${RUN_URL}
           commit: ${COMMIT}
+          kind: publish_queue
           EOF
 
-          # 讀當前 DB size 寫進 marker（人肉追蹤用）
           if [ -f data/01_harvest/news_radar.db ]; then
             echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
           fi
@@ -190,22 +163,16 @@ jobs:
             echo "[persist] 無變化，跳過推送"
             exit 0
           fi
-          git commit -q -m "state: run ${RUN_ID} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          # Force-push 蓋掉舊的 state branch（orphan 模式）
+          git commit -q -m "state: publish_queue run ${RUN_ID} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push --force \
             "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
             state
 
-      # --------------------------------------------------------
-      # 7. 把本次 run 的 logs 上傳成 artifact（Actions 內保留 14 天）
-      #    好處：即使 state branch 蓋掉了，最近 14 天的 run 還能回溯
-      # --------------------------------------------------------
       - name: Upload logs as artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: pipeline-logs-${{ github.run_id }}
+          name: publish-logs-${{ github.run_id }}
           path: |
             logs/
             data/01_harvest/news_radar.db

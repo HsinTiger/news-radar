@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  News Radar · 每小時 compose LaunchAgent (Phase 8.18)
+  ================================================================
+  安裝步驟：見 scripts/INSTALL_COMPOSE_LAUNCHAGENT.md
+  手動觸發：launchctl start com.hsin.news-radar.compose
+  查看 log： ~/news_radar_snapshots/_compose_logs/YYYYMMDD_HHMMSS.log
+
+  重要：腳本必須位於 ~/bin/（或其他非 OneDrive/iCloud 位置），
+       因為 macOS TCC 會擋 launchd 存取 CloudStorage 底下的檔案。
+       orm 執行時用的本機 repo 鏡像在 ~/news_radar/（script 內會自動 clone）。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hsin.news-radar.compose</string>
+
+    <!-- 每小時的 05 分觸發（避開整點擁塞；Cloud publisher 在整點 00 分跑）-->
+    <!-- launchd 不支援 cron-style */1 寫法；用 StartInterval 每 3600 秒 -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <!-- 不在 load 時立刻跑；等到下一個 3600s 週期 -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 實際要跑的 shell script：
+         HOME_DIR 安裝時會被 INSTALL 腳本替換成 $HOME。
+         腳本必須位於 ~/bin/ 而非 OneDrive，否則 TCC 會擋。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>HOME_DIR/bin/news_radar_compose.sh</string>
+    </array>
+
+    <!-- launchd 自己的 stdout/stderr 也收起來（備援 log）-->
+    <key>StandardOutPath</key>
+    <string>/tmp/news-radar-compose.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/news-radar-compose.err.log</string>
+
+    <!-- 繼承使用者的 PATH（有 python3 / git） -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- 不要 always on；只在排程時間跑 -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

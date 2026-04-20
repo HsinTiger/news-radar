@@ -58,6 +58,20 @@ def init_db() -> None:
         _migrate_add_column_if_missing(
             conn, "news_items", "og_video_is_direct", "INTEGER DEFAULT 0"
         )
+        # Phase 8.18：雲本混合架構 publish queue（drafts 表）
+        _migrate_add_column_if_missing(
+            conn, "drafts", "publish_at", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "drafts", "queue_status", "TEXT"
+        )
+        # index 可能首次建立時已存在、若是 migration 情境要補
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_drafts_queue_status ON drafts(queue_status)"
+            )
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     print("[DB]  ↳ schema 套用完成")
 
@@ -326,6 +340,170 @@ def list_platform_drafts_with_edits(conn: sqlite3.Connection, limit: int = 50) -
         """,
         (limit,),
     ).fetchall()
+
+
+# ---------- Phase 8.18 · Publish Queue (Cloud publisher 用) ----------
+#
+# 語意備忘：
+#   drafts.status        = composer / 審核維度  (pending_review / approved / auto_approved / published / rejected)
+#   drafts.queue_status  = publisher 佇列維度  (NULL / queued / published / stale / failed)
+#   drafts.publish_at    = composer 寫入的『預期發佈時間』(ISO8601)——freshness-first 下只當 stale 判定用
+#
+# Cloud publisher 的選稿契約（freshness-first）：
+#   1. WHERE queue_status='queued' 且 status IN ('approved','auto_approved')
+#   2. ORDER BY news_items.published_at DESC 挑最新一筆
+#   3. 發出後 mark_queue_published(...)；剩下比它舊的全部 mark_queue_stale_older_than(...)
+
+def enqueue_draft(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    publish_at: Optional[str] = None,
+) -> None:
+    """composer 寫稿完呼叫：把 draft 標為 queued。
+    publish_at 是 ISO8601 預期發佈時間（可選；freshness-first 下主要當 stale 判定用）。
+    Idempotent：同一個 draft_id 重複 enqueue 只會更新 publish_at，不會重複入庫。
+    """
+    conn.execute(
+        """
+        UPDATE drafts
+           SET queue_status = 'queued',
+               publish_at = COALESCE(?, publish_at)
+         WHERE id = ?
+        """,
+        (publish_at, draft_id),
+    )
+    conn.commit()
+
+
+def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+    """Cloud publisher 的主選稿邏輯：挑 news_items.published_at 最新的那筆 queued draft。
+
+    回傳單一 Row（包含 drafts + news_items 所有欄位）或 None。
+    只回「可直接發」的——要求 queue_status='queued' 且人類審核已過（approved / auto_approved）。
+    """
+    return conn.execute(
+        """
+        SELECT d.*,
+               n.published_at AS news_published_at,
+               n.title        AS news_title,
+               n.url          AS news_url,
+               n.og_image_url,
+               n.og_video_url,
+               n.og_video_is_direct
+        FROM drafts d
+        JOIN news_items n ON d.news_id = n.id
+        WHERE d.queue_status = 'queued'
+          AND d.status IN ('approved', 'auto_approved')
+        ORDER BY n.published_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+    """2h lower bound degradation：過了兩小時還沒發，queue 又空，
+    放寬條件挑 status='approved' 的（含 queue_status='stale' 的）硬發一則，
+    避免頻道沉默超過 2h。"""
+    return conn.execute(
+        """
+        SELECT d.*,
+               n.published_at AS news_published_at,
+               n.title        AS news_title,
+               n.url          AS news_url,
+               n.og_image_url,
+               n.og_video_url,
+               n.og_video_is_direct
+        FROM drafts d
+        JOIN news_items n ON d.news_id = n.id
+        WHERE d.status IN ('approved', 'auto_approved')
+          AND (d.queue_status IS NULL OR d.queue_status IN ('queued', 'stale'))
+        ORDER BY n.published_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def mark_queue_published(conn: sqlite3.Connection, draft_id: str) -> None:
+    """Publisher 成功發文後呼叫。同時更新 drafts.status='published'。"""
+    conn.execute(
+        """
+        UPDATE drafts
+           SET queue_status = 'published',
+               status       = 'published'
+         WHERE id = ?
+        """,
+        (draft_id,),
+    )
+    conn.commit()
+
+
+def mark_queue_failed(conn: sqlite3.Connection, draft_id: str) -> None:
+    """Publisher 發文失敗（三平台全軍覆沒）呼叫——標 failed 讓它不會無限輪迴被挑中。
+    人工後續可以手動改回 queued 重試。"""
+    conn.execute(
+        "UPDATE drafts SET queue_status = 'failed' WHERE id = ?",
+        (draft_id,),
+    )
+    conn.commit()
+
+
+def mark_queue_stale_except(
+    conn: sqlite3.Connection,
+    keep_draft_id: str,
+) -> int:
+    """publisher 挑中一筆發之後呼叫：把 news_items.published_at 比它舊的 queued draft
+    全部標 'stale'。freshness-first 的核心動作——舊的就別再等了。
+    回傳 affected rows 數。"""
+    cur = conn.execute(
+        """
+        UPDATE drafts
+           SET queue_status = 'stale'
+         WHERE queue_status = 'queued'
+           AND id <> ?
+           AND news_id IN (
+               SELECT n2.id
+                 FROM news_items n2
+                 JOIN drafts d2 ON d2.news_id = n2.id
+                WHERE d2.id <> ?
+                  AND n2.published_at < (
+                      SELECT n3.published_at
+                        FROM news_items n3
+                        JOIN drafts d3 ON d3.news_id = n3.id
+                       WHERE d3.id = ?
+                  )
+           )
+        """,
+        (keep_draft_id, keep_draft_id, keep_draft_id),
+    )
+    conn.commit()
+    return cur.rowcount or 0
+
+
+def last_successful_publish_at(conn: sqlite3.Connection) -> Optional[str]:
+    """查 publish_log 最後一筆 success 的 posted_at（ISO8601）。
+    Cadence 計算用：若距今 < 1h 跳過；若距今 > 2h 就算 queue 空也要發。"""
+    row = conn.execute(
+        """
+        SELECT posted_at
+          FROM publish_log
+         WHERE success = 1
+         ORDER BY posted_at DESC
+         LIMIT 1
+        """
+    ).fetchone()
+    return row["posted_at"] if row else None
+
+
+def count_queue_status(conn: sqlite3.Connection) -> dict:
+    """diagnose 用：盤點 queue 裡各狀態多少筆。"""
+    rows = conn.execute(
+        """
+        SELECT COALESCE(queue_status, 'null') AS qs, COUNT(*) AS c
+          FROM drafts
+         GROUP BY COALESCE(queue_status, 'null')
+        """
+    ).fetchall()
+    return {r["qs"]: r["c"] for r in rows}
 
 
 # ---------- Milestone 3 · Reflector 相關 ----------

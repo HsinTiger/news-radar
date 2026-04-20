@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# ============================================================
+# News Radar · 每小時 compose（Mac launchd 入口）· Phase 8.18
+# ------------------------------------------------------------
+# 由 ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 每小時觸發。
+#
+# 流程：
+#   1. cd 到 ~/news_radar/（本機鏡像 repo，避開 CloudStorage TCC 限制）
+#   2. git fetch + reset 到 main 最新（拿到 OneDrive 裡剛 push 的程式碼變動）
+#   3. 從 state branch 拉最新 DB（內含 Cloud publisher 剛更新的 queue 狀態）
+#   4. 跑 `python run_pipeline.py --compose-only --buffer-target 2`
+#      （用 Gemini API 寫稿；429 時由手動操作接手 —— 這條手動 path 不在本 script 範圍）
+#   5. 把更新後的 DB 推回 state branch
+#
+# 手動跑：bash ~/bin/news_radar_compose.sh
+# 自動跑：launchctl start com.hsin.news-radar.compose
+# ============================================================
+
+set -u
+
+# ---- 使用者可調參數 ----
+REPO="HsinTiger/news-radar"
+LOCAL_REPO="$HOME/news_radar"              # 本機鏡像，不在 CloudStorage/
+BUFFER_TARGET=2                             # queue buffer 目標筆數（1-2 小時 buffer）
+LOG_ROOT="$HOME/news_radar_snapshots/_compose_logs"
+LOG_FILE="$LOG_ROOT/$(date +%Y%m%d_%H%M%S).log"
+
+mkdir -p "$LOG_ROOT"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "===== News Radar Compose: $(date '+%Y-%m-%d %H:%M:%S') ====="
+echo "LOCAL_REPO: $LOCAL_REPO"
+
+# ---- 依賴檢查 ----
+for cmd in git python3; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "❌ 找不到 $cmd。請 brew install $cmd 後再執行。"
+        exit 1
+    fi
+done
+
+# ---- 首次執行：如果本機還沒有 clone，clone 下來 ----
+if [ ! -d "$LOCAL_REPO/.git" ]; then
+    echo "📥 本機尚無 $LOCAL_REPO → 首次 clone..."
+    if ! git clone "https://github.com/${REPO}.git" "$LOCAL_REPO"; then
+        echo "❌ Clone 失敗。請確認網路與 GitHub 存取權。"
+        exit 2
+    fi
+fi
+
+cd "$LOCAL_REPO" || { echo "❌ cd $LOCAL_REPO 失敗"; exit 3; }
+
+# ---- 拉 main 最新（可能 OneDrive 那邊剛 push 程式碼變動）----
+echo "🔄 fetch origin main..."
+git fetch --quiet origin main || { echo "⚠️ fetch main 失敗，沿用本機 main"; }
+git reset --hard origin/main >/dev/null 2>&1 || true
+
+# ---- 拉 state branch 的 DB ----
+echo "🔄 fetch state branch..."
+if git fetch --quiet origin state 2>/dev/null; then
+    # 從 state branch 取 DB（用 git show 直接把 blob 倒到工作區）
+    mkdir -p data/01_harvest state archive
+    if git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db 2>/dev/null; then
+        echo "✅ DB 從 state branch 還原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
+    else
+        echo "⚠️ state branch 沒有 DB → 會初始化新的"
+    fi
+    if git show origin/state:state/last_harvest.txt > state/last_harvest.txt 2>/dev/null; then
+        :
+    else
+        rm -f state/last_harvest.txt
+    fi
+else
+    echo "⚠️ state branch 尚未存在 → 這是第一次跑，DB 會初始化"
+fi
+
+# ---- 確認 Python 依賴（pip install 在 requirements.txt 有變動時才跑）----
+if [ ! -d ".venv" ]; then
+    echo "📦 首次建立 venv..."
+    python3 -m venv .venv || { echo "❌ venv 建立失敗"; exit 4; }
+fi
+# shellcheck disable=SC1091
+source .venv/bin/activate
+pip install --quiet --upgrade pip
+pip install --quiet -r requirements.txt || { echo "❌ pip install 失敗"; exit 5; }
+
+# ---- 跑 compose-only pipeline ----
+echo ""
+echo "🧠 Running run_pipeline.py --compose-only --buffer-target $BUFFER_TARGET"
+python run_pipeline.py --compose-only --buffer-target "$BUFFER_TARGET"
+PIPELINE_EXIT=$?
+echo ""
+echo "↳ pipeline exit code: $PIPELINE_EXIT"
+
+# ---- 把 DB 推回 state branch（orphan commit，force-push 覆蓋）----
+echo ""
+echo "📤 Push DB 回 state branch..."
+STATE_DIR="$(mktemp -d)"
+(
+    cd "$STATE_DIR" || exit 10
+    git init -q -b state
+    git config user.name "news-radar-mac-compose"
+    git config user.email "noreply@local"
+
+    mkdir -p data/01_harvest state archive
+    cp "$LOCAL_REPO/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db 2>/dev/null || true
+    if [ -f "$LOCAL_REPO/state/last_harvest.txt" ]; then
+        cp "$LOCAL_REPO/state/last_harvest.txt" state/last_harvest.txt
+    fi
+    if [ -d "$LOCAL_REPO/archive" ]; then
+        cp -r "$LOCAL_REPO/archive/." archive/ 2>/dev/null || true
+    fi
+
+    cat > LAST_RUN.txt <<EOF
+last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+kind: mac_compose
+pipeline_exit: ${PIPELINE_EXIT}
+host: $(hostname -s)
+EOF
+
+    git add -A
+    if git diff --cached --quiet; then
+        echo "↳ 無變化，不推送"
+        exit 0
+    fi
+    git commit -q -m "state: mac_compose @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # 用本機 git config 的 credential helper（通常是 osxkeychain）推送
+    if git push --force "https://github.com/${REPO}.git" state 2>&1; then
+        echo "✅ state branch 已更新"
+    else
+        echo "❌ push state branch 失敗（檢查 GitHub credential / osxkeychain）"
+        exit 11
+    fi
+)
+
+echo ""
+echo "===== 完成: $(date '+%Y-%m-%d %H:%M:%S') ====="

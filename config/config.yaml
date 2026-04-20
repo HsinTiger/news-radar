@@ -376,16 +376,25 @@ review:
 
 
 # ---------- 5. 發文排程 (Publishing Schedule) ----------
-# 採「排程 + jitter」避免被演算法當成機器人
+# Phase 8.18 雲本混合架構（2026-04-20）：
+#   Mac compose 端每小時入 queue 1-2 筆；Cloud publisher 端每小時整點 freshness-first 挑最新。
+#   舊的 publishing_slots / max_posts_per_day / jitter / min_interval_minutes:90 已棄用，
+#   保留在下方作為歷史紀錄，**不再被任何程式讀取**。
+#   現行參數改由 run_publish_queue.py (Cloud) 與 run_pipeline.py --compose-only (Mac) 直接硬編。
 schedule:
   timezone: Asia/Taipei
-  publishing_slots:
-    - "08:30"   # 早間通勤
-    - "12:30"   # 午休
-    - "21:00"   # 晚間
-  jitter_minutes: 15          # 實際發文時間 ±15 分鐘內隨機
-  max_posts_per_day: 3
-  min_interval_minutes: 90    # 兩篇之間至少間隔 90 分鐘
+  # === Phase 8.18 有效參數 ===
+  min_interval_minutes: 60       # 頻率上限：相鄰兩篇至少 1 小時
+  max_interval_minutes: 120      # 頻率下限：相鄰兩篇至多 2 小時（超過走 fallback/stale path）
+  buffer_size: 2                 # Mac compose queue buffer 目標筆數（1-2 小時 buffer）
+
+  # === 以下欄位 DEPRECATED（Phase 8.18 起不再使用，保留僅為歷史）===
+  publishing_slots:              # deprecated Phase 8.18
+    - "08:30"
+    - "12:30"
+    - "21:00"
+  jitter_minutes: 15             # deprecated Phase 8.18
+  max_posts_per_day: 3           # deprecated Phase 8.18（Cloud freshness-first 沒有「天」概念）
 
 
 # ---------- 6. 平台設定 (Platform Config) ----------

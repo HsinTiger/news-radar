@@ -111,6 +111,11 @@ class Draft(BaseModel):
     cost_usd: float = 0.0
     generated_at: str
     status: str = "pending_review"
+    # Phase 8.18：雲本混合架構 publish queue 欄位（與 status 正交）
+    # status 表達「composer 產出 → 人工審核」的狀態；
+    # queue_status 表達「publisher 佇列」的狀態（NULL / queued / published / stale / failed）。
+    publish_at: Optional[str] = None        # ISO8601；composer 寫稿時給 cloud publisher 看的「預期發佈時間」
+    queue_status: Optional[str] = None      # NULL 表示不在佇列裡；publisher 獨占改動
 
 
 # ---------- 發布結果 ----------
