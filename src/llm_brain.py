@@ -248,9 +248,13 @@ async def _try_claude_cli(
     - `-p` / `--print`：non-interactive 模式
     - `--output-format json`：回傳 envelope JSON（含 result / usage / total_cost_usd）
     - `--system-prompt <text>`：乾淨地指定 system instruction（取代 default）
-    - `--bare`：跳過 hook / skill / plugin / MCP 自動探索，scripted call 啟動更快
     - `--no-session-persistence`：不把 session 存進 ~/.claude/sessions，避免污染
     - user prompt 透過 argv 傳，非 stdin（docs 的 canonical form）
+
+    ⚠️ 不用 `--bare`：實測會把 auth context 跟 hook/skill/plugin 一起剝掉，
+    導致即使 `claude login` 成功、`-p` 也會回 "Not logged in"。
+    tradeoff: 每次 call 會載整套 context，成本約 $0.094/call（full caching 後），
+    但 Claude CLI 只在 Gemini 失敗時才觸發，頻率低，可接受。
 
     實作細節：
     - 用 asyncio.create_subprocess_exec 避免 block event loop
@@ -270,7 +274,6 @@ async def _try_claude_cli(
         "-p",
         "--output-format", "json",
         "--system-prompt", system.strip(),
-        "--bare",
         "--no-session-persistence",
         prompt.strip(),  # user prompt as positional argv
     ]
