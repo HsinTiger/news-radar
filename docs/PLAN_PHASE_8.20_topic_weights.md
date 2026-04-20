@@ -1,9 +1,16 @@
 # Phase 8.20 · 主題分類 + 權重 back-prop
 
 > 作者：Cowork Claude · 2026-04-21
-> 狀態：Draft（待 Hsin 確認後開工）
+> 狀態：**Step 1 已完成**（Hsin 於 2026-04-21 00:55 拍板 5 個決策）
 > 依賴：Phase 8.19c/d（Threads 修復 + 推導聲線）已上線
 > 目標：把「主題權重」變成一條可觀察、可調整、會根據實際發文成效自動修正的迴路。
+
+**Hsin 的最終決策（2026-04-21）：**
+1. AI 新品再高一點 → AI 再拆三類，權重 1.55–1.70（非 AI 壓在 1.20 以下）
+2. AI 拆 `ai_model` / `ai_agent` / `ai_application`
+3. Back-prop 週一次
+4. 保留 `other`（權重 0.70）
+5. engagement 公式採用 `likes + 2*comments + 3*shares + 0.01*reach`，且**平台分開算**（Threads / IG / FB 各自用該平台中位數正規化後再加總到類別 delta）
 
 ---
 
@@ -19,20 +26,23 @@
 
 ---
 
-## Ⅱ. 主題分類 (Topic Taxonomy)
+## Ⅱ. 主題分類 (Topic Taxonomy) — Hsin 拍板版
 
-初始 7 個類別，每個有穩定 ID（snake_case）、顯示名、初始權重、白話說明。
+**10 個類別**，每個有穩定 ID（snake_case）、顯示名、初始權重、白話說明。
+單一事實來源：`src/topic_taxonomy.py`。
 
 | ID | 中文 | 初始權重 | 納入條件（examples） |
 |---|---|---|---|
-| `ai_product_launch` | AI 新產品發表 | **1.50** | 模型發表、API 發佈、AI 應用第一手官宣、Agent 新版 |
-| `tech_product_launch` | 非 AI 科技新產品 | 1.20 | 晶片、消費電子、SaaS 主線更新 |
-| `supply_chain` | 產業鏈／供應鏈 | **1.40** | 代工、封測、晶圓、模組廠、能源、材料（GaN / HBM / EUV 等） |
+| `ai_model` | AI 基礎模型 | **1.70** | GPT / Claude / Gemini 新版；開源 LLM（Llama / Mistral）；多模態模型新代 |
+| `ai_agent` | AI Agent／自主系統 | **1.60** | Claude Code / Devin / Manus / Agent SDK；coding agent / research agent |
+| `ai_application` | AI 應用層產品 | **1.55** | Perplexity / Cursor / Canva AI / Notion AI；企業導入；垂直領域 AI 方案 |
+| `supply_chain` | 產業鏈／供應鏈 | **1.40** | 代工、封測、晶圓、HBM / GaN / EUV；關鍵材料戰略意涵 |
 | `earnings` | 營收／財報 | **1.30** | 月營收、法說、毛利、業績指引 |
-| `tw_stocks` | 台股個股／大盤 | **1.25** | 上市櫃公司動態、主力籌碼、政策利多／利空 |
+| `tw_stocks` | 台股個股／大盤 | **1.25** | 主力籌碼、外資動向、台股 ETF、櫃買熱點 |
 | `us_stocks` | 美股個股／大盤 | **1.25** | 科技七雄、指數變動、FOMC 對股市的直接影響 |
-| `policy_geopolitics` | 政策／地緣政治 | 1.00 | 法案、制裁、外交、關稅 |
-| `other` | 其它 | 0.70 | 以上都不沾邊的雜訊 |
+| `tech_product_launch` | 非 AI 科技新品 | 1.20 | iPhone、特斯拉新車、Vision Pro、遊戲主機、SaaS 主線更新 |
+| `policy_geopolitics` | 政策／地緣政治 | 1.00 | CHIPS 法案、對中制裁、AI Act、貿易協定、出口管制 |
+| `other` | 其它 | 0.70 | 以上 9 類都不沾邊；不淘汰（保留意外之財） |
 
 **權重公式**：
 ```
@@ -94,23 +104,35 @@ final_score = clip(base_score.confidence_score * weight, 0.0, 2.0)
 
 `run_pipeline.py` 那邊排序改讀 `final_score` 欄位（在 DB 再加一欄 `weighted_score` 或動態 JOIN 都可；先選加欄方案，simpler）。
 
-### 3.4 Back-prop（新模組 `src/reflector_topic.py`）
+### 3.4 Back-prop（新模組 `src/reflector_topic.py`，Hsin 要求平台分開算）
 
-每週執行一次（launchd 或 GitHub Actions cron）：
-1. 取過去 30 天所有『已發布、有 engagement_stats』的 drafts → JOIN 回 news_items.topic_category。
-2. 每個類別算 `median_engagement_score`（簡化公式：`likes + 2*comments + 3*shares + 0.01*reach`）。
-3. 算全站 median 作為基準線。
-4. 對每個類別：
-   - `category_delta = category_median / site_median - 1.0`  （大於 0 表示這類比平均好）
-   - `new_weight = old_weight × (1 + η × category_delta)`，`η = 0.1`（學習率）
-   - `new_weight = clip(new_weight, 0.3, 2.0)`（避免飛走）
-5. UPDATE `topic_weights`，`update_reason='back_prop'`, 寫 `reflection_events` 記一筆 log。
-6. 產出 Markdown 報告到 `docs/topic_weight_log/YYYY-MM-DD.md`，給 Hsin 週報。
+**每週一**執行一次（launchd 或 GitHub Actions cron；頻率 Hsin 拍板）：
+
+1. 取過去 30 天所有『已發布、有 engagement_stats』的 posts → JOIN 回
+   `news_items.topic_category`。每一則貼文有 3 筆 engagement（FB / IG / Threads）。
+2. 每個平台分開算 engagement_score：
+   - FB：`likes + 2*comments + 3*shares + 0.01*reach`
+   - IG：`likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach`
+   - Threads：`likes + 2*replies + 3*reposts + 1.5*quotes + 0.005*views`
+   （IG 的 saves、Threads 的 reposts / quotes / replies 在 engagement_stats 已有欄位，公式用得上。）
+3. 每個平台分開算**該平台的全站中位數**，作為該平台的基準線。
+4. 對每個（類別 × 平台）算 `normalized_delta = category_median / platform_median - 1.0`。
+5. **類別 delta = 三平台 normalized_delta 的平均**（平台權重一致；若類別在某平台樣本 < 3 就跳過該平台）。
+6. 更新權重：
+   - `new_weight = old_weight × (1 + η × category_delta)`，η = 0.1
+   - `new_weight = clip(new_weight, 0.3, 2.0)`
+   - `abs(new - old)` 超過 0.3 時 clip 到 0.3（單週穩定性護欄）
+7. UPDATE `topic_weights`，INSERT 一筆 `topic_weight_history`，同時寫一筆 `reflection_events`。
+8. 產出 Markdown 報告到 `docs/topic_weight_log/YYYY-MM-DD.md`，內容：
+   - 當週各類別權重（new vs old）
+   - 每個類別在三平台的表現分解（讓 Hsin 能看出『這類在 Threads 特別好、但在 IG 弱』這種訊號）
+   - 下週建議的人工覆核項目
 
 🛑 **護欄**：
-- 樣本數 `< 5` 的類別不調（樣本太少，噪音 > 信號）。
-- 一次調整幅度 `abs(new - old) > 0.3` 時必須 clip 到 0.3，避免單週巨變。
-- 連續 3 週 delta 同方向才算穩定趨勢，否則視為抖動。
+- 樣本數（跨平台合計）`< 5` 的類別不調。
+- 單週變動 `abs(new - old) > 0.3` 時 clip。
+- 連續 3 週 delta 同方向才視為趨勢；否則視為抖動。
+- `other` 類別永遠不自動降到 0.3 以下（保留意外之財的渠道）。
 
 ### 3.5 觀察性（Hsin 看得到的界面）
 
@@ -121,21 +143,25 @@ final_score = clip(base_score.confidence_score * weight, 0.0, 2.0)
 
 ---
 
-## Ⅳ. Rollout 順序
+## Ⅳ. Rollout 順序 + 進度
 
-1. **Step 1（1–2 小時）**：schema migration + seed_topic_weights.py + 手動 UPDATE 現有 news_items（最近 50 筆直接打 LLM classifier）。
-2. **Step 2（1 小時）**：topic_classifier.py + 整合進 scorer。下一輪 compose 開始帶著分類跑。
-3. **Step 3（30 分鐘）**：weighted_score 加欄位 + run_pipeline 排序改讀新欄。
-4. **Step 4（延後 2 週）**：等累積至少 2 週、每類別 ≥ 5 篇真實發文後，再上 back-prop job。在那之前權重保持 seed 值。
+- ✅ **Step 1（done 2026-04-21 01:00）**：`src/topic_taxonomy.py` 建立、`schema.sql` 新增 4 個 news_items 欄位 + `topic_weights` / `topic_weight_history` 兩張表、`src/db.py::init_db` 加 migration + seed（冪等）、`tests/unit/test_topic_taxonomy.py` 8 個測試全綠。
+- ⏳ **Step 2（下一棒，約 1 小時）**：
+  - `config/topic_keywords.yaml`（關鍵字快速通道）
+  - `src/topic_classifier.py`（keyword fast-path + LLM fallback，回 `TopicClassification`）
+  - 整合進 `scorer.py::score_news`：分類 → 查 weight → 算 weighted_score → 寫 DB
+  - 同時寫一個 `scripts/backfill_topic_classifier.py`，把現有 news_items（目前只有 3 筆已發布 + 2 筆 pending_review）打分類
+- ⏳ **Step 3（30 分鐘）**：`run_pipeline.py` / `run_publish_queue.py` 排序改讀 `weighted_score`（目前是 `confidence_score`）
+- ⏳ **Step 4（延後 2 週）**：等累積 ≥ 每類 5 篇真實發文，再上 `src/reflector_topic.py` 做週一 back-prop。在那之前權重保持 seed 值。
 
 ---
 
-## Ⅴ. 待 Hsin 決策的問題
+## Ⅴ. 已決策事項（封存）
 
-1. **初始權重數值**：Ⅱ. 表格的 1.50 / 1.40 / 1.30 是我抓的建議，要不要調？（比方想讓 AI 新品再高一點？）
-2. **分類粒度**：`ai_product_launch` vs `tech_product_launch` 要合併嗎？還是再分拆（`ai_model` / `ai_agent` / `ai_application`）？
-3. **Back-prop 觸發頻率**：週一次 vs 雙週一次？樣本越多越穩，但越慢見到反應。
-4. **`other` 類別**：要不要直接淘汰（權重 0）？還是保留 0.7 作為意外之財的渠道？
-5. **engagement 公式**：`likes + 2*comments + 3*shares + 0.01*reach` 是合理加權嗎？Threads / IG / FB 的每個指標含意不同，要不要平台分開算？
+1. 初始權重：**AI 三類 1.55–1.70，非 AI 供應鏈／財報 1.25–1.40，其它 ≤ 1.20**。
+2. 分類粒度：**AI 拆三類**（`ai_model` / `ai_agent` / `ai_application`），非 AI 保持單一 `tech_product_launch`。
+3. Back-prop：**週一次**，每週一早上。
+4. `other`：**保留**，權重 0.70（不自動降到 0.3 以下）。
+5. engagement：**平台分開算**，FB / IG / Threads 各自用該平台特色指標加權並用該平台中位數正規化後再加總。
 
-回答這 5 題我就可以動 Step 1–3 的 code。Step 4 不急，先讓 Step 1–3 跑 2 週收資料。
+（這 5 條在 Ⅱ / 3.4 節已具體化；此處只做封存。）

@@ -21,11 +21,19 @@ CREATE TABLE IF NOT EXISTS news_items (
     og_video_is_direct INTEGER DEFAULT 0,     -- 1 = .mp4/.mov/.webm 等可直丟 Meta Graph API
     tags            TEXT,                     -- JSON array
     status          TEXT DEFAULT 'fetched',   -- fetched / scored / drafted / published / dropped
-    drop_reason     TEXT
+    drop_reason     TEXT,
+    -- Phase 8.20：主題分類 + 加權分數
+    topic_category     TEXT,                  -- 見 src/topic_taxonomy.py 的 category_id（snake_case）
+    topic_confidence   REAL,                  -- 0..1，classifier 回傳的信心
+    topic_rationale    TEXT,                  -- classifier 附的一句話理由（給人工檢查用）
+    weighted_score     REAL                   -- scorer 結果 × topic_weights.weight，clip 0..2；排序實際用這個
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_status ON news_items(status);
 CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at);
+-- Phase 8.20：topic 排序常用，加 index；加權分數 DESC 排名也會用
+CREATE INDEX IF NOT EXISTS idx_news_topic ON news_items(topic_category);
+CREATE INDEX IF NOT EXISTS idx_news_weighted_score ON news_items(weighted_score);
 
 
 -- ============ 2. AI 產出草稿 ============
@@ -164,3 +172,38 @@ CREATE TABLE IF NOT EXISTS reflection_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reflection_ran_at ON reflection_events(ran_at);
+
+
+-- ============ 7. 主題權重（Phase 8.20，Hsin seed 2026-04-21）============
+-- 分類 id（snake_case）對應 src/topic_taxonomy.py 的 TopicCategory.id。
+-- seed 寫在 db.py::init_db 裡，以便未來改權重不用碰 SQL；這張表由 back-prop
+-- reflector 週期性 UPDATE，人工改動請在 update_reason 記 'manual'。
+CREATE TABLE IF NOT EXISTS topic_weights (
+    category_id       TEXT PRIMARY KEY,
+    display_name      TEXT NOT NULL,
+    weight            REAL NOT NULL,          -- 目前使用中的權重，0.3..2.0
+    last_updated_at   TEXT NOT NULL,          -- ISO8601
+    update_reason     TEXT NOT NULL,          -- 'initial_seed' / 'back_prop' / 'manual'
+    sample_count      INTEGER DEFAULT 0,      -- 這類別已累積的發文數（給 back-prop EMA 用）
+    last_delta        REAL,                   -- 最近一次 back-prop 的 delta（debug 用）
+    notes             TEXT
+);
+
+
+-- ============ 8. 主題權重變動歷史（Phase 8.20，審計用）============
+-- 每次 topic_weights 被 UPDATE 就 INSERT 一筆；人工檢查『為什麼 ai_model 從 1.7
+-- 跌到 1.3』時可以追溯。append-only。
+CREATE TABLE IF NOT EXISTS topic_weight_history (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_id       TEXT NOT NULL,
+    recorded_at       TEXT NOT NULL,
+    weight_before     REAL,
+    weight_after      REAL NOT NULL,
+    update_reason     TEXT NOT NULL,
+    delta             REAL,                   -- weight_after - weight_before
+    samples_in_window INTEGER,                -- 本輪 back-prop 看了多少篇
+    rationale         TEXT                    -- 人工或機器留的一段理由
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_weight_history_category
+    ON topic_weight_history(category_id, recorded_at);

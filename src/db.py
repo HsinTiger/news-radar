@@ -72,8 +72,64 @@ def init_db() -> None:
             )
         except sqlite3.OperationalError:
             pass
+        # Phase 8.20：主題分類 + 加權分數（news_items 新欄位）
+        _migrate_add_column_if_missing(
+            conn, "news_items", "topic_category", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "topic_confidence", "REAL"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "topic_rationale", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "weighted_score", "REAL"
+        )
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_news_topic ON news_items(topic_category)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_news_weighted_score "
+                "ON news_items(weighted_score)"
+            )
+        except sqlite3.OperationalError:
+            pass
+        # Phase 8.20：seed topic_weights（僅插入尚未存在的 category）
+        _seed_topic_weights(conn)
         conn.commit()
     print("[DB]  ↳ schema 套用完成")
+
+
+def _seed_topic_weights(conn: sqlite3.Connection) -> None:
+    """把 src.topic_taxonomy.TOPIC_CATEGORIES 的初始權重寫進 topic_weights 表。
+    已存在的 category_id 完全不動（避免覆蓋 back-prop 已調整過的權重）；
+    只補新增的類別。
+    """
+    # 延後 import 避免循環依賴（db.py 極基層，taxonomy 也不依賴 db）
+    from datetime import datetime, timezone
+    from .topic_taxonomy import TOPIC_CATEGORIES
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    existing = {
+        r[0] for r in conn.execute(
+            "SELECT category_id FROM topic_weights"
+        ).fetchall()
+    }
+    inserted = 0
+    for c in TOPIC_CATEGORIES:
+        if c.id in existing:
+            continue
+        conn.execute(
+            "INSERT INTO topic_weights "
+            "(category_id, display_name, weight, last_updated_at, "
+            "update_reason, sample_count) "
+            "VALUES (?, ?, ?, ?, 'initial_seed', 0)",
+            (c.id, c.display_name, c.seed_weight, now_iso),
+        )
+        inserted += 1
+    if inserted:
+        print(f"[DB]  ↳ 主題權重 seed：補入 {inserted} 個新類別")
 
 
 # ---------- news_items CRUD ----------
