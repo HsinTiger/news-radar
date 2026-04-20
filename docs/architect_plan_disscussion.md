@@ -732,6 +732,63 @@ Phase 8.18 的雲本混合架構解了 compose 在哪裡跑的問題，但留了
 
 ---
 
+## 🗓️ 2026-04-20 · Phase 8.19 hardening（commit 78d5835 / 4a9ed24 / 4bf06b3）
+
+夜班 Phase 8.19 落完後，本局（morning）再做了三件收尾，動機是「確保 8.19 的核心不變量（no brain → no publish）真的沒有漏洞」：
+
+### 決策 1：Claude CLI 改用官方 flags，不再 stdin 合併
+
+**原本**：`_try_claude_cli` 把 system + user 合成一段字串從 stdin 餵進去。
+
+**問題**：依 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)，當 prompt 合併成一段時容易混淆角色分界，尤其是 schema-gated task。
+
+**改法**：改用 `--system-prompt` / `--bare` / `--no-session-persistence` + 把 user prompt 當 positional argv：
+```python
+args = [CLAUDE_CLI_BIN, "-p", "--output-format", "json",
+        "--system-prompt", system.strip(),
+        "--bare", "--no-session-persistence",
+        prompt.strip()]
+proc = await asyncio.create_subprocess_exec(
+    *args, stdin=asyncio.subprocess.DEVNULL, ...)
+```
+
+**trade-off**：
+- 好：roles 明確分離、與官方 CLI 行為一致、不會因未知的 stdin quoting 搞砸 prompt
+- 壞：依賴 `--bare` + `--no-session-persistence` 這兩個 flag 不被未來版本 CLI 移除；已在 MORNING_CHECKLIST 要求 Hsin 第一次 compose 後檢查 log 確認 envelope 依舊正常
+
+### 決策 2：移除 scorer-fail 的「暴力發布模式」footgun
+
+**原本** `run_pipeline.py` 在 `score_news()` 回 None 時會塞一顆假的 `NewsScore(confidence_score=1.0, editorial_note="[緊急代班] 強化數據深度...")` 強推 auto-approve。
+
+**問題**：跟 8.19 拔掉的 emergency template 是同一類設計錯誤——「LLM 掛掉就讓每一篇都滿分、什麼都發」。後果是雲端 Gemini 一掛，接下來每個 hour 都會用偽分數強推低品質文章上 queue，汙染社群帳號品質。
+
+**改法**：走 skip 路徑，回傳 `"skipped_no_llm"`，news_items.status 維持 `fetched`，下一輪 cron Gemini 恢復後自然重試。
+
+**trade-off**：
+- 好：「no brain → no publish」原則在 scorer 層也成立，不再有路徑繞過（composer 層在夜班已收口，現在 scorer 也收口）
+- 壞：若 Gemini 長時間不穩 + Claude CLI 也掛（雙黑），queue 會流空 → freshness-first publish queue 會 fallback 到舊的 approved draft（見 `run_publish_queue.py::pick_fallback_any_approved`）→ 仍有最低保底
+- 最糟情況（queue 空、舊 approved 也沒）Cloud publisher 那一 cycle 就空跑，下個小時再試。這比「發爛文」可接受太多
+
+### 決策 3：Regression test for skipped_no_llm 雙路徑
+
+新增 `tests/integration/test_process_item_skip_paths.py`（pytest）+ `validate_skip_paths_sandbox.py`（不依賴 pytest/pydantic，給沙箱測用）：
+
+- **test_scorer_fail_returns_skipped_no_llm**：scorer 回 None 時 process_item 回 `"skipped_no_llm"`、drafts 表無新列、news_items.status 保持 fetched
+- **test_composer_fail_returns_skipped_no_llm**：同上但觸發點在 composer
+- **test_scorer_fail_does_not_fabricate_confidence**：明確 regression guard——任何 draft 的 confidence_score 絕不會 >= 0.99（防止未來有人重新加入 fabricated score 的 fallback）
+
+為什麼要雙版本測試檔：pytest 版是正規 CI 入口；sandbox 版是當 Claude 在 overnight / morning 無 pytest/pydantic 環境時也能跑，避免「測試沒寫好 → 部署後才爆」的 risk。
+
+### 後續觀察點（併入 Phase 8.19 既有觀察）
+
+- 第一個 compose-only cycle 跑完後，看 log 的 `provider=` 欄位是否如預期在 `gemini` / `claude_cli` 之間切換
+- skipped_no_llm 的實際發生率（期待 < 5%）
+- `confidence_score` histogram 是否仍在 0.65-0.95 的合理分布，沒有 spike 到 1.0 的異常點（這是 regression test 的真實世界 counterpart）
+
+**寫入檔案**：commit 78d5835 (llm_brain + run_pipeline)、4a9ed24 (tests + sandbox validator)、4bf06b3 (publisher file-handle leak fix)、本檔條目。
+
+---
+
 ## 🔁 本次 session 的 meta 觀察
 
 1. **Agent 被期待挑戰，不是逢迎**：使用者在 Round 3 明確要求「挑戰我」；Round 6 使用者主動拋出組織結構提案、期待被 agent 質疑。這是健康的合議模式 —— 本檔保留挑戰軌跡，避免未來 agent 誤以為「使用者說什麼就是對的」。
