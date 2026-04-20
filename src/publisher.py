@@ -132,16 +132,18 @@ async def publish_to_fb(
         print(f"[Publisher: FB] 正在由在地檔案發布 (Plan B)...")
         endpoint = f"/{FB_PAGE_ID}/photos"
         params["caption"] = text
-        files = {"source": open(local_file_path, "rb")}
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(f"{base}{endpoint}", params=params, files=files)
-            data = resp.json()
-            if resp.status_code == 200:
-                print(f"[Success: FB] ID: {data.get('id')}")
-                return {"success": True, "id": data.get("id"), "media_kind": "image"}
-            print(f"[Error: FB] {data.get('error', {}).get('message')}")
-            return {"success": False, "error": data}
+        # 用 with 包著確保 exception 時也會關檔；之前寫 `open(...)` 直接塞 dict
+        # 會 leak file handle 如果 httpx call 拋例外。
+        with open(local_file_path, "rb") as fh:
+            files = {"source": fh}
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(f"{base}{endpoint}", params=params, files=files)
+                data = resp.json()
+                if resp.status_code == 200:
+                    print(f"[Success: FB] ID: {data.get('id')}")
+                    return {"success": True, "id": data.get("id"), "media_kind": "image"}
+                print(f"[Error: FB] {data.get('error', {}).get('message')}")
+                return {"success": False, "error": data}
 
     if image_url:
         print(f"[Publisher: FB] 正在由網址發布 (Plan A)...")
