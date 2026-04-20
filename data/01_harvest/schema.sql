@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 CREATE INDEX IF NOT EXISTS idx_drafts_score ON drafts(confidence_score);
-CREATE INDEX IF NOT EXISTS idx_drafts_queue_status ON drafts(queue_status);
+-- idx_drafts_queue_status 故意不寫在這：queue_status 欄位是 Phase 8.18 才加的,
+-- 對舊 DB 而言該欄位要等 src/db.py::init_db 跑 _migrate_add_column_if_missing 才會存在。
+-- 這條 index 的 CREATE 改到 db.py 在 migration 之後執行 (見 init_db 第 70-74 行的 CREATE INDEX IF NOT EXISTS)。
 
 
 -- ============ 3. 發布紀錄 ============
