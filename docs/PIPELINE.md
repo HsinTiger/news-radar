@@ -3,6 +3,20 @@
 > 每個階段的輸入 / 輸出 / 失敗模式合約。修改任何一層時，
 > 先對照本檔確認**自己打算改變的 contract**，再動程式碼。
 
+> ⚠️ **2026-04-20 更新 · 部分章節已被 Phase 8.11/8.17/8.18/8.19 覆蓋**
+>
+> 本檔最原始的 Stage 02-04 contract 反映 **Milestone 2-3** 時期的設計，與目前 production 行為有以下差異。在重讀前請先掌握差異清單，必要時以 `docs/architect_plan_disscussion.md` 為 ground truth：
+>
+> | 條目 | 本檔原文 | 目前實況（Phase 8.19） |
+> |------|----------|-----------------------|
+> | scorer.py 是否呼叫 LLM | Stage 02 合約要求「**不得**呼叫 LLM」 | 呼叫 LLM（Gemini → Claude CLI 雙路徑，經 `src/llm_brain.py`），該要求已作廢；scorer 產 `NewsScore`（含 confidence / breakdown / editorial_note） |
+> | Compose 後如何送至 publisher | Stage 03 → Stage 04 直接手動審核 | Mac 端 `run_pipeline.py --compose-only` 寫入 `drafts.queue_status='queued'`；Cloud 端 `run_publish_queue.py` 每小時從 queue 挑最新一筆發文（見 Phase 8.18） |
+> | Publish 的觸發來源 | `platform_drafts` where `status='approved'`（手動審核） | `drafts.queue_status='queued'`（auto-approve via confidence_score ≥ AUTO_PUBLISH_THRESHOLD）；approved 流程僅做 legacy fallback |
+> | schedule.publishing_slots + jitter | 合約要求先查 slots | 已不存在；改為 `cadence` 規則：min 1hr、max 2hr (rescue) |
+> | LLM 雙路徑全失敗時的行為 | 未定義 | 回傳 `"skipped_no_llm"` / 不寫 draft / news 狀態保持 fetched；**絕不塞 fallback 範本或偽分數**（Phase 8.19 emergency template + scorer-fail fabricated score 均已移除） |
+>
+> 其餘章節（Stage 01 Harvest / Stage 05 Feedback / Phase 8.11 Module 3-7 延伸設計）仍有效。
+
 ---
 
 ## 總覽
