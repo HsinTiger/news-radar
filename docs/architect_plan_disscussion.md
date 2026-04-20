@@ -544,6 +544,194 @@ Fox Hsiao → IG（科技風尚師）
 
 ---
 
+## 🗓️ 2026-04-20 · Phase 8.18 雲本混合架構：Mac 寫稿、Cloud 發稿
+
+**議題**：Phase 8.17 把整條 pipeline 推上 GitHub Actions（`*/30` cron）後發現兩層根本問題：
+1. **雲端沒有 fallback 大腦**：本機 pipeline 遇到 Gemini 429 會由「當下主 agent」（Round 10 定案）手動接手；GitHub Actions 是 headless 環境，Gemini 一 429 就只能走 `run_pipeline.py` 寫死的「緊急模板」——實測產出的是硬套標題 + 空洞 body 的垃圾貼文（`run_pipeline.py` line 470-487 的 `emergency_v`）。品質直接崩盤。
+2. **使用者預算上限是既有訂閱**：Claude Code Max（$100/月）+ Gemini AI Pro 訂閱——**不會再付 API key 錢**。Round 7 / Round 10 定案的 fallback 大腦機制實務上只有 Claude Code Max（OAuth 綁定本機 CLI）能跑，而 OAuth 不能放 GitHub Actions secret 裡——所以「把 brain 推上雲」本身就是死路。
+
+**使用者立場**（原話）：
+- 「我原本在這裡跑如果 gemini api key 不能用還有你充當大腦，如果推上 github action 跑，他會用誰當替代大腦？這是不是根本性的問題？該如何解決？」
+- 「我手中的預算也只有買 gemini ai pro 方案與 claude code max 方案，我不打算再花錢買 API key 了。我一個月付 100 鎂買 claude code max 方案就是希望可以善用 claude（也就是你這顆大腦），想想辦法。」
+- 「我閉蓋又不充電的時間可以忽略不計，只有在假日前往咖啡廳的一段路會這麼作，其餘時間一律接著電源。」
+- 「提早 buffer 文案給 github action 可以不必那麼多，抓前後一到兩小時的 buffer 發文量即可（大概也就是每個平台個別一、兩篇）」
+- 「GitHub Actions（每小時）都看如果有當下最新的文章進來就發最新的，不必理會 queue buffer 的舊資訊了。」
+- 「記得我們發文週期有規定 1 小時上限跟 2 小時下限嗎」→ 最高頻率 = 每小時 1 則新聞、3 平台並發（1h upper bound），下限 = 至少 2 小時一則（2h lower bound）。
+
+**Agent 分析**：
+
+1. **Phase 8.17 架構往雲端遷移是錯的**：當時我推動「pipeline.yml 每 30 分鐘跑 `run_pipeline.py`」意圖是「解放 MacBook 不必常開機」，但忽略了 brain 不能雲端化這個硬邊界。Round 7/Round 10 的 fallback 原則早已寫明「主 agent 充當大腦」，headless 環境本質上沒有主 agent——違反自己定的契約。**承認錯誤**，這輪要回退。
+
+2. **Claude Code Max 的使用方式**：訂閱只能透過本機 `claude` CLI（`claude --version` 2.1.114）走 OAuth 呼叫 Anthropic 後端。`claude -p "<prompt>" --output-format json` 可以 subprocess 非互動式呼叫，這是把 Max 訂閱用在自動化的唯一合法路徑。**必須留在 Mac 本地**。
+
+3. **職責切分**：pipeline 的兩個階段本質不同——
+   - **Compose（寫稿）**：LLM-heavy、對 brain fallback 敏感、品質決定一切 → **必須在 Mac**。
+   - **Publish（發稿）**：純 HTTP POST 到 Meta Graph API、無 LLM 呼叫、只需網路與 token → **天然雲端 friendly**。
+   這條分線一畫，雲端需要的 secrets 瞬間從「Gemini + Anthropic + 7 個 Meta token」縮到「7 個 Meta token」——brain 不必上雲。
+
+4. **DB 同步已經有解**：Phase 8.17 的 `state` branch orphan commit 模式（`.github/workflows/pipeline.yml` 步驟 6）已經支援雙向同步 DB。本機寫入稿件進 DB → commit state branch（新 script 負責）→ Cloud pull state → publish → commit 更新後的 DB 回 state。這個基礎設施不必重做，換的是**什麼程式呼叫它**。
+
+5. **Freshness-first vs buffer queue 的取捨**：使用者明確要「有當下最新的文章就發最新的」——這修掉我原本「按 publish_at 排程發」的直覺設計。Cloud publisher 的選稿邏輯變成：
+   - **優先挑 queue 裡 news_items.published_at 最新的那一筆**（不是 drafts.publish_at 最早到期的那一筆）。
+   - Buffer 存在只是為了「萬一這小時沒新東西就拿舊的發」這種 degradation case，不是主路徑。
+   - Stale 判定：一旦 queue 裡有更新的可發，舊的自動標 `stale`（不發但保留稽核軌跡）。
+   這是「新聞頻道」vs「排程內容日曆」的取捨——我們做前者。
+
+6. **Cadence 規則對齊**：使用者說「1 小時上限 / 2 小時下限」。語意澄清：
+   - **1h upper bound（頻率上限）= 相鄰兩篇同平台間隔**至少** 1 小時**——最密也就是每小時一篇。
+   - **2h lower bound（頻率下限）= 相鄰兩篇間隔**至多** 2 小時**——最疏也至少兩小時要發一篇（避免沉默太久）。
+   - 結論：`min_interval_minutes: 60`, `max_interval_minutes: 120`。
+   - 現 `config/config.yaml` 有 `publishing_slots: [08:30, 12:30, 21:00]` + `max_posts_per_day: 3` + `min_interval_minutes: 90`——**全部失效**，因為舊規則是「一天 3 次固定時段」，現在是「每小時檢查、動態挑最新」。舊 slot 機制留在 config 裡作為歷史紀錄（註解標 deprecated），新規則優先。
+
+7. **Buffer size**：使用者明確要「每個平台個別一、兩篇」= 1-2 小時 buffer。這跟 freshness-first 不矛盾——freshness-first 是「挑選策略」，buffer 是「萬一空窗的保險」。Mac 每小時 compose 1 個新 news_item → 展成 3 個 platform_drafts（FB/IG/Threads）→ 加入 queue。queue 保持 1-2 筆 pending 就夠。
+
+8. **DB schema 需要的改動**：
+   - `drafts.queue_status TEXT DEFAULT NULL`——值域 `NULL / queued / published / stale / failed`。為什麼獨立於原有 `drafts.status`（pending_review/approved/published/...）？因為 `status` 是「composer 產出 vs 人工審核」的狀態，`queue_status` 是「publisher 佇列」的狀態——兩個維度正交。
+   - `drafts.publish_at TEXT`——composer 寫稿時設的預期發佈時間（ISO8601）。Cloud publisher **不強制按此發**（freshness-first），但用來判 stale（`publish_at < now - 2h` 視為過期）。
+   - 同步加入 `data/01_harvest/schema.sql`（新裝 DB 用）和 `src/db.py` 的 `_migrate_add_column_if_missing`（舊 DB 線上補欄、idempotent、Phase 8.16 已有 pattern）。
+
+9. **MacBook 電源狀態的 trade-off**：使用者假日帶咖啡廳閉蓋不充電的時段「可以忽略不計」。這讓 launchd 排程的覆蓋策略變簡單：
+   - 插電 + 閉蓋：`pmset -b sleep 0` + `caffeinate` 不需要，launchd 照跑。
+   - 電池 + 開蓋：照跑。
+   - 電池 + 閉蓋（假日通勤短暫狀態）：**深睡，launchd 跳過該次 trigger，醒來後 launchd 的 `StartCalendarInterval` 行為是「錯過就補」**——下一次醒來會立刻補跑。錯過一次的影響 = 那小時 queue buffer 少一筆 → Cloud publisher fallback 挑上一小時的 → 可接受的 degradation。
+   - 長途飛機等級的長時間閉蓋電池 → 不在 MVP scope。
+
+10. **Phase 切分（本輪 vs 下輪）**：為了守住「半小時改完不影響品質」的使用者時間框：
+    - **Phase 8.18（本輪，infra only）**：DB schema 加欄、`run_publish_queue.py`（cloud 用、無 LLM）、`pipeline.yml` 改走新 script、建立 `com.hsin.news-radar.compose.plist` 定時本機 compose、`run_pipeline.py` 加 queue enqueue 邏輯。**composer.py 與 scorer.py 程式碼不動**——仍然用 Gemini，Gemini 429 時手動 fallback（既有機制）。
+    - **Phase 8.19（下輪，brain swap）**：把 composer.py / scorer.py 的 Gemini SDK 呼叫改成 `claude -p ... --output-format json` subprocess。這個要動很多 LLM 調用點、prompt 格式 + cache token 統計可能全部要重算，風險較高，獨立一輪處理。
+
+**結論（定案）**：
+
+- **拓撲**：
+  - **Mac（launchd `com.hsin.news-radar.compose` + 每小時）**：跑現有 `run_pipeline.py`，但新加 `--compose-only` flag，不做 publish，只到 `enqueue draft` 就收手。寫入 DB → push state branch。
+  - **Cloud（`pipeline.yml` 每小時 `0 * * * *`）**：跑新的 `run_publish_queue.py`，拉 state DB → 挑最新 queued draft → HTTP POST 到 FB/IG/Threads → 更新 draft 狀態 → push 回 state branch。**無 LLM secrets**。
+  - **Cloud（`reflect.yml` 每日）**：維持不變——reflect 要呼叫 LLM，但 Phase 8.18 暫時接受「reflect 的 Gemini 429 就當天略過」（reflect 是低頻、missable）。**注意**：這是 Phase 8.18 scope 之外的技術債，列入 BACKLOG：「reflect.yml 要不要也改成本機跑？」未決。
+
+- **選稿邏輯（freshness-first）**：
+  ```
+  SELECT d.* FROM drafts d
+  JOIN news_items n ON d.news_id = n.id
+  WHERE d.queue_status = 'queued'
+    AND d.status IN ('approved', 'auto_approved')
+  ORDER BY n.published_at DESC  -- 最新新聞優先
+  LIMIT 1
+  ```
+  挑到的那筆發出 → 狀態改 `published`；**其他比挑中這筆還舊的也全部標 `stale`**（不發、保留軌跡）。
+
+- **Cadence 實作**：`run_publish_queue.py` 開頭查 `publish_log` 最後一筆 success 紀錄：
+  - 若距今 < 60 分鐘 → 跳過這次 run（honour 1h upper bound）。
+  - 若距今 > 120 分鐘 → 就算 queue 空也要想辦法發（挑任何 status='approved' 的，即使 queue_status='stale'——避免沉默超過 2h）。
+  - 介於 60-120 分鐘 → 正常走 freshness-first。
+
+- **檔案改動清單**：
+  - `data/01_harvest/schema.sql`：`drafts` 加 `publish_at TEXT`、`queue_status TEXT DEFAULT NULL`
+  - `src/db.py`：`init_db()` 補兩條 `_migrate_add_column_if_missing`；新增 `enqueue_draft(draft_id, publish_at)`、`pick_freshest_queued()`、`mark_published(draft_id, platform_post_ids)`、`mark_stale_older_than(cutoff_iso)` 四個 helper
+  - `src/schema.py`：`Draft` / `PlatformVariant` dataclass 加對應欄位
+  - `run_publish_queue.py`（**新檔**）：cloud-only 腳本，`argparse` 支援 `--force`（忽略 1h upper bound，人工觸發用）。不 import 任何 LLM SDK。
+  - `run_pipeline.py`：補 `--compose-only` flag，流程截止在「draft 入庫且 enqueue_draft 完」。
+  - `.github/workflows/pipeline.yml`：
+    - cron `*/30 * * * *` → `0 * * * *`
+    - `run_pipeline.py` → `run_publish_queue.py`
+    - env 區塊移除 `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`，保留 Meta tokens + `META_APP_*`
+  - `scripts/com.hsin.news-radar.compose.plist`（**新檔**）：`StartCalendarInterval` 每小時（分鐘隨機 offset 5-15 避開整點）觸發 `~/bin/news_radar_compose.sh`
+  - `scripts/news_radar_compose.sh`（**新檔**）：`cd` 到 repo → `python run_pipeline.py --compose-only` → push state branch。放 `~/bin/` 避開 TCC（Phase 8.17 `weekly_snapshot.sh` 同款）。
+  - `scripts/INSTALL_COMPOSE_LAUNCHAGENT.md`（**新檔**）：安裝步驟，沿用 snapshot 那份的風格。
+  - `config/config.yaml`：`schedule` 區塊整段重寫——舊 `publishing_slots` / `max_posts_per_day` 保留但註解 `# deprecated Phase 8.18`；新增 `min_interval_minutes: 60`, `max_interval_minutes: 120`, `buffer_size: 2`。
+  - **不改**：`src/composer.py`, `src/scorer.py`, `.github/workflows/reflect.yml`——brain swap 留給 Phase 8.19。
+
+- **契約（給 Phase 8.19 與未來的 agent 看）**：
+  - Mac 端才能呼叫 LLM。任何「想在 Cloud 跑 LLM」的提議都要回看本條。
+  - `run_publish_queue.py` 永遠不能 import `composer` / `scorer` / `reflector`——這是結構性防線。
+  - `queue_status` 的狀態轉移只能由 publisher 改；composer 只負責 `NULL → queued`。
+  - freshness-first 是選稿契約，不是「先進先出」。任何想加「排程時段」的提案要先回看本條。
+
+**隱含 trade-off**：
+
+- **可靠性 vs 單點依賴**：Mac 離線 > 2h → queue 會空 → Cloud publisher 走 degradation path（發舊的或不發）。使用者明示此狀態「可忽略不計」，接受。反過來 Cloud 掛掉（GitHub Actions 故障）不影響 compose，只影響 publish 時機。雙系統獨立失效比單系統少一層。
+- **freshness-first vs 編輯日曆感**：老派內容策略會排 8:30/12:30/21:00 三個高峰時段發。我們放棄這個——新聞頻道比起「日曆節奏」，「時效」更重要。若未來 engagement 數據顯示早晚高峰時段 engagement 顯著高，Phase 8.2X 可加「時段加權」層（不是 slot，是 scorer 的時間加權因子）。
+- **schema 加欄 vs 新建表**：我選加欄 (`drafts.queue_status`)，不新建 `publish_queue` 表。理由：queue 是 draft 的生命週期一個階段，不是獨立實體；建表會多一次 JOIN、schema 複雜度也高。代價：`drafts` 表兩個正交維度（`status` + `queue_status`）會讓新手 confused，必須靠註解與本檔補充。
+- **每 30 分鐘 → 每小時的 cadence 降頻**：從 2×/hour 降到 1×/hour，GitHub Actions minutes 消耗減半。副作用：若同一小時內 Mac 剛 enqueue 了更新的，Cloud 要等最多 60 分鐘才發——可接受，反正我們 1h upper bound 本來就是每小時一發。
+- **`--compose-only` vs 新寫一個 `run_compose.py`**：選前者為的是 minimize 改動——`run_pipeline.py` 已經處理 harvest → score → compose → enqueue → publish 全鏈，截止點只差一個 if。新寫腳本會重複很多載入邏輯。代價：`run_pipeline.py` 變得有兩個 mode（full / compose-only），但 Phase 8.19 brain swap 完後這兩個會自然收斂——那時再評估是否拆分。
+
+**後續觀察點**：
+
+- **第一週**：publish_log 的成功率 vs Phase 8.17 同週的基準。理論上應該從「Gemini 429 → 垃圾模板 → 品質崩盤」改善回「Mac compose 品質正常」。
+- **Buffer 空窗率**：Cloud publisher 遇到「queue 空、距上篇 > 2h」的次數。若每天 > 2 次，buffer_size 要從 2 拉到 3（或補 Mac 半夜也 compose 一輪）。
+- **Stale 率**：queue 裡被標 stale（被更新的蓋掉）的比例。預期 < 20%。若 > 50%，代表 Mac compose 速率 >> 發文速率，要放慢 compose cadence（改 2 小時一次）。
+- **Cron miss 率**：GitHub Actions cron 有時會 delay 數分鐘 → 跨整點的 run 會 skew。觀察實際 publish 時間分佈是否真的落在 00/01/02...每小時一次，還是飄成 05/17/28 這種花花的。若 skew 太大，可能要改 `*/30` 並在 script 裡判斷是否真的該跑。
+- **Reflect 的技術債**：Phase 8.18 沒碰 reflect，但若 Gemini 429 持續、reflect 連續幾週都略過 → 需要 Phase 8.20 處理（可能改本機跑或改 claude CLI）。
+
+**寫入檔案**：`docs/architect_plan_disscussion.md`（本條目，**先於程式碼變動**完成）；後續 code 變動清單如「結論」小節所列。
+
+---
+
+## 🗓️ 2026-04-20 · Phase 8.19：Claude CLI fallback brain（夜班 overnight 實作）
+
+### 議題
+
+Phase 8.18 的雲本混合架構解了 compose 在哪裡跑的問題，但留了一個結構性破口：若 Mac 的 Gemini API 跳 429（quota exhausted），`run_pipeline.py` 會走進既有的 `emergency_v = PlatformVariant(...)` 硬編範本、把「科技格局正在發生結構性位移⋯⋯」這種通用樣版入 queue。於是 Cloud 的 freshness-first publisher 會照發，結果就是頻道出去一篇「系統代班速報」垃圾文，品質直接崩盤。
+
+結論：這條 emergency path 必須徹底拔掉。**寧可 skip 整篇不發，也不發垃圾。**
+
+### 使用者立場
+
+- 只付 Claude Code Max（$100/月）+ Gemini AI Pro 訂閱，**不會**另外買 API key
+- 手邊唯一能程式化呼叫 Claude Max 的方式：`claude -p --output-format json` subprocess
+- 既然是訂閱制，fallback 路徑本身是「免費」——使用它不會額外花錢
+
+### Agent 分析
+
+1. **emergency template 不該存在的根本理由**：它解的是「pipeline 能完走」的工程問題，不是「寫出好貼文」的產品問題。工程失敗 → 上游重試；產品失敗 → 讀者棄訂。這兩個問題不能用同一個答案（「塞一篇通用樣版」）去解。
+
+2. **為什麼另開 `src/llm_brain.py` 而不是在 composer / scorer 就地加 fallback**：兩邊都要同樣的 Gemini → Claude CLI → None 決策樹。複製貼上兩份是反模式；未來若要加第三條路（本機 llama.cpp / Perplexity / ...）動一處即可。契約是單一 `call_for_json(...) -> LLMResult[T]`，Pydantic `response_model` 直接給 caller 的 schema。
+
+3. **為什麼是 subprocess 不是 HTTP API**：Claude Max 的授權模型就是「本機 CLI 用 subscription cookie」。沒有 public HTTP endpoint 能讓訂閱者用 Max quota 發 request；開發者要自建 API 得另外付 API key 的錢。subprocess 是目前唯一合乎 license 的路徑。
+
+4. **envelope 解析的 defensive parsing**：`claude -p --output-format json` 的 envelope 結構在跨版本有漂移紀錄（`result` vs `content` vs 直接回字串）。防守三層：(a) 嘗試整段當 JSON → (b) envelope 的 `result` 欄位 → (c) 若前兩者都失敗，把 stdout 當純文字；再從文字裡抽 JSON（支援 markdown code fence ``` ```json 包覆、前後閒聊 `Sure, here it is: {...} Hope that helps`）。
+
+5. **Pydantic 是最後一道閘**：extract JSON blob → `response_model.model_validate()` → 失敗即視為 fallback 沒產出。這保證下游拿到的是 schema-compliant 物件，不是「像 JSON 的字串」。
+
+6. **為什麼保留 `get_gemini_client()` 空殼而不是完全刪除**：composer.py 對外已經是 Phase 8.18 的 LLM 路徑單一出口，但 tests / 舊腳本可能會 `from composer import get_gemini_client`——保留一個 raise `RuntimeError("已於 Phase 8.19 移除")` 的空殼能給遷移期更清楚的錯誤訊息，比 ImportError 直觀很多。
+
+7. **timeout 預設 180s，composer 覆寫 240s**：scorer 評閱（短 JSON）180s 綽綽有餘；composer 寫三平台長文 + Claude 4 Sonnet 本身推理時間，180s 會卡。調高到 240s 讓本機寫作有餘裕。
+
+8. **保留的範圍——反過來說就是不動的範圍**：
+   - `reflect.yml`（低頻、miss 無傷）→ Phase 8.20 再處理
+   - `analyst.py`（Phase 8.18 已實質棄用）
+   - `competitor_agent.py`（舊 Gemini SDK，非主路徑）
+   - 這三者都持續用舊 Gemini SDK。Phase 8.19 只鎖定 compose-only 路徑的 brain。
+
+9. **失敗時回 `"skipped_no_llm"` 而非 `"dropped"`**：這兩個語意不同——dropped 是「新聞不值得寫」，skipped_no_llm 是「現在我沒腦子可用，不要責怪這篇新聞」。保留明確區分方便後續 reflect 分析「系統沉默是因為分數太低還是技術問題」。
+
+10. **使用者要求不呼叫真實 Meta API 驗證**：本次驗證以 AST + 單元測試 + 用真 sqlite3 的 integration test 為底線；Meta token 在 live 上用有風險，推上去之後實際效果明早使用者檢查。這是合理的品質 / 風險權衡。
+
+### 結論（定案）
+
+- 新檔 `src/llm_brain.py`，單一函式 `call_for_json(...)` 負責 Gemini → Claude CLI → None 決策樹
+- `src/composer.py` / `src/scorer.py` refactor：刪所有 Gemini client 邏輯，一行 `await call_for_json(...)` 取代
+- `run_pipeline.py` 的 `emergency_v = PlatformVariant(...)` 區塊整段刪除；`if not bundle:` 改成 `return "skipped_no_llm"` + 對應的 docstring 補說明
+- `process_item` 回傳值列舉加入 `"skipped_no_llm"`
+- 單元測試 `tests/unit/test_llm_brain.py` 覆蓋：JSON 抽取、envelope parsing、決策樹五條分支、subprocess-level 成功/exit/refusal/validation fail
+- 整合測試 `tests/integration/test_publish_queue_flow.py` 覆蓋：enqueue / freshest 選稿 / mark_published / mark_stale_except / mark_failed / fallback
+- Sandbox 驗證腳本（`validate_*_sandbox.py`，放在 session 的 scratch 目錄，不進 git）：以 sys.modules 偽造 pydantic，直接跑真 sqlite3，7+9+12 = 28 條 case 全綠
+
+### 隱含的 trade-off
+
+- **本機 Claude CLI 的延遲不可控**：`claude -p` 單次 round trip 視 prompt 長度、網路、Anthropic 的排隊而定，通常 8–30 秒；如果 Gemini 持續 429，每小時 compose 可能被拉長到 1 分鐘內完成。Mac launchd 間隔 3600 秒，容忍得起。
+- **CLI 版本漂移風險**：`claude` CLI 的 envelope 格式在 Anthropic 更新 SDK 時可能變動。本檔的防守三層抽取夠寬鬆，但不是萬無一失——需要 Phase 8.20 觀察真實 log，若頻繁 parse 失敗要升級 parser。
+- **rate limit 的隱性天花板**：Claude Max 訂閱有隱性的日用量上限（Anthropic 未公開精確數字，有社群數據點）。若某天兩條路都打滿，queue 會真的空著——這是 freshness-first semantic 的可接受失敗模式（`--force` 仍可挑 stale 救場）。
+
+### 後續觀察點
+
+- **實測 envelope 結構**：夜班後第一次 compose 成功後，撿一筆 log 確認 `result` / `total_cost_usd` / `usage` 欄位是否真的如預期
+- **Claude CLI 的 token 計量**：cost_usd 和 Anthropic 帳單對不對上。Phase 8.20 可以把 `result.cost_usd` 累積到 `token_usage_daily` 表
+- **Skip 率**：Mac launchd 每小時一次，一週 168 次；`skipped_no_llm` 的比例期待 < 5%。若 > 20%，代表兩條路一起崩的頻率遠高於預期，要啟動 Phase 8.20（第三條路 / 本機模型）
+- **emergency template 的情感惯性**：過去半年累積的 post 裡是否有 emergency template 漏出去的案例？需要一次 archive scan 確認
+
+**寫入檔案**：本檔條目 + `src/llm_brain.py` + `src/composer.py` + `src/scorer.py` + `run_pipeline.py` + `tests/{unit,integration}/test_*.py`。
+
+---
+
 ## 🔁 本次 session 的 meta 觀察
 
 1. **Agent 被期待挑戰，不是逢迎**：使用者在 Round 3 明確要求「挑戰我」；Round 6 使用者主動拋出組織結構提案、期待被 agent 質疑。這是健康的合議模式 —— 本檔保留挑戰軌跡，避免未來 agent 誤以為「使用者說什麼就是對的」。
