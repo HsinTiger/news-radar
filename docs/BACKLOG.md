@@ -147,9 +147,20 @@
 
 B/C 類是關於「內容與題材」，D 類是關於「執行環境」。本類有獨立優先度：D-01 是 MVP 跑穩後**第一個**要處理的基礎建設題。
 
-### D-01 · 可靠的免費雲端全自動部署
+### D-01 · 可靠的免費雲端全自動部署 · **Phase 8.17/8.18/8.19 已收口** ✅
 
-- **現況**：
+> **2026-04-20 更新**：本條自 Phase 8.11 MVP 上線後逐步解鎖，Phase 8.19 完成收尾，維持在
+> backlog 作歷史紀錄。實際架構：
+>
+> - **Phase 8.17**：`pipeline.yml` workflow 上雲，cron `0 * * * *`（首版整條 pipeline 在雲端跑）
+> - **Phase 8.18**：雲本混合。compose/scorer 留 Mac（launchd 每小時）、publish 走 GitHub
+>   Actions；DB 用 `state` orphan branch 做雙向同步。解決了 Mac Gemini quota 雲端無法觸及的困境
+> - **Phase 8.19**：Gemini → Claude CLI 雙路徑 brain。LLM 失敗時主動 skip，不再塞
+>   emergency template。徹底消除「brain fail → 品質崩盤」的隱患
+>
+> 下方原本的 MVP 期評估保留，便於日後理解為什麼這麼選。
+
+- **現況（歷史）**：
   - Pipeline 必須在本機（使用者 Mac）手動觸發或透過 `cron` / `launchd` 跑。
   - SQLite DB、cache、logs 全部落在本機；儲存空間會持續長大、跨機器不可攜。
   - 發文節奏綁使用者開機時間；24 小時真正自動化無法達成。
