@@ -493,14 +493,24 @@ def mark_queue_published(conn: sqlite3.Connection, draft_id: str) -> None:
     conn.commit()
 
 
-def mark_queue_failed(conn: sqlite3.Connection, draft_id: str) -> None:
-    """Publisher 發文失敗（三平台全軍覆沒）呼叫——標 failed 讓它不會無限輪迴被挑中。
-    人工後續可以手動改回 queued 重試。"""
+def mark_queue_failed(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    reason: Optional[str] = None,
+) -> None:
+    """Publisher 發文失敗（三平台全軍覆沒、或品質守門員攔下）呼叫——
+    標 failed 讓它不會無限輪迴被挑中。人工後續可改回 queued 重試。
+
+    reason 只會被 print 出來給 log 用，不寫 DB（避免為 Phase 8.20 附帶這條
+    守門員去改 schema；真要審計細節可去 content_quality_guard 那邊的 format_issues）。
+    """
     conn.execute(
         "UPDATE drafts SET queue_status = 'failed' WHERE id = ?",
         (draft_id,),
     )
     conn.commit()
+    if reason:
+        print(f"[DB] mark_queue_failed draft_id={draft_id[:16]}… reason={reason}")
 
 
 def mark_queue_stale_except(

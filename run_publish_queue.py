@@ -33,6 +33,12 @@ from typing import Optional
 
 from src import db as dbmod
 from src import image_manager
+from src.content_quality_guard import (
+    check_quality,
+    format_issues,
+    has_blocking_issues,
+)
+from src.local_notify import notify_quality_block
 from src.publisher import publish_to_fb, publish_to_ig, publish_to_threads
 from src.schema import PublishResult
 from src.token_utils import refresh_threads_token
@@ -113,7 +119,26 @@ async def _publish_one(conn, row, dry_run: bool = False) -> bool:
     if not platform_drafts:
         print(f"   ⚠️ 找不到 platform_drafts → 無法發布，標 failed")
         if not dry_run:
-            dbmod.mark_queue_failed(conn, draft_id)
+            dbmod.mark_queue_failed(conn, draft_id, reason="no_platform_drafts")
+        return False
+
+    # ---------- Phase 8.20：品質守門員（攔下 Phase 8.19 前的 emergency_template）----------
+    # 檢查每個平台的 final/full_text；只要有任一個 platform_draft 觸發 block 級規則，
+    # 整筆 draft 不發，標 failed，跳 Mac 通知。Hsin 要求不刪 DB、他手動處理。
+    guard_news_title = row["news_title"] or ""
+    block_reasons: list[str] = []
+    for pd_row in platform_drafts:
+        text_to_check = pd_row["final_text"] or pd_row["full_text"] or ""
+        issues = check_quality(text_to_check, title=guard_news_title)
+        if has_blocking_issues(issues):
+            block_reasons.append(f"{pd_row['platform']}: {format_issues(issues)}")
+    if block_reasons:
+        one_line = " || ".join(block_reasons)
+        print(f"   🛑 [QualityGuard] 擋下代班假文 → {one_line}")
+        if not dry_run:
+            dbmod.mark_queue_failed(conn, draft_id, reason=f"quality_guard: {one_line}")
+            notify_quality_block(draft_id=draft_id, reasons_one_line=one_line[:200])
+        # 回 False 但不記 publish_log——這不是「發文失敗」而是「主動拒發」
         return False
 
     image_url = row["og_image_url"]

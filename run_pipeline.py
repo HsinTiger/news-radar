@@ -27,6 +27,11 @@ from src.schema import (
 )
 from src.scorer import score_news
 from src.composer import compose_multi_platform, finalize_variant
+from src.content_quality_guard import (
+    check_quality,
+    format_issues,
+    has_blocking_issues,
+)
 from src.publisher import publish_to_fb, publish_to_threads, publish_to_ig
 from src.token_utils import refresh_threads_token
 from src.analyst import run_analysis_cycle
@@ -488,11 +493,28 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         raw_variant = getattr(bundle, platform_key)
         if not raw_variant:
             continue
-            
+
         variant, full_text, ok = finalize_variant(raw_variant, platform_key)
         finalized[platform_key] = (variant, full_text, ok)
         tag = "✅" if ok else "⚠️"
         print(f"   ↳ {dbmod.PLATFORM_LABEL[platform_key]}: {variant.char_count} 字 {tag}")
+
+    # 3.5 Phase 8.20：品質守門員（第一道防線：compose 後立即檢查）
+    # 只要有任一平台觸發 block 級規則，整篇 draft 不入 DB、不入 queue。
+    # 這是對『LLM 生成端』的雙重保險——即便 composer 未來又回歸到某種
+    # fallback template，也會在這裡被當場擋下。
+    compose_block: list[str] = []
+    for platform_key, (_variant, ftext, _ok) in finalized.items():
+        issues = check_quality(ftext, title=title)
+        if has_blocking_issues(issues):
+            compose_block.append(f"{platform_key}: {format_issues(issues)}")
+    if compose_block:
+        print(
+            f" 🛑 [QualityGuard·compose] 偵測到代班假文指紋，skip 本篇不寫 draft："
+            f" {' || '.join(compose_block)}"
+        )
+        dbmod.update_status(conn, news_id, "dropped")
+        return "dropped_quality_block"
 
     # 4. 建立 Draft（舊表相容 / 以 FB 變體為 canonical）
     fb_variant, fb_full_text, _ = finalized["fb"]
