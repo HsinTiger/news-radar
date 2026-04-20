@@ -368,59 +368,66 @@ async def call_for_json(
     temperature: float = 0.2,
     timeout_s: int = 180,
 ) -> LLMResult[T]:
-    """核心 API：先試 Gemini，失敗才試 Claude CLI。
+    """核心 API：先試 Claude CLI (Max 方案)，失敗才退 Gemini。
+
+    Phase 8.19b 排序變更（2026-04-20）：
+        原本 Gemini primary、Claude CLI fallback，因 Gemini free_tier quota=0
+        實測失效 → 反轉成 Claude Max 當 primary brain。Max 訂閱含 CLI 使用，
+        無額外 API 費用；額度 5 小時滾動 + 每週上限，以本專案每小時 2 篇、
+        每篇 ~4 calls 的量級在限制內綽綽有餘。
+        Gemini 保留作備援：哪天 Max 掛掉或使用者換 key，這條 path 還在。
 
     Args:
         system: System instruction（全部前綴）
         prompt: User prompt / 新聞內容 / 評閱指令
         response_model: Pydantic BaseModel 類別（例如 NewsScore / MultiPlatformDraft）
-        gemini_model: Gemini 模型名稱，預設 `gemini-2.0-flash-lite`
+        gemini_model: Gemini 模型名稱（備援用），預設 `gemini-2.0-flash-lite`
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
 
     Returns:
         LLMResult，data 為 None 表兩條路都失敗（呼叫端要自己 skip）。
     """
-    # Path 1: Gemini
+    # Path 1: Claude CLI (primary — Claude Max brain)
+    if _claude_cli_available():
+        r1 = await _try_claude_cli(
+            system=system,
+            prompt=prompt,
+            response_model=response_model,
+            timeout_s=timeout_s,
+        )
+        if r1.data is not None:
+            return r1
+        print(
+            f"[llm_brain] ⚠️ Claude CLI 失敗，嘗試 Gemini fallback。"
+            f" reason={r1.raw_error}"
+        )
+    else:
+        print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，嘗試 Gemini fallback。")
+
+    # Path 2: Gemini (fallback)
     if _has_gemini_key():
-        r1 = await _try_gemini(
+        r2 = await _try_gemini(
             system=system,
             prompt=prompt,
             response_model=response_model,
             model=gemini_model,
             temperature=temperature,
         )
-        if r1.data is not None:
-            return r1
-        print(
-            f"[llm_brain] ⚠️ Gemini ({gemini_model}) 失敗，嘗試 Claude CLI fallback。"
-            f" reason={r1.raw_error}"
-        )
-    else:
-        print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，直接嘗試 Claude CLI fallback。")
-
-    # Path 2: Claude CLI
-    if _claude_cli_available():
-        r2 = await _try_claude_cli(
-            system=system,
-            prompt=prompt,
-            response_model=response_model,
-            timeout_s=timeout_s,
-        )
         if r2.data is not None:
             return r2
         print(
-            f"[llm_brain] ⚠️ Claude CLI 失敗。"
+            f"[llm_brain] ⚠️ Gemini ({gemini_model}) 失敗。"
             f" reason={r2.raw_error}"
         )
     else:
-        print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，略過 Claude CLI fallback。")
+        print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，略過 Gemini fallback。")
 
     # Path 3: 全部失敗
     return LLMResult(
         data=None,
         provider="none",
-        raw_error="both gemini and claude_cli unavailable or failed",
+        raw_error="both claude_cli and gemini unavailable or failed",
     )
 
 
