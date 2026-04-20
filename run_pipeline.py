@@ -385,14 +385,21 @@ async def _publish_platform(
 
 # ---------- 單篇新聞處理 ----------
 
-async def process_item(conn, row, publish_threshold: Optional[float] = None) -> str:
+async def process_item(conn, row, publish_threshold: Optional[float] = None,
+                        compose_only: bool = False) -> str:
     """單篇新聞處理。回傳狀態字串：
-    - "published"：達標且至少一個平台成功發布（Hunter 獵殺成功）
-    - "drafted"  ：未達 publish_threshold，僅落草稿
-    - "dropped"  ：低於 MIN_SCORE_THRESHOLD 或無可發平台
+    - "published"     ：達標且至少一個平台成功發布（Hunter 獵殺成功）
+    - "drafted"       ：未達 publish_threshold，僅落草稿
+    - "dropped"       ：低於 MIN_SCORE_THRESHOLD 或無可發平台
+    - "queued"        ：compose_only 模式下達門檻、入佇列等待 Cloud publisher
+    - "skipped_no_llm"：（Phase 8.19）Gemini + Claude CLI 兩條路都失敗，主動 skip
 
     publish_threshold: 自動發布門檻，預設用全域 AUTO_PUBLISH_THRESHOLD。
     main loop 會依 cadence 動態傳入（例：Rescue Mode 傳 0.8）。
+
+    compose_only (Phase 8.18): 只跑到 platform_drafts 入庫 + enqueue，不觸發 publisher。
+    Mac 端 launchd 每小時呼叫 `run_pipeline.py --compose-only` 使用此路徑，
+    Cloud 的 run_publish_queue.py 再從佇列挑最新一筆發文。
     """
     if publish_threshold is None:
         publish_threshold = AUTO_PUBLISH_THRESHOLD
@@ -468,23 +475,13 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None) -> 
         platforms=active_platforms
     )
     if not bundle:
-        # --- 應變邏輯：如果寫作 AI 也配額用盡，使用高品質範本進行緊急發布 (M6.1 Emergency Fallback) ---
-        print(" ⚠️  [Pipeline] 寫作 AI 配額用盡，啟動『緊急範本發布』...")
-        from src.schema import MultiPlatformDraft, PlatformVariant
-        
-        # 建立一個通用的高品質變體
-        emergency_v = PlatformVariant(
-            title=f"🚀 {title}",
-            body=f"【系統代班速報】\n\n科技格局正在發生結構性位移，護城河的定義已從產品轉向生態數據。這反映了產業變遷下的必然選擇。與其追逐破碎的新聞，不如冷靜看清底層的戰略邏輯，體諒轉型期帶來的陣痛。面對充滿挑戰的市場，數據密度高的決策，將會成為未來的勝負點。",
-            hashtags=["#科技戰略", "#商業洞察", "#數據驅動"],
-            char_count=300
-        )
-        bundle = MultiPlatformDraft(
-            fb=emergency_v,
-            ig=emergency_v,
-            threads=emergency_v,
-            image_url=final_img_url
-        )
+        # Phase 8.19：徹底移除 emergency template。
+        # composer.py 已內建 Gemini → Claude CLI 雙路徑；若仍回 None，
+        # 代表 (1) 雲端 Gemini quota 用盡 且 (2) 本機 Claude CLI 不可用。
+        # 此時不該塞「系統代班速報」垃圾範本進 queue，應果斷 skip，
+        # 讓 Cloud publisher 的 freshness-first fallback 挑舊一點但真貨的素材。
+        print(" ⚠️  [Pipeline] 寫作 LLM 雙路徑皆失敗 → skip 本篇（不入 queue）")
+        return "skipped_no_llm"
 
     # 3. 逐平台 finalize（修 hashtag、壓字數）
     finalized: Dict[str, Tuple[PlatformVariant, str, bool]] = {}
@@ -547,7 +544,19 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None) -> 
     # 7. 自動發布路徑
     publish_results: Dict[str, bool] = {}
     any_success = False
-    if auto_publish:
+    if compose_only and auto_publish:
+        # Phase 8.18 雲本混合：達門檻的 draft 入 publish queue，由 Cloud 端 run_publish_queue.py 發文
+        dbmod.enqueue_draft(conn, draft_id, publish_at=datetime.now(timezone.utc).isoformat())
+        dbmod.update_status(conn, news_id, "queued")
+        print(f" ↳ [Compose-Only] draft 已入 publish queue，等待 Cloud 發文")
+        save_md_draft(draft, finalized, bundle.image_url, news_url)
+        return "queued"
+    elif compose_only and not auto_publish:
+        # 沒達門檻的草稿在 compose-only 模式下不進 queue，靜待人工 review
+        dbmod.update_status(conn, news_id, "drafted")
+        save_md_draft(draft, finalized, bundle.image_url, news_url)
+        return "drafted"
+    elif auto_publish:
         for platform_key in ("fb", "threads", "ig"):
             if platform_key not in finalized:
                 continue
@@ -590,6 +599,17 @@ async def main():
         action="store_true",
         help="立即推送一篇：強制 harvest + 放寬門檻至 MIN_SCORE_THRESHOLD，用於『我現在就要一篇上架』場景"
     )
+    parser.add_argument(
+        "--compose-only",
+        action="store_true",
+        help="Phase 8.18：只 harvest + score + compose + enqueue，不發文。Mac launchd 每小時用此模式。"
+    )
+    parser.add_argument(
+        "--buffer-target",
+        type=int,
+        default=2,
+        help="Phase 8.18：compose-only 模式下，queue buffer 目標筆數（預設 2）"
+    )
     args = parser.parse_args()
 
     dbmod.init_db()
@@ -621,9 +641,28 @@ async def main():
             # --- [M6.3] Cadence 決策：1hr ≤ 間隔 ≤ 2hr ---
             if args.publish_now:
                 override = MIN_SCORE_THRESHOLD  # 極度寬鬆：保證推得出東西
+            elif args.compose_only:
+                # Phase 8.18: compose-only 不看 publish cadence（發文時機是 Cloud publisher 的事）
+                # 用 AUTO_PUBLISH_THRESHOLD 做門檻，但強制 should_publish=True 讓流程跑
+                override = None
             else:
                 override = None
-            should_publish, threshold, reason = decide_cadence(conn, override_threshold=override)
+
+            if args.compose_only:
+                # Phase 8.18：compose-only 模式的 buffer 上限檢查
+                queue_counts = dbmod.count_queue_status(conn)
+                queued_n = queue_counts.get("queued", 0)
+                if queued_n >= args.buffer_target:
+                    print(f"\n[Compose-Only] queue 已有 {queued_n} 筆 queued (≥{args.buffer_target})，buffer 已滿，本 cycle 跳過 compose")
+                    should_publish = False
+                    threshold = AUTO_PUBLISH_THRESHOLD
+                    reason = f"buffer 滿 ({queued_n}/{args.buffer_target})"
+                else:
+                    should_publish = True
+                    threshold = AUTO_PUBLISH_THRESHOLD
+                    reason = f"compose-only，buffer {queued_n}/{args.buffer_target}，繼續 compose"
+            else:
+                should_publish, threshold, reason = decide_cadence(conn, override_threshold=override)
             print(f"\n[Cadence] {reason}")
 
             pending_items = dbmod.get_pending_items(conn)
@@ -653,9 +692,17 @@ async def main():
                         )
                         break
                     scanned += 1
-                    outcome = await process_item(conn, row, publish_threshold=threshold)
-                    if outcome == "published":
+                    outcome = await process_item(
+                        conn, row,
+                        publish_threshold=threshold,
+                        compose_only=args.compose_only,
+                    )
+                    if outcome in ("published", "queued"):
                         published_count += 1
+                    # compose-only：每 cycle 只 compose 一筆入 queue，避免一次爆量塞滿 buffer
+                    if args.compose_only and published_count >= 1:
+                        print(f"[Compose-Only] 本 cycle 已 compose 一筆入 queue，收手")
+                        break
 
                 print(
                     f"[Hunter] 本輪總結：掃描 {scanned} / 發布 {published_count}"

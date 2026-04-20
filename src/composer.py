@@ -54,9 +54,9 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
-from google import genai
 from dotenv import load_dotenv
 
+from src.llm_brain import call_for_json
 from src.schema import MultiPlatformDraft, PlatformVariant
 
 # 定位 .env 與設定
@@ -88,13 +88,15 @@ PLATFORM_HASHTAG_RANGE = {
 }
 
 
-# ---------- 客戶端 & Soul 讀取 ----------
+# ---------- Soul 讀取 ----------
+# Phase 8.19 起，LLM 呼叫改由 src.llm_brain 負責，不再在 composer.py
+# 管理 Gemini client。保留 get_gemini_client 空殼以防下游遺留 import，
+# 但實際邏輯已下沉到 llm_brain.call_for_json。
 
 def get_gemini_client():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in .env")
-    return genai.Client(api_key=api_key)
+    raise RuntimeError(
+        "get_gemini_client() 已於 Phase 8.19 移除：LLM 呼叫請改用 src.llm_brain.call_for_json。"
+    )
 
 
 def _read_file(path: Path) -> str:
@@ -292,10 +294,16 @@ async def compose_multi_platform(
     platforms: List[str] = ["fb", "ig", "threads"],
     model: Optional[str] = None,
 ) -> Optional[MultiPlatformDraft]:
-    """產出多個平台的版本。若傳入特定 platforms，則只產出那些平台。
-    model: 覆寫預設 Gemini 模型名稱；None 時用 DEFAULT_COMPOSER_MODEL。
+    """產出多個平台的版本。
+
+    Phase 8.19：改由 src.llm_brain.call_for_json 統一處理 LLM 路徑。
+        1. Gemini primary（失敗時自動 fallback Claude CLI）
+        2. Claude CLI fallback
+        3. 兩條路都失敗 → 回 None；呼叫端必須 skip（不再塞 emergency template）
+
+    Args:
+        model: 覆寫預設 Gemini 模型名稱；None 時用 DEFAULT_COMPOSER_MODEL。
     """
-    client = get_gemini_client()
     main_soul, appendices = load_soul_bundle()
 
     # 只保留被選中的平台指令
@@ -315,33 +323,39 @@ async def compose_multi_platform(
 原始圖片網址: {og_image or '無'}
 
 請直接輸出 MultiPlatformDraft 的 JSON，包含 {', '.join(platforms)} 的變體。
+(欄位結構：{{
+  "fb": {{...PlatformVariant}} or null,
+  "ig": {{...PlatformVariant}} or null,
+  "threads": {{...PlatformVariant}} or null,
+  "image_url": "..."
+}}
+每個 PlatformVariant 必要欄位：title, body, hashtags (list of str with #), primary_topic_tag, char_count)
 """
 
     chosen_model = model or DEFAULT_COMPOSER_MODEL
 
-    def _sync_call():
-        return client.models.generate_content(
-            model=chosen_model,
-            contents=prompt,
-            config={
-                "system_instruction": system_instruction,
-                "response_mime_type": "application/json",
-                "response_schema": MultiPlatformDraft,
-            },
-        )
+    result = await call_for_json(
+        system=system_instruction,
+        prompt=prompt,
+        response_model=MultiPlatformDraft,
+        gemini_model=chosen_model,
+        temperature=0.3,  # 寫作需要一點變化
+        timeout_s=240,    # Claude CLI 寫長文需要較長 timeout
+    )
 
-    try:
-        response = await asyncio.to_thread(_sync_call)
-        draft: MultiPlatformDraft = response.parsed
-        
-        # 兜底：若 LLM 沒填 image_url 但我們有網址，沿用
-        if not draft.image_url:
-            draft.image_url = og_image
-            
-        return draft
-    except Exception as e:
-        print(f"[Error: Composer] 多平台撰寫失敗: {e}")
+    if result.data is None:
+        print(f"[Composer] ❌ 所有 LLM 路徑皆失敗 → 呼叫端請 skip。raw_error={result.raw_error}")
         return None
+
+    if result.provider != "gemini":
+        print(f"[Composer] ℹ️ 撰寫來自 fallback 提供者：{result.provider}")
+
+    draft = result.data
+    # 兜底：若 LLM 沒填 image_url 但我們有網址，沿用
+    if not draft.image_url:
+        draft.image_url = og_image
+
+    return draft
 
 
 # ---------- 保留舊 API 兼容性（供尚未升級的呼叫端用）----------
