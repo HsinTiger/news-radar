@@ -3,17 +3,20 @@
 > 每個階段的輸入 / 輸出 / 失敗模式合約。修改任何一層時，
 > 先對照本檔確認**自己打算改變的 contract**，再動程式碼。
 
-> ⚠️ **2026-04-20 更新 · 部分章節已被 Phase 8.11/8.17/8.18/8.19 覆蓋**
+> ⚠️ **2026-04-21 更新 · 部分章節已被 Phase 8.11/8.17/8.18/8.19/8.20 覆蓋**
 >
 > 本檔最原始的 Stage 02-04 contract 反映 **Milestone 2-3** 時期的設計，與目前 production 行為有以下差異。在重讀前請先掌握差異清單，必要時以 `docs/architect_plan_disscussion.md` 為 ground truth：
 >
-> | 條目 | 本檔原文 | 目前實況（Phase 8.19） |
+> | 條目 | 本檔原文 | 目前實況（Phase 8.20） |
 > |------|----------|-----------------------|
 > | scorer.py 是否呼叫 LLM | Stage 02 合約要求「**不得**呼叫 LLM」 | 呼叫 LLM（Gemini → Claude CLI 雙路徑，經 `src/llm_brain.py`），該要求已作廢；scorer 產 `NewsScore`（含 confidence / breakdown / editorial_note） |
+> | 排序依據 | Stage 02 confidence_score 單鍵排序 | `news_items.weighted_score = scorer_confidence × topic_weights.weight`（Phase 8.20 Step 3），排序以 weighted_score 為主、confidence_score 為 tie-breaker |
 > | Compose 後如何送至 publisher | Stage 03 → Stage 04 直接手動審核 | Mac 端 `run_pipeline.py --compose-only` 寫入 `drafts.queue_status='queued'`；Cloud 端 `run_publish_queue.py` 每小時從 queue 挑最新一筆發文（見 Phase 8.18） |
 > | Publish 的觸發來源 | `platform_drafts` where `status='approved'`（手動審核） | `drafts.queue_status='queued'`（auto-approve via confidence_score ≥ AUTO_PUBLISH_THRESHOLD）；approved 流程僅做 legacy fallback |
 > | schedule.publishing_slots + jitter | 合約要求先查 slots | 已不存在；改為 `cadence` 規則：min 1hr、max 2hr (rescue) |
 > | LLM 雙路徑全失敗時的行為 | 未定義 | 回傳 `"skipped_no_llm"` / 不寫 draft / news 狀態保持 fetched；**絕不塞 fallback 範本或偽分數**（Phase 8.19 emergency template + scorer-fail fabricated score 均已移除） |
+> | 主題分類是否存在 | 未定義，所有 news_items 無分類欄位 | Phase 8.20 Step 1-2：`news_items.topic_category/topic_confidence/topic_rationale`；classifier 走 keyword fast-path → LLM fallback |
+> | 每篇貼文互動如何回饋到選題 | `reflector.py` 只改 soul.md，不調權重 | Phase 8.20 Step 4：`reflector_topic.py` 每週一跑，把三平台 engagement 依照固定公式聚合→正規化→用 EMA-style 溫和更新 `topic_weights` |
 >
 > 其餘章節（Stage 01 Harvest / Stage 05 Feedback / Phase 8.11 Module 3-7 延伸設計）仍有效。
 
@@ -540,3 +543,124 @@ DB 每筆 score 同時記 `soul_version`、`platform_guide_version`、`rubric_ve
 
 未進 Phase 8.11 scope 的所有擴充（新主題 source、新人格、視覺處理 vertical slice）見 `docs/BACKLOG.md`。
 MVP 跑完 14 天 baseline 後，依該檔順序解鎖。
+
+---
+
+# Phase 8.20 · Topic-weight Classifier + Back-prop
+
+> 2026-04-21 加入。把「哪類主題值得發」從 soul.md 裡的模糊原則，搬到一張可以
+> 被 engagement 數據持續調整的權重表。
+
+## 為什麼要這層
+
+- 原本 pipeline 只有「每篇的 confidence_score」這個 axis。同分時 composer
+  無從選題，等於依 RSS 抓到的順序發。
+- 不同主題 engagement 天生不同，若不分類直接訓練，composer 會被「標題黨新
+  聞」拉走（近 30 天被轉發 10 次的那篇是 clickbait 還是硬新聞？分不出來）。
+- 拆成兩層後：
+  - **Classifier**（短期、確定性）：把每篇新聞歸到 10 個穩定類別之一
+  - **Back-prop**（長期、統計）：把每類別被三平台接受的程度聚合成一個
+    `topic_weights.weight`，回注到 `weighted_score = confidence × weight`
+
+## 10 類 taxonomy
+
+寫在 `src/topic_taxonomy.py`，也 seed 到 `topic_weights` 表。Hsin 初期設定：
+
+| id | display | 初始權重 | 備註 |
+|---|---|---:|---|
+| `ai_model` | AI Model | 1.70 | 基礎模型本體 |
+| `ai_agent` | AI Agent | 1.60 | 自主 / coding agent |
+| `ai_application` | AI Application | 1.40 | 應用層 |
+| `supply_chain` | Supply Chain | 1.40 | 半導體 / 封測 / 電池 |
+| `earnings` | Earnings | 1.30 | 財報 / 指引 |
+| `policy_geopolitics` | Policy / Geopolitics | 1.20 | 法案 / 制裁 / 貿易 |
+| `us_stocks` | US Stocks | 1.20 | 指數 / Fed |
+| `tech_product_launch` | Tech Product | 1.10 | 非 AI 新品 |
+| `tw_stocks` | TW Stocks | 1.00 | 台股專題 |
+| `other` | Other | 0.70 | 兜底 |
+
+## Step 1：Schema + seed（`src/db.py::init_db`）
+
+- `news_items` 新增 `topic_category / topic_confidence / topic_rationale / weighted_score`。
+- 新表 `topic_weights`、`topic_weight_history`（見 `data/01_harvest/schema.sql`）。
+- index 寫在 db.py::init_db 的 migration 之後，不是 schema.sql 裡——
+  不然對舊 DB（還沒 ALTER TABLE）會炸。**regression 測：**`tests/unit/test_schema_migration_regression.py`。
+
+## Step 2：Classifier（`src/topic_classifier.py`）
+
+### 兩層策略
+1. **Keyword fast-path**（免 LLM 費用）—— 讀 `config/topic_keywords.yaml`，命中即回
+   `confidence=0.60`。排序按 taxonomy 順序，前面類別越具體越優先。
+2. **LLM fallback**（只有 keyword 全 miss 才打）—— 經 `llm_brain.call_for_json`
+   雙路（Gemini → Claude CLI），強制輸出 pydantic schema。
+
+### 合約
+- 永遠回一個 `TopicClassification`；就算兩路都失敗，也回 `other / 0.0 /
+  'classifier_unavailable_or_all_missed'`——讓呼叫端看得出 signal 可不可信。
+- 分類結果寫到 `news_items.topic_category`，但**不**寫 `status='classified'`；
+  Stage 02 scorer 仍是唯一能改 `status='scored'` 的節點。
+
+### Debug CLI
+`scripts/classify_dryrun.py` —— 給邊界 case 手動驗算：
+- `--title/--content` 試單則
+- `--news-id` 從 DB 抓某則重跑
+- `--recheck-recent 20` 批次對照，列分歧
+
+## Step 3：Weighted Score（scorer + sort）
+
+- `src/scorer.py` 計算完 `confidence_score` 後，查 `topic_weights.weight`、
+  呼叫 `compute_weighted_score(confidence, weight)` → 寫回
+  `news_items.weighted_score`（clip 0–2）。
+- 下游（composer 排隊）改用 `weighted_score DESC, confidence_score DESC`。
+
+## Step 4：Weekly Back-prop（`src/reflector_topic.py`）
+
+### Engagement 公式（Hsin 拍板）
+
+```
+FB：      likes + 2*comments + 3*shares + 0.01*reach
+IG：      likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach
+Threads： likes + 2*replies  + 3*reposts + 1.5*quotes + 0.005*views
+```
+
+每平台獨立做中位數正規化：`normalized_delta = 該類該平台中位數 / 平台全站中位數 − 1`。
+一個類別的 `raw_delta` = 三平台 normalized_delta 的平均（某平台樣本 < 3 時該平台不算進平均）。
+
+### 更新公式
+
+```
+proposed_new = old × (1 + η × raw_delta)          # η = 0.1
+delta        = clip(proposed_new − old, ±0.30)    # 單週穩定性護欄
+new          = clip(old + delta, [0.30, 2.00])    # 全域護欄（other 也受此底線）
+```
+
+### Guard rails
+
+1. 該類跨平台合計樣本 < 5 → **整類跳過**（`skipped_reason='low_samples'`），weights 不動。
+2. 某類某平台樣本 < 3 → 該平台不算進類別 delta 平均。
+3. 單週絕對變動超過 0.30 → clip。
+4. 全域 clip 到 [0.30, 2.00]。
+5. 連續 3 週同方向才標 `trend='up'/'down'`（report-only，不改 math）。
+
+### 產出
+
+- `UPDATE topic_weights` + `INSERT topic_weight_history`（append-only，即使 skip 也留）。
+- `INSERT reflection_events`（跟 daily soul reflector 共用這張表）。
+- `docs/topic_weight_log/YYYY-MM-DD.md`（週一 06:00 TW 自動 commit 到 main）。
+
+### 執行
+
+- Cron：`.github/workflows/reflect_topic.yml`，週一 06:00 TW（Sun 22:00 UTC）。
+- 手動：`python -m src.reflector_topic --dry-run` 或 workflow_dispatch。
+
+## Step 5：Observability
+
+每日由 GitHub Actions 產出兩份人類可讀的儀表板：
+
+- `.github/workflows/morning_report.yml` → `docs/morning/YYYY-MM-DD.md`
+  （queue 狀態 / 昨日發文 / 主題覆蓋 × 權重 / 7d feed 貢獻）
+- `.github/workflows/feed_healthcheck.yml` → 有 feed 掛掉自動開 GitHub issue，
+  綠了自動 close。
+
+Debug CLI：`scripts/queue_inspect.py`（看單張 draft 的 platform variants /
+publish_log 詳情）+ `scripts/classify_dryrun.py`（上面 Step 2）。
