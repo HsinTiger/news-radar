@@ -197,16 +197,14 @@ feeds:
     tier: primary
     language: en
     tags: [semiconductor, supply-chain, ai-chip, research]
-    # UNVERIFIED 2026-04-21 — substack-style WordPress feed，部分文章付費
-    # 仍有免費摘要可撈；若 harvest dead 就改成 substack 路徑重試
+    # VERIFIED 2026-04-21 — 200 OK, 969 KB（比其他 feed 大十倍，含長篇研究）
 
   - name: TechNews 科技新報
     url: https://technews.tw/feed/
     tier: primary
     language: zh
     tags: [taiwan, semiconductor, supply-chain, ai]
-    # UNVERIFIED 2026-04-21 — 台灣科技媒體，WordPress 標準 RSS pattern
-    # 供應鏈、台積電、科技政策中文第一線
+    # VERIFIED 2026-04-21 — 200 OK, 37 KB. 供應鏈、台積電、科技政策中文第一線
 
   # 市場數據／個股解析（游庭皓風格）
   - name: Calculated Risk
@@ -214,14 +212,15 @@ feeds:
     tier: secondary
     language: en
     tags: [macro, us-housing, labor-market, economy]
-    # UNVERIFIED 2026-04-21 — Blogger feed，Bill McBride 宏觀數據長期追蹤
+    # VERIFIED 2026-04-21 — 200 OK, 118 KB. Bill McBride 宏觀數據長期追蹤
 
   - name: The Diff (Byrne Hobart)
-    url: https://diff.substack.com/feed
+    url: https://www.thediff.co/feed
     tier: primary
     language: en
     tags: [strategy, finance, tech-business, deep-analysis]
-    # UNVERIFIED 2026-04-21 — substack，部分文章付費但 RSS 有摘要
+    # UNVERIFIED 2026-04-21 — diff.substack.com/feed 回 400，改成自建域名路徑
+    # Byrne 2023 已從純 substack 遷到 thediff.co；再跑一次 audit 確認
 
   # 宏觀／政策／地緣（IEO 風格）
   - name: Marginal Revolution
@@ -229,14 +228,15 @@ feeds:
     tier: secondary
     language: en
     tags: [economics, policy, macro, global]
-    # UNVERIFIED 2026-04-21 — Tyler Cowen，經濟學家每日觀察
+    # VERIFIED 2026-04-21 — 200 OK, 62 KB. Tyler Cowen 每日觀察
 
   - name: Not Boring (Packy McCormick)
     url: https://www.notboring.co/feed
     tier: secondary
     language: en
     tags: [strategy, venture, tech-business]
-    # UNVERIFIED 2026-04-21 — substack，VC / 戰略觀察，類 Stratechery 但更新頻率高
+    # VERIFIED 2026-04-21 — 200 OK, 1.4 MB（feed 很肥，含全文；可能要在 harvester
+    # 做 content trunc 避免 DB 撐太大）。VC / 戰略觀察。
 
 # ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
 # 文章/影音必須命中至少一個關鍵字才進入處理流程
