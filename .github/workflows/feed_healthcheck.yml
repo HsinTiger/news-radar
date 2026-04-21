@@ -1,0 +1,147 @@
+name: News Radar · Feed Healthcheck (Daily)
+
+# ------------------------------------------------------------
+# Phase 8.20 Step 4（maintenance）—— 每天 ping 一次所有 RSS feed
+# URL，fail 時自動開 GitHub issue 讓 Hsin 收到通知。
+#
+# 為什麼獨立成一條 workflow：
+#   * pipeline.yml 每小時跑 harvest 時雖然也會碰 feed，但那只看『這一小時
+#     能不能抓到新條目』，不是『feed 本身是否還活著』（例如 The Diff 從
+#     Substack 遷到 thediff.co 的案例，舊 URL 回 400 但 harvest 只會 retry
+#     幾次就放棄、不會顯眼地叫 Hsin 去換 URL）。
+#   * 這條只跑輕量 HTTP HEAD/GET，30 秒搞定，發現問題立刻開 issue。
+#
+# 開 issue 策略（避免灌爆通知）：
+#   * 若已有開放中的 feed-healthcheck issue → 追加一則 comment
+#   * 沒有 → 建立新 issue 並 label `feed-healthcheck`
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    # 每天 UTC 23:00 = Asia/Taipei 07:00（Hsin 起床前先知道哪個 feed 掛了）
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  # 跟 pipeline / reflect 不衝突，但自己要 serialize 以免 cron + 手動撞一起
+  group: news-radar-feed-healthcheck
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # audit_feeds.py --urls-only 只需 httpx + pyyaml，但 requirements.txt
+          # 夠輕量（<30s）就直接全裝，省 branching。
+          pip install -r requirements.txt
+
+      - name: Run feed healthcheck
+        id: audit
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          # --urls-only 不需 DB、不需 pydantic 模型，最輕量
+          set +e
+          python -m scripts.audit_feeds --urls-only 2>&1 | tee /tmp/feed_audit.log
+          AUDIT_RC=${PIPESTATUS[0]}
+          set -e
+          echo "rc=${AUDIT_RC}" >> "$GITHUB_OUTPUT"
+          # 取失敗行（非 200）給 issue body
+          grep -E "❌|⚠️" /tmp/feed_audit.log > /tmp/feed_failures.log || true
+          if [ -s /tmp/feed_failures.log ]; then
+            echo "has_failures=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_failures=false" >> "$GITHUB_OUTPUT"
+          fi
+          # workflow 本身不因 feed fail 而紅——交給 issue 通知，避免通知疲勞
+          exit 0
+
+      - name: Upsert GitHub issue on failure
+        if: steps.audit.outputs.has_failures == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          # 既有開放中的 issue？有就 comment，沒有就 create
+          EXISTING_ISSUE=$(gh issue list \
+            --label feed-healthcheck \
+            --state open \
+            --json number \
+            --jq '.[0].number' || echo "")
+
+          BODY_FILE=$(mktemp)
+          {
+            echo "## Feed healthcheck 失敗"
+            echo ""
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "時間：$(date -u +%Y-%m-%dT%H:%M:%SZ) UTC"
+            echo ""
+            echo "### 失敗清單（含 redirect/403/500）"
+            echo ""
+            echo '```'
+            cat /tmp/feed_failures.log
+            echo '```'
+            echo ""
+            echo "### 下一步"
+            echo "- 登入 Mac，在 repo 根目錄跑 \`python -m scripts.audit_feeds --urls-only\` 重現"
+            echo "- 如果 URL 需要換，修 \`config/config.yaml\` 後 push，下一輪 pipeline 自動生效"
+            echo "- 如果只是單次 timeout，等明天 healthcheck 自動重跑；連續 3 天還失敗再手動介入"
+          } > "$BODY_FILE"
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "[gh-issue] 已有開放中 issue #$EXISTING_ISSUE，追加 comment"
+            gh issue comment "$EXISTING_ISSUE" --body-file "$BODY_FILE"
+          else
+            echo "[gh-issue] 無開放 issue，建立新的"
+            gh issue create \
+              --title "[feed-healthcheck] Feed(s) failed — $(date -u +%Y-%m-%d)" \
+              --label feed-healthcheck \
+              --body-file "$BODY_FILE"
+          fi
+
+      - name: Auto-close stale healthcheck issues when all green
+        if: steps.audit.outputs.has_failures == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 若全綠但仍有開放中的 feed-healthcheck issue → 留一則 comment + close
+          OPEN_ISSUES=$(gh issue list \
+            --label feed-healthcheck \
+            --state open \
+            --json number \
+            --jq '.[].number' || echo "")
+          if [ -z "$OPEN_ISSUES" ]; then
+            echo "[gh-issue] 無需處理的舊 issue"
+            exit 0
+          fi
+          for NUM in $OPEN_ISSUES; do
+            gh issue comment "$NUM" --body "✅ 今日 healthcheck 全綠，自動 close（run ${{ github.run_id }}）"
+            gh issue close "$NUM" --reason completed
+          done
+
+      - name: Upload healthcheck log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: feed-healthcheck-${{ github.run_id }}
+          path: /tmp/feed_audit.log
+          retention-days: 14
+          if-no-files-found: warn
