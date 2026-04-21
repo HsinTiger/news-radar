@@ -48,6 +48,16 @@ MIN_INTERVAL_SECONDS = 60 * 60           # 1h upper bound（頻率上限 = 至�
 MAX_INTERVAL_SECONDS = 2 * 60 * 60       # 2h lower bound（頻率下限 = 至多間隔 120 min）
 
 
+# ---------- _publish_one outcome codes（Phase 8.20 追加）----------
+# exit code 映射寫在 main()；任何非 ALL_PLATFORMS_FAILED 都算「pipeline 正常運作」
+# 設計原則：workflow red 只保留給『真的出事』的情境。預期內的操作（queue 空、
+# guard 主動攔、資料缺損已 mark_failed）都 exit 0。
+OUTCOME_PUBLISHED = "published"               # ≥1 平台成功 → exit 0
+OUTCOME_QUALITY_BLOCKED = "quality_blocked"   # guard 主動拒發 → exit 0（guard 正常工作）
+OUTCOME_NO_PLATFORM_DRAFTS = "no_platform_drafts"  # 資料異常、已 mark_failed → exit 0
+OUTCOME_ALL_PLATFORMS_FAILED = "all_platforms_failed"  # Meta API 三平台全敗 → exit 1
+
+
 # ---------- 工具 ----------
 
 def _parse_iso(s: str) -> Optional[datetime]:
@@ -108,8 +118,12 @@ def _pick_draft(conn, allow_fallback: bool):
 
 # ---------- 發布 ----------
 
-async def _publish_one(conn, row, dry_run: bool = False) -> bool:
-    """把挑到的 draft 的三個 platform_drafts 各發一次。回傳 True 表示至少一平台成功。"""
+async def _publish_one(conn, row, dry_run: bool = False) -> str:
+    """把挑到的 draft 的三個 platform_drafts 各發一次。
+
+    回傳 OUTCOME_* 字串。main() 負責把它映射成 exit code。
+    設計原則：_publish_one 只講「發生什麼」、不講「workflow 該紅還是綠」。
+    """
     draft_id = row["id"]
     print(f"\n[PublishQueue] 選中 draft: {draft_id[:16]}…")
     print(f"   ↳ 新聞: {(row['news_title'] or '')[:60]}")
@@ -120,7 +134,7 @@ async def _publish_one(conn, row, dry_run: bool = False) -> bool:
         print(f"   ⚠️ 找不到 platform_drafts → 無法發布，標 failed")
         if not dry_run:
             dbmod.mark_queue_failed(conn, draft_id, reason="no_platform_drafts")
-        return False
+        return OUTCOME_NO_PLATFORM_DRAFTS
 
     # ---------- Phase 8.20：品質守門員（攔下 Phase 8.19 前的 emergency_template）----------
     # 檢查每個平台的 final/full_text；只要有任一個 platform_draft 觸發 block 級規則，
@@ -138,8 +152,9 @@ async def _publish_one(conn, row, dry_run: bool = False) -> bool:
         if not dry_run:
             dbmod.mark_queue_failed(conn, draft_id, reason=f"quality_guard: {one_line}")
             notify_quality_block(draft_id=draft_id, reasons_one_line=one_line[:200])
-        # 回 False 但不記 publish_log——這不是「發文失敗」而是「主動拒發」
-        return False
+        # 不記 publish_log——這不是「發文失敗」而是 guard 主動拒發。
+        # workflow 維持 exit 0（guard 做它該做的事，不是系統壞）。
+        return OUTCOME_QUALITY_BLOCKED
 
     image_url = row["og_image_url"]
     # og_video_url 暫不主動使用（Phase 8.18 範圍內；影片 path 已在 Phase 8.16 實作，
@@ -196,18 +211,19 @@ async def _publish_one(conn, row, dry_run: bool = False) -> bool:
             print(f"   ❌ [{platform}] 失敗: {str(result.get('error'))[:200]}")
 
     if dry_run:
-        return True  # dry-run 不改 DB、不算成功
+        return OUTCOME_PUBLISHED  # dry-run 不改 DB、也不記失敗——視為正常走完
 
     if any_success:
         dbmod.mark_queue_published(conn, draft_id)
         stale_count = dbmod.mark_queue_stale_except(conn, draft_id)
         if stale_count:
             print(f"   ↳ freshness-first: 把 {stale_count} 筆比它舊的 queued 標 stale")
-    else:
-        # 三平台全軍覆沒 → 避免無限輪迴，標 failed（人工可改回 queued 重試）
-        dbmod.mark_queue_failed(conn, draft_id)
+        return OUTCOME_PUBLISHED
 
-    return any_success
+    # 三平台全軍覆沒 → 避免無限輪迴，標 failed（人工可改回 queued 重試）。
+    # 這是少數會讓 workflow red 的情境——代表 Meta API 側真的有問題，應該要收到通知。
+    dbmod.mark_queue_failed(conn, draft_id)
+    return OUTCOME_ALL_PLATFORMS_FAILED
 
 
 # ---------- Main ----------
@@ -241,10 +257,19 @@ async def main() -> int:
         print(f"[PublishQueue] 選稿 mode={mode}")
 
         # 3. 發布
-        ok = await _publish_one(conn, row, dry_run=args.dry_run)
-        print(f"[PublishQueue] 完成，any_success={ok}")
+        outcome = await _publish_one(conn, row, dry_run=args.dry_run)
+        print(f"[PublishQueue] 完成，outcome={outcome}")
         print(f"[Queue] 最終狀態分佈: {dbmod.count_queue_status(conn)}")
-        return 0 if ok or args.dry_run else 1
+
+        # Outcome → exit code 映射（Phase 8.20 exit semantics）
+        #   PUBLISHED / QUALITY_BLOCKED / NO_PLATFORM_DRAFTS → 0（pipeline 正常運作）
+        #   ALL_PLATFORMS_FAILED                              → 1（Meta API 真的出事，workflow red）
+        # dry-run 永遠 0。
+        if args.dry_run:
+            return 0
+        if outcome == OUTCOME_ALL_PLATFORMS_FAILED:
+            return 1
+        return 0
     finally:
         conn.close()
 

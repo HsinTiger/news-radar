@@ -3,7 +3,10 @@
 這邊不碰真實 Meta API（mock publisher）、也不碰 launch_notification_center
 （靠 local_notify 在 Linux sandbox 預設就 no-op），只驗證：
     給一筆『platform_drafts 內容是 emergency_template』的 draft，
-    _publish_one 會在 call publisher 前就 return False，並標 failed。
+    _publish_one 會在 call publisher 前就 return OUTCOME_QUALITY_BLOCKED，並標 failed。
+
+Phase 8.20 update：_publish_one 改回 string outcome code（不再是 bool）。
+OUTCOME_QUALITY_BLOCKED 代表 guard 正常運作，對應 exit code 0（不是 workflow 失敗）。
 """
 from __future__ import annotations
 
@@ -59,7 +62,7 @@ def _seed_one_templated_draft(conn):
         conn.execute(
             """INSERT INTO platform_drafts
                  (draft_id, platform, title, body, full_text, char_count, created_at)
-               VALUES ('d1', ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             ("d1", pl, "🚀 Zero-Copy GPU Inference", tmpl, tmpl, len(tmpl), now),
         )
     conn.commit()
@@ -87,8 +90,8 @@ def test_publish_queue_blocks_templated_draft(monkeypatch):
             WHERE d.id='d1'"""
     ).fetchone()
 
-    ok = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
-    assert ok is False
+    outcome = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
+    assert outcome == rpq.OUTCOME_QUALITY_BLOCKED, f"expected quality_blocked, got {outcome!r}"
 
     # After block, queue_status='failed'
     qs = conn.execute("SELECT queue_status FROM drafts WHERE id='d1'").fetchone()[0]
@@ -154,6 +157,111 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
             WHERE d.id='d2'"""
     ).fetchone()
 
-    ok = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
-    assert ok is True
+    outcome = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
+    assert outcome == rpq.OUTCOME_PUBLISHED, f"expected published, got {outcome!r}"
     assert len(call_log) == 3, f"expected 3 publisher calls, got {len(call_log)}"
+
+
+# ---------- Phase 8.20 追加：exit code 語義測試 ----------
+
+def test_publish_queue_all_platforms_fail_returns_all_failed_outcome(monkeypatch):
+    """若 publisher 三個平台都失敗，outcome 必須是 ALL_PLATFORMS_FAILED（workflow red）。"""
+    import run_publish_queue as rpq
+
+    conn = _fresh_memory_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    healthy = (
+        "NVIDIA 宣布 Blackwell B200 量產，首批 10 萬片已交付 Hyperscaler。"
+        "每片 BoM 約 3 萬美金，Microsoft、Meta、Google、Amazon 四家合計 85%。\n\n#NVIDIA"
+    )
+    conn.execute(
+        """INSERT INTO news_items
+             (id, feed_name, feed_tier, url, title, published_at, fetched_at, og_image_url)
+           VALUES ('n3','test','primary','https://a.example/d','Blackwell B200 量產',?,?,?)""",
+        (now, now, "https://example.com/y.jpg"),
+    )
+    conn.execute(
+        """INSERT INTO drafts
+             (id, news_id, persona_version, generated_at, status,
+              confidence_score, queue_status, publish_at)
+           VALUES ('d3','n3','1.1',?, 'auto_approved', 1.0, 'queued', ?)""",
+        (now, now),
+    )
+    for pl in ("facebook", "instagram", "threads"):
+        conn.execute(
+            """INSERT INTO platform_drafts
+                 (draft_id, platform, full_text, created_at)
+               VALUES ('d3', ?, ?, ?)""",
+            (pl, healthy, now),
+        )
+    conn.commit()
+
+    async def _fake_fail(*a, **kw):
+        return {"success": False, "error": {"code": 500, "msg": "simulated API outage"}}
+    monkeypatch.setattr(rpq, "publish_to_fb", _fake_fail)
+    monkeypatch.setattr(rpq, "publish_to_ig", _fake_fail)
+    monkeypatch.setattr(rpq, "publish_to_threads", _fake_fail)
+
+    row = conn.execute(
+        """SELECT d.id, d.news_id, n.title AS news_title,
+                  n.published_at AS news_published_at, n.og_image_url
+             FROM drafts d JOIN news_items n ON d.news_id = n.id
+            WHERE d.id='d3'"""
+    ).fetchone()
+
+    outcome = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
+    assert outcome == rpq.OUTCOME_ALL_PLATFORMS_FAILED, \
+        f"expected all_platforms_failed, got {outcome!r}"
+
+    # 標 failed 讓 queue 前進，不會無限 retry 同一則
+    qs = conn.execute("SELECT queue_status FROM drafts WHERE id='d3'").fetchone()[0]
+    assert qs == "failed", f"expected queue_status=failed, got {qs}"
+
+
+def test_publish_queue_no_platform_drafts_returns_no_platform_outcome():
+    """若 draft 沒有對應的 platform_drafts（資料異常），outcome 必須是 NO_PLATFORM_DRAFTS。"""
+    import run_publish_queue as rpq
+
+    conn = _fresh_memory_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO news_items
+             (id, feed_name, feed_tier, url, title, published_at, fetched_at)
+           VALUES ('n4','test','primary','https://a.example/e','孤兒 draft',?,?)""",
+        (now, now),
+    )
+    conn.execute(
+        """INSERT INTO drafts
+             (id, news_id, persona_version, generated_at, status,
+              confidence_score, queue_status, publish_at)
+           VALUES ('d4','n4','1.1',?, 'auto_approved', 1.0, 'queued', ?)""",
+        (now, now),
+    )
+    conn.commit()
+    # 故意不 seed platform_drafts
+
+    row = conn.execute(
+        """SELECT d.id, d.news_id, n.title AS news_title,
+                  n.published_at AS news_published_at, n.og_image_url
+             FROM drafts d JOIN news_items n ON d.news_id = n.id
+            WHERE d.id='d4'"""
+    ).fetchone()
+
+    outcome = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
+    assert outcome == rpq.OUTCOME_NO_PLATFORM_DRAFTS, \
+        f"expected no_platform_drafts, got {outcome!r}"
+
+    qs = conn.execute("SELECT queue_status FROM drafts WHERE id='d4'").fetchone()[0]
+    assert qs == "failed", f"expected queue_status=failed, got {qs}"
+
+
+def test_outcome_constants_are_distinct():
+    """四個 OUTCOME_* 常數不可撞名，否則 exit code 映射會崩。"""
+    import run_publish_queue as rpq
+    outcomes = {
+        rpq.OUTCOME_PUBLISHED,
+        rpq.OUTCOME_QUALITY_BLOCKED,
+        rpq.OUTCOME_NO_PLATFORM_DRAFTS,
+        rpq.OUTCOME_ALL_PLATFORMS_FAILED,
+    }
+    assert len(outcomes) == 4, f"expected 4 distinct outcomes, got {outcomes}"
