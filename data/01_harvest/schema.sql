@@ -31,9 +31,10 @@ CREATE TABLE IF NOT EXISTS news_items (
 
 CREATE INDEX IF NOT EXISTS idx_news_status ON news_items(status);
 CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at);
--- Phase 8.20：topic 排序常用，加 index；加權分數 DESC 排名也會用
-CREATE INDEX IF NOT EXISTS idx_news_topic ON news_items(topic_category);
-CREATE INDEX IF NOT EXISTS idx_news_weighted_score ON news_items(weighted_score);
+-- Phase 8.20 的 idx_news_topic / idx_news_weighted_score 故意不寫在這：
+-- topic_category 與 weighted_score 是 Phase 8.20 才加的欄位，對舊 DB 而言
+-- CREATE TABLE IF NOT EXISTS 不會補欄位，CREATE INDEX 會因為該欄位不存在而炸。
+-- 改在 src/db.py::init_db 的 ALTER TABLE migration 之後執行（同 idx_drafts_queue_status 模式）。
 
 
 -- ============ 2. AI 產出草稿 ============
