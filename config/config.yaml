@@ -219,8 +219,7 @@ feeds:
     tier: primary
     language: en
     tags: [strategy, finance, tech-business, deep-analysis]
-    # UNVERIFIED 2026-04-21 — diff.substack.com/feed 回 400，改成自建域名路徑
-    # Byrne 2023 已從純 substack 遷到 thediff.co；再跑一次 audit 確認
+    # VERIFIED 2026-04-21 — 200 OK, 85 KB（diff.substack.com 已遷，走 thediff.co）
 
   # 宏觀／政策／地緣（IEO 風格）
   - name: Marginal Revolution
