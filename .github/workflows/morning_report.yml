@@ -1,0 +1,105 @@
+name: News Radar · Morning Report (Daily)
+
+# ------------------------------------------------------------
+# Phase 8.20 Step 4（observability）—— 每日清晨產出系統狀態一頁式報告，
+# commit 到 main:docs/morning/YYYY-MM-DD.md。
+#
+# 和其他 workflows 的關係：
+#   * pipeline.yml：每小時發文。執行者。
+#   * reflect.yml：每日改 soul.md。腦袋。
+#   * reflect_topic.yml：每週調 topic_weights。關節。
+#   * feed_healthcheck.yml：每日 ping feed 是否活著。嗅覺。
+#   * morning_report.yml：每日晨間盤點（本 workflow）。儀表板。
+#
+# Hsin 每天起床只要讀兩個地方就完整掌握系統：
+#   1. GitHub repo 的 `docs/morning/YYYY-MM-DD.md`（本檔產出）
+#   2. feed-healthcheck issue list（如果有黃/紅燈）
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    # UTC 23:30 = Asia/Taipei 07:30（比 feed_healthcheck 慢半小時，
+    # 這樣 morning_report 能把今早 healthcheck 的結果也納進來）
+    - cron: "30 23 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  # read-only DB、跟別的 workflow 不衝突
+  group: news-radar-morning-report
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # commit 報告檔到 main
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Checkout state branch
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies (stdlib only needed)
+        run: |
+          python -m pip install --upgrade pip
+          # morning_report.py 本身只用 stdlib；但若未來 section 要查 pydantic
+          # 模型的話就需要 requirements。為了將來好擴，現在就裝齊。
+          pip install -r requirements.txt
+
+      - name: Restore DB from state branch
+        run: |
+          mkdir -p data/01_harvest
+          if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
+          else
+            echo "[restore] state branch 沒 DB —— 報告會印 placeholder"
+          fi
+
+      - name: Generate morning report
+        env:
+          TZ: Asia/Taipei
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python -m scripts.morning_report --stdout
+          # 檢查檔案確實產出
+          TODAY=$(date -u +%Y-%m-%d)
+          ls -la docs/morning/
+          test -f "docs/morning/${TODAY}.md"
+
+      - name: Commit report to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+          git add docs/morning/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "[morning] 今日報告無變動（可能今天已跑過一次），跳過 commit"
+            exit 0
+          fi
+          git commit -m "docs: morning report $(date -u +%Y-%m-%d) (run ${{ github.run_id }})"
+          git push
+
+      - name: Upload as artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: morning-report-${{ github.run_id }}
+          path: docs/morning/
+          retention-days: 30
+          if-no-files-found: warn
