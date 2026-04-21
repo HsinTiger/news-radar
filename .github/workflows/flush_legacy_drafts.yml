@@ -1,0 +1,160 @@
+name: News Radar · Flush Legacy Drafts
+
+# ------------------------------------------------------------
+# Phase 8.20 · 一次性清掉 pre-8.19 的 legacy draft
+# 做什麼：
+#   從 state branch 拉 DB → 跑 scripts/flush_legacy_drafts →（視 mode）寫回 state
+# 為什麼在這裡跑、不是 Mac：
+#   canonical DB 住在 state branch（publisher 每小時 force-push 到這裡），
+#   Mac 本地 DB 是舊 schema，跑不動；而且在這裡跑可以跟 publisher 共用同一把鎖
+#   （concurrency group），不會撞到整點 cron。
+# 用法：
+#   1. GitHub → Actions → "Flush Legacy Drafts" → Run workflow
+#      - mode=dry-run（預設）：只印 preview，不動 DB
+#      - mode=apply：實際 mark_failed，並 force-push 更新後 state branch
+#   2. 或 CLI：
+#      gh workflow run flush_legacy_drafts.yml -f mode=dry-run
+#      gh workflow run flush_legacy_drafts.yml -f mode=apply
+# ------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: true
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - apply
+      include:
+        description: "queue_status 要掃哪些（逗號分隔）"
+        required: false
+        default: "null,queued,stale"
+        type: string
+
+concurrency:
+  # 和 publisher 共用 group，避免並行寫 state branch
+  group: news-radar-publish-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  flush:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Checkout state branch
+        id: state_checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore DB from state branch
+        run: |
+          mkdir -p data/01_harvest logs state archive
+          if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
+          else
+            echo "[restore] state branch 沒有 DB，沒東西可 flush"
+            exit 0
+          fi
+
+      - name: Run flush_legacy_drafts
+        id: run
+        env:
+          PYTHONUNBUFFERED: "1"
+          TZ: Asia/Taipei
+        run: |
+          MODE="${{ inputs.mode }}"
+          INCLUDE="${{ inputs.include }}"
+          echo "[flush] mode=$MODE include=$INCLUDE"
+          if [ "$MODE" = "apply" ]; then
+            python -m scripts.flush_legacy_drafts --include "$INCLUDE" --apply
+          else
+            python -m scripts.flush_legacy_drafts --include "$INCLUDE"
+          fi
+
+      - name: Persist state (apply mode only)
+        if: ${{ inputs.mode == 'apply' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+
+          mkdir -p data/01_harvest logs state archive
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          # logs/archive/state 保持同步（別把 publisher 留下來的資料蓋掉）
+          if [ -d "$GITHUB_WORKSPACE/_state/logs" ]; then
+            cp -r "$GITHUB_WORKSPACE/_state/logs/." logs/ 2>/dev/null || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE/_state/archive" ]; then
+            cp -r "$GITHUB_WORKSPACE/_state/archive/." archive/ 2>/dev/null || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/_state/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/_state/state/last_harvest.txt" state/last_harvest.txt
+          fi
+
+          cat > LAST_RUN.txt <<EOF
+          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_id: ${RUN_ID}
+          run_url: ${RUN_URL}
+          commit: ${COMMIT}
+          kind: flush_legacy_drafts
+          EOF
+
+          if [ -f data/01_harvest/news_radar.db ]; then
+            echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] 無變化，跳過推送"
+            exit 0
+          fi
+          git commit -q -m "state: flush_legacy_drafts run ${RUN_ID} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            state
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: flush-logs-${{ github.run_id }}
+          path: |
+            logs/
+            data/01_harvest/news_radar.db
+          retention-days: 14
+          if-no-files-found: warn
