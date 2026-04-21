@@ -44,11 +44,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src import db as dbmod  # noqa: E402
+import run_pipeline  # noqa: E402
 from run_pipeline import process_item  # noqa: E402
 
 
 async def _run(news_id: str, force: bool) -> str:
     dbmod.init_db()
+
+    # --force 要 bypass 兩道門檻：
+    #   (1) MIN_SCORE_THRESHOLD（分數太低就 return "dropped"、連 compose 都不跑）
+    #   (2) publish_threshold / AUTO_PUBLISH_THRESHOLD（分數未達就不入 queue）
+    # 非 fatal 的 monkey-patch，只在這支 test utility 的 process 內生效。
+    if force:
+        orig_min = run_pipeline.MIN_SCORE_THRESHOLD
+        run_pipeline.MIN_SCORE_THRESHOLD = 0.0
+        print(f"[ComposeOne] --force：MIN_SCORE_THRESHOLD {orig_min} → 0.0（本次 run 生效）")
+
     conn = dbmod.get_conn()
     try:
         row = conn.execute(
@@ -61,7 +72,7 @@ async def _run(news_id: str, force: bool) -> str:
 
         print(f"[ComposeOne] 目標新聞：{row['title'][:70]}")
         print(f"    ↳ published_at: {row['published_at']}")
-        print(f"    ↳ force mode: {'YES (publish_threshold=0.0)' if force else 'no (使用預設門檻)'}")
+        print(f"    ↳ force mode: {'YES (bypass MIN_SCORE + AUTO_PUBLISH thresholds)' if force else 'no (使用預設門檻)'}")
 
         # 看有沒有舊 draft 要被覆蓋
         old = conn.execute(
