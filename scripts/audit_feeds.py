@@ -35,18 +35,45 @@ def _load_feeds() -> List[dict]:
 
 
 async def _check_one(url: str, timeout_s: float = 10.0) -> Tuple[int, str]:
-    """回 (http_status, info_text)。network 錯誤 → status=0。"""
+    """回 (http_status, info_text)。network 錯誤 → status=0。
+
+    優先用 httpx（更快、對 HTTP/2 友善）；沒裝就 fallback 到 stdlib urllib。
+    urllib fallback 走 executor 避免阻塞 event loop。
+    """
+    # 優先路徑：httpx
     try:
         import httpx  # type: ignore
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as cli:
+                r = await cli.get(url, headers={"User-Agent": "News-Radar-FeedAudit/1.0"})
+                return (r.status_code, f"{len(r.content)} bytes")
+        except Exception as e:
+            return (0, f"{type(e).__name__}: {str(e)[:120]}")
     except ImportError:
-        return (-1, "httpx 未安裝，跳過 HTTP 健檢；pip install httpx")
+        pass
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as cli:
-            r = await cli.get(url, headers={"User-Agent": "News-Radar-FeedAudit/1.0"})
-            return (r.status_code, f"{len(r.content)} bytes")
-    except Exception as e:
-        return (0, f"{type(e).__name__}: {str(e)[:120]}")
+    # Fallback 路徑：urllib（stdlib，永遠在）
+    import urllib.request
+    import urllib.error
+
+    def _sync_get() -> Tuple[int, str]:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "News-Radar-FeedAudit/1.0"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                body = resp.read()
+                return (resp.status, f"{len(body)} bytes (urllib)")
+        except urllib.error.HTTPError as e:
+            # 301/302/404/5xx 類 — 有 status code
+            return (e.code, f"HTTPError: {e.reason}")
+        except urllib.error.URLError as e:
+            return (0, f"URLError: {str(e.reason)[:100]}")
+        except Exception as e:
+            return (0, f"{type(e).__name__}: {str(e)[:120]}")
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_get)
 
 
 async def run_url_audit() -> int:
