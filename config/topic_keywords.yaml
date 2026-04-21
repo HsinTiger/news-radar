@@ -93,6 +93,17 @@ supply_chain:
   - "Nvidia 供應鏈"
   - "ASML"
   - "Applied Materials"
+  # Phase 8.20 補英文覆蓋（for SemiAnalysis）
+  - "H100"
+  - "H200"
+  - "B100"
+  - "B200"
+  - "GB200"
+  - "MI300"
+  - "NVLink"
+  - "Infiniband"
+  - "datacenter GPU"
+  - "wafer"
 
 earnings:
   # 營收 / 財報
@@ -113,6 +124,19 @@ earnings:
   - "下修財測"
   - "年增率"
   - "季增率"
+  # Phase 8.20 補英文覆蓋（for The Diff / Not Boring）
+  - "acquisition"
+  - "IPO"
+  - "Series A"
+  - "Series B"
+  - "Series C"
+  - "funding round"
+  - "Q1 earnings"
+  - "Q2 earnings"
+  - "Q3 earnings"
+  - "Q4 earnings"
+  - "beat estimates"
+  - "missed estimates"
 
 tw_stocks:
   # 台股
@@ -146,6 +170,17 @@ us_stocks:
   - "Magnificent Seven"
   - "10-year Treasury"
   - "VIX"
+  # Phase 8.20 補英文覆蓋（for Calculated Risk 宏觀數據；會影響美股）
+  - "CPI"
+  - "inflation"
+  - "jobless claims"
+  - "nonfarm payrolls"
+  - "housing starts"
+  - "Case-Shiller"
+  - "PCE"
+  - "Fed rate"
+  - "rate cut"
+  - "rate hike"
 
 tech_product_launch:
   # 非 AI 的科技新品
@@ -181,5 +216,12 @@ policy_geopolitics:
   - "技術出口"
   - "FTC"
   - "反壟斷"
+  # Phase 8.20 補英文覆蓋（for Marginal Revolution / The Diff）
+  - "tariff"
+  - "trade war"
+  - "sanctions"
+  - "export control"
+  - "antitrust"
+  - "geopolitics"
 
 # 注意：other 不定義 keywords — 若全部都 miss，classifier 會回 other（含低信心）
