@@ -59,16 +59,16 @@ graph TD
     end
 
     %% ==================== 5. 發布層 ====================
-    subgraph PUB_LAYER["5. Publisher (僅 score ≥ 0.9 觸發)"]
-        GATE{{"AUTO_PUBLISH_THRESHOLD<br/>= 0.9"}}
+    subgraph PUB_LAYER["5. Publisher (score ≥ 0.7 strict / 0.65 rescue)"]
+        GATE{{"AUTO_PUBLISH_THRESHOLD = 0.7<br/>RESCUE_PUBLISH_THRESHOLD = 0.65<br/>(2026-04-23 量取勝實驗)"}}
         PUB["publisher.py"]
         FB["📘 Facebook"]
         IG["📸 Instagram"]
         TH["🧵 Threads"]
 
         FIN -- "確認字數合規" --> GATE
-        GATE -- "達 0.9：自動發" --> PUB
-        GATE -- "0.65–0.89：drafted" --> DRAFTS_TBL
+        GATE -- "達 0.7 / rescue 0.65：自動發" --> PUB
+        GATE -- "0.65–0.69：drafted" --> DRAFTS_TBL
         PUB -- "Plan A 網址 / Plan B 在地檔案" --> FB
         PUB --> IG
         PUB --> TH
@@ -143,10 +143,17 @@ graph TD
 ## 🚦 三道關卡與兩個門檻
 
 ```
-score < 0.65   →  dropped (不寫稿、不發、不浪費 token)
-0.65 ≤ s < 0.9  →  drafted (產三平台稿，落 drafts/，但不發到社群)
-score ≥ 0.9     →  published (發三平台 + 寫 archive/)
+score < 0.65       →  dropped (不寫稿、不發、不浪費 token)
+0.65 ≤ s < 0.7     →  drafted (產三平台稿，落 pending_drafts/；rescue 時段會被自動拾取發文)
+score ≥ 0.7        →  published (嚴格模式，發文距上次 1–2hr 時用此門檻)
+score ≥ 0.65       →  published (rescue 模式，距上次 ≥ 2hr 避免空窗用此門檻；等於全發)
 ```
+
+> 門檻歷史：
+> - 2026-04-22 以前：0.9 / 0.8（嚴選，實測 queue 長期空置）
+> - 2026-04-23 起：**0.7 / 0.65（量取勝 2 週實驗）**。近乎全開，只受 1hr 最小間隔與 1/slot 節流。
+>   兩週後由 analyst 的互動數據（FB reach、IG saves、Threads quotes）決定是否回升。
+
 
 **Hunter Loop 終止條件（兩個之一觸發即停）**：
 - 已發 `MAX_PUBLISH_PER_SLOT (= 1)` 篇

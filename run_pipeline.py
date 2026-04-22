@@ -39,10 +39,15 @@ from src.analyst import run_analysis_cycle
 from src.reflector import run_reflection
 
 
-# ---------- 策略參數 (Milestone 6.2 · Hunter 0.9) ----------
-AUTO_PUBLISH_THRESHOLD = 0.9    # Hunter 精準門檻：只有 0.9+ 才算「獵殺成功」
-RESCUE_PUBLISH_THRESHOLD = 0.8  # Rescue 模式放寬門檻（距上次發文 ≥ 2hr 時用）
+# ---------- 策略參數 (Phase 8.20 · 量取勝 2 週實驗，2026-04-23) ----------
+# 原設定：0.9 / 0.8（嚴選），導致 2026-04-20 之後 queue 長期空置（見 §7.1）。
+# 2026-04-23 直接降到 0.7 / 0.65（近乎全開）——composer 寫出來的幾乎都發，
+# 只受 MIN_PUBLISH_INTERVAL（1hr）與 MAX_PUBLISH_PER_SLOT（=1）節流。
+# 目的：2 週後台資料收集期，資料量優先；兩週後回頭看 analyst 互動數據再決定是否回升。
+AUTO_PUBLISH_THRESHOLD = 0.7    # Hunter 精準門檻：距上次發文 1–2hr 時用
+RESCUE_PUBLISH_THRESHOLD = 0.65 # Rescue 模式放寬門檻（距上次發文 ≥ 2hr 時用）
 MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
+                                # ⚠️ RESCUE == MIN：rescue 時段等於「composer 產出全發」
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
 
