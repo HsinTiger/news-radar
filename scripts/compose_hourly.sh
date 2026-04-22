@@ -50,10 +50,21 @@ fi
 
 cd "$LOCAL_REPO" || { echo "❌ cd $LOCAL_REPO 失敗"; exit 3; }
 
-# ---- 拉 main 最新（可能 OneDrive 那邊剛 push 程式碼變動）----
+# ---- 拉 main 最新（另一台機可能剛 push 程式碼變動）----
+# 設計決策：用 `merge --ff-only` 而非 `reset --hard`：
+#   clean tree + 可 ff → fast-forward（與 reset 效果相同）
+#   dirty tree       → ff-only 衝突檔才拒絕；reset --hard 會無聲吞 WIP
+#   local 有未 push commit + origin 也前進 → ff-only 拒絕；reset --hard 會吞掉 commit
+# 失敗都 loud-log，不用 `|| true` 靜默吞掉。
 echo "🔄 fetch origin main..."
-git fetch --quiet origin main || { echo "⚠️ fetch main 失敗，沿用本機 main"; }
-git reset --hard origin/main >/dev/null 2>&1 || true
+if ! git fetch --quiet origin main; then
+    echo "⚠️ fetch main 失敗，沿用本機 main"
+fi
+if ! git merge --ff-only origin/main >/dev/null 2>&1; then
+    echo "⚠️ 不能 fast-forward 到 origin/main —— 本輪沿用現有 code"
+    echo "   可能原因：working tree 髒、或 local 有未 push commit"
+    echo "   手動處理：cd $LOCAL_REPO && git status && git log --oneline origin/main..HEAD"
+fi
 
 # ---- 拉 state branch 的 DB ----
 echo "🔄 fetch state branch..."
