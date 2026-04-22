@@ -31,7 +31,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional
 
-Severity = Literal["block", "warn"]
+Severity = Literal["block", "warn", "rewrite"]
+# block   = 拒絕發文（嚴重 FP）
+# warn    = 記錄但放行（弱訊號）
+# rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,167 @@ _TEMPLATED_HASHTAG_BUNDLE = (
     "#數據驅動",
 )
 
+
+# ---------- Topic-4 redo（2026-04-22）patterns ----------
+# 目標：把『LLM 輸出破綻 / 套話堆疊 / 無依據數字 / 過時年份』擋在 Meta API 之前。
+# 設計原則：
+#   - 有『context-gated』的規則（hyperbole、corporate fluff、uncited stat、wave opener）
+#     一定要跟 count / 距離 / year anchor 綁在一起——否則 FP 一下就把 healthy 貼文也 block。
+#   - severity='rewrite' 不是拒絕發文，而是給 composer 一個機會重寫；上層可以決定要不要
+#     重跑 LLM。這比 block 更溫和，適合『內容結構不好但不算假文』的情況。
+
+# Pattern 1：AI 拒絕／meta 語句——LLM refuses 或自我揭露時的產物
+_AI_REFUSAL_MARKERS = (
+    "抱歉，我無法",
+    "抱歉我無法",
+    "作為一個 AI",
+    "作為語言模型",
+    "作為 AI 助理",
+    "I cannot",
+    "I'm not able to",
+    "I am unable to",
+    "As an AI",
+    "As a language model",
+    "I don't have",
+    "我無法提供",
+)
+
+# Pattern 2：template expansion 留下的未替換 placeholder
+_PLACEHOLDER_MARKERS = (
+    "[公司名]",
+    "[產品名]",
+    "[日期]",
+    "{{",
+    "}}",
+    "XXXX",
+    "XXX 公司",
+    "TBD",
+    "TODO",
+    "待補",
+    "此處待補",
+    "lorem ipsum",
+)
+
+# Pattern 3：LLM 掰的示範網址
+_FAKE_URL_MARKERS = (
+    "example.com",
+    "yourwebsite.com",
+    "placeholder.io",
+    "sample-url",
+    "your-site.com",
+)
+
+# Pattern 4：過時年份（LLM 用舊 training data 產稿的指紋；單獨出現不判，需 context gate）
+_STALE_YEAR_MARKERS = ("2021", "2022", "2023")
+
+# Pattern 5：LLM 虛構的『知名媒體 / 內部消息』佐證
+_FAKE_SOURCE_MARKERS = (
+    "《某某日報》",
+    "《某科技網》",
+    "知名科技媒體報導",
+    "知名財經媒體指出",
+    "根據業內內部消息",
+    "匿名內部人士透露",
+    "消息人士透露",
+)
+
+# Pattern 6：企業套話——單一個不算 fluff，要 ≥3 個才算堆疊
+_CORPORATE_FLUFF_TERMS = (
+    "賦能", "生態", "賽道", "閉環", "下沉市場", "痛點", "打法",
+    "降維打擊", "全鏈路", "抓手", "頂層設計", "護城河", "底層邏輯",
+    "戰略縱深", "勢能", "心智占領",
+)
+
+# Pattern 7：誇飾詞——單用無礙，疊用 ≥4 次就是 AI 超燃文
+_HYPERBOLE_TERMS = (
+    "劃時代", "顛覆", "重大突破", "改寫", "前所未有", "史上最",
+    "震撼業界", "徹底改變", "革命性", "石破天驚", "翻天覆地",
+)
+
+# Pattern 8：數字但無引用來源——要配 citation 近距檢查
+_STAT_PATTERN = re.compile(
+    r"(?:提升|增長|成長|下降|跌|漲|提高|減少)\s*\d+(?:\.\d+)?\s*%"
+    r"|(?:\d+(?:\.\d+)?)\s*(?:億|兆|萬)\s*(?:美元|元|台幣|日圓|人民幣)"
+    r"|\d+(?:\.\d+)?\s*倍"
+)
+
+# 這些詞表示前後文有引用來源——數字出現在這些詞 ±40 字內就不算 uncited
+_CITATION_MARKERS = (
+    "來源", "根據", "資料來源", "路透", "彭博", "《", "CNBC", "《華爾街",
+    "per ", "according to", "財報", "法說", "官方數據", "調查顯示",
+    "白皮書", "研究指出", "公告", "分析師預估",
+)
+
+# Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
+_WAVE_PATTERN = re.compile(
+    r"在\s*(數位化|AI|快速變動|科技|全球化|變革)\s*的\s*浪潮\s*(中|下|裡|之中|之下)"
+)
+
+# 文章若本身含年份錨點，wave opener 就不算干話——算有落地
+_YEAR_ANCHORS = ("2024", "2025", "2026", "Q1", "Q2", "Q3", "Q4", "本季", "上季", "本月")
+
+
+# ---------- Topic-4 helpers ----------
+
+def _count_hits(needles: tuple, text: str) -> int:
+    """distinct term count：同一個詞重複只算一次。"""
+    return sum(1 for n in needles if n and n in text)
+
+
+def _hyperbole_overuse(full_text: str, _title: str) -> Optional[str]:
+    hits = [n for n in _HYPERBOLE_TERMS if n in full_text]
+    if len(hits) >= 4:
+        return "hyperbole_count=" + str(len(hits)) + ":" + "/".join(hits[:5])
+    return None
+
+
+def _corporate_fluff_pileup(full_text: str, _title: str) -> Optional[str]:
+    hits = [n for n in _CORPORATE_FLUFF_TERMS if n in full_text]
+    if len(hits) >= 3:
+        return "fluff_count=" + str(len(hits)) + ":" + "/".join(hits[:5])
+    return None
+
+
+def _has_citation_nearby(text: str, stat_pos: int, radius: int = 40) -> bool:
+    """stat_pos 前後 radius 字元內若有 citation marker，就算有憑據。"""
+    lo = max(0, stat_pos - radius)
+    hi = min(len(text), stat_pos + radius)
+    window = text[lo:hi]
+    return any(m in window for m in _CITATION_MARKERS)
+
+
+def _uncited_stat(full_text: str, _title: str) -> Optional[str]:
+    """抓到任何數字但 ±40 字內都沒有 citation marker。"""
+    for m in _STAT_PATTERN.finditer(full_text):
+        if not _has_citation_nearby(full_text, m.start()):
+            return "stat_no_citation:" + m.group(0)
+    return None
+
+
+def _wave_opener_without_year(full_text: str, _title: str) -> Optional[str]:
+    """LLM 最愛的『在 X 的浪潮中』，除非文內有年份錨點才放行。"""
+    m = _WAVE_PATTERN.search(full_text)
+    if not m:
+        return None
+    if any(y in full_text for y in _YEAR_ANCHORS):
+        return None  # 有年份錨點 → 算落地寫作
+    return "wave_opener:" + m.group(0)
+
+
+def _stale_year_with_recent_context(full_text: str, _title: str) -> Optional[str]:
+    """只有當文章同時含 2026 的當前年份 + 2021-2023 舊年份時不算 flag。
+    純粹 LLM 拿舊 training data 寫新聞時才 flag（= 沒有當前年份錨點）。"""
+    has_stale = any(y in full_text for y in _STALE_YEAR_MARKERS)
+    if not has_stale:
+        return None
+    has_current = any(y in full_text for y in ("2024", "2025", "2026"))
+    if has_current:
+        return None
+    # 只有舊年份、沒當代年份 = LLM 用 outdated data
+    stale_hits = [y for y in _STALE_YEAR_MARKERS if y in full_text]
+    return "only_stale_years:" + ",".join(stale_hits)
+
+
 _RULES: tuple[_Rule, ...] = (
     _Rule(
         code="templated_fallback_marker",
@@ -131,6 +295,61 @@ _RULES: tuple[_Rule, ...] = (
         severity="block",
         message="正文少於 30 字，幾乎不可能是正常產稿結果",
         matcher=lambda ft, _t: f"len={len(ft)}" if len(ft.strip()) < 30 else None,
+    ),
+    # ---- Topic-4 redo：9 條新規則 ----
+    _Rule(
+        code="ai_refusal_marker",
+        severity="block",
+        message="偵測到 LLM 拒絕／meta 語句——代表 composer 產稿失敗，不是真的貼文",
+        matcher=_contains_any(_AI_REFUSAL_MARKERS),
+    ),
+    _Rule(
+        code="placeholder_marker",
+        severity="block",
+        message="偵測到未替換的 template placeholder（[公司名]、{{var}} 等）",
+        matcher=_contains_any(_PLACEHOLDER_MARKERS),
+    ),
+    _Rule(
+        code="fake_url_marker",
+        severity="rewrite",
+        message="含 example.com / yourwebsite 類虛構網址——LLM 掰的示範連結",
+        matcher=_contains_any(_FAKE_URL_MARKERS),
+    ),
+    _Rule(
+        code="stale_year_without_current",
+        severity="warn",
+        message="只出現 2021-2023 舊年份、沒有 2024-2026 錨點——可能 LLM 拿舊資料產稿",
+        matcher=_stale_year_with_recent_context,
+    ),
+    _Rule(
+        code="fake_source_marker",
+        severity="block",
+        message="偵測到『《某某日報》』『內部人士透露』等虛構媒體／來源",
+        matcher=_contains_any(_FAKE_SOURCE_MARKERS),
+    ),
+    _Rule(
+        code="corporate_fluff_pileup",
+        severity="warn",
+        message="企業套話堆疊（≥3 個：賦能／生態／賽道／閉環…）——AI 味過重",
+        matcher=_corporate_fluff_pileup,
+    ),
+    _Rule(
+        code="hyperbole_overuse",
+        severity="rewrite",
+        message="誇飾詞 ≥4 個（劃時代／顛覆／重大突破／改寫）——typical AI hype",
+        matcher=_hyperbole_overuse,
+    ),
+    _Rule(
+        code="uncited_stat",
+        severity="warn",
+        message="有具體數字但 ±40 字內找不到來源 marker——LLM 可能自己掰的",
+        matcher=_uncited_stat,
+    ),
+    _Rule(
+        code="wave_opener_without_year",
+        severity="rewrite",
+        message="『在 X 的浪潮中』開場 + 無任何年份／季度錨點——純 LLM 空泛開場",
+        matcher=_wave_opener_without_year,
     ),
 )
 
@@ -160,6 +379,12 @@ def has_blocking_issues(issues: List[QualityIssue]) -> bool:
     return any(i.severity == "block" for i in issues)
 
 
+def should_request_rewrite(issues: List[QualityIssue]) -> bool:
+    """任一 issue severity='rewrite' → 上層可決定要不要請 composer 再寫一次。
+    跟 has_blocking_issues 獨立：一篇可能同時 rewrite 跟 block（block 優先）。"""
+    return any(i.severity == "rewrite" for i in issues)
+
+
 def format_issues(issues: List[QualityIssue]) -> str:
     """一行文，給 log / notification 用。"""
     if not issues:
@@ -172,5 +397,6 @@ __all__ = [
     "QualityIssue",
     "check_quality",
     "has_blocking_issues",
+    "should_request_rewrite",
     "format_issues",
 ]
