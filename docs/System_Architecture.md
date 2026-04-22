@@ -14,26 +14,40 @@
 
 ---
 
-## 1. Two-clone topology
+## 1. Single local clone topology (2026-04-23 起)
 
-There are **two working copies** of this repo on the user's machine, and they play
-different roles. Mixing them up was the root cause of the 2026-04-20 DB confusion.
+There is **one local clone** of this repo on the user's machine, and GitHub holds
+the canonical history. This is the standard DVCS pattern — no "dev vs exec"
+split, no "which folder do I edit in" confusion.
 
-| Clone | Path | Role | DB? |
+| Location | Path | Role | DB? |
 |---|---|---|---|
-| **OneDrive clone** (dev clone) | `~/Library/CloudStorage/OneDrive-RealtekSemiconductorCorp/文件/antigravity_workspace/substack/科技商業國際新聞自動化流程研究/news_radar` | Human edits + `git push` | Has `data/01_harvest/news_radar.db` but **nothing should run against it** — macOS TCC blocks launchd from CloudStorage |
-| **Exec clone** (launchd mirror) | `/Users/hsin/news_radar` | launchd + manual compose run against **this one** | This is the authoritative runtime DB |
+| **Local clone** | `/Users/hsin/news_radar` | Human edits + `git push` + launchd + manual compose all run against this one | Authoritative runtime DB |
+| **GitHub `main`** | `https://github.com/HsinTiger/news-radar.git` | Off-site canonical backup of code/config/docs | — |
+| **GitHub `state`** | same remote, `state` branch | Off-site orphan-push mirror of live DB | network-transported DB lives here |
 
 **Rule.** Source-of-truth for code is GitHub `main`. Source-of-truth for the
-**live DB** is GitHub `state` branch. Both clones are *caches*. Specifically:
+**live DB** is GitHub `state` branch. The local clone is a *cache*. Specifically:
 
-- OneDrive clone → writes code → `git push origin main`
-- Exec clone → `git fetch origin main && git reset --hard origin/main` at the start of every hourly compose → runs compose → pushes DB to `state` branch
-- GitHub Actions (Cloud publisher) → clones fresh → reads DB from `state` → publishes to Meta → pushes updated `state`
+- `~/news_radar` → human edits → `git commit` + `git push origin main` (same sitting)
+- `~/news_radar` launchd compose → `git fetch origin main && git merge --ff-only origin/main` → runs compose → orphan-push DB to `state` branch
+- GitHub Actions (Cloud publisher) → clones fresh → reads DB from `state` → publishes to Meta → orphan-pushes updated `state`
 
-When these fall out of sync, the symptom is almost always "I edited file X in clone
-A but the runtime is still using clone B's copy". Always ask which clone the
-launchd / the script is actually reading from before debugging further.
+**Golden rule:** edit → commit → push all in the same sitting. The hourly
+`compose_hourly.sh` expects `--ff-only` to succeed; any local commit you leave
+un-pushed will make the next cycle fail loudly (by design — §5.3).
+
+### 1.1 Historical note: why this used to be three clones
+
+Pre-2026-04-23 there was also an **OneDrive clone** at `~/Library/CloudStorage/OneDrive-.../news_radar`
+for cross-device auto-sync of uncommitted work. It was retired because:
+- GitHub is a better backup for code (full history, branches, rollback; OneDrive only mirrors latest state)
+- OneDrive silently modifies file mtime causing phantom git diffs
+- OneDrive occasionally produces `... (conflicted copy).py` sibling files
+- The "commit + push in same sitting" habit makes OneDrive's cross-device sync niche unnecessary
+
+If you ever need a cross-device editing workflow again, prefer `git clone` on the
+second device over OneDrive.
 
 ---
 
@@ -50,9 +64,8 @@ this table in the same commit.
 | `src/export_drafts.py: DB_PATH` | `/Users/hsin/news_radar/db/news_radar.db` ⚠️ **wrong path, file does not exist** | `src/export_drafts.py:11` | Bug, not currently a live footgun (script apparently unused). Park it. |
 | GitHub `state` branch blob | `origin/state:data/01_harvest/news_radar.db` | `scripts/compose_hourly.sh` does `git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db` at start of each run | This is the network-transported DB. Size as of 2026-04-22 04:30 UTC: 1,658,880 bytes. |
 
-On disk today there is exactly **one** `news_radar.db` file under the exec clone
-(verified via `find ~/news_radar -name "*.db" -not -path "*/.venv/*"`). The
-OneDrive clone has its own copy but it is never written to by automation.
+On disk today there is exactly **one** `news_radar.db` file under the local
+clone (verified via `find ~/news_radar -name "*.db" -not -path "*/.venv/*"`).
 
 ---
 
@@ -124,7 +137,7 @@ Three branches carry three kinds of state:
 
 | Branch | Contains | Who writes | Who reads |
 |---|---|---|---|
-| `main` | Code, config, docs, tests | Humans (via OneDrive clone → push) | Everyone fetches this |
+| `main` | Code, config, docs, tests | Humans (via local clone `~/news_radar` → push) | Everyone fetches this |
 | `state` | `data/01_harvest/news_radar.db`, `state/last_harvest.txt`, `archive/`, `LAST_RUN.txt` | Mac `compose_hourly.sh`, Mac `push_state.sh`, Cloud `pipeline.yml`, Cloud `reflect_topic.yml` | Mac compose, Cloud publisher — **force-pushed orphan commits, no history retention** |
 | `gh-pages` or none for docs | — | — | — |
 
@@ -153,16 +166,15 @@ Anything that writes a draft and then claims "it's queued" should pipe through
 `push_state.sh --expect-draft <new_id>` or equivalent — log lines alone are not
 evidence.
 
-### 5.3 Hybrid 三方同步視覺圖（Mac × Cloud × GitHub）
+### 5.3 Hybrid 兩方同步視覺圖（Mac × Cloud × GitHub）
 
 §5 的表格用 prose 講完了誰讀誰寫，這裡補一張可以 30 秒看懂的視覺版。
-三個實體、兩條分支、五條 recurring 路徑。
+兩個本地／遠端實體、兩條分支、七條 recurring 路徑。
 
 ```mermaid
 graph LR
-    subgraph MAC["💻 Mac (本機)"]
-        OD["OneDrive clone<br/>~/.../news_radar<br/>(人類改 code)"]
-        EX["Exec clone<br/>~/news_radar<br/>(launchd 跑 compose)"]
+    subgraph MAC["💻 Mac (本機，單一 clone)"]
+        LC["~/news_radar<br/>(人類改 code<br/>+ launchd 跑 compose)"]
     end
 
     subgraph GH["☁️ GitHub origin"]
@@ -176,10 +188,10 @@ graph LR
 
     META[("📱 Meta API<br/>FB / IG / Threads")]
 
-    OD -- "①  git push<br/>(code 改動)" --> MAIN
-    MAIN -- "②  git fetch<br/>+ merge --ff-only<br/>(每小時 compose 前)" --> EX
-    STATE -- "③  restore DB<br/>git show origin/state:...db" --> EX
-    EX -- "④  orphan push<br/>(compose 完把 DB 推回)" --> STATE
+    LC -- "①  git push<br/>(code 改動)" --> MAIN
+    MAIN -- "②  git fetch<br/>+ merge --ff-only<br/>(每小時 compose 前)" --> LC
+    STATE -- "③  restore DB<br/>git show origin/state:...db" --> LC
+    LC -- "④  orphan push<br/>(compose 完把 DB 推回)" --> STATE
     MAIN -- "⑤a clone main" --> PL
     STATE -- "⑤b restore DB" --> PL
     PL -- "⑥  publish" --> META
@@ -191,14 +203,15 @@ graph LR
     class STATE data
 ```
 
-**分工規則（記三條就夠）**：
+**分工規則（記兩條就夠）**：
 
-1. **`main` 分支 = 程式碼／設定／文件**：只有人類會寫（從 OneDrive clone push）。Exec clone 跟 Cloud runner 都只讀。
-2. **`state` 分支 = 執行狀態（DB + LAST_RUN.txt）**：Exec clone 跟 Cloud runner 都會寫，都是 **orphan force-push**（無歷史，只保留最新一份）。
-3. **OneDrive clone 不跑 launchd**（macOS TCC 會擋 CloudStorage 的背景寫入），Exec clone 也 **不手動改 code**（launchd 每小時 `git reset --hard` 會擦掉）。
+1. **`main` 分支 = 程式碼／設定／文件**：只有人類會寫（`~/news_radar` → `git push`）。launchd 自動流程只讀 main，不寫。
+2. **`state` 分支 = 執行狀態（DB + LAST_RUN.txt）**：Mac 的 launchd compose 跟 Cloud runner 都會寫，都是 **orphan force-push**（無歷史，只保留最新一份）。
+
+**黃金法則**：edit → commit → push 一次坐下做完。不要留 uncommitted / unpushed 的改動過夜——下次 launchd compose 跑 `git merge --ff-only` 時會碰到「本地有新 commit 但沒 push」而卡住（這是刻意設計的，見下）。
 
 **為什麼是 `--ff-only`（Phase 8.20 後）而不是 `git reset --hard`**：
-`--ff-only` 只允許「純粹向前」的更新；如果 Exec clone 意外有了本地 commit（例如某次 debug 手癢在 Exec clone 改了東西），merge 會拒絕並報錯，讓你來人工處理。`reset --hard` 則會無聲蓋掉——曾經發生過一次本地 hotfix 被清掉的事故。
+`--ff-only` 只允許「純粹向前」的更新；如果本地意外有了未 push 的 commit（例如 debug 手癢），merge 會拒絕並報錯，讓你人工決定是要 push 還是放棄。`reset --hard` 則會無聲蓋掉——曾經發生過一次本地 hotfix 被清掉的事故。這是從「黃金法則違規」恢復的安全網。
 
 ---
 
@@ -331,9 +344,9 @@ decision, 2026-04-22) bind the above disciplines into the agent workflow:
   No "read-code-and-edit-at-same-time" fluency; the post-condition clause is
   what links log output to reality (§7.3).
 - **`cto`** — meta-process rules: log cadence (one checkpoint per completed
-  unit), multi-clone sync protocol (if editing code, it's the OneDrive clone;
-  if editing runtime state, it's the exec clone), red-line definitions
-  (`git push`, `rm` of data, large API bursts, anything touching PII).
+  unit), single-clone workflow protocol (edit → commit → push in one sitting;
+  never leave unpushed commits overnight), red-line definitions (`git push`,
+  `rm` of data, large API bursts, anything touching PII).
 
 See `news_radar/.claude/skills/<name>/SKILL.md` for the full definitions.
 

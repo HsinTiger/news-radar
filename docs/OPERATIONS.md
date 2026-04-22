@@ -78,8 +78,8 @@ copy** with `HOME_DIR` substituted to `/Users/hsin`. These must stay in sync
 after any repo change.
 
 ```bash
-# From OneDrive clone (dev clone)
-cd ~/Library/CloudStorage/OneDrive-RealtekSemiconductorCorp/文件/antigravity_workspace/substack/科技商業國際新聞自動化流程研究/news_radar
+# From the local clone (單一 clone，2026-04-23 起)
+cd ~/news_radar
 
 # 1) Render HOME_DIR → $HOME into ~/Library/LaunchAgents/
 sed "s|HOME_DIR|$HOME|g" scripts/com.hsin.news-radar.compose.plist \
@@ -110,13 +110,11 @@ launchd runtime (`~/bin/news_radar_compose.sh`). launchd only reads the
 second one. After editing the repo version:
 
 ```bash
-cp ~/Library/CloudStorage/OneDrive-*/*/*/*/news_radar/scripts/compose_hourly.sh \
-   ~/bin/news_radar_compose.sh
+cp ~/news_radar/scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
 chmod +x ~/bin/news_radar_compose.sh
 
 # Sanity: file sizes should match
-shasum -a 256 ~/Library/CloudStorage/OneDrive-*/*/*/*/news_radar/scripts/compose_hourly.sh \
-              ~/bin/news_radar_compose.sh
+shasum -a 256 ~/news_radar/scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
 # Expect two identical hashes.
 ```
 

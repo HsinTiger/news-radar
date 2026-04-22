@@ -10,7 +10,7 @@
 
 | 名詞 | 一句話解釋 | 在 News Radar 的角色 |
 |---|---|---|
-| **repo（repository）** | 被 git 追蹤的資料夾，裡面有一個隱藏的 `.git/` 目錄 | 本專案有兩份 repo：OneDrive clone（人類改）、Exec clone（launchd 跑）|
+| **repo（repository）** | 被 git 追蹤的資料夾，裡面有一個隱藏的 `.git/` 目錄 | 本專案本機只有一份 clone：`~/news_radar`（人類改 + launchd 跑）。遠端鏡像在 GitHub。|
 | **remote** | 一個命名的 URL，指向別處的 repo | 預設叫 `origin`，指向 GitHub 上的 news_radar repo |
 | **branch** | 一條「commit 鏈」的命名指標 | 本專案有 `main`（程式碼）與 `state`（DB + 狀態）兩條，§S_A §5 |
 | **commit** | 一次快照：檔案內容 + 訊息 + 指向上一個 commit 的指標 | 用 SHA（40 碼 hex，常縮寫前 7 碼，例如 `c4bf25e`）識別 |
