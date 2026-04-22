@@ -50,10 +50,15 @@ TOPIC_CATEGORIES: List[TopicCategory] = [
         display_name="AI Agent／自主系統",
         seed_weight=1.60,
         description=(
-            "AI Agent、autonomous 系統、工具使用導向的 AI 產品。例：Claude Code / "
-            "Devin / Manus / Agent SDK 發佈；coding agent / research agent 等"
-            "能自主執行多步驟任務的系統；agent benchmark 新紀錄。模型能力 +"
-            "工具鏈整合才算這類，純『模型會叫函式』不算。"
+            "同時滿足以下三條才算 ai_agent（與 ai_application 最容易混淆，故從嚴）："
+            " (1) 能『自主執行多步驟任務』——非單次 prompt → 單次 output；"
+            " (2) 主動使用工具/function calling/外部 API，而非只回答問題；"
+            " (3) 目標是『交付成果』（寫完 PR、完成研究報告、操作瀏覽器買票），"
+            "不只是生成文字。 "
+            "✓ 正例：Claude Code / Devin / Manus / Agent SDK / MCP 生態 / Computer Use / "
+            "multi-agent 系統 / browser agent / SWE-bench 新紀錄。 "
+            "✗ 反例：ChatGPT / Perplexity 的 Q&A（無多步驟任務）；"
+            "單純『模型會叫函式』但只用於 JSON 輸出（沒有交付成果）。"
         ),
     ),
     TopicCategory(
@@ -61,9 +66,13 @@ TOPIC_CATEGORIES: List[TopicCategory] = [
         display_name="AI 應用層產品",
         seed_weight=1.55,
         description=(
-            "AI 應用在特定場域的產品或服務。例：Perplexity / Cursor / Canva AI / "
-            "Notion AI 新版；企業導入 AI 的案例；垂直領域 AI 解決方案（法律、"
-            "醫療、設計）。模型被『包裝』進某個工作流即算這類。"
+            "ai_application 的三條判準（與 ai_agent 的關鍵差別在『任務模式』）："
+            " (1) 使用模式是單次 call → 單次 output（搜尋、翻譯、寫作、生圖）；"
+            " (2) 沒有跨步驟推理或自主控制流；"
+            " (3) 有明確的產品品牌且包裝給終端使用者。 "
+            "✓ 正例：Perplexity / Cursor 的 autocomplete / Canva AI / Notion AI / "
+            "ChatGPT Enterprise / NotebookLM / Apple Intelligence / v0.dev 生成元件。 "
+            "✗ 反例：Devin 這種能跑整個任務的→算 ai_agent；模型本身發表→算 ai_model。"
         ),
     ),
     TopicCategory(

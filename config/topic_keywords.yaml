@@ -38,6 +38,17 @@ ai_model:
   - "LLM 發表"
   - "multimodal model"
   - "開源模型"
+  # Phase 8.20 Topic-3 redo（2026-04-22）：2025 Q3 後熱詞 + reasoning 類
+  - "Gemini 3"
+  - "DeepSeek V3"
+  - "DeepSeek R1"
+  - "Qwen 3"
+  - "Llama 5"
+  - "Grok 4"
+  - "o3"
+  - "o4"
+  - "reasoning model"
+  - "inference-time compute"
 
 ai_agent:
   # 自主系統 / coding agent / research agent
@@ -54,6 +65,16 @@ ai_agent:
   - "SWE-bench"
   - "tool use"
   - "自主代理"
+  # Phase 8.20 Topic-3 redo（2026-04-22）：MCP 生態 + 新 agent 產品
+  - "MCP"
+  - "Model Context Protocol"
+  - "Computer Use"
+  - "computer-use"
+  - "Cognition Devin"
+  - "Agent Builder"
+  - "SWE-Lancer"
+  - "multi-agent"
+  - "browser agent"
 
 ai_application:
   # AI 包裝成應用層產品
@@ -70,6 +91,16 @@ ai_application:
   - "AI 應用"
   - "AI 助理"
   - "垂直 AI"
+  # Phase 8.20 Topic-3 redo（2026-04-22）：2025 下半年進入主流的垂直 AI 產品
+  - "ChatGPT Enterprise"
+  - "Claude Projects"
+  - "NotebookLM"
+  - "v0.dev"
+  - "Bolt.new"
+  - "Replit Agent"
+  - "Apple Intelligence"
+  - "Windsurf"
+  - "Lovable"
 
 supply_chain:
   # 半導體 / 封測 / 電池 / 材料
@@ -223,5 +254,12 @@ policy_geopolitics:
   - "export control"
   - "antitrust"
   - "geopolitics"
+  # Phase 8.20 Topic-3 redo（2026-04-22）：半導體出口管制實務詞彙
+  - "BIS"
+  - "Bureau of Industry and Security"
+  - "Section 232"
+  - "ECCN"
+  - "DOJ antitrust"
+  - "semiconductor export"
 
 # 注意：other 不定義 keywords — 若全部都 miss，classifier 會回 other（含低信心）

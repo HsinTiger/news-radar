@@ -1,26 +1,33 @@
 """
-News Radar · Topic Classifier（Phase 8.20 Step 2）
-===================================================
-兩層策略：
-  1. Keyword fast-path（免 LLM 費用）
-       讀 config/topic_keywords.yaml，第一個命中的類別（order 優先）勝出。
-       回傳 confidence=0.6（保守：讓呼叫端知道這不是 LLM 判讀、若要高信心
-       可以再追一 LLM call）。
-  2. LLM fallback
-       keyword 全 miss 時才打 call_for_json，用 TopicClassification pydantic schema
-       強制輸出 category_id + confidence + rationale。
+News Radar · Topic Classifier（Phase 8.20 Step 2 + Topic-3 redo 2026-04-22）
+=========================================================================
+三層策略（由高信心 → 低信心 → LLM 托底）：
+  1. Disambiguation（高信心 AND-of-OR 規則）
+       針對 8 個『公司名 + 事件/產品線』這種多詞共現才能判準的 case，給出
+       confidence 0.78–0.82 的高信心結論。命中就直接回，不再跑後面的 LLM。
+       例：『台積電』+『法說/Q3/毛利』→ earnings 而非 supply_chain。
+  2. Simple keyword fast-path（免 LLM 費用）
+       讀 config/topic_keywords.yaml，第一個命中的類別（taxonomy 順序為準）
+       勝出。confidence=0.60，保守值——讓呼叫端若想要高信心可再追 LLM。
+       命中後會先過一層 exclusion veto（6 條）：例如『台積電 + 慈善捐款』就
+       veto supply_chain，落到 LLM 那條路，避免 FP 污染 back-prop。
+  3. LLM fallback（前兩層都沒有結論才跑）
+       用 call_for_json + pydantic schema，強制輸出 category_id + confidence +
+       rationale。LLM 雙路（Claude CLI / Gemini）都失敗則回 other(0.0)。
 
 設計原則：
   - **單一事實來源**：類別 id / 顯示名 / 描述寫在 src.topic_taxonomy；
     這邊只處理『分類邏輯』，不 hard-code 權重或顯示名。
-  - **雙路可回 None**：LLM 雙路（Claude CLI + Gemini）都失敗時，classifier
-    不假裝，回 TopicClassification(category_id='other', confidence=0.0,
+  - **層級透明**：每層都有獨立 public API（`match_disambiguation` /
+    `classify_topic_keyword` / `is_vetoed_by_exclusion`），測試可單獨驗證。
+  - **雙路可回 None**：LLM 雙路都失敗時 classifier 不假裝，回
+    TopicClassification(category_id='other', confidence=0.0,
     rationale='classifier_unavailable')——讓呼叫端看得出 signal 是否可信。
-  - **pure-ish**：keyword 層完全 pure，LLM 層為 async，呼叫端 await 即可。
-  - **冷啟動友善**：classifier 可以在沒有 LLM 的 sandbox（無網路、無 pydantic
-    裝好的環境）跑純 keyword 路徑，方便 backfill 腳本。
+  - **pure-ish**：前兩層完全 pure；只有 LLM 層是 async。
+  - **冷啟動友善**：沒有 LLM 的 sandbox（無網路、無 pydantic）仍能跑前兩層，
+    方便 backfill 腳本重建歷史分類。
 
-—— 2026-04-21 overnight, Cowork Claude
+—— 2026-04-21 overnight, 2026-04-22 Topic-3 redo, Cowork Claude
 """
 from __future__ import annotations
 
@@ -63,6 +70,215 @@ if _HAS_PYDANTIC:
         category_id: str = Field(description="必須是 taxonomy 裡的 snake_case id")
         confidence: float = Field(description="0.0~1.0，對分類的信心")
         rationale: str = Field(description="一句話解釋為何歸入此類")
+
+
+# ---------- Layer 1: Disambiguation（高信心 AND-of-OR 規則）----------
+
+@dataclass(frozen=True)
+class DisambiguationRule:
+    """多詞共現才判準的情況。
+    when_all_groups：外層 tuple 是 AND，inner tuple 是 OR。
+      例：((台積電, TSMC), (法說, Q3, earnings)) = 必須有 TSMC 某個說法 AND 有 earnings 某個說法。
+    unless_any：任一出現就不觸發（用來讓『Apple Intelligence』不被 apple_hardware 搶走）。
+    """
+    name: str
+    when_all_groups: tuple
+    unless_any: tuple
+    category_id: str
+    confidence: float
+    rationale_hint: str
+
+
+# 所有 needle 在比對時會先 .lower()，所以 tuple 裡寫原始中英文大小寫混合都可以。
+DISAMBIGUATION_RULES: tuple = (
+    DisambiguationRule(
+        name="tsmc_earnings",
+        when_all_groups=(
+            ("台積電", "TSMC"),
+            ("法說", "Q1 營收", "Q2 營收", "Q3 營收", "Q4 營收", "毛利率", "EPS", "guidance", "earnings"),
+        ),
+        unless_any=(),
+        category_id="earnings",
+        confidence=0.80,
+        rationale_hint="disambig:tsmc+earnings",
+    ),
+    DisambiguationRule(
+        name="nvidia_earnings",
+        when_all_groups=(
+            ("Nvidia", "輝達", "NVDA"),
+            ("法說", "earnings", "guidance", "Q1", "Q2", "Q3", "Q4", "毛利率", "beat estimates", "missed estimates"),
+        ),
+        unless_any=(),
+        category_id="earnings",
+        confidence=0.80,
+        rationale_hint="disambig:nvidia+earnings",
+    ),
+    DisambiguationRule(
+        name="apple_hardware",
+        when_all_groups=(
+            ("Apple", "蘋果"),
+            ("iPhone", "iPad", "MacBook", "Apple Watch", "Vision Pro", "AirPods"),
+        ),
+        unless_any=("Apple Intelligence",),
+        category_id="tech_product_launch",
+        confidence=0.78,
+        rationale_hint="disambig:apple+hardware",
+    ),
+    DisambiguationRule(
+        name="apple_ai_application",
+        when_all_groups=(
+            ("Apple Intelligence",),
+        ),
+        unless_any=(),
+        category_id="ai_application",
+        confidence=0.80,
+        rationale_hint="disambig:apple_intelligence",
+    ),
+    DisambiguationRule(
+        name="google_gemini_model",
+        when_all_groups=(
+            ("Gemini",),
+            ("Google", "DeepMind", "Pro", "Ultra", "3", "2.5", "Flash"),
+        ),
+        unless_any=("雙子座", "星座", "占星"),
+        category_id="ai_model",
+        confidence=0.82,
+        rationale_hint="disambig:google+gemini_model",
+    ),
+    DisambiguationRule(
+        name="copilot_as_agent",
+        when_all_groups=(
+            ("Copilot",),
+            ("agent", "multi-step", "autonomous", "Agent Builder", "agentic"),
+        ),
+        unless_any=(),
+        category_id="ai_agent",
+        confidence=0.78,
+        rationale_hint="disambig:copilot_as_agent",
+    ),
+    DisambiguationRule(
+        name="meta_device",
+        when_all_groups=(
+            ("Meta",),
+            ("Quest", "Ray-Ban", "Orion", "頭戴", "VR 頭盔"),
+        ),
+        unless_any=("Llama",),
+        category_id="tech_product_launch",
+        confidence=0.78,
+        rationale_hint="disambig:meta+device",
+    ),
+    DisambiguationRule(
+        name="openai_reasoning_model",
+        when_all_groups=(
+            ("OpenAI", "ChatGPT"),
+            ("o3", "o4", "reasoning model", "inference-time compute", "推理模型"),
+        ),
+        unless_any=(),
+        category_id="ai_model",
+        confidence=0.80,
+        rationale_hint="disambig:openai_reasoning",
+    ),
+)
+
+
+# ---------- Layer 2.5: Exclusion Veto（simple keyword FP 擋板）----------
+
+@dataclass(frozen=True)
+class ExclusionPattern:
+    """當 simple keyword 把一篇明顯不是 X 類的文章判成 X 類時，veto 掉讓它走 LLM。
+    trigger_any：這類 keyword 一定會出現（例：台積電、Grok），否則 veto 根本碰不到。
+    veto_any：但若 haystack 同時含這些負面 context，就判定 keyword 是 FP。
+    """
+    name: str
+    category_id: str
+    trigger_any: tuple
+    veto_any: tuple
+
+
+EXCLUSION_PATTERNS: tuple = (
+    ExclusionPattern(
+        name="tsmc_philanthropy",
+        category_id="supply_chain",
+        trigger_any=("台積電", "TSMC"),
+        veto_any=("慈善", "捐款", "贊助", "公益", "基金會", "義賣"),
+    ),
+    ExclusionPattern(
+        name="grok_literature",
+        category_id="ai_model",
+        trigger_any=("Grok",),
+        veto_any=("Heinlein", "海萊恩", "異鄉異客", "科幻小說", "俚語"),
+    ),
+    ExclusionPattern(
+        name="mistral_weather",
+        category_id="ai_model",
+        trigger_any=("Mistral",),
+        veto_any=("地中海", "強風", "氣象", "風速", "風暴"),
+    ),
+    ExclusionPattern(
+        name="copilot_aviation",
+        category_id="ai_application",
+        trigger_any=("Copilot",),
+        veto_any=("副駕駛", "機師", "航班", "航空公司", "駕駛艙", "波音", "空中巴士"),
+    ),
+    ExclusionPattern(
+        name="chatgpt_meme",
+        category_id="ai_application",
+        trigger_any=("ChatGPT Plus",),
+        veto_any=("迷因", "梗圖", "惡搞", "諷刺漫畫", "網路笑話"),
+    ),
+    ExclusionPattern(
+        name="deepseek_mining",
+        category_id="ai_model",
+        trigger_any=("DeepSeek",),
+        veto_any=("挖礦", "礦業", "地底探勘", "鑽孔", "深海鑽探"),
+    ),
+)
+
+
+# ---------- Layer 1/2.5 helpers ----------
+
+def _build_haystack(title: str, content: str) -> str:
+    """統一 lowercase 後的比對文本。和 classify_topic_keyword 對齊。"""
+    return f"{title or ''}\n{(content or '')[:1500]}".lower()
+
+
+def _any_in(needles: tuple, haystack: str) -> bool:
+    """需要時做 case-insensitive 比對。needles 可以有大小寫混合。"""
+    return any((n or "").lower() in haystack for n in needles if n)
+
+
+def _rule_fires(rule: DisambiguationRule, haystack: str) -> bool:
+    """AND-of-OR：每個 group 至少命中一個、且 unless_any 全不中。"""
+    for group in rule.when_all_groups:
+        if not _any_in(group, haystack):
+            return False
+    if rule.unless_any and _any_in(rule.unless_any, haystack):
+        return False
+    return True
+
+
+def match_disambiguation(title: str, content: str) -> Optional[TopicClassification]:
+    """Layer 1：跑 DISAMBIGUATION_RULES；第一條命中即回（tuple 順序即優先級）。"""
+    haystack = _build_haystack(title, content)
+    for rule in DISAMBIGUATION_RULES:
+        if _rule_fires(rule, haystack):
+            return TopicClassification(
+                category_id=rule.category_id,
+                confidence=rule.confidence,
+                rationale=rule.rationale_hint,
+            )
+    return None
+
+
+def is_vetoed_by_exclusion(title: str, content: str, tentative_cat_id: str) -> bool:
+    """Layer 2.5：tentative 分類若是某類且 haystack 含負面 context，判 FP。"""
+    haystack = _build_haystack(title, content)
+    for rule in EXCLUSION_PATTERNS:
+        if rule.category_id != tentative_cat_id:
+            continue
+        if _any_in(rule.trigger_any, haystack) and _any_in(rule.veto_any, haystack):
+            return True
+    return False
 
 
 # ---------- keyword fast-path ----------
@@ -190,18 +406,27 @@ async def classify_topic_llm(
 # ---------- orchestrator ----------
 
 async def classify_topic(title: str, content: str) -> TopicClassification:
-    """公開 API：keyword fast-path → LLM fallback → other(0.0)。
+    """公開 API：disambig → keyword(+exclusion veto) → LLM → other(0.0)。
     保證回一個有效的 TopicClassification；taxonomy 之外的 id 不會出現。
     """
+    # Layer 1：高信心 AND-of-OR 規則
+    disambig_hit = match_disambiguation(title, content)
+    if disambig_hit is not None:
+        return disambig_hit
+
+    # Layer 2：簡單 keyword 命中（若沒被 exclusion veto）
     kw_hit = classify_topic_keyword(title, content)
     if kw_hit is not None:
-        return kw_hit
+        if not is_vetoed_by_exclusion(title, content, kw_hit.category_id):
+            return kw_hit
+        # 有 veto → 當作沒 match，往下打 LLM
 
+    # Layer 3：LLM fallback
     llm_hit = await classify_topic_llm(title, content)
     if llm_hit is not None:
         return llm_hit
 
-    # 雙路皆無結果 → 保險落到 other
+    # 三路皆無結果 → 保險落到 other
     return TopicClassification(
         category_id="other",
         confidence=0.0,
@@ -225,8 +450,14 @@ def compute_weighted_score(
 
 __all__ = [
     "TopicClassification",
+    "DisambiguationRule",
+    "ExclusionPattern",
+    "DISAMBIGUATION_RULES",
+    "EXCLUSION_PATTERNS",
     "classify_topic",
     "classify_topic_keyword",
     "classify_topic_llm",
+    "match_disambiguation",
+    "is_vetoed_by_exclusion",
     "compute_weighted_score",
 ]
