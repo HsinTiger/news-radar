@@ -28,6 +28,8 @@ from typing import Dict, Optional
 import httpx
 from dotenv import load_dotenv
 
+from .image_prep import prepare_image_for_ig
+
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(ENV_PATH)
 
@@ -265,6 +267,16 @@ async def publish_to_ig(
     else:
         if not image_url:
             return {"success": False, "error": {"local_reject": "IG 必須有 image_url 或 video_url"}}
+
+        # Pre-flight: IG 對 aspect ratio (0.8–1.91) 跟 filesize (≤8 MB) 嚴格把關，
+        # FB / Threads 不管。在打 API 前先探頭，不合規則嘗試 CDN rewrite，救不回來
+        # 就 local_reject 優雅跳過 IG。詳見 src/image_prep.py。
+        prep = await prepare_image_for_ig(image_url)
+        print(prep.log_line())
+        if not prep.is_usable:
+            return {"success": False, "error": {"local_reject": f"image_prep: {prep.reason}"}}
+        image_url = prep.url
+
         print(f"[Publisher: IG] 建立 IMAGE 媒體容器... ({len(text)} 字)")
         container_params = {
             "image_url": image_url,
