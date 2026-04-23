@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# News Radar · 每小時 compose（Mac launchd 入口）· Phase 8.18
+# News Radar · 每小時 compose（Mac launchd 入口）· Phase 8.18 + 8.22
 # ------------------------------------------------------------
 # 由 ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 每小時觸發。
 #
@@ -8,8 +8,10 @@
 #   1. cd 到 ~/news_radar/（本機鏡像 repo，避開 CloudStorage TCC 限制）
 #   2. git fetch + reset 到 main 最新（拿到 OneDrive 裡剛 push 的程式碼變動）
 #   3. 從 state branch 拉最新 DB（內含 Cloud publisher 剛更新的 queue 狀態）
-#   4. 跑 `python run_pipeline.py --compose-only --buffer-target 2`
-#      （用 Gemini API 寫稿；429 時由手動操作接手 —— 這條手動 path 不在本 script 範圍）
+#   4. 跑 `python run_pipeline.py --harvest-now --compose-only --buffer-target 2`
+#      Phase 8.22 修：必須加 --harvest-now，否則 --compose-only 不會觸發 harvest
+#      (maybe_run_harvest 只在 --loop 或 --harvest-now/--publish-now 時被呼叫)。
+#      Gemini 429 時 claude_cli 會自動接手（見 src/llm_brain.py Phase 8.19 fallback）。
 #   5. 把更新後的 DB 推回 state branch
 #
 # 手動跑：bash ~/bin/news_radar_compose.sh
@@ -95,10 +97,11 @@ source .venv/bin/activate
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt || { echo "❌ pip install 失敗"; exit 5; }
 
-# ---- 跑 compose-only pipeline ----
+# ---- 跑 harvest + compose-only pipeline ----
+# Phase 8.22: 加 --harvest-now，否則 --compose-only 不會觸發 harvest → RSS 永遠是舊的
 echo ""
-echo "🧠 Running run_pipeline.py --compose-only --buffer-target $BUFFER_TARGET"
-python run_pipeline.py --compose-only --buffer-target "$BUFFER_TARGET"
+echo "🧠 Running run_pipeline.py --harvest-now --compose-only --buffer-target $BUFFER_TARGET"
+python run_pipeline.py --harvest-now --compose-only --buffer-target "$BUFFER_TARGET"
 PIPELINE_EXIT=$?
 echo ""
 echo "↳ pipeline exit code: $PIPELINE_EXIT"
