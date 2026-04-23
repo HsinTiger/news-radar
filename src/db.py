@@ -504,6 +504,26 @@ def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
 
     回傳單一 Row（包含 drafts + news_items 所有欄位）或 None。
     只回「可直接發」的——要求 queue_status='queued' 且人類審核已過（approved / auto_approved）。
+
+    Phase 8.18 契約（刻意凍結，不是沒想到 schedule）
+    ------------------------------------------------
+    這個 picker 的排序鍵是 `news_items.published_at`，不是 `drafts.publish_at`。
+    意思是：被 enqueue 當下寫到 drafts.publish_at 的「預計時間」對發稿順序完全
+    沒影響——publisher 永遠挑「最新的新聞」發，而不是「最早排進 queue」的。
+
+    這個設計是有意的——頻道定位是「最新資訊」，不是「時段排程」。新鮮度
+    永遠勝過 FIFO。drafts.publish_at 欄位留著只是 migration 成本太高，
+    實際上是 dead field（production 程式碼沒有 READ 點，只有 logging）。
+
+    未來若要 timezone-optimized scheduling（例如「早上 9 點一定發某類」），
+    正確做法是：
+        1. 加 `scheduled_at` 欄位（別重用 publish_at，避免語意混淆）
+        2. 改 picker 為 `ORDER BY scheduled_at ASC`（然後新鮮度變排程的輸入）
+        3. 同步砍掉 dashboard 的 freshness-first 說明
+
+    所以：如果你正想動這個 ORDER BY，請先確認是不是要一起做上面 3 件事；
+    只改這裡會讓 dashboard 的文案、queue 的 UI 預期、以及 back-prop 的
+    reflector rules 全部跟實際行為對不起來。
     """
     return conn.execute(
         """
