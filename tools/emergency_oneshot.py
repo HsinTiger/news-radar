@@ -582,6 +582,63 @@ def step_write_drafts(item: dict, finalized: dict) -> str:
     return draft_id
 
 
+def step_rehost_image(item: dict) -> dict:
+    """Step 6.5 · rehost og_image 到 GitHub raw (--auto-rehost 啟用時)。
+
+    為什麼要做：許多新聞 CDN（Reuters resizer、Bloomberg、WSJ、FT…）對
+    Referer / auth token 設防，Meta Graph API 抓不到就會 IG/Threads 全 FAIL
+    （FB code 324、IG/Threads code 2207052）。本 step 預先下載 og_image、
+    commit + push 到 repo 的 assets/，換成 raw.githubusercontent.com 的
+    穩定 URL 再往 publish 走。
+
+    失敗即 abort：任何下載 / commit / push 失敗 → fail(3)。不降級用原始
+    URL（那樣下游 publish 一定會失敗，錯誤訊息還更難 debug）。
+
+    Idempotent：assets/{news_id[:16]}.* 已存在 → 跳過下載 + 跳過 push，
+    回舊的 raw URL。
+
+    Side effects：
+      1. item['og_image'] 就地改寫成新 URL（publish 階段會用）
+      2. news_items.og_image_url UPDATE 成新 URL（audit trail）
+    """
+    step("Step 6.5 · auto-rehost og_image → GitHub raw")
+    if not item.get("og_image"):
+        fail(3, "--auto-rehost 開啟但沒有 og_image 可 rehost。"
+                "請用 --og-image 手動指定，或確認 fetch 路徑拿得到 og:image。")
+
+    # tools/ 已經在 sys.path（PROJECT_ROOT 在最上面 insert），import 即可
+    try:
+        from tools.image_rehost import rehost_to_github_raw
+    except ImportError as e:
+        fail(3, f"找不到 tools/image_rehost.py：{e}")
+
+    try:
+        new_url = rehost_to_github_raw(
+            image_url=item["og_image"],
+            news_id=item["id"],
+            title_hint=item.get("title") or "",
+        )
+    except RuntimeError as e:
+        fail(3, f"auto-rehost 失敗：{e}")
+
+    print(f"   ↳ 舊 og_image：{item['og_image'][:80]}...")
+    print(f"   ↳ 新 og_image：{new_url}")
+
+    # Sync to news_items so Archive / dashboard show the URL we actually used
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE news_items SET og_image_url=? WHERE id=?",
+        (new_url, item["id"]),
+    )
+    conn.commit()
+    conn.close()
+    print(f"   ↳ news_items.og_image_url 已同步更新")
+
+    item["og_image"] = new_url
+    return item
+
+
 async def step_publish(draft_id: str, item: dict, finalized: dict) -> dict:
     """Step 7b：依序 publish FB → Threads → IG。每一筆都 record_publish_result。
     回傳 {platform: {ok, resp, err}}。"""
@@ -718,6 +775,13 @@ async def main_async(args) -> int:
         approve_file=Path(args.approve_file) if args.approve_file else None,
         approve_timeout=args.approve_timeout,
     )
+
+    # Step 6.5 (optional) · auto-rehost og_image 到 GitHub raw
+    # 順序重要：YES gate 之後才 rehost（user 先看 drafts 再決定要不要動用 git push）；
+    # step_write_drafts 之前 rehost（drafts.image_url 直接存對的 URL）。
+    if args.auto_rehost:
+        step_rehost_image(item)
+
     draft_id = step_write_drafts(item, finalized)
     # 寫 breadcrumb 給 .sh 用（push_state.sh --expect-draft）
     DRAFT_ID_BREADCRUMB.write_text(draft_id, encoding="utf-8")
@@ -783,6 +847,12 @@ def main() -> None:
     ap.add_argument("--approve-timeout", type=int, default=1800,
                     help="--approve-file 模式的等候上限（秒）；預設 30 分。"
                          "超時自動 abort（exit 6），避免 Python 永遠卡著。")
+    ap.add_argument("--auto-rehost", action="store_true",
+                    help="YES 之後 publish 之前，自動下載 og_image、commit + push 到 "
+                         "assets/、換成 raw.githubusercontent.com 的穩定 URL 再發。"
+                         "解決 Reuters / WSJ / Bloomberg 等 CDN 擋 Meta fetcher 的問題"
+                         "（FB 324 / IG/Threads 2207052）。失敗即 abort（exit 3）。"
+                         "idempotent：assets/{news_id[:16]}.* 已存在就直接用。")
     args = ap.parse_args()
 
     # 互斥檢查：--pdf / --content-file 不能同時給
