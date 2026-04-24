@@ -84,3 +84,8 @@ test-results/
 tmp/
 .tmp/
 AGENT_WORKLOG.md
+
+# --- Emergency oneshot ephemeral state ---
+# Breadcrumb written by tools/emergency_oneshot.py so the bash wrapper can
+# pick up the draft_id for push_state.sh --expect-draft. Regenerated every run.
+tools/.last_emergency_draft_id
