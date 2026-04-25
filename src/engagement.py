@@ -395,7 +395,11 @@ async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
             # 小小節流，對 Meta 的 rate limit 友善一點
             await asyncio.sleep(0.2)
 
-    print(f"[Engagement] 完成 | OK={ok_count} Fail={len(failures)}")
+    # 持久化：Python 3.6+ 的 sqlite3 在 conn.close() 不再隱式 commit；
+    # 必須明確 commit() 否則整批 INSERT 會被 rollback（log 看到 OK=N 但 DB 0 rows
+    # 的詭異情況——2026-04-25 早上 50 個 OK 全 rollback 才發現）。
+    conn.commit()
+    print(f"[Engagement] 完成 | OK={ok_count} Fail={len(failures)} · committed")
     return {"total": len(rows), "ok": ok_count, "failed": len(failures), "failures": failures}
 
 
