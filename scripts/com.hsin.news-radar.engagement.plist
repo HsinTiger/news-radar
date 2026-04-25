@@ -34,9 +34,13 @@
     <key>Label</key>
     <string>com.hsin.news-radar.engagement</string>
 
-    <!-- 每 4 小時跑一次 (14400 秒) -->
+    <!-- 2026-04-25 改成每小時跑一次 (3600 秒)：
+         新的 sync_bucket_polls 走 log-scale [1h, 24h, 168h] 三 bucket 模式。
+         hourly cron 會做 dispatcher：沒有任何 (draft, platform) 落在 ±15min
+         tolerance 區間時就 no-op exit，cheap。換算下來不會打爆 Meta rate limit
+         （IG/FB 200/h、Threads 250/24h，實際呼叫量遠低於此）。 -->
     <key>StartInterval</key>
-    <integer>14400</integer>
+    <integer>3600</integer>
 
     <!-- 不在 load 時立刻跑；等到下一個週期才跑（避免一裝就打 API） -->
     <key>RunAtLoad</key>

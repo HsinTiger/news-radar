@@ -97,8 +97,87 @@ def init_db() -> None:
             pass
         # Phase 8.20：seed topic_weights（僅插入尚未存在的 category）
         _seed_topic_weights(conn)
+        # 2026-04-25: log-scale time-series engagement polling
+        # （詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql）
+        _migrate_log_scale_engagement(conn)
         conn.commit()
     print("[DB]  ↳ schema 套用完成")
+
+
+def _migrate_log_scale_engagement(conn: sqlite3.Connection) -> None:
+    """Idempotent migration for log-scale engagement polling (2026-04-25).
+
+    Adds:
+      - engagement_stats.post_age_bucket (INTEGER, NULL OK; canonical 1/24/168)
+      - CHECK trigger restricting bucket to NULL or {1, 24, 168}
+      - Partial UNIQUE INDEX on (draft_id, platform, post_age_bucket)
+        WHERE post_age_bucket IS NOT NULL — prevents double-polling same bucket
+        without blocking legacy NULL rows
+      - INDEX (draft_id, platform, fetched_at DESC) — accelerates the
+        engagement_stats_latest VIEW's correlated subquery
+      - VIEW engagement_stats_latest — most recent row per (draft, platform);
+        dashboard reads from this for snapshot queries
+
+    All statements are idempotent (IF NOT EXISTS / column-existence check).
+    Safe to re-run.
+    """
+    # 1. ADD COLUMN (only if missing)
+    _migrate_add_column_if_missing(
+        conn, "engagement_stats", "post_age_bucket", "INTEGER"
+    )
+
+    # 2. CHECK trigger — SQLite can't add CHECK to existing column via ALTER,
+    #    but BEFORE INSERT trigger gives equivalent enforcement.
+    try:
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS engagement_stats_bucket_check
+            BEFORE INSERT ON engagement_stats
+            FOR EACH ROW
+            WHEN NEW.post_age_bucket IS NOT NULL
+                 AND NEW.post_age_bucket NOT IN (1, 24, 168)
+            BEGIN
+                SELECT RAISE(ABORT, 'post_age_bucket must be NULL or one of (1, 24, 168)');
+            END
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    # 3. Partial unique index — legacy NULL rows excluded
+    try:
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_engagement_stats_bucket
+            ON engagement_stats (draft_id, platform, post_age_bucket)
+            WHERE post_age_bucket IS NOT NULL
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    # 4. Lookup index for VIEW's correlated subquery on MAX(fetched_at)
+    try:
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_engagement_stats_lookup
+            ON engagement_stats (draft_id, platform, fetched_at DESC)
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    # 5. VIEW for dashboard snapshot reads.
+    #    Form: correlated subquery (not ROW_NUMBER) — SQLite supports both
+    #    since 3.25, but correlated subquery is more readable in sqlite3 CLI
+    #    debugging and equally fast given the lookup index above.
+    try:
+        conn.execute("""
+            CREATE VIEW IF NOT EXISTS engagement_stats_latest AS
+            SELECT * FROM engagement_stats e
+            WHERE fetched_at = (
+                SELECT MAX(fetched_at)
+                FROM engagement_stats e2
+                WHERE e2.draft_id = e.draft_id
+                  AND e2.platform = e.platform
+            )
+        """)
+    except sqlite3.OperationalError:
+        pass
 
 
 def _seed_topic_weights(conn: sqlite3.Connection) -> None:
@@ -704,14 +783,23 @@ def insert_engagement(
     views: int = 0,
     reach: int = 0,
     raw_json: Optional[str] = None,
+    post_age_bucket: Optional[int] = None,
 ) -> None:
+    """Append a row to engagement_stats.
+
+    post_age_bucket: NULL for legacy / one-off backfills (Phase pre-8.23);
+        canonical 1 / 24 / 168 (hours) for log-scale time-series polls.
+        CHECK trigger enforces NULL or canonical values; partial UNIQUE INDEX
+        on (draft_id, platform, post_age_bucket) prevents double-poll of
+        same bucket.
+    """
     conn.execute(
         """
         INSERT INTO engagement_stats
           (draft_id, platform, platform_post_id, fetched_at,
            likes, comments, shares, saves, reposts, quotes, replies,
-           views, reach, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           views, reach, raw_json, post_age_bucket)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             draft_id,
@@ -728,6 +816,7 @@ def insert_engagement(
             int(views or 0),
             int(reach or 0),
             raw_json,
+            post_age_bucket if post_age_bucket is None else int(post_age_bucket),
         ),
     )
     conn.commit()

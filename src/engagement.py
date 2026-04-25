@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -316,6 +317,237 @@ PLATFORM_FETCHERS = {
 }
 
 
+# ---------- Phase 8.23 (2026-04-25): log-scale time-series bucket dispatch ----------
+#
+# 為了讓 dashboard 能畫 EngagementGrowthChart（x 軸 = post age 1h/24h/168h、
+# y 軸 = likes / views / reach），把 polling 從「每 4h 均勻」改成「依 post 齡 log-scale」。
+# 每個 (draft, platform) 的 t0 是 publish_log.posted_at（最早 success=1 那筆），
+# 在 [1, 24, 168] 三個 bucket 各 poll 一次、保留時序資料。
+#
+# 落地組件：
+#   - 新欄位 engagement_stats.post_age_bucket（INTEGER, NULL OK；canonical 1/24/168）
+#   - CHECK trigger + partial UNIQUE INDEX 防 dup-bucket（schema migration in db.py）
+#   - VIEW engagement_stats_latest 給 dashboard 讀 latest snapshot
+#   - sync_bucket_polls() 為新 hourly cron entry，取代舊的 sync_all_posts()
+#   - rate limiter src.rate_limit.can_call 防超量
+#
+# 詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql。
+
+CANONICAL_BUCKETS = (1, 24, 168)  # hours since first successful publish
+TOLERANCE_HOURS = 0.25            # ±15 min — wider than cron interval prevents miss
+
+
+@dataclass(frozen=True)
+class PollTask:
+    """One (draft, platform, bucket) poll instruction emitted by select_posts_to_poll()."""
+    draft_id: str
+    platform: str            # facebook / instagram / threads
+    platform_post_id: str
+    bucket: int              # 1, 24, or 168
+    posted_at: datetime      # tz-aware UTC
+
+
+def _parse_iso_utc(s: str) -> datetime:
+    """Parse an ISO-8601 string from publish_log.posted_at; ensure tz-aware UTC.
+    Naive → ValueError (publish_log audit confirmed all 1751 rows have +00:00)."""
+    if not s:
+        raise ValueError("empty timestamp")
+    # Python 3.11+ accepts 'Z' suffix; 3.10 doesn't. Normalize defensively.
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        raise ValueError(f"naive datetime in publish_log.posted_at: {s}")
+    return dt.astimezone(timezone.utc)
+
+
+def _bucket_already_polled(conn, draft_id: str, platform: str, bucket: int) -> bool:
+    """True if engagement_stats already has a row for this (draft, platform, bucket).
+    Belt-and-suspenders with the partial UNIQUE INDEX (which raises on conflict)."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM engagement_stats
+        WHERE draft_id=? AND platform=? AND post_age_bucket=?
+        LIMIT 1
+        """,
+        (draft_id, platform, bucket),
+    ).fetchone()
+    return row is not None
+
+
+def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
+    """Decide which (draft, platform, bucket) tuples to poll on this hourly run.
+
+    Algorithm:
+      1. SELECT distinct (draft, platform, MIN(posted_at)) FROM publish_log
+         WHERE success=1 AND platform_post_id is non-empty.
+      2. For each row: compute age_h = now_utc - posted_at (in hours).
+         - If age_h > 168 + TOLERANCE_HOURS: skip (window expired)
+         - For each bucket in CANONICAL_BUCKETS:
+             - If |age_h - bucket| <= TOLERANCE_HOURS:
+               - If not already polled at this bucket: emit PollTask
+
+    now_utc must be tz-aware UTC; naive → ValueError (defensive — every
+    timestamp downstream depends on tz consistency).
+    """
+    if now_utc.tzinfo is None:
+        raise ValueError("now_utc must be tz-aware UTC")
+
+    rows = conn.execute(
+        """
+        SELECT
+            pl.draft_id,
+            pl.platform,
+            pl.platform_post_id,
+            MIN(pl.posted_at) AS first_posted_at
+        FROM publish_log pl
+        WHERE pl.success = 1
+          AND pl.platform_post_id IS NOT NULL
+          AND pl.platform_post_id != ''
+        GROUP BY pl.draft_id, pl.platform
+        """
+    ).fetchall()
+
+    tasks: List[PollTask] = []
+    window_max_h = CANONICAL_BUCKETS[-1] + TOLERANCE_HOURS
+    window_min_h = CANONICAL_BUCKETS[0] - TOLERANCE_HOURS
+
+    for r in rows:
+        try:
+            posted_at = _parse_iso_utc(r["first_posted_at"])
+        except ValueError as e:
+            print(f"[bucket] skip — invalid posted_at for "
+                  f"{r['draft_id'][:12]}/{r['platform']}: {e}")
+            continue
+
+        age_h = (now_utc - posted_at).total_seconds() / 3600.0
+
+        if age_h > window_max_h:
+            continue  # window already passed; never poll this (draft, platform) again
+        if age_h < window_min_h:
+            continue  # too fresh; first bucket is 1h
+
+        for bucket in CANONICAL_BUCKETS:
+            if abs(age_h - bucket) > TOLERANCE_HOURS:
+                continue
+            if _bucket_already_polled(conn, r["draft_id"], r["platform"], bucket):
+                continue
+            tasks.append(PollTask(
+                draft_id=r["draft_id"],
+                platform=r["platform"],
+                platform_post_id=r["platform_post_id"],
+                bucket=bucket,
+                posted_at=posted_at,
+            ))
+
+    return tasks
+
+
+async def sync_bucket_polls(conn) -> Dict:
+    """Hourly cron entry: dispatch bucket polls for (draft, platform) tuples
+    falling within ±15min tolerance of canonical buckets [1, 24, 168] h.
+
+    Replaces `sync_all_posts` (uniform 4h polling). Most cron ticks will have
+    0 tasks (no bucket alignment) — that's expected and cheap.
+    """
+    # Local import to avoid module-load circular dep when other modules
+    # transitively import engagement before rate_limit.
+    from src.rate_limit import can_call
+
+    now_utc = datetime.now(timezone.utc)
+    tasks = select_posts_to_poll(conn, now_utc)
+    print(f"[Engagement] hourly bucket dispatch · {len(tasks)} tasks "
+          f"@ {now_utc.isoformat(timespec='seconds')}")
+
+    if not tasks:
+        return {"total": 0, "ok": 0, "failed": 0, "rate_limited": 0, "failures": []}
+
+    ok_count = 0
+    failures: List[Dict] = []
+    rate_limited = 0
+    # Per-cron-run tracker for can_call(). At our scale (max ~30 tasks/cron)
+    # cross-run rate limits are not exercised, so empty-init is correct.
+    recent_calls: Dict[str, List[datetime]] = {
+        "facebook": [], "instagram": [], "threads": [],
+    }
+
+    async with httpx.AsyncClient() as client:
+        for task in tasks:
+            platform = task.platform
+            fetcher = PLATFORM_FETCHERS.get(platform)
+            if not fetcher:
+                print(f"  ↳ [Skip] unsupported platform: {platform}")
+                continue
+            token_required = {
+                "facebook": FB_PAGE_ACCESS_TOKEN,
+                "instagram": IG_ACCESS_TOKEN,
+                "threads": THREADS_ACCESS_TOKEN,
+            }[platform]
+            if not token_required:
+                print(f"  ↳ [Skip] {platform} no access token configured")
+                continue
+
+            now = datetime.now(timezone.utc)
+            allowed, secs = can_call(platform, now, recent_calls[platform])
+            if not allowed:
+                rate_limited += 1
+                print(f"  ↳ [RateLimit] {platform} blocked, retry in {secs}s — "
+                      f"deferring {task.draft_id[:8]}@bucket={task.bucket}")
+                continue
+
+            result = await fetcher(client, task.platform_post_id)
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            recent_calls[platform].append(now)
+
+            if result.get("ok"):
+                dbmod.insert_engagement(
+                    conn,
+                    draft_id=task.draft_id,
+                    platform=platform,
+                    platform_post_id=task.platform_post_id,
+                    fetched_at=fetched_at,
+                    likes=result.get("likes", 0),
+                    comments=result.get("comments", 0),
+                    shares=result.get("shares", 0),
+                    saves=result.get("saves", 0),
+                    reposts=result.get("reposts", 0),
+                    quotes=result.get("quotes", 0),
+                    replies=result.get("replies", 0),
+                    views=result.get("views", 0),
+                    reach=result.get("reach", 0),
+                    raw_json=json.dumps(result.get("raw"), ensure_ascii=False),
+                    post_age_bucket=task.bucket,
+                )
+                ok_count += 1
+                print(f"  ↳ [OK] {platform:9s} bucket={task.bucket:>3d}h "
+                      f"{task.platform_post_id[:14]}… "
+                      f"likes={result.get('likes')} views={result.get('views')} "
+                      f"reach={result.get('reach', 0)}")
+            else:
+                err = result.get("error")
+                failures.append({
+                    "platform": platform,
+                    "draft_id": task.draft_id,
+                    "bucket": task.bucket,
+                    "error": err,
+                })
+                print(f"  ↳ [Fail] {platform:9s} bucket={task.bucket:>3d}h "
+                      f"{task.platform_post_id[:14]}… err={str(err)[:80]}")
+
+            await asyncio.sleep(0.2)
+
+    conn.commit()
+    print(f"[Engagement] done | OK={ok_count} Fail={len(failures)} "
+          f"RateLimit={rate_limited} · committed")
+    return {
+        "total": len(tasks),
+        "ok": ok_count,
+        "failed": len(failures),
+        "rate_limited": rate_limited,
+        "failures": failures,
+    }
+
+
 async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
     """從 publish_log 撈所有成功發佈的貼文，依序抓互動、寫入 engagement_stats。"""
     rows = dbmod.list_successful_posts(conn, limit=max_posts)
@@ -404,10 +636,30 @@ async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="News Radar engagement worker")
+    parser.add_argument(
+        "--legacy-uniform",
+        action="store_true",
+        help="跑舊的 uniform sync_all_posts（一次性 backfill 用；預設走新的 hourly bucket dispatch）",
+    )
+    parser.add_argument(
+        "--max-posts",
+        type=int,
+        default=50,
+        help="--legacy-uniform 模式下的取樣上限",
+    )
+    args = parser.parse_args()
+
     async def _main():
         conn = dbmod.get_conn()
-        summary = await sync_all_posts(conn)
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        if args.legacy_uniform:
+            print("[Engagement] mode = legacy uniform (sync_all_posts)")
+            summary = await sync_all_posts(conn, max_posts=args.max_posts)
+        else:
+            print("[Engagement] mode = log-scale bucket dispatch (sync_bucket_polls)")
+            summary = await sync_bucket_polls(conn)
+        print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
         conn.close()
 
     asyncio.run(_main())
