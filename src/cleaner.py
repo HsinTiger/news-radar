@@ -5,11 +5,37 @@ HTML → Markdown via trafilatura；抓 og:image；關鍵字 / 字數過濾
 """
 from __future__ import annotations
 from typing import Optional, Tuple, List, Dict, Any
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 import trafilatura
 
 from .schema import NewsItem
+
+
+def _absolutize(url: Optional[str], base_url: Optional[str]) -> Optional[str]:
+    """把可能是相對路徑的 og 屬性 URL 補成絕對 URL。
+
+    為什麼需要：某些 site（Astro 部落格、自架 CMS）的 `<meta property="og:image">`
+    填的是 `/_astro/img.png` 這種相對路徑——對瀏覽器會自動 resolve 對 base URL
+    沒事，但餵給 Meta Graph API 會回 `(#100) url should represent a valid URL`。
+    這裡用 `urljoin(article_url, og_value)` 直接補完。
+
+    保險：傳進來已經是絕對 URL → urljoin 不會動它；傳 None → 回 None。
+    """
+    if not url:
+        return None
+    url = url.strip()
+    if not url:
+        return None
+    if url.startswith(("http://", "https://")):
+        return url  # 已是絕對 URL
+    if not base_url:
+        return url  # 沒 base 沒辦法 resolve；維持原樣（publisher 的 guard 會擋掉）
+    try:
+        return urljoin(base_url, url)
+    except Exception:
+        return url
 
 
 def extract_markdown(html: str) -> Tuple[Optional[str], int]:
@@ -34,17 +60,23 @@ def extract_markdown(html: str) -> Tuple[Optional[str], int]:
     return md, wc
 
 
-def extract_og_image(html: str) -> Optional[str]:
+def extract_og_image(html: str, base_url: Optional[str] = None) -> Optional[str]:
+    """從 HTML 抽 og:image / twitter:image / 第一張 <img>。
+
+    base_url 用於把相對路徑（`/_astro/img.png` 之類）補成絕對 URL——FB / Meta
+    Graph API 對相對 URL 會回 `(#100) url should represent a valid URL`。
+    傳 None 維持舊行為，但建議呼叫方把 article URL 傳進來。
+    """
     try:
         soup = BeautifulSoup(html, "html.parser")
         # 優先順序：og:image → twitter:image → 第一張 <img>
         for prop in ("og:image", "twitter:image"):
             tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if tag and tag.get("content"):
-                return tag["content"]
+                return _absolutize(tag["content"], base_url)
         first_img = soup.find("img")
         if first_img and first_img.get("src"):
-            return first_img["src"]
+            return _absolutize(first_img["src"], base_url)
     except Exception:
         pass
     return None
@@ -82,8 +114,10 @@ def _classify_video_url(url: Optional[str]) -> tuple[Optional[str], bool]:
     return url, False
 
 
-def extract_og_video(html: str) -> tuple[Optional[str], bool]:
+def extract_og_video(html: str, base_url: Optional[str] = None) -> tuple[Optional[str], bool]:
     """從 HTML 中抽出最具價值的影片 URL，回傳 (url, is_direct)。
+
+    base_url 用途同 extract_og_image — 把相對 src 補成絕對 URL。
 
     優先序（嚴格由上到下）：
       1. `<meta property="og:video:secure_url">`  — HTTPS 直鏈，最優先
@@ -106,7 +140,7 @@ def extract_og_video(html: str) -> tuple[Optional[str], bool]:
     for prop in ("og:video:secure_url", "og:video:url", "og:video"):
         tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
         if tag and tag.get("content"):
-            url, is_direct = _classify_video_url(tag["content"])
+            url, is_direct = _classify_video_url(_absolutize(tag["content"], base_url))
             if url:
                 return url, is_direct
 
@@ -114,7 +148,7 @@ def extract_og_video(html: str) -> tuple[Optional[str], bool]:
     twit = soup.find("meta", attrs={"name": "twitter:player:stream"}) \
         or soup.find("meta", property="twitter:player:stream")
     if twit and twit.get("content"):
-        url, is_direct = _classify_video_url(twit["content"])
+        url, is_direct = _classify_video_url(_absolutize(twit["content"], base_url))
         if url:
             return url, is_direct
 
@@ -123,13 +157,13 @@ def extract_og_video(html: str) -> tuple[Optional[str], bool]:
     if video_tag:
         # src 屬性直接掛在 <video> 上
         if video_tag.get("src"):
-            url, is_direct = _classify_video_url(video_tag["src"])
+            url, is_direct = _classify_video_url(_absolutize(video_tag["src"], base_url))
             if url:
                 return url, is_direct
         # 或塞在第一個 <source> 子節點
         source_tag = video_tag.find("source")
         if source_tag and source_tag.get("src"):
-            url, is_direct = _classify_video_url(source_tag["src"])
+            url, is_direct = _classify_video_url(_absolutize(source_tag["src"], base_url))
             if url:
                 return url, is_direct
 
@@ -216,12 +250,14 @@ async def clean_and_filter(
         item.word_count = max(1, len(stripped) // 3)
 
     # 2. 抓 og:image 與 og:video（有 html 則抓；無 html 代表 fetcher 已預填 markdown，跳過）
+    # 把 article URL 傳進去當 base_url — 這樣 og:image / og:video 的相對路徑會被
+    # urljoin 成絕對 URL，否則 FB Graph API 會回 (#100) url should represent a valid URL。
     if html:
-        item.og_image_url = extract_og_image(html)
+        item.og_image_url = extract_og_image(html, base_url=item.url)
         # og_video_url 若 fetcher 已從 RSS enclosure 預填（podcast / 原生影片 feed），
         # 不要被 HTML 抽取的結果覆蓋（enclosure URL 通常比頁面 og:video 更穩）
         if not item.og_video_url:
-            video_url, is_direct = extract_og_video(html)
+            video_url, is_direct = extract_og_video(html, base_url=item.url)
             if video_url:
                 item.og_video_url = video_url
                 item.og_video_is_direct = is_direct

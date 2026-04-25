@@ -102,6 +102,30 @@ async def _poll_threads_container_finished(client: httpx.AsyncClient, creation_i
 
 
 # ---------- Facebook ----------
+def _is_valid_http_url(url: Optional[str]) -> bool:
+    """簡單的 http(s):// URL guard。
+
+    擋掉幾種會讓 FB 回 `(#100) url should represent a valid URL` 的型態：
+      - None / 空字串
+      - 相對路徑：`/path/img.png`、`./img.png`、`../foo.png`
+      - protocol-relative：`//cdn.example.com/img.png`（FB 不接受）
+      - 裸 host：`cdn.example.com/img.png`
+      - 含空白字元（很少見但 RSS 偶爾會塞）
+
+    為什麼不用 urllib.parse 全套 validation：那會誤殺 query string 含特殊字元的合
+    法 URL（Reuters resizer 那種 auth=...&width=... 帶 base64 的）。簡單前綴判斷
+    就夠擋掉今天遇到的 case，又不容易誤殺。
+    """
+    if not url or not isinstance(url, str):
+        return False
+    url = url.strip()
+    if not url:
+        return False
+    if " " in url:
+        return False
+    return url.startswith("http://") or url.startswith("https://")
+
+
 async def _fb_upload_unpublished_photo(
     client: httpx.AsyncClient,
     image_url: Optional[str] = None,
@@ -114,6 +138,11 @@ async def _fb_upload_unpublished_photo(
 
     優先 local_file_path（自家下載過的圖，FB 一定抓得到），fallback 到 image_url
     （FB 自己抓——對某些 CDN 會 403，那時候才會回 None）。
+
+    URL guard（2026-04-25 加）：拿到 image_url 之前先驗證是 http(s):// 開頭。
+    某些 site（例如 Astro 部落格）的 og:image 是相對路徑（`/_astro/x.png`），
+    cleaner 沒 urljoin 補成絕對 URL 就直接給我們，丟給 FB 會回 `(#100)`。直接
+    pre-validate 跳過，讓上層 fallback 不浪費 API call。
     """
     base = "https://graph.facebook.com/v20.0"
     endpoint = f"/{FB_PAGE_ID}/photos"
@@ -135,6 +164,11 @@ async def _fb_upload_unpublished_photo(
         return None
 
     if image_url:
+        # Pre-validate 在打 API 前擋掉相對路徑 / 半成品 URL
+        if not _is_valid_http_url(image_url):
+            print(f"[Publisher: FB] _upload_unpublished (url) skipped — 非合法 http(s) URL: {image_url!r}")
+            return None
+
         params = {
             "url": image_url,
             "published": "false",
