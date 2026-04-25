@@ -299,3 +299,154 @@ Mode B 的 180–400 字中段不要只給數據——要展示「邏輯如何�
 - 「必看！」「錯過後悔！」「神文！」
 
 寫完 grep 一次這些詞——出現任何一個 → 整段重寫。
+
+---
+
+## 十五、Mode C · 圖文短評型（2026-04-25 加）
+
+> 從 operator 提供的 viral Threads 範本反推：除了 Mode A 短辣（30–80 字、需要金句衝擊）跟 Mode B 標準推導（180–400 字、需要事實密度），還有第三種高互動模式——**ultra-short caption + 圖片**，平均 < 30 字。
+
+### 15.1 結構
+
+```
+[反差形容句 / 觀察陳述 / 擬人化反應]  ← 1–2 句、≤ 30 字、可帶 emoji
+[圖片 / 影片 / carousel]              ← 圖負責絕大多數資訊承載
+```
+
+### 15.2 跟 Mode A 的差別
+
+| | Mode A 短辣 | **Mode C 圖文短評** |
+|---|---|---|
+| 字數 | 30–80 | ≤ 30 |
+| 文字承擔 | 金句衝擊（情緒+數據+互動誘餌三拍） | 反差/觀察/擬人化反應一拍 |
+| 圖片角色 | 配角（可有可無） | **主角**（沒圖整個 post 不成立） |
+| 互動誘餌 | 文末「哭死」「有人也這樣嗎」 | **不需要**（圖本身就是誘餌） |
+| 適合題材 | 個人感受強的宏觀數據 | 對既有對象的日常觀察、操作體驗、milestone |
+
+### 15.3 Pipeline 採用範圍（重要）
+
+**Mode C 不在 pipeline 自動發文預設範圍**——pipeline default 為 Mode A/B（依 §11.3 雙模式決策樹）。Mode C 適合場景：
+
+- emergency_oneshot 模式 + operator 手動寫 editorial_note
+- 未來 reflector 學會分辨「圖片承載資訊密度高 → 適合 Mode C」時再啟用
+- 圖片本身就是新聞主體（截圖 / 圖表 / 報導畫面）的場景
+
+---
+
+## 十六、Viral 呈現手法庫（8 種模式）
+
+> 來源：operator 觀察的高互動 Threads 範本反推。每一種給「公式」「何時用」「News Radar 適用版」三層。**Pipeline default 不主動採用這些手法**，留給 emergency 模式或 reflector 將來學會觸發條件再用。
+
+### 16.1 「X 也非常 Y 啊」routine status report
+
+- **公式**：「今天的 [既有對象] [狀態形容] 也非常 [情緒形容詞] 啊」
+- **viral 範本**：「今天的周子瑜狀態也非常好啊」（2.0 萬 likes）
+- **何時用**：對 known entity 的 routine 觀察。**新訊息含量為 0 但 reaction 強**。
+- **News Radar 適用版**：
+  - 「今天 Nvidia 股價也非常綠啊」+ K 線圖
+  - 「今天 Sam Altman 在 podcast 上的髮型也非常一致啊」+ 截圖
+  - 「今天 Anthropic 的估值也非常離譜啊」+ funding 新聞圖
+
+### 16.2 「這樣 X 其實有點 Y」反差形容
+
+- **公式**：「這樣 [日常 mundane action] 其實有點 [意料外的形容詞]」+ 影片/圖
+- **viral 範本**：「這樣除霉菌其實有點舒服😌」（2.2 萬 likes / 2,339 sends——send 數高代表被私訊推薦）
+- **何時用**：對 routine 操作給一個反差形容詞，激發讀者「我也試試看」衝動。
+- **News Radar 適用版**：
+  - 「這樣讀財報其實有點 satisfying」+ 三張紅綠對照圖
+  - 「這樣看 token 消耗曲線其實有點失控」+ Anthropic 用量圖
+  - 「這樣盯緊一個地緣指標其實有點上癮」+ 紅海航運 chart
+
+### 16.3 「X 歲後第一次 Y 的紀錄」milestone framing
+
+- **公式**：「[數字] 歲後第一次 [動作] 紀錄」+ 場景照
+- **viral 範本**：「18歲之後第一次跟我老爸單獨出門 紀錄」（1.3 萬 likes）
+- **何時用**：個人 milestone。需要 operator 真實的個人經驗，pipeline 無法 fabricate。
+- **News Radar 適用版**（emergency 模式）：
+  - 「30 歲後第一次完整看完一份 10-K 的紀錄」
+  - 「離開大摩後第一次 cold pitch 一個觀點的紀錄」
+
+### 16.4 「X 歲解鎖 Y 的小小成就」achievement
+
+- **公式**：「[數字] 歲解鎖 [里程碑] 的小小成就 🔒✨」+ 證據截圖
+- **viral 範本**：「24歲解鎖初級大人的小小成就🔒✨」+ 1,065,126 TWD 資產截圖
+- **何時用**：個人 achievement。需要真實證據圖。
+- **News Radar 適用版**（emergency 模式）：
+  - 「3 個月解鎖『不靠新聞稿』寫滿 100 篇的小小成就」+ pipeline 統計圖
+  - 「30 歲解鎖看懂台積電財報的小小成就」+ 重點標註截圖
+
+### 16.5 「X：不要啊」meta-commentary 擬人化反應
+
+- **公式**：「[公司/產品/概念名]：不要啊」對某事件的擬人化嘆息
+- **viral 範本**：「台鐵：不要啊」（quote-reply 另一個 viral post）
+- **何時用**：對熱門事件中的「受害者」做擬人化代言。**短到一句即可**。
+- **News Radar 適用版**：
+  - 對 OpenAI 削價：「Anthropic：不要啊」
+  - 對中國晶片自製：「Nvidia：不要啊」
+  - 對 AI 取代會議記錄：「人資：不要啊」
+
+### 16.6 「真心覺得 X 就是要 Y」斷言式 listicle
+
+- **公式**：「真心覺得 [主題] 就是要選 [標準1] 又 [標準2] 的。第一 X、第二 Y、第三 Z」
+- **viral 範本**：「真心覺得男友就是要選好看又有責任心的。第一⋯⋯第二⋯⋯第三⋯⋯」
+- **何時用**：個人化的選擇判斷標準。比 Mode B 的「結構分析 listicle」更主觀、更短。
+- **News Radar 適用版**：
+  - 「真心覺得 AI 公司就是要選 cash 多又 founder 不浮誇的」+ 三條
+  - 「真心覺得財報就是要看現金流又看客戶集中度的」+ 三條
+  - 跟 §FB 範本 E（checklist 識別型）的差別：FB 版是「教讀者識別」、Threads 版是「我自己的選擇偏好」——後者更人味、更短、更主觀
+
+### 16.7 「我見過很多 X，但同時 Y 的，其實少之又少」aphorism
+
+- **公式**：「我見過很多 [常見特質] 的人，但同時兼具 [常見特質] 與 [稀缺特質] 的，其實少之又少」
+- **viral 範本**：「我見過很多可以稱得上敏銳的人，但同時兼具敏銳與堅韌的人，其實少之又少」（無圖純文字）
+- **何時用**：純文字 aphorism、提煉一個觀察。**不需要圖**。
+- **News Radar 適用版**：
+  - 「我見過很多會看財報的人，但同時看得懂籌碼心理的，其實少之又少」
+  - 「我見過很多寫 prompt 寫得很順的工程師，但同時還在親手 debug 模型輸出的，其實少之又少」
+  - 「我見過很多敢做 short 的散戶，但同時懂期權對沖成本的，其實少之又少」
+
+### 16.8 機構 deadpan reply（**不適用** pipeline，記錄供參考）
+
+- **公式**：機構/品牌身份對 viral 情緒貼文用 deadpan formal tone reply 一句
+- **viral 範本**：台鐵 (@tr_taiwan.railway) 對性騷擾抱怨文回「遇到性騷擾還是建議直接報警🙏」（2,597 likes，**比原 post 還紅**）
+- **為什麼不適用**：News Radar 是內容帳號、不是機構帳號；不會主動 reply 別人 post。
+- **記錄理由**：未來若有「主力爸爸我錯了」對某 viral 投資受害文 deadpan reply 的場景（emergency 模式 + operator 手動），這個手法值得記得。
+
+---
+
+## 十七、題材光譜 vs Pipeline default 行為
+
+> 釐清：**Pipeline 自動發文範圍 ≠ Threads composer 能寫的所有題材範圍**。
+
+### 17.1 Pipeline default（每小時 cron 自動發）只走
+
+- 科技商業財經新聞（feeds.yaml 40+ tech/business sources）
+- Mode A 短辣 / Mode B 標準推導（依 §11 雙模式決策樹）
+- §12 Strategy B（逆勢判讀）/ Strategy C（連結點）
+- §13 降維打擊 hook 公式
+- §14 quote-worthy insight + News Radar 適用 CTA
+- 不採用 Mode C / §16 viral 手法 / Strategy A（公開思考）
+
+### 17.2 Emergency 模式可走（operator 手動 trigger）
+
+- 任何題材（科技 / 政治 / 偶像 / 性別 / 軍事 / 生活），但要 operator 自己寫 editorial_note 引導
+- Mode C 圖文短評
+- §16 八種 viral 手法（含 16.1–16.7，16.8 仍不適用）
+- §12 Strategy A（公開思考）
+
+### 17.3 為什麼這樣切
+
+- **Pipeline default 保守** → 維持「主力爸爸我錯了」這個 page 在「投資觀察 + 科技商業」的 niche 一致性，不稀釋演算法對 page entity 的學習
+- **Emergency 模式擴張** → operator 個人判斷某個非典型題材值得搶發時，composer 寫得出對的 voice
+- **未來路徑**：reflector 累積足夠 engagement 數據後，可以學會「哪些 viral 手法在哪些 topic_category 下提升 reach」，那時再放寬 pipeline default 採用範圍。**這是 Phase 4+ 的事，不是現在做。**
+
+### 17.4 題材擴張到偶像/政治/軍事的決策層級
+
+如果未來真要讓 pipeline 自動發這些題材，需要動三層（**不在這次 PR 範圍**）：
+
+1. `config/feeds.yaml` — 加偶像新聞 / 政治評論 / 軍事分析的 RSS 源
+2. `config/news_radar_soul.md` — soul 重寫，擴開「科技商業新聞解讀」的限定
+3. `src/topic_taxonomy.py` — 增加新 topic_category（idol / politics / military）
+
+這是 page positioning 決策、不是純技術問題。要做之前先想：「主力爸爸我錯了」的 followers 訂閱你是因為什麼？擴張會強化還是稀釋這個訂閱動機？
+
