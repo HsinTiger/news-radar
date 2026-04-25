@@ -26,9 +26,33 @@ from src import db as dbmod
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(ENV_PATH)
 
+FB_PAGE_ID = os.getenv("FB_PAGE_ID")  # 用於 normalize 沒帶 page prefix 的舊 post_id
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
 THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN")
 IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
+
+
+def _normalize_fb_post_id(post_id: str) -> str:
+    """把 publisher 不一致的 post_id 統一成 `{page_id}_{post_id}` 格式。
+
+    為什麼要這個 helper（2026-04-25 發現）：
+    publisher 在不同路徑下儲存的 platform_post_id 格式不一致——某些 publish
+    路徑（/photos endpoint）回傳完整的 `{page_id}_{post_id}`、某些（/feed
+    endpoint with link）回傳裸 `{post_id}`。Meta Graph API 對裸 post_id 開放
+    的欄位很有限：連 `reactions.summary(total_count)` 都會回 `(#100) Tried
+    accessing nonexisting field (reactions)`。
+
+    所以 engagement 端 defensive 修正：看到沒有底線的 post_id 就主動拼回完整
+    格式。對已經有底線的（之前 publish 路徑存對的）原樣回傳，不重複加 prefix。
+
+    這只是補救，不是 root fix。Root fix 在 publisher.py 應該保證寫進 DB 的
+    post_id 永遠帶 page prefix——但那是另一條 PR。
+    """
+    if "_" in post_id:
+        return post_id  # 已是完整格式
+    if not FB_PAGE_ID:
+        return post_id  # 沒環境變數可拼 → 維持原狀（會失敗，但讓錯誤訊息誠實）
+    return f"{FB_PAGE_ID}_{post_id}"
 
 FB_GRAPH = "https://graph.facebook.com/v20.0"
 TH_GRAPH = "https://graph.threads.net/v1.0"
@@ -39,50 +63,65 @@ TH_GRAPH = "https://graph.threads.net/v1.0"
 async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
     """FB 粉專貼文 / 相片的互動指標。
 
-    為什麼這支 fetch 改寫過（2026-04-25）：
-    Meta 在某個版本把 `/{post_id}?fields=...,shares` 的 `shares` 子物件砍掉了——
-    新版 link / photo posts 回 `(#100) Tried accessing nonexisting field (shares)`，
-    16/16 全 fail。修法：
+    為什麼這支 fetch 改寫過兩次（2026-04-25）：
 
-      Step 1：`/{post_id}?fields=reactions.summary,comments.summary` 拿基本互動
-              （likes / comments）。不再帶 `shares` 欄位。
-      Step 2：`/{post_id}/insights?metric=...` 拿 reach + reactions_total + 真正的
-              shares count。這個 endpoint 才是 v20+ 還在更新的官方途徑。
+    第 1 次：Meta 在某個版本把 `/{post_id}?fields=...,shares` 的 `shares` 子物件
+    砍掉了——新版 link / photo posts 回 `(#100) Tried accessing nonexisting
+    field (shares)`，16/16 全 fail。改寫成「basic + insights」雙 step。
 
-    若 Step 2 失敗（permission 不夠 / 貼文太舊 / 用 photo 不是 post id）就只回
-    Step 1 的數字，不讓 Step 2 的失敗污染 Step 1 已經拿到的 likes/comments。
+    第 2 次（同日下午）：發現裸 post_id（沒有 `{page_id}_` prefix）連
+    `reactions.summary(total_count)` 都會回 `nonexisting field (reactions)`。
+    publisher 端在不同路徑寫進 DB 的 post_id 格式不一致——/photos endpoint 寫
+    完整 `{page_id}_{post_id}`、/feed endpoint with image_url 寫裸 `{post_id}`。
+    在 engagement 端 defensive 修正：呼叫 _normalize_fb_post_id() 統一格式。
+
+    Step 設計（任一 step 失敗都不影響另一 step 的數字）：
+      Step 1: `/{normalized_id}?fields=reactions.summary,comments.summary`
+              → likes + comments（如果 post_id 格式對的話）
+      Step 2: `/{normalized_id}/insights?metric=...` → reach + views + 反應細項
+              → reach + views_total
+              → 用 post_reactions_by_type_total 當 likes 的 backup（萬一 Step 1
+                的 reactions field 不可用，也至少有 insights 端的反應總計）
+
+    return ok=True 條件：兩個 step 至少有一個拿到數字。兩個都失敗才回 ok=False。
     """
-    # ---- Step 1：基本互動（永遠先打這一支，最不容易 fail） -----------------
+    nid = _normalize_fb_post_id(post_id)
+
+    # ---- Step 1：基本互動（不見得每篇都支援，失敗就跳過不 abort） ---------
     params_basic = {
         "fields": "reactions.summary(total_count),comments.summary(total_count)",
         "access_token": FB_PAGE_ACCESS_TOKEN,
     }
+    likes = 0
+    comments = 0
+    step1_ok = False
+    data_basic: Dict = {}
     try:
-        resp = await client.get(f"{FB_GRAPH}/{post_id}", params=params_basic, timeout=30.0)
+        resp = await client.get(f"{FB_GRAPH}/{nid}", params=params_basic, timeout=30.0)
         data_basic = resp.json()
-        if resp.status_code != 200:
-            return {"ok": False, "error": data_basic, "raw": data_basic}
-
-        likes = int((data_basic.get("reactions") or {}).get("summary", {}).get("total_count") or 0)
-        comments = int((data_basic.get("comments") or {}).get("summary", {}).get("total_count") or 0)
+        if resp.status_code == 200:
+            likes = int((data_basic.get("reactions") or {}).get("summary", {}).get("total_count") or 0)
+            comments = int((data_basic.get("comments") or {}).get("summary", {}).get("total_count") or 0)
+            step1_ok = True
+        # 否則不 abort，留給 Step 2 試試
     except Exception as e:
-        return {"ok": False, "error": str(e), "raw": {"exception": str(e)}}
+        data_basic = {"exception": str(e)}
 
-    # ---- Step 2：insights — reach + shares + 真正的 reactions 細項 ----------
+    # ---- Step 2：insights — reach / views / reactions 細項 -----------------
     # 文件：https://developers.facebook.com/docs/graph-api/reference/v20.0/insights
-    # 這幾個 metric 對 Page-owned Post 都還支援；rate-limited 但不收錢。
     insights_metrics = ",".join([
-        "post_impressions_unique",   # reach (去重曝光)
-        "post_impressions",          # views (含重複)
-        "post_clicks",               # 點擊（連結點擊 + 媒體點擊）
+        "post_impressions_unique",          # reach (去重曝光)
+        "post_impressions",                 # views (含重複)
+        "post_reactions_by_type_total",     # 各反應類型總計（like/love/wow/haha/sad/angry）
     ])
-    shares = 0
     reach = 0
     views_total = 0
+    reactions_from_insights = 0
+    step2_ok = False
     insights_data: Dict = {}
     try:
         resp2 = await client.get(
-            f"{FB_GRAPH}/{post_id}/insights",
+            f"{FB_GRAPH}/{nid}/insights",
             params={"metric": insights_metrics, "access_token": FB_PAGE_ACCESS_TOKEN},
             timeout=30.0,
         )
@@ -93,27 +132,40 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
                 values = item.get("values") or []
                 if not values:
                     continue
-                v = int(values[0].get("value") or 0)
+                val = values[0].get("value")
                 if name == "post_impressions_unique":
-                    reach = v
+                    reach = int(val or 0)
                 elif name == "post_impressions":
-                    views_total = v
-        # else: 不污染回傳，shares/reach 維持 0；錯誤訊息塞進 raw
+                    views_total = int(val or 0)
+                elif name == "post_reactions_by_type_total":
+                    # value 是 dict {"like": N, "love": N, ...} — 加總當 likes
+                    if isinstance(val, dict):
+                        reactions_from_insights = sum(int(v or 0) for v in val.values())
+            step2_ok = True
     except Exception:
-        pass  # insights 失敗不影響基本互動回傳
+        pass
 
-    # FB shares 在新 API 裡不直接給；最接近的代理是 reactions + comments + clicks，
-    # 但我們不想偽造數字。shares 留 0，DB 裡這個欄位主要靠 IG/Threads 填。
-    # 若日後 Meta 重新開放 shares metric 再加進來。
+    # likes 的 final 值：Step 1 拿到就用 Step 1（精確 reactions.summary），
+    # Step 1 失敗就用 Step 2 的 reactions_by_type 加總當 backup
+    if not step1_ok and reactions_from_insights:
+        likes = reactions_from_insights
+
+    # 兩個 step 都掛 → 才回 ok=False，讓上層記錯誤
+    if not step1_ok and not step2_ok:
+        return {
+            "ok": False,
+            "error": data_basic,
+            "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
+        }
 
     return {
         "ok": True,
         "likes": likes,
         "comments": comments,
-        "shares": shares,
+        "shares": 0,        # FB API 不再單獨開放 shares metric；保留 0 不偽造
         "views": views_total,
         "reach": reach,
-        "raw": {"basic": data_basic, "insights": insights_data},
+        "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
     }
 
 
@@ -206,7 +258,21 @@ async def fetch_ig_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
 
 async def fetch_threads_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
     """Threads 貼文 insights：views / likes / replies / reposts / quotes。
+
     官方 endpoint: GET /{media-id}/insights?metric=views,likes,replies,reposts,quotes
+
+    為什麼這支 fetch 改寫過（2026-04-25）：
+    舊版本把 Threads 的 `replies` alias 成 `comments`、把 `reposts + quotes` 合
+    併成 `shares`，目的是讓三平台 dashboard column 形狀一致。代價是丟資訊：
+
+      - replies 跟 comments 是不同概念（Threads 沒有 comments、IG 沒有 replies）
+      - reposts 跟 quotes 是不同行為（轉貼 vs 引用評論）
+      - dashboard 想拆開顯示就抓不到 native 數值
+
+    現在改寫 native 三欄（schema 早就有 `replies` / `reposts` / `quotes` 欄位，
+    只是從沒被填過——dashboard 看到的永遠是 schema default 0），把 Threads 拿
+    到的數值直接寫進對應 native 欄。`comments` / `shares` 對 Threads 是 0（這
+    兩個概念對 Threads 不存在；不偽造）。
     """
     metrics = "views,likes,replies,reposts,quotes"
     params = {"metric": metrics, "access_token": THREADS_ACCESS_TOKEN}
@@ -226,11 +292,15 @@ async def fetch_threads_insights(client: httpx.AsyncClient, post_id: str) -> Dic
 
         return {
             "ok": True,
-            "likes": pulled.get("likes", 0),
-            "comments": pulled.get("replies", 0),
-            "shares": pulled.get("reposts", 0) + pulled.get("quotes", 0),
-            "views": pulled.get("views", 0),
-            "reach": 0,
+            "likes":    pulled.get("likes", 0),
+            "replies":  pulled.get("replies", 0),    # native：DB replies 欄位（Threads 留言）
+            "reposts":  pulled.get("reposts", 0),    # native：DB reposts 欄位（純轉貼）
+            "quotes":   pulled.get("quotes", 0),     # native：DB quotes 欄位（引用評論）
+            "comments": 0,                            # Threads 無此 metric；保留 0 不偽造
+            "shares":   0,                            # 同上（拆成 reposts+quotes 後不再合併）
+            "saves":    0,                            # Threads 無此 metric
+            "views":    pulled.get("views", 0),
+            "reach":    0,                            # Threads 無此 metric
             "raw": data,
         }
     except Exception as e:
@@ -289,19 +359,28 @@ async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
                     likes=result.get("likes", 0),
                     comments=result.get("comments", 0),
                     shares=result.get("shares", 0),
-                    saves=result.get("saves", 0),       # IG insights metric (post-2026-04-25)
+                    saves=result.get("saves", 0),       # IG (post-2026-04-25)
+                    reposts=result.get("reposts", 0),   # Threads native (post-2026-04-25)
+                    quotes=result.get("quotes", 0),     # Threads native (post-2026-04-25)
+                    replies=result.get("replies", 0),   # Threads native (post-2026-04-25)
                     views=result.get("views", 0),
                     reach=result.get("reach", 0),
                     raw_json=json.dumps(result.get("raw"), ensure_ascii=False),
                 )
                 ok_count += 1
-                # Print a compact one-liner. Show reach/saves only when non-zero
-                # to keep terminal noise low for cold platforms.
+                # Print a compact one-liner. Show platform-specific extras only
+                # when non-zero to keep terminal noise low for cold platforms.
                 extra_bits = []
                 if result.get("reach"):
                     extra_bits.append(f"reach={result['reach']}")
                 if result.get("saves"):
                     extra_bits.append(f"saves={result['saves']}")
+                if result.get("replies"):
+                    extra_bits.append(f"replies={result['replies']}")
+                if result.get("reposts"):
+                    extra_bits.append(f"reposts={result['reposts']}")
+                if result.get("quotes"):
+                    extra_bits.append(f"quotes={result['quotes']}")
                 extra = (" " + " ".join(extra_bits)) if extra_bits else ""
                 print(
                     f"  ↳ [OK] {platform} {post_id[:14]}… "
