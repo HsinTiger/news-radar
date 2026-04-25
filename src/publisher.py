@@ -21,7 +21,6 @@ Phase 8.14 · 短影片支援（2026-04-19）：
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from typing import Dict, Optional
@@ -36,12 +35,6 @@ load_dotenv(ENV_PATH)
 
 FB_PAGE_ID = os.getenv("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
-# Optional: pre-uploaded brand fallback photo. When set, image upload failures
-# fall back to this photo_id in attached_media instead of degrading to a
-# text-only post (which would break visual consistency in the feed).
-# To populate: manually upload a logo/brand image to your FB Page (no
-# special API needed), grab the photo_id from the URL or via API, paste here.
-FB_FALLBACK_PHOTO_ID = os.getenv("FB_FALLBACK_PHOTO_ID")
 
 THREADS_USER_ID = os.getenv("THREADS_USER_ID")
 THREADS_ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN")
@@ -126,68 +119,6 @@ def _is_valid_http_url(url: Optional[str]) -> bool:
     return url.startswith("http://") or url.startswith("https://")
 
 
-async def _fb_upload_unpublished_photo(
-    client: httpx.AsyncClient,
-    image_url: Optional[str] = None,
-    local_file_path: Optional[str] = None,
-) -> Optional[str]:
-    """上傳一張圖到粉專的『未發佈圖庫』（published=false），回傳 photo_id。
-
-    這是 attached_media 兩步流程的 Step 1。失敗回 None（讓上層決定怎麼降級），
-    成功回 FB 給的 photo_id（供 Step 2 的 attached_media 使用）。
-
-    優先 local_file_path（自家下載過的圖，FB 一定抓得到），fallback 到 image_url
-    （FB 自己抓——對某些 CDN 會 403，那時候才會回 None）。
-
-    URL guard（2026-04-25 加）：拿到 image_url 之前先驗證是 http(s):// 開頭。
-    某些 site（例如 Astro 部落格）的 og:image 是相對路徑（`/_astro/x.png`），
-    cleaner 沒 urljoin 補成絕對 URL 就直接給我們，丟給 FB 會回 `(#100)`。直接
-    pre-validate 跳過，讓上層 fallback 不浪費 API call。
-    """
-    base = "https://graph.facebook.com/v20.0"
-    endpoint = f"/{FB_PAGE_ID}/photos"
-
-    # local file 優先：自己下載過的圖一定能傳成功
-    if local_file_path and os.path.exists(local_file_path):
-        params = {"published": "false", "access_token": FB_PAGE_ACCESS_TOKEN}
-        with open(local_file_path, "rb") as fh:
-            files = {"source": fh}
-            try:
-                resp = await client.post(f"{base}{endpoint}", params=params, files=files, timeout=120.0)
-            except Exception as e:
-                print(f"[Publisher: FB] _upload_unpublished (local) 例外：{e}")
-                return None
-        data = resp.json()
-        if resp.status_code == 200:
-            return data.get("id")
-        print(f"[Publisher: FB] _upload_unpublished (local) 失敗：{data.get('error', {}).get('message')}")
-        return None
-
-    if image_url:
-        # Pre-validate 在打 API 前擋掉相對路徑 / 半成品 URL
-        if not _is_valid_http_url(image_url):
-            print(f"[Publisher: FB] _upload_unpublished (url) skipped — 非合法 http(s) URL: {image_url!r}")
-            return None
-
-        params = {
-            "url": image_url,
-            "published": "false",
-            "access_token": FB_PAGE_ACCESS_TOKEN,
-        }
-        try:
-            resp = await client.post(f"{base}{endpoint}", params=params, timeout=120.0)
-        except Exception as e:
-            print(f"[Publisher: FB] _upload_unpublished (url) 例外：{e}")
-            return None
-        data = resp.json()
-        if resp.status_code == 200:
-            return data.get("id")
-        print(f"[Publisher: FB] _upload_unpublished (url) 失敗：{data.get('error', {}).get('message')}")
-        return None
-
-    return None
-
-
 async def publish_to_fb(
     text: str,
     image_url: Optional[str] = None,
@@ -196,25 +127,31 @@ async def publish_to_fb(
 ) -> Dict:
     """發 FB 粉專。
 
-    歷史 vs 現況（2026-04-25 改寫）：
-    舊版走 `/{page-id}/photos?url=...&caption=...`，FB 把這種貼文歸類成
-    「相片更新」，**只出現在 Photos tab、不在 Posts tab**——對非 follower
-    完全隱形。我們累積 23+1 篇都中槍。
-
-    新版走 `attached_media` 模式（Meta Business Suite / Buffer / Hootsuite 用的
-    同一條 path）：
-        Step 1: POST /{page-id}/photos?url=...&published=false → 拿 photo_id
-        Step 2: POST /{page-id}/feed?message=...&attached_media=[{media_fbid}]
-                → Posts tab 上的原生圖文貼文
-
     優先級：
-        1. video_url        → `/videos`（不變）
-        2. 圖片（image_url 或 local_file_path）→ attached_media 兩步流程
-           - Step 1 失敗 + 有 FB_FALLBACK_PHOTO_ID env → 用 fallback photo
-           - Step 1 失敗 + 沒 fallback → 純文字 `/feed`（仍在 Posts tab）
-        3. 純文字 → `/feed`（不變）
+        1. video_url（公開 .mp4 URL）→ `/videos` 端點
+        2. local_file_path → `/photos` with file upload (Plan B)
+        3. image_url → `/photos` with url= (Plan A)
+        4. 皆無 / image_url 非合法 → `/feed` 純文字
 
-    return shape 同舊版（success / id / media_kind / error），caller 不用改。
+    歷史脈絡（2026-04-25 一日內反覆）：
+    今天稍早把這支 fetch 改成 `attached_media` 兩步流程（先 published=false 上
+    圖、再 /feed 帶 attached_media），原以為這樣才能讓貼文出現在 Posts tab。
+    深入測試後發現：Posts/Photos tab 的可見性問題其實是 **Meta App 在 Dev mode**
+    導致的——切到 Live mode 之後，所有歷史 /photos 上傳的貼文 retroactively
+    出現在 Posts tab，跟 attached_media post 並無顯示差異。
+
+    既然 /photos 一步流程在 Live mode 下表現相同、且：
+      - API call 少 1 次（少 ~1 秒）
+      - FB 對 photo post 有歷史 reach 紅利（algorithm 偏愛 native photo）
+      - Photos tab + Posts tab 雙重曝光
+    沒有理由維持兩步流程。Revert 回 /photos。
+
+    Keep（仍有用）：`_is_valid_http_url` URL guard——擋住相對路徑 og_image
+    （`/_astro/...`）這種 FB 會回 `(#100)` 的爛 URL，省一個必爛的 API call。
+    Drop（已無用）：`_fb_upload_unpublished_photo` helper、`FB_FALLBACK_PHOTO_ID`
+    env var、`json` import。
+
+    詳細日誌見 docs/worklog/2026-04-25.md「FB endpoint 來回踩坑記」。
     """
     if _over_limit(text, FB_MAX):
         msg = f"FB 文字超限:{len(text)} > {FB_MAX},拒發"
@@ -222,16 +159,13 @@ async def publish_to_fb(
         return {"success": False, "error": {"local_reject": msg}}
 
     base = "https://graph.facebook.com/v20.0"
+    params = {"access_token": FB_PAGE_ACCESS_TOKEN}
 
-    # ---- 影片優先（不變）-------------------------------------------------
+    # 影片優先
     if video_url:
         print(f"[Publisher: FB] 正在由影片 URL 發布 (/videos)...")
         endpoint = f"/{FB_PAGE_ID}/videos"
-        params = {
-            "file_url": video_url,
-            "description": text,
-            "access_token": FB_PAGE_ACCESS_TOKEN,
-        }
+        params.update({"file_url": video_url, "description": text})
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.post(f"{base}{endpoint}", params=params)
             data = resp.json()
@@ -241,64 +175,53 @@ async def publish_to_fb(
             print(f"[Error: FB video] {data.get('error', {}).get('message')}")
             return {"success": False, "error": data}
 
-    # ---- 圖片：attached_media 兩步流程 -----------------------------------
-    media_fbid: Optional[str] = None
-    fallback_used: bool = False
+    # local file 上傳（自家下載過的圖一定能傳成功）
+    if local_file_path and os.path.exists(local_file_path):
+        print(f"[Publisher: FB] 正在由在地檔案發布 (Plan B)...")
+        endpoint = f"/{FB_PAGE_ID}/photos"
+        params["caption"] = text
+        # 用 with 包著確保 exception 時也會關檔；之前寫 `open(...)` 直接塞 dict
+        # 會 leak file handle 如果 httpx call 拋例外。
+        with open(local_file_path, "rb") as fh:
+            files = {"source": fh}
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(f"{base}{endpoint}", params=params, files=files)
+                data = resp.json()
+                if resp.status_code == 200:
+                    print(f"[Success: FB] ID: {data.get('id')}")
+                    return {"success": True, "id": data.get("id"), "media_kind": "image"}
+                print(f"[Error: FB] {data.get('error', {}).get('message')}")
+                return {"success": False, "error": data}
 
-    async with httpx.AsyncClient() as client:
-        if image_url or local_file_path:
-            print(f"[Publisher: FB] Step 1 · 上傳未發佈圖片...")
-            media_fbid = await _fb_upload_unpublished_photo(
-                client,
-                image_url=image_url,
-                local_file_path=local_file_path,
-            )
-            if media_fbid:
-                print(f"[Publisher: FB] Step 1 OK · photo_id={media_fbid}")
-            else:
-                # 圖片上傳失敗的兩種降級路徑：
-                if FB_FALLBACK_PHOTO_ID:
-                    print(f"[Publisher: FB] Step 1 失敗 → 使用 FB_FALLBACK_PHOTO_ID")
-                    media_fbid = FB_FALLBACK_PHOTO_ID
-                    fallback_used = True
-                else:
-                    print(f"[Publisher: FB] Step 1 失敗 → 降級純文字 /feed（仍在 Posts tab）")
+    # image_url 上傳（FB 端抓圖）
+    # URL guard：擋住 `/_astro/x.png` 這種相對路徑爛 URL，省一個必爛的 API call
+    if image_url and _is_valid_http_url(image_url):
+        print(f"[Publisher: FB] 正在由網址發布 (Plan A)...")
+        endpoint = f"/{FB_PAGE_ID}/photos"
+        params.update({"url": image_url, "caption": text})
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{base}{endpoint}", params=params)
+            data = resp.json()
+            if resp.status_code == 200:
+                print(f"[Success: FB] ID: {data.get('id')}")
+                return {"success": True, "id": data.get("id"), "media_kind": "image"}
+            print(f"[Error: FB] {data.get('error', {}).get('message')}")
+            return {"success": False, "error": data}
+    elif image_url:
+        # 有給 image_url 但不是合法 http(s) URL → 不要打 API（會回 #100）
+        print(f"[Publisher: FB] image_url 非合法 http(s) URL，跳過圖片改純文字 /feed: {image_url!r}")
 
-        # ---- Step 2: /feed ------------------------------------------------
-        endpoint = f"/{FB_PAGE_ID}/feed"
-        # 注意：data= 用 form body 傳 attached_media（JSON 字串），FB 比較穩；
-        # 把 attached_media 放在 query string 容易被截斷或編碼出錯。
-        params = {"access_token": FB_PAGE_ACCESS_TOKEN}
-        body = {"message": text}
-        if media_fbid:
-            body["attached_media"] = json.dumps([{"media_fbid": media_fbid}])
-
-        print(f"[Publisher: FB] Step 2 · 發 /feed (attached={'yes' if media_fbid else 'no'})...")
-        try:
-            resp = await client.post(
-                f"{base}{endpoint}",
-                params=params,
-                data=body,
-                timeout=120.0,
-            )
-        except Exception as e:
-            return {"success": False, "error": {"exception": str(e)}}
-
+    # 純文字（image_url None / 無效 / 沒給）
+    print(f"[Publisher: FB] 正在進行純文字發布...")
+    endpoint = f"/{FB_PAGE_ID}/feed"
+    params["message"] = text
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(f"{base}{endpoint}", params=params)
         data = resp.json()
         if resp.status_code == 200:
-            post_id = data.get("id") or data.get("post_id")
-            kind_label = (
-                "image_fallback" if fallback_used
-                else ("image" if media_fbid else "text")
-            )
-            print(f"[Success: FB] post_id={post_id}  media_kind={kind_label}")
-            return {
-                "success": True,
-                "id": post_id,
-                "media_kind": kind_label,
-            }
-        err_msg = (data.get("error") or {}).get("message", "")
-        print(f"[Error: FB /feed] {err_msg}")
+            print(f"[Success: FB] ID: {data.get('id')}")
+            return {"success": True, "id": data.get("id"), "media_kind": "text"}
+        print(f"[Error: FB] {data.get('error', {}).get('message')}")
         return {"success": False, "error": data}
 
 
