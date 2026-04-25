@@ -106,6 +106,28 @@ DRAFT_ID_BREADCRUMB = PROJECT_ROOT / "tools" / ".last_emergency_draft_id"
 
 PLATFORM_TO_DB = {"fb": "facebook", "ig": "instagram", "threads": "threads"}
 
+# Canonical order — 影響 compose 內部優先級、step_write_drafts 的 drafts row 來源、
+# step_publish 的順序。Operator 用 --platforms 指定子集時，仍按此順序排列。
+ALL_PLATFORMS = ("fb", "ig", "threads")
+
+
+def parse_platforms_arg(arg: Optional[str]) -> List[str]:
+    """把 --platforms 參數（如 "fb,threads" 或 "ig" 或 None）轉成排序好的子集。
+
+    None / 空字串 → 預設三平台都發
+    含未知平台 → fail(2) 給乾淨錯誤訊息
+    保留 ALL_PLATFORMS 順序（不論 user 怎麼排）
+    """
+    if not arg:
+        return list(ALL_PLATFORMS)
+    requested = {p.strip().lower() for p in arg.split(",") if p.strip()}
+    invalid = sorted(p for p in requested if p not in ALL_PLATFORMS)
+    if invalid:
+        fail(2, f"--platforms 含未知值 {invalid}；合法值：{list(ALL_PLATFORMS)}")
+    if not requested:
+        fail(2, "--platforms 解析後空集合（逗號之間沒內容？）")
+    return [p for p in ALL_PLATFORMS if p in requested]
+
 # ---- 預設編輯角度 note ---------------------------------------------------
 # 這條 note 是『Reuters: Meta capturing employee mouse/keystrokes for AI training
 # 2026-04-21』的專用角度。未來若跑別條新聞，請用 --editorial-note-file 覆寫，
@@ -377,30 +399,43 @@ async def step_score(title: str, content: str) -> float:
     return result.confidence_score
 
 
-async def step_compose(title: str, content: str, og_image: Optional[str], editorial_note: str) -> dict:
-    """Step 4：composer → finalize_variant 三平台。任一平台 char_count 超限 → exit 5。"""
-    step("Step 4 · compose_multi_platform（三平台一次 LLM call）")
+async def step_compose(
+    title: str,
+    content: str,
+    og_image: Optional[str],
+    editorial_note: str,
+    platforms: List[str],
+) -> dict:
+    """Step 4：composer → finalize_variant 指定平台。任一平台 char_count 超限 → exit 5。
+
+    platforms 由 --platforms flag 決定，預設三平台都發。指定子集時：
+      - 只 finalize 子集（非選中的平台 LLM 還是會生（compose_multi_platform 一次 call
+        生三份），但我們不 finalize、不寫 DB、不 publish）
+      - banner 只印選中的 draft 全文
+    """
+    sel_label = ",".join(platforms)
+    step(f"Step 4 · compose_multi_platform（平台={sel_label}）")
     t0 = time.time()
     draft = await compose_multi_platform(
         title=title,
         content=content,
         og_image=og_image,
         editorial_note=editorial_note,
-        platforms=["fb", "ig", "threads"],
+        platforms=platforms,
     )
     print(f"   ↳ composer 耗時 {time.time() - t0:.1f}s")
     if not draft:
         fail(4, "compose_multi_platform 回 None（Gemini + Claude fallback 皆失效）")
 
     finalized = {}
-    for p in ("fb", "ig", "threads"):
-        v = getattr(draft, p)
+    for p in platforms:
+        v = getattr(draft, p, None)
         if not v:
-            fail(5, f"composer 沒有產出 {p} 變體；三平台齊發才能過 emergency gate")
+            fail(5, f"composer 沒有產出 {p} 變體（指定發送平台必須齊全）")
         v2, full_text, ok = finalize_variant(v, p)
         finalized[p] = (v2, full_text, ok)
 
-    banner("Step 5 · 三份 draft 全文（請仔細看）")
+    banner(f"Step 5 · 已 finalize 的 draft 全文（{len(finalized)} 平台 · 請仔細看）")
     for p, (v2, full_text, ok) in finalized.items():
         print()
         print(f"------- {p.upper()} (char_count={v2.char_count}, ok={ok}) -------")
@@ -521,18 +556,30 @@ def step_yes_gate(
 
 
 def step_write_drafts(item: dict, finalized: dict) -> str:
-    """Step 7a：INSERT drafts + platform_drafts (3x)。回傳 draft_id。"""
-    step("Step 7a · 寫入 drafts + platform_drafts")
+    """Step 7a：INSERT drafts + platform_drafts。回傳 draft_id。
+
+    drafts 表只存一筆 canonical row（title / hashtags / full_text 等概要欄位），
+    依 ALL_PLATFORMS 順序選 finalized 裡第一個有的平台當資料來源。例如：
+      - 三平台齊發 → fb 為 canonical
+      - 只發 ig + threads → ig 為 canonical
+      - 只發 threads → threads 為 canonical
+    platform_drafts 則只 INSERT finalized 含的子集。
+    """
+    step(f"Step 7a · 寫入 drafts + platform_drafts ({len(finalized)} platforms)")
     persona_version = "news_radar_soul_v1"
     appendix_version = "v2"
     draft_id = hashlib.sha1(
         (item["id"] + persona_version + datetime.now(timezone.utc).isoformat()).encode()
     ).hexdigest()[:16]
 
+    # canonical platform = ALL_PLATFORMS 順序裡第一個有 finalize 的
+    canonical_p = next((p for p in ALL_PLATFORMS if p in finalized), None)
+    if canonical_p is None:
+        fail(5, "step_write_drafts 收到空 finalized；不應該發生")
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    fb_variant = finalized["fb"]
-    v2_fb, full_text_fb, _ = fb_variant
+    v2_fb, full_text_fb, _ = finalized[canonical_p]
     cur.execute(
         """
         INSERT INTO drafts(
@@ -640,14 +687,19 @@ def step_rehost_image(item: dict) -> dict:
 
 
 async def step_publish(draft_id: str, item: dict, finalized: dict) -> dict:
-    """Step 7b：依序 publish FB → Threads → IG。每一筆都 record_publish_result。
-    回傳 {platform: {ok, resp, err}}。"""
-    step("Step 7b · publish（FB → Threads → IG）")
+    """Step 7b：依 ALL_PLATFORMS 順序 publish 已 finalize 的子集。
+    每一筆都 record_publish_result。回傳 {platform: {ok, resp, err}}。
+
+    若 finalized 不含某平台 → 跳過（不 publish_log、不錯誤）。
+    """
+    selected = [p for p in ALL_PLATFORMS if p in finalized]
+    sel_label = " → ".join(p.upper() for p in selected)
+    step(f"Step 7b · publish（{sel_label}）")
     # Emergency 目前統一走圖片路徑；影片 URL 若有，也只當備註（Meta 上傳影片需要額外
     # 驗證 mp4 可下載，emergency 不做這件事以免 polling 卡住）
     publish_image_url = item["og_image"]
     results = {}
-    for p in ("fb", "threads", "ig"):
+    for p in selected:
         v2, full_text, _ = finalized[p]
         print(f"\n>>> [{p.upper()}] publishing ({v2.char_count} 字) ...")
         t0 = time.time()
@@ -760,7 +812,15 @@ async def main_async(args) -> int:
         og_image_override=args.og_image,
     )
     score = await step_score(item["title"], item["content"])
-    finalized = await step_compose(item["title"], item["content"], item["og_image"], editorial_note)
+
+    # 解析 --platforms（預設三平台，否則 user 指定子集）
+    selected_platforms = parse_platforms_arg(args.platforms)
+    print(f"   ↳ 選定平台：{selected_platforms}")
+
+    finalized = await step_compose(
+        item["title"], item["content"], item["og_image"], editorial_note,
+        platforms=selected_platforms,
+    )
 
     if args.dry_run:
         # Dry-run 也寫 drafts-json，讓 chat orchestrator 可以拿來預覽
@@ -853,6 +913,11 @@ def main() -> None:
                          "解決 Reuters / WSJ / Bloomberg 等 CDN 擋 Meta fetcher 的問題"
                          "（FB 324 / IG/Threads 2207052）。失敗即 abort（exit 3）。"
                          "idempotent：assets/{news_id[:16]}.* 已存在就直接用。")
+    ap.add_argument("--platforms", default=None,
+                    help="逗號分隔指定要發哪幾個平台：fb, ig, threads。"
+                         "未指定 → 三平台都發。範例：--platforms threads（只發 Threads）；"
+                         "--platforms fb,threads（不發 IG，例如沒圖場景）。"
+                         "Note：選 ig 但沒有合法 og_image 會 publish-time fail（IG 強制要圖）。")
     args = ap.parse_args()
 
     # 互斥檢查：--pdf / --content-file 不能同時給
