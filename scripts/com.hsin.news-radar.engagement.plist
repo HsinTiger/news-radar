@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  News Radar · 每 4 小時 engagement LaunchAgent（2026-04-25 新增）
+  ================================================================
+  為什麼需要：dashboard 上的 FB/IG/Threads 互動數字是靠 src/engagement.py 寫
+  進 engagement_stats 表的；之前這支 worker 一直沒排程，DB 永遠是手動跑的
+  快照。這個 plist 把它接上 launchd，每 4 小時自動更新一次。
+
+  為什麼是 4 小時而不是 1 小時：
+    - FB / IG Insights API 有 hourly rate limit（per-app + per-user 雙層）
+    - engagement 數字本來就不即時，4h 解析度足夠看曲線
+    - 一天 6 次掃描 × 50 篇 ≈ 300 次 API call，遠低於 rate limit
+
+  安裝：
+    cp scripts/news_radar_engagement.sh ~/bin/
+    chmod +x ~/bin/news_radar_engagement.sh
+    sed "s|HOME_DIR|$HOME|g" scripts/com.hsin.news-radar.engagement.plist \
+        > ~/Library/LaunchAgents/com.hsin.news-radar.engagement.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.engagement.plist
+
+  手動觸發：
+    launchctl start com.hsin.news-radar.engagement
+
+  查看 log：
+    tail -50 ~/news_radar_snapshots/_engagement_logs/*.log | less
+
+  停用：
+    launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.engagement.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hsin.news-radar.engagement</string>
+
+    <!-- 每 4 小時跑一次 (14400 秒) -->
+    <key>StartInterval</key>
+    <integer>14400</integer>
+
+    <!-- 不在 load 時立刻跑；等到下一個週期才跑（避免一裝就打 API） -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 實際要跑的 shell script：
+         HOME_DIR 安裝時會被 sed 替換成 $HOME。
+         腳本必須在 ~/bin/ 而非 OneDrive/iCloud，否則 TCC 會擋 launchd 存取。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>HOME_DIR/bin/news_radar_engagement.sh</string>
+    </array>
+
+    <!-- launchd 自己的 stdout/stderr 也收起來（備援 log，主 log 在 ~/news_radar_snapshots/_engagement_logs/）-->
+    <key>StandardOutPath</key>
+    <string>/tmp/news-radar-engagement.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/news-radar-engagement.err.log</string>
+
+    <!-- 繼承使用者的 PATH（python3 / venv） -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- 不要 always on；只在排程時間跑 -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
