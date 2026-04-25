@@ -10,22 +10,19 @@ beautifulsoup4==4.12.3    # 抓 og:image 等 meta 標籤
 pydantic==2.9.2           # 結構化資料驗證
 pyyaml==6.0.2             # config.yaml 解析
 python-dotenv==1.0.1      # .env 載入
-
 # ===== AI 處理 (Milestone 2) =====
 # 兩個 Gemini SDK 並存：新版（google-genai）給 scorer/composer/analyst/reflector；
 # 舊版（google-generativeai）給 competitor_agent。等 competitor_agent 遷移後可以刪掉舊版。
 google-genai==1.73.1         # 新版 SDK，用法：from google import genai
 google-generativeai==0.8.3   # 舊版 SDK，用法：import google.generativeai as genai
 anthropic==0.39.0            # Claude API（週反思迭代用）
-
 # ===== 審核 UI (Milestone 2) =====
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
 jinja2==3.1.4
-
 # ===== 圖片處理 (Milestone 3) =====
 Pillow==11.0.0
-
 # ===== 工具 =====
 rich==13.9.4              # 終端漂亮輸出（log / table）
 python-dateutil==2.9.0    # 時區處理
+pytest>=7.0

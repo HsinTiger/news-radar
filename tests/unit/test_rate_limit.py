@@ -33,8 +33,8 @@ def test_empty_call_times_allows():
 
 # ---------- 2. just under limit ------------------------------------------
 def test_199_of_200_ig_allows():
-    # 199 calls all within the 1h window
-    times = [NOW - timedelta(minutes=i + 1) for i in range(199)]  # 1..199 min ago
+    # 199 calls ALL within the 1h window (use seconds spacing to stay in window)
+    times = [NOW - timedelta(seconds=i + 1) for i in range(199)]  # 1s..199s ago
     allowed, wait = can_call("instagram", NOW, times)
     assert allowed is True
     assert wait == 0
@@ -42,12 +42,17 @@ def test_199_of_200_ig_allows():
 
 # ---------- 3. at limit, IG, oldest 20m ago -------------------------------
 def test_200_of_200_ig_blocked_until_oldest_rolloff():
-    # 200 calls within 1h. Oldest = 20 min ago → rolls off at +60 min from
-    # then = 40 min from now.
+    # 200 calls all within 1h. Oldest = 20 min ago → rolls off at +60 min
+    # from oldest = 40 min from now. Other 199 calls spaced 1s..199s ago
+    # (all in window).
     oldest = NOW - timedelta(minutes=20)
-    times = [oldest] + [NOW - timedelta(minutes=i + 1) for i in range(199)]
+    others = [NOW - timedelta(seconds=i + 1) for i in range(199)]
+    times = [oldest] + others
     allowed, wait = can_call("instagram", NOW, times)
-    assert allowed is False
+    assert allowed is False, (
+        f"expected blocked but got allowed=True; "
+        f"len(times)={len(times)}, oldest={oldest.isoformat()}"
+    )
     # ~40 min wait; allow ±2s for floor-vs-ceil
     expected = 40 * 60
     assert abs(wait - expected) <= 2, f"expected ~{expected}s, got {wait}s"
@@ -87,12 +92,13 @@ def test_naive_call_time_raises():
 # ---------- 7. unsorted input → still correct -----------------------------
 def test_unsorted_call_times_still_correct():
     # Same as test 3 (200 calls, oldest 20min ago, blocked) but shuffled.
+    # All 199 'rest' entries within 1h window via seconds offsets.
     oldest = NOW - timedelta(minutes=20)
-    rest = [NOW - timedelta(minutes=i + 1) for i in range(199)]
+    rest = [NOW - timedelta(seconds=i + 1) for i in range(199)]
     # Put oldest in the middle to confirm internal sort matters
     times = rest[:50] + [oldest] + rest[50:]
     allowed, wait = can_call("instagram", NOW, times)
-    assert allowed is False
+    assert allowed is False, f"got allowed=True with len(times)={len(times)}"
     expected = 40 * 60
     assert abs(wait - expected) <= 2
 
