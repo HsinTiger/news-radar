@@ -7,10 +7,13 @@
 > ambiguous, this file is the ground truth; if it contradicts code, fix the code or
 > the doc — no third source wins.
 >
-> **Last ground-truth pass:** 2026-04-22, verified against code (`src/db.py`,
+> **Last ground-truth pass:** 2026-04-26, verified against code (`src/db.py`,
 > `run_pipeline.py`, `run_publish_queue.py`, `scripts/compose_hourly.sh`,
-> `scripts/com.hsin.news-radar.compose.plist`), the DB itself, the installed
-> launchd plist at `~/Library/LaunchAgents/`, and last 8 h of compose logs.
+> `scripts/news_radar_engagement.sh`, `src/engagement.py`,
+> `scripts/com.hsin.news-radar.compose.plist`,
+> `scripts/com.hsin.news-radar.engagement.plist`), the DB itself, all three
+> installed launchd plists at `~/Library/LaunchAgents/`, and last 24 h of
+> compose + engagement logs (case study §7.4 added).
 
 ---
 
@@ -95,6 +98,7 @@ but some sibling scripts resolve files via `pathlib.Path(...)` relative to cwd.
 | Agent | Schedule | Real script at | Logs |
 |---|---|---|---|
 | `com.hsin.news-radar.compose` | `StartInterval 3600` (every 1 h from load time) | `~/bin/news_radar_compose.sh` (source: `scripts/compose_hourly.sh`) | `~/news_radar_snapshots/_compose_logs/YYYYMMDD_HHMMSS.log` + `/tmp/news-radar-compose.{out,err}.log` |
+| `com.hsin.news-radar.engagement` | `StartInterval 3600` (every 1 h, log-scale bucket dispatch within ±15min of [1h, 24h, 168h] post-age tolerance windows) | `~/bin/news_radar_engagement.sh` (source: `scripts/news_radar_engagement.sh`) | `~/news_radar_snapshots/_engagement_logs/YYYYMMDD_HHMMSS.log` + `/tmp/news-radar-engagement.{out,err}.log` |
 | `com.hsin.news-radar.snapshot` | Sunday 10:30 local | `~/bin/news_radar_weekly_snapshot.sh` | `~/news_radar_snapshots/_logs/YYYYMMDD_HHMMSS.log` |
 
 The plists at `~/Library/LaunchAgents/com.hsin.news-radar.*.plist` are produced
@@ -138,7 +142,7 @@ Three branches carry three kinds of state:
 | Branch | Contains | Who writes | Who reads |
 |---|---|---|---|
 | `main` | Code, config, docs, tests | Humans (via local clone `~/news_radar` → push) | Everyone fetches this |
-| `state` | `data/01_harvest/news_radar.db`, `state/last_harvest.txt`, `archive/`, `LAST_RUN.txt` | Mac `compose_hourly.sh`, Mac `push_state.sh`, Cloud `pipeline.yml`, Cloud `reflect_topic.yml` | Mac compose, Cloud publisher — **force-pushed orphan commits, no history retention** |
+| `state` | `data/01_harvest/news_radar.db`, `state/last_harvest.txt`, `archive/`, `LAST_RUN.txt` | Mac `compose_hourly.sh`, Mac `news_radar_engagement.sh` (via `push_state.sh` since 2026-04-26 fix), Mac `push_state.sh`, Cloud `pipeline.yml`, Cloud `reflect_topic.yml` | Mac compose, Mac engagement worker, Cloud publisher — **force-pushed orphan commits, no history retention** |
 | `gh-pages` or none for docs | — | — | — |
 
 ### 5.1 The orphan-commit pattern
@@ -308,6 +312,53 @@ env -i PATH='<same string as plist>' your_binary --version
 ```
 
 If that fails, launchd will fail too.
+
+### 7.4 Engagement worker writes clobbered by compose's state-restore (2026-04-26)
+
+**Symptom (2026-04-25 → 2026-04-26):** State-branch DB's `engagement_stats`
+table sits 17.5 h stale despite the new hourly engagement worker
+(`com.hsin.news-radar.engagement`, added 2026-04-25) firing every hour and
+its log saying `OK=N committed`. Local DB equally stale. Specifically: only
+3 rows from `2026-04-26T07:02 UTC` survived in DB; runs at 11:02 / 13:02 UTC
+each claimed to commit ≥1 row but those rows were nowhere on disk hours later.
+
+**Root cause** (verified 2026-04-26 by correlating engagement worker logs
+in `~/news_radar_snapshots/_engagement_logs/` with compose logs in
+`~/news_radar_snapshots/_compose_logs/`):
+
+1. Engagement worker writes to `data/01_harvest/news_radar.db` and commits.
+2. ~3-25 minutes later, `compose_hourly.sh` line 76 runs
+   `git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db`
+   to "restore" DB from state branch. This is a **whole-file overwrite** —
+   any local engagement_stats writes since the last state-push are lost.
+3. Compose then runs the pipeline and pushes the resulting (engagement-free)
+   DB back to state. State-branch engagement_stats stops advancing.
+4. The only engagement rows that survive are ones written in the narrow
+   window between compose's restore step and compose's push step (typically
+   <3 minutes per cycle). E.g. the 2026-04-26T07:02:50 rows survived because
+   compose at 15:02:11 CST started its restore, then engagement at 15:02:50
+   CST won the race against compose's push at ~15:05.
+
+The original `news_radar_engagement.sh` comment explicitly said "不 push_state，
+等下一次 compose_hourly.sh 順手帶上去" — that assumption was wrong: compose's
+restore is destructive, not additive.
+
+**Fix (2026-04-26):** `news_radar_engagement.sh` now compares
+`MAX(fetched_at)` from `engagement_stats` before vs after `python -m
+src.engagement`. If new rows were written, it calls `scripts/push_state.sh`
+immediately to orphan-push the DB to state. Concurrent-writer race with
+compose is acceptable because (a) state-branch already documents
+disjoint-table force-push semantics in §4.3, (b) engagement_stats and
+drafts/news_items are disjoint, so compose's next-cycle restore picks up
+whatever engagement most-recently-pushed and includes those rows in its
+own push, (c) push_state.sh has sha256 + fetch-back post-condition, so a
+silent-loss like §7.3 cannot happen on the engagement push.
+
+**Detection going forward:** any future "DB X is stale on state branch
+despite worker logs saying it ran" case should immediately check whether
+the worker pushes state itself OR has a downstream that does so before the
+next state-restore clobber. Local-only writes between two state-restorers
+are a known anti-pattern now.
 
 ### 7.3 "Log says ✅ so it worked" — post-condition mandate
 
