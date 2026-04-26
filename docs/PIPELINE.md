@@ -176,6 +176,11 @@
 
 # Phase 8.11+ Extension · Module 3–7 閘道與品質評估
 
+> **SUNSET (2026-04-26):** 本章描述的 Module 3–7 設計（multi-variant compose + LLM rubric scorer + gate.py）已**正式停用**，不再是後端建置目標。
+> 取代方案：[../../PM_Radar/roadmap/phase_9_unified_reflector.md](../../PM_Radar/roadmap/phase_9_unified_reflector.md)（Hsin 2026-04-26 核可的 Phase 9 Unified Reflector 設計，Proposal A）。
+> 原因：Phase 9 把 composer 端的回饋迴路統一到 reflector 的 top-Q / bot-Q sibling-draft 取樣 + LLM 規則萃取，使 Module 3–7 的 multi-variant + rubric 流程冗餘。
+> 以下章節保留作為歷史紀錄與背景脈絡，**請勿據此實作**；新工作請參照 Phase 9 文件。
+
 > 本章補上原 Stage 02–04 之間缺掉的 ranker / selector / quality-scorer / gate 四個環節。
 >
 > 原 Stage 02 "Score" 的 contract 其實是 **item-level ranking**（deterministic、不碰 LLM），本章將它重新命名為 **Module 3 Rank** 以避免與 Module 6（draft quality scorer）混淆。
