@@ -237,6 +237,106 @@ feeds:
     # VERIFIED 2026-04-21 — 200 OK, 1.4 MB（feed 很肥，含全文；可能要在 harvester
     # 做 content trunc 避免 DB 撐太大）。VC / 戰略觀察。
 
+  # === Phase 8.24 · 國際官方來源 Tier 1 (2026-04-26) ===
+  # 來源：spec/feeds_international_official_sources.md (boss-driven scope expansion)
+  # 13 條 Tier 1 候選 → 6 條 ship-ready：Fed×2 / ECB press / EU Commission / WHO / BoJ。
+  # 失敗 7 條（Whitehouse / Treasury / ECB monetary / IMF / WB / OECD / BIS）因
+  # .gov/.org IA 改版、403 anti-bot、XML 自身 well-formed bug 等問題，不在這次 ship 範圍。
+  # RSSHub self-host 路徑作為 sub-project 另議。
+  #
+  # 4-week grace period（feed_added_at + 28d）由 harvest_analyzer 在 Phase 9 上線時 enforce；
+  # 在那之前任何 yield-based sunset 提案都 manually gated。所有 boss-driven 加入的 feed
+  # 都帶 boss_lineage 欄位記錄 spec 來源 + 授權人 + 日期。
+  #
+  # 新欄位（fetcher.py 對未知 key silent ignore，無 schema migration 需要）：
+  #   source_tier=official  → 機構類別（vs primary/secondary 的編輯權重 tier）
+  #   source_class=official → cross-cut tag，給 harvest_analyzer / reflector 跨 feed 切片用
+  #   region                → us | eu | jp | cn | global
+  #   topic_hint            → 預期主題分類（topic_classifier 可參考；非強制）
+  #   feed_added_at         → ISO8601 deploy 時間（grace period 起算點）
+  #   boss_lineage          → spec 路徑 + 授權日期 + 授權人 free-text
+
+  - name: fed_press_releases
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: us
+    topic_hint: policy_regulate
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, monetary, fed, us]
+    # VERIFIED 2026-04-26 — 200 text/xml, 14 KB, 20 items
+
+  - name: fed_speeches
+    url: https://www.federalreserve.gov/feeds/speeches.xml
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: us
+    topic_hint: policy_regulate
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, monetary, fed, us, speeches]
+    # VERIFIED 2026-04-26 — 200 text/xml, 9 KB, 15 items
+
+  - name: ecb_press
+    url: https://www.ecb.europa.eu/rss/press.html
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: eu
+    topic_hint: policy_regulate
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, monetary, ecb, eu]
+    # VERIFIED 2026-04-26 — 200 application/rss+xml, 6 KB, 15 items
+
+  - name: eu_commission_press
+    url: https://ec.europa.eu/commission/presscorner/api/rss?language=en
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: eu
+    topic_hint: policy_regulate
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, policy, eu, commission]
+    # VERIFIED 2026-04-26 — 200 application/rss+xml, 8 KB, 10 items
+
+  - name: who_news
+    url: https://www.who.int/rss-feeds/news-english.xml
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: global
+    topic_hint: biotech_pharma
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, health, who, global]
+    # VERIFIED 2026-04-26 — 200 application/rss+xml, 191 KB (10-30x larger than peers!), 25 items
+    # 觀察點：feed 比其他 6 條大 10-30 倍；harvest 第一週看 cleaner 抽出來的 markdown
+    # 是否 coherent，若高比例變 HTML soup 再考慮切到 source_type: rss_summary 模式
+
+  - name: boj_releases_en
+    url: https://www.boj.or.jp/en/rss/whatsnew.xml
+    tier: primary
+    source_tier: official
+    source_class: official
+    region: jp
+    topic_hint: policy_regulate
+    language: en
+    feed_added_at: 2026-04-26T13:45:00+00:00
+    boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
+    tags: [official, monetary, boj, japan]
+    # VERIFIED 2026-04-26 — 200 application/xml, 53 items
+    # 註：原 spec URL /en/rss/whatsnew_e.xml 已 404；hunt 找到 whatsnew.xml 是現役 path
+
 # ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
 # 文章/影音必須命中至少一個關鍵字才進入處理流程
 keywords:
