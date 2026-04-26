@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
 """
-News Radar · Tier-1 official feed dry-run harvest
+News Radar · Tier-1 official feed dry-run with real trafilatura extraction
 
-Per spec/feeds_international_official_sources.md §6 step 4.
-For each verified Tier-1 feed, fetch + parse + sample first item.
-Output: HTTP status, parse success, item count, sample title/link/summary
-length, has_media_content hint.
+Per spec/feeds_international_official_sources.md §6 step 4 +
+PM notes 2026-04-26 (note #4 — extraction quality requires real
+trafilatura on sample article URL, not just RSS-level summary inspection).
 
-Doesn't write to DB (read-only validation). Uses feedparser (same library
-as src/fetcher.py) so behavior matches what the real harvester will see
-on next launchd cron tick.
+For each verified Tier-1 feed:
+  1. Fetch + parse RSS (read-only)
+  2. Sample first item: title / link / RSS-summary
+  3. **Fetch the sample article URL with browser UA**
+  4. **Run trafilatura.extract on the response body**
+  5. Report:
+     - clean_markdown length (chars)
+     - one-line verdict: "coherent text" / "HTML soup" / "nav noise / body too short"
+
+Doesn't write to DB. Adds ~5-10s per feed for the article fetch.
+Total runtime expected ~30-60s for 6 feeds.
 """
 from __future__ import annotations
 
+import sys
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from typing import Optional
 
-import feedparser  # already a dep (used by src/fetcher.py)
+import feedparser
+import trafilatura
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -35,74 +45,143 @@ VERIFIED_TIER1 = [
 ]
 
 
-def dryrun_one(name: str, url: str) -> None:
-    print(f"\n=== {name} ===")
-    print(f"url: {url}")
-
+def http_fetch(url: str, timeout: int = 25) -> Optional[bytes]:
+    """Fetch URL with browser UA. Returns body bytes, or None on any failure."""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            body = resp.read()
-            status = resp.status
-    except Exception as e:
-        print(f"❌ fetch fail: {type(e).__name__}: {str(e)[:80]}")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except Exception:
+        return None
+
+
+def extract_quality_verdict(clean_markdown: Optional[str], body: bytes,
+                            link: str) -> tuple[int, str]:
+    """Returns (markdown_len, verdict_one_liner).
+
+    Verdict heuristics:
+      - "coherent_text"   : len > 500 + ratio of CJK-or-Latin chars high
+      - "short_body"      : len 100-500 (probably nav-heavy or summary-only)
+      - "nav_noise"       : len < 100 (cleaner couldn't isolate body)
+      - "extract_failed"  : trafilatura returned None
+      - "pdf_skipped"     : link looks like PDF (trafilatura cannot extract)
+      - "html_soup"       : trafilatura returned text but the body is mostly
+                            HTML markup that didn't get cleaned (rare)
+    """
+    if link.lower().endswith(".pdf"):
+        return (0, "pdf_skipped (link is .pdf, trafilatura does not handle binary)")
+
+    if not clean_markdown:
+        # Try to figure out why
+        if not body:
+            return (0, "extract_failed (HTTP fetch returned no body)")
+        size = len(body)
+        return (0, f"extract_failed (trafilatura returned None on {size}-byte body)")
+
+    md_len = len(clean_markdown)
+
+    # Quick sanity: how much of the markdown is whitespace + punctuation?
+    stripped = "".join(clean_markdown.split())
+    if not stripped:
+        return (md_len, "nav_noise (markdown all whitespace)")
+
+    # Coarse check: <-tag-like chars suggesting HTML wasn't fully stripped
+    angle_density = (clean_markdown.count("<") + clean_markdown.count(">")) / max(1, md_len)
+    if angle_density > 0.02:
+        return (md_len, f"html_soup (angle-bracket density {angle_density:.1%}, suspect HTML leak)")
+
+    if md_len < 100:
+        return (md_len, "nav_noise (body too short, cleaner likely captured menu/footer)")
+    if md_len < 500:
+        return (md_len, "short_body (under 500 chars; usable but thin)")
+    return (md_len, "coherent_text (>500 chars, low markup)")
+
+
+def dryrun_one(name: str, url: str) -> None:
+    print(f"\n=== {name} ===")
+    print(f"feed url: {url}")
+
+    rss_body = http_fetch(url)
+    if not rss_body:
+        print(f"❌ feed fetch fail")
         return
 
-    parsed = feedparser.parse(body)
+    parsed = feedparser.parse(rss_body)
     items = parsed.entries
     feed_title = parsed.feed.get("title", "?") if hasattr(parsed, "feed") else "?"
-
-    print(f"HTTP {status} | items {len(items)} | feed_title: {str(feed_title)[:60]}")
-
+    print(f"feed parse: items={len(items)}  title={str(feed_title)[:60]}")
     if parsed.bozo:
-        # feedparser sets bozo=1 when there were parser warnings
         bozo_err = str(parsed.get("bozo_exception", ""))[:80]
-        print(f"⚠️  feedparser bozo flag set: {bozo_err}")
+        print(f"  ⚠️ feedparser bozo flag: {bozo_err}")
 
     if not items:
-        print("⚠️  no items — feed parsed but empty")
+        print("(no items today — endpoint health OK, just no new release; not a fail per PM note 2026-04-26 #2)")
         return
 
     first = items[0]
     title = first.get("title", "?")
     link = first.get("link", "?")
-    published = first.get("published", "?")
-    summary = first.get("summary", first.get("description", ""))
+    rss_summary = first.get("summary", first.get("description", ""))
 
-    # media hints (some feeds embed image URLs in entries)
-    has_media_content = bool(first.get("media_content"))
-    has_media_thumb = bool(first.get("media_thumbnail"))
-    has_enclosure = bool(first.get("enclosures"))
+    print(f"sample title    : {str(title)[:80]}")
+    print(f"sample link     : {str(link)[:100]}")
+    print(f"RSS summary len : {len(rss_summary)} chars")
 
-    print(f"sample title    : {title[:80]}")
-    print(f"sample link     : {link[:100]}")
-    print(f"sample published: {published[:40]}")
-    print(f"summary length  : {len(summary)} chars")
-    if summary:
-        # quick coherence check: 看 summary 是不是純文字 vs HTML 渣
-        summary_head = summary[:160].replace("\n", " ")
-        looks_html = "<" in summary_head and ">" in summary_head
-        print(f"summary head    : {summary_head}")
-        print(f"summary kind    : {'HTML markup' if looks_html else 'plain text'}")
-    print(f"has media hints : media_content={has_media_content} "
-          f"media_thumbnail={has_media_thumb} enclosure={has_enclosure}")
+    # === The actual extraction quality check ===
+    # PM note 2026-04-26 #4: must run trafilatura, not just look at RSS summary.
+    print(f"--- fetching sample article + trafilatura extract ---")
+    article_body = http_fetch(link)
+    if not article_body:
+        print(f"❌ sample article fetch failed (HTTP error / timeout)")
+        print(f"   verdict: extract_failed (article URL unreachable)")
+        return
+
+    body_size = len(article_body)
+    print(f"article body    : {body_size:,} bytes")
+
+    try:
+        clean_markdown = trafilatura.extract(
+            article_body,
+            output_format="markdown",
+            include_comments=False,
+            include_tables=False,
+            include_links=False,
+            no_fallback=False,
+        )
+    except Exception as e:
+        print(f"❌ trafilatura raised: {type(e).__name__}: {str(e)[:80]}")
+        clean_markdown = None
+
+    md_len, verdict = extract_quality_verdict(clean_markdown, article_body, link)
+    print(f"clean_markdown  : {md_len:,} chars")
+    print(f"verdict         : {verdict}")
+    if clean_markdown and md_len > 0:
+        head = clean_markdown[:200].replace("\n", " ")
+        print(f"markdown head   : {head}")
 
 
 def main() -> int:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"=== Tier 1 official feeds dry-run · {now} ===")
     print(f"Verifying {len(VERIFIED_TIER1)} feeds (read-only, no DB writes).")
+    print(f"Per PM note 2026-04-26 #4: running real trafilatura on sample item per feed.")
+    print(f"Adds ~5-10s per feed for the article fetch + extract; total ~30-60s.")
 
     for name, url in VERIFIED_TIER1:
         dryrun_one(name, url)
 
     print("\n=== Dry-run complete ===")
-    print("Notes for the report:")
-    print("  - 'plain text' summary kind = cleaner.py + trafilatura should produce")
-    print("    coherent clean_markdown.")
-    print("  - 'HTML markup' summary kind = will be cleaned by trafilatura on full")
-    print("    article fetch; RSS summary itself is not used as content.")
-    print("  - feed bozo flag = feedparser saw recoverable parse warnings; usually OK.")
+    print("Verdict legend (PM note #4):")
+    print("  coherent_text   = >500 chars, looks like real article body. cleaner can use.")
+    print("  short_body      = 100-500 chars, usable but thin. likely RSS-summary level.")
+    print("  nav_noise       = <100 chars, cleaner captured menu/footer instead of body.")
+    print("                    → strong signal to switch source_type=rss_summary mode")
+    print("  html_soup       = >2% angle bracket density, HTML leaked through.")
+    print("                    → trafilatura config may need tuning")
+    print("  extract_failed  = trafilatura returned None.")
+    print("                    → sample item is not extractable; cleaner will silently drop")
+    print("  pdf_skipped     = link ends with .pdf; trafilatura does not handle PDF.")
+    print("                    → would need pypdf path in cleaner.py to use this feed")
     return 0
 
 

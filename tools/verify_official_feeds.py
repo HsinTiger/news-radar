@@ -61,7 +61,12 @@ def verify_one(name: str, url: str) -> tuple[str, dict]:
     info["items"] = len(rss_items) + len(atom_entries)
 
     if info["items"] == 0:
-        return ("no_items", info)
+        # PM note 2026-04-26: 0 items ≠ failure. Official sources have low
+        # cadence (Fed FOMC 8/year, ECB monetary 8/year). Empty feed today
+        # just means no new release; endpoint health is what verification
+        # cares about. Returning "ok_empty" so reporting can show it's a
+        # PASS variant, not a fail.
+        return ("ok_empty", info)
     return ("ok", info)
 
 
@@ -76,9 +81,11 @@ def main() -> int:
             ok_count += 1
             print(f"OK   {name:<24} {info['status']} {info['size']:>7}B  "
                   f"{info['content_type']:<24} items={info['items']}")
-        elif verdict == "no_items":
-            print(f"WARN {name:<24} {info['status']} {info['size']:>7}B  "
-                  f"{info['content_type']:<24} parsed_but_zero_items")
+        elif verdict == "ok_empty":
+            # Endpoint healthy, no items today (cadence-driven, not a fail)
+            ok_count += 1
+            print(f"OK   {name:<24} {info['status']} {info['size']:>7}B  "
+                  f"{info['content_type']:<24} items=0 (empty_today, not_a_fail)")
         elif verdict == "parse_fail":
             print(f"WARN {name:<24} {info['status']} {info['size']:>7}B  "
                   f"parse_fail: {info['parse_err']}")
