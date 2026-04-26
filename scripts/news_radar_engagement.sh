@@ -84,9 +84,12 @@ if [[ ! -f "$LOCAL_REPO/.env" ]]; then
     exit 2
 fi
 
-DB_PATH="$LOCAL_REPO/data/01_harvest/news_radar.db"
+export DB_PATH="$LOCAL_REPO/data/01_harvest/news_radar.db"
 
 # Helper：印出本機 engagement_stats 最新一筆 fetched_at（沒有就回空字串）
+# 注意：DB_PATH 必須在呼叫前 export（見下方註釋）。bash 不會把 `VAR=val func`
+# 形式的前綴傳到 shell function 內部 spawn 的 subprocess（python3 heredoc）—
+# 這是 Phase 1 (commit abff524) 的 bug，Phase 1.5 修正：改用 export。
 read_max_fetched_at() {
     python3 - <<'PY' 2>/dev/null
 import sqlite3, os, sys
@@ -103,7 +106,7 @@ PY
 }
 
 # Before-shot：跑 python 之前的 MAX(fetched_at)
-DB_PATH="$DB_PATH" BEFORE_MAX=$(read_max_fetched_at)
+BEFORE_MAX=$(read_max_fetched_at)
 echo "[engagement] before MAX(fetched_at) = ${BEFORE_MAX:-<none>}"
 
 # 跑 engagement
@@ -122,7 +125,7 @@ if [[ $PYRC -ne 0 ]]; then
 fi
 
 # After-shot：python 跑完之後的 MAX(fetched_at)
-DB_PATH="$DB_PATH" AFTER_MAX=$(read_max_fetched_at)
+AFTER_MAX=$(read_max_fetched_at)
 echo "[engagement] after  MAX(fetched_at) = ${AFTER_MAX:-<none>}"
 
 # 比對：MAX(fetched_at) 有前進才推 state branch
