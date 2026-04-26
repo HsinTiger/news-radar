@@ -303,10 +303,16 @@ feeds:
     region: eu
     topic_hint: policy_regulate
     language: en
+    source_type: rss_summary
     feed_added_at: 2026-04-26T13:45:00+00:00
     boss_lineage: "spec/feeds_international_official_sources.md · 2026-04-26 Hsin"
     tags: [official, policy, eu, commission]
     # VERIFIED 2026-04-26 — 200 application/rss+xml, 8 KB, 10 items
+    # 2026-04-26 dry-run: 19,583-byte article body 但 trafilatura.extract 回 0 字
+    # （EU Commission presscorner 是 JS-rendered SPA、HTML shell 無 article body）。
+    # 切 source_type: rss_summary 模式：fetcher 從 RSS <description> 預填 clean_markdown，
+    # 跳過 fetch_html。RSS summary 407 字 plain text、語意完整，scorer + composer 夠用。
+    # 跟 The Block 同一個處理路徑（Phase 8.15b 建立的 fallback pattern）。
 
   - name: who_news
     url: https://www.who.int/rss-feeds/news-english.xml
