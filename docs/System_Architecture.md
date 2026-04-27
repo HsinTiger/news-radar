@@ -124,6 +124,7 @@ is `HOME_DIR/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` (see
 | `pipeline.yml` | `cron: 0 * * * *` (hourly on :00) | Clone main → restore DB from `state` → `python run_publish_queue.py` → push `state` |
 | `reflect_topic.yml` | `cron: 0 22 * * 0` (Sun 22:00 UTC ≈ Mon 06:00 Taipei) | Weekly topic-weight back-prop |
 | `reflect_harvest.yml` | `cron: 0 3 * * *` (daily 03:00 UTC ≈ 11:00 Taipei) | Daily harvest analyzer (Phase 9 Item 4) — feed-yield evaluation, proposal-only sunset/investigation entries |
+| `reflect_scorer.yml` | `cron: 0 4 * * *` (daily 04:00 UTC ≈ 12:00 Taipei) | Daily scorer analyzer (Phase 9 Item 6) — per-platform AUTO_PUBLISH threshold optimization, proposal-only |
 | `feed_healthcheck.yml` | daily | Pings feed URLs, opens GH Issue on failure |
 
 ### 4.3 Concurrency & race windows
@@ -399,6 +400,112 @@ step).
 non-dry-run AND ≥ 1 proposal written AND `PUSH_STATE` env var set.
 The cron workflow's own "Persist state" step is the production
 propagation path; the in-process trigger is the launchd-fallback.
+
+### 6.5 reflect_scorer analyzer (Phase 9 Item 6, 2026-04-28)
+
+`src/reflector/scorer.py` is the third Phase 9 sub-analyzer. **Daily**
+cron (`.github/workflows/reflect_scorer.yml`, 04:00 UTC ≈ 12:00 TW),
+deliberately staggered one hour after Item 4's `reflect_harvest.yml`
+(03:00 UTC) to avoid same-time CI contention on the
+`news-radar-pipeline` concurrency group. Reads
+`v_post_engagement_aggregated` (Item 1, Item 1.6's full per-platform
+column extension required) and writes per-platform AUTO_PUBLISH
+threshold proposals to `data/05_reflect/proposals/YYYY-WW.jsonl` via
+`src.reflector.proposals.write_proposal`.
+
+**Per-platform analysis** (FB / IG / Threads, independent):
+
+1. Pull every published draft from the last **30 days** for this
+   platform via the substrate view.
+2. Drop rows where the platform's engagement columns are ALL NULL —
+   the engagement worker hasn't polled them yet, so they don't carry
+   a curve-fitting signal. A separate "polled with 0 engagement" row
+   IS included (any non-NULL column = polled).
+3. **Sample-size gate:** < 30 polled-published rows → SKIP this
+   platform. Write a **lineage-skip row** (no jsonl entry) tagged
+   with `evidence.reason="insufficient_samples"`.
+4. Bucket each row's `weighted_score` to nearest 0.05 via Python
+   `round()` (banker's rounding — half-to-even — chosen over half-up to
+   avoid systematic upward bias on bucket boundaries).
+5. Compute `engagement_weight` per row using the **Hsin-pinned formulas**
+   (Phase 8.20 verbatim, codified in `src/reflector/_engagement.py`):
+   - FB:      `likes + 2*comments + 3*shares + 0.01*reach`
+   - IG:      `likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach`
+   - Threads: `likes + 2*replies  + 3*reposts + 1.5*quotes + 0.005*views`
+6. Grid-search threshold T over [0.30, 0.95] in 0.05 steps, scoring
+   `mean(engagement_weight | weighted_score >= T)` (mean-of-tail =
+   per-published-post engagement). Sub-threshold tails (< 5 rows)
+   score 0 — guards against an optimum on a sparse top-bucket.
+7. **Sanity-bound clamp** to `[0.50, 0.95]`. If unconstrained T < 0.50
+   → propose 0.50 with `evidence.metrics.bound_hit="lower"`. If > 0.95
+   → 0.95 with `bound_hit="upper"`.
+8. **Noise floor:** `|delta| < 0.02` → no jsonl proposal, lineage-skip
+   row with `evidence.reason="below_noise_floor"`.
+9. **Calibration override** (Phase 9 §8.4): every actionable proposal
+   carries `boss_attention_required=True` regardless of |delta|.
+   `mark_deployed()` is never called from this module — Item 6 in
+   calibration mode is strictly proposal-only. Phase 9 graduation
+   flips this gate; until then auto-deploy is disabled.
+
+**Proposal payload shape:**
+- `analyzer="scorer"`, `proposal_type="tune_threshold"`,
+  `platform=<facebook|instagram|threads>`.
+- `action.target_config="thresholds.yml"`,
+  `action.field="per_platform.<fb|ig|threads>.AUTO_PUBLISH"`.
+- `evidence.confidence`: HIGH if `sample_count ≥ 60` AND `bound_hit is
+  None`; MED otherwise (clamping demotes confidence — the data wanted
+  to go further than our sanity rails).
+- `evidence.sample_ids`: empty (curve-level proposal, not draft-level).
+- `evidence.metrics`: `sample_count`, `excluded_unpolled`, current /
+  proposed thresholds, delta, `engagement_per_post_at_*` for both
+  thresholds, `total_engagement_lift_estimate`, `bound_hit`,
+  `window_days`.
+
+**Spec interpretation note** (audit-flagged for PM ratification, see
+`PM_Radar/audits/2026-04-28_phase9_item6_scorer_analyzer.md`): the
+spec's literal objective `mean(...) × (count_at_or_above_T /
+total_count)` is algebraically equivalent to `sum_in_tail / N`, which
+is monotonically non-increasing in T for non-negative weights — the
+unconstrained optimum is always GRID_LO and the formula does NOT
+"balance per-post quality with publish volume" as labeled. This module
+implements the **mean-of-tail** interpretation (matches the spec's
+named metric `engagement_per_published_post`) plus a
+`MIN_TAIL_FOR_FIT=5` sparse-tail guard. Documented for PM sign-off
+before Item 7 lands.
+
+**`thresholds.yml` schema** (introduced by Item 6 — file did not
+exist prior; production `AUTO_PUBLISH` lives as a Python constant
+in `run_pipeline.py` until graduation deploys catch up). Resolution
+order for any consumer:
+1. `per_platform.<plat>.AUTO_PUBLISH` if file + key exist.
+2. Top-level `AUTO_PUBLISH` as global default.
+3. Hard-coded `0.70` (matches today's `run_pipeline.py` constant).
+
+The reader helper is `src.reflector.scorer.read_current_threshold()`.
+Existing constants in `run_pipeline.py` and `tools/emergency_oneshot.py`
+are NOT yet refactored to read this file — the cutover is parked as a
+Phase 9 follow-up (calibration phase makes everything proposal-only;
+no auto-deploy reads thresholds.yml today). See the Item 6 audit for
+the full parked-consumers list.
+
+**Per-run markdown report (Task C absorption):** every non-dry-run
+cycle writes `reports/scorer_<YYYY-MM-DD>.md` with one section per
+platform: sample_count, current/proposed thresholds, delta, bound_hit,
+confidence, engagement_per_post for both thresholds, and a per-bucket
+histogram. Workflow commits the markdown to `main` (same shape as Item
+3's `docs/topic_weight_log/` and Item 4's `reports/harvest_*.md`).
+
+**State-branch propagation:** `_maybe_push_state_branch()` mirrors
+`topic.py` / `harvest.py`'s env-var-gated subprocess pattern. Trigger
+conditions: non-dry-run AND ≥ 1 fire_id produced (actionable OR skip
+lineage row) AND `PUSH_STATE` env var set. The cron workflow's own
+"Persist state" step is the production propagation path.
+
+**Engagement-weight helper placement:** `src/reflector/_engagement.py`
+(new leaf module, zero dependencies on `proposals.py`/`db.py`). The
+formulas are pure and Hsin-pinned, so they're shared across analyzers
+that correlate signal with engagement (Items 5/6/7). Imported by Item
+6 today; Items 5 / 7 will pick it up when they ship.
 
 ---
 

@@ -1,0 +1,37 @@
+# News Radar · per-pipeline thresholds.
+#
+# Phase 9 Item 6 (2026-04-28) introduced this file as the deployment
+# surface for the scorer analyzer's per-platform AUTO_PUBLISH proposals.
+# Prior to Item 6 every threshold lived as a Python constant in
+# `run_pipeline.py` (`AUTO_PUBLISH_THRESHOLD = 0.7`). This file does
+# NOT yet replace those constants — Phase 9 is in calibration mode and
+# all reflector proposals are PROPOSAL-ONLY (boss_attention_required=
+# True, no auto-deploy). The eventual deployment step (post-graduation)
+# will:
+#   1. update both this file AND any code-side constants OR
+#   2. flip every consumer to read from this file.
+# That cutover is parked as a Phase 9 follow-up; tracked in:
+#   /Users/hsin/PM_Radar/audits/2026-04-28_phase9_item6_scorer_analyzer.md
+#
+# Resolution order for any threshold consumer (see scorer.py
+# `read_current_threshold()` for reference impl):
+#   1. `per_platform.<plat>.AUTO_PUBLISH` if the file + key exist.
+#   2. top-level `AUTO_PUBLISH` as global default fallback.
+#   3. hard-coded `0.70` (matches today's run_pipeline constant).
+#
+# Unit: `weighted_score` (post-Phase-8.20 score, [0.0, 1.0]).
+# Sanity bounds enforced by scorer analyzer: [0.50, 0.95].
+#
+# Schema version contract: top-level `AUTO_PUBLISH` and the `per_platform`
+# block must coexist. Removing either breaks the resolution-order
+# fallback. Add new platforms only by extending `per_platform`.
+
+AUTO_PUBLISH: 0.70  # global default, fallback for unset platforms
+
+per_platform:
+  fb:
+    AUTO_PUBLISH: 0.70
+  ig:
+    AUTO_PUBLISH: 0.70
+  threads:
+    AUTO_PUBLISH: 0.70
