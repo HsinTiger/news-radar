@@ -108,6 +108,10 @@ def init_db() -> None:
         # statements are idempotent. See:
         #   data/01_harvest/migrations/2026-04-27_phase9_proposal_lineage.sql
         _migrate_proposal_lineage(conn)
+        # Phase 9 Item 1 (2026-04-28): backfill news_items.status='published'
+        # historic rows where mark_queue_published was called before the fix.
+        # See: data/01_harvest/migrations/2026-04-28_backfill_news_items_status.sql
+        _migrate_backfill_news_items_status(conn)
         # Phase 9 Item 1 (2026-04-27): substrate views for unified reflector.
         # Sourced AFTER schema.sql + all column migrations so views can rely
         # on Phase 8.18 queue_status / Phase 8.20 topic_category etc.
@@ -142,6 +146,36 @@ def _migrate_proposal_lineage(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # IF NOT EXISTS should make this unreachable, but defend the
         # init path against future migration-file edits.
+        pass
+
+
+_MIGRATION_BACKFILL_NEWS_ITEMS_STATUS_PATH = (
+    _BASE / "data" / "01_harvest" / "migrations"
+    / "2026-04-28_backfill_news_items_status.sql"
+)
+
+
+def _migrate_backfill_news_items_status(conn: sqlite3.Connection) -> None:
+    """Idempotent migration for Phase 9 Item 1 backfill.
+
+    Backfill missing news_items.status='published' promotions that should have
+    occurred when mark_queue_published was called (but didn't, due to defect
+    in src/db.py lines 699-710 before Phase 9 Item 1 fix).
+
+    Safe to re-run (WHERE clause excludes already-published rows).
+    """
+    if not _MIGRATION_BACKFILL_NEWS_ITEMS_STATUS_PATH.exists():
+        return
+    sql = _MIGRATION_BACKFILL_NEWS_ITEMS_STATUS_PATH.read_text(encoding="utf-8")
+    try:
+        conn.executescript(sql)
+        # Verify: count published news_items before and log if changed.
+        result = conn.execute(
+            "SELECT COUNT(*) as count FROM news_items WHERE status='published'"
+        ).fetchone()
+        if result:
+            print(f"[DB]  ↳ backfill：news_items.status='published' 共 {result['count']} 筆")
+    except sqlite3.OperationalError:
         pass
 
 
@@ -697,17 +731,33 @@ def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row
 
 
 def mark_queue_published(conn: sqlite3.Connection, draft_id: str) -> None:
-    """Publisher 成功發文後呼叫。同時更新 drafts.status='published'。"""
-    conn.execute(
-        """
-        UPDATE drafts
-           SET queue_status = 'published',
-               status       = 'published'
-         WHERE id = ?
-        """,
-        (draft_id,),
-    )
-    conn.commit()
+    """Publisher 成功發文後呼叫。同時更新 drafts.status='published' 和 news_items.status='published'。
+
+    Atomic transaction: both tables updated together, or neither.
+    Resolves Phase 9 Item 1 backfill: news_items.status promotion was missing from regular publish path.
+    """
+    try:
+        conn.execute(
+            """
+            UPDATE drafts
+               SET queue_status = 'published',
+                   status       = 'published'
+             WHERE id = ?
+            """,
+            (draft_id,),
+        )
+        conn.execute(
+            """
+            UPDATE news_items
+               SET status = 'published'
+             WHERE id = (SELECT news_id FROM drafts WHERE id = ?)
+            """,
+            (draft_id,),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def mark_queue_failed(

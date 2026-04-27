@@ -172,7 +172,14 @@ feeds:
     url: https://cointelegraph.com/rss
     tier: secondary
     language: en
+    source_type: rss_summary
     tags: [crypto, news]
+    # Phase 9 Item 1 (2026-04-28): rss_summary mode per silent feeds audit.
+    # Cointelegraph RSS bodies are 80-120 char summaries, tripping 200-word floor
+    # in regular article mode (34% drop rate). rss_summary: fetcher uses <description>,
+    # run_harvest skips fetch_html, word threshold drops to 60. Trade-off: ~100 char
+    # summaries vs. deep analysis, but sufficient for scorer classification + platform
+    # publishing. Resolves low draft yield + freshness-first queue starvation.
     # 備註：Cointelegraph 價格/行情評論偏多，依賴 must_exclude_any 的 alpha 過濾詞過濾
 
   # 以下 4 個源 Phase 8.15 首次 + 二次 harvest 確認失效，撤下（2026-04-19）：
