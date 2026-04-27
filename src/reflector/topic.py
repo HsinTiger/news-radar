@@ -526,17 +526,16 @@ def _fetch_view_aggregates(
 def _is_boss_pinned(conn: sqlite3.Connection, category_id: str) -> bool:
     """Check whether a topic category is boss-pinned.
 
-    TODO(phase-9-item-8): query `topic_weights.boss_pinned` column once
-    Item 8 adds it. Until then, NO categories are pinned in production
-    (Hsin 2026-04-26 confirmed this is acceptable interim behavior;
-    the auto-deploy path therefore exercises the small-delta branch
-    today and Items 4-7 can dispatch in parallel without waiting for
-    Item 8).
+    Phase 9 Item 8 (2026-04-28): reads `topic_weights.boss_pinned` column.
+    Defensive PRAGMA-based check so the code gracefully handles older DBs
+    where the column may not exist yet (returns False).
 
-    The defensive PRAGMA-based check below means: the day Item 8
-    deploys the column, this helper transparently picks it up without
-    requiring a code change here. If the column is absent (today), we
-    return False uniformly.
+    Boss-pinned categories cannot auto-deploy weight changes; they must
+    go through the proposal-only path with explicit boss review. This
+    prevents engagement-driven back-prop from systematically demoting
+    categories that Hsin manually scoped in via boss-driven expansion.
+
+    See spec: PM_Radar/roadmap/phase_9_unified_reflector.md §9
     """
     try:
         cols = {

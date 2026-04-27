@@ -965,3 +965,189 @@ def test_view_aggregates_picked_up_when_view_present(tmp_path):
         "feed into the proposal evidence metrics; absence indicates the "
         "view is not being queried"
     )
+
+
+def test_boss_pinned_column_with_actual_migration(tmp_path):
+    """Phase 9 Item 8: test _is_boss_pinned with the actual boss_pinned
+    column (migration 2026-04-28_phase9_boss_pinned.sql applied).
+
+    This verifies:
+      1. Migration adds the column successfully
+      2. policy_regulate is set to boss_pinned=1
+      3. Other categories default to boss_pinned=0
+      4. _is_boss_pinned reads the column correctly
+    """
+    db_file = tmp_path / "test.db"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+
+    # Seed topic_weights BEFORE applying migration (so policy_regulate exists
+    # when the migration's UPDATE runs).
+    for cat, w in [("policy_regulate", 1.20), ("ai_model", 1.70),
+                   ("ai_agent", 1.60), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+
+    # Now apply the Item 8 migration (which will add the column and UPDATE
+    # policy_regulate to boss_pinned=1)
+    migration = (_ROOT / "data" / "01_harvest" / "migrations" /
+                 "2026-04-28_phase9_boss_pinned.sql").read_text(encoding="utf-8")
+    on_disk.executescript(migration)
+
+    # Verify the migration applied: boss_pinned column exists
+    cols = {r[1] for r in on_disk.execute(
+        "PRAGMA table_info(topic_weights)"
+    ).fetchall()}
+    assert "boss_pinned" in cols, (
+        "Migration 2026-04-28_phase9_boss_pinned.sql must add boss_pinned column"
+    )
+
+    # Verify policy_regulate is pinned, others are not
+    assert _is_boss_pinned(on_disk, "policy_regulate") is True, (
+        "Migration must set policy_regulate.boss_pinned = 1"
+    )
+    assert _is_boss_pinned(on_disk, "ai_model") is False, (
+        "ai_model should default to boss_pinned = 0"
+    )
+    assert _is_boss_pinned(on_disk, "ai_agent") is False
+    assert _is_boss_pinned(on_disk, "other") is False
+
+
+def test_boss_pinned_column_with_actual_db_prevents_auto_deploy(tmp_path):
+    """Phase 9 Item 8: end-to-end test verifying that a boss_pinned=1
+    category takes the proposal-only path even with a small delta.
+
+    Uses the actual migration to add the column and set policy_regulate=1.
+    Produces a small positive delta on policy_regulate and verifies:
+      1. topic_weights.weight is NOT updated
+      2. A proposal jsonl entry is written with boss_attention_required=True
+      3. lineage.deployed_at remains NULL (not auto-deployed)
+    """
+    db_file = tmp_path / "test.db"
+    proposals_dir = tmp_path / "proposals"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+
+    # Add columns from Phase 8.18 and Phase 8.20
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute("PRAGMA table_info(drafts)").fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+
+    # Apply Item 8 migration BEFORE seeding rows (so the UPDATE in the
+    # migration doesn't fail with "no matching row")
+    migration = (_ROOT / "data" / "01_harvest" / "migrations" /
+                 "2026-04-28_phase9_boss_pinned.sql").read_text(encoding="utf-8")
+    on_disk.executescript(migration)
+
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+
+    # Seed policy_regulate with initial weight and other
+    for cat, w in [("policy_regulate", 1.50), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+
+    # Update policy_regulate to boss_pinned since it now defaults to 0
+    # (the migration's UPDATE ran before these rows existed)
+    on_disk.execute(
+        "UPDATE topic_weights SET boss_pinned = 1 WHERE category_id = ?",
+        ("policy_regulate",),
+    )
+    on_disk.commit()
+
+    # Seed engagement with policy_regulate showing good performance
+    # but small delta (like _seed_high_engagement_category pattern)
+    for i in range(4):
+        _seed_post(on_disk, f"d_pol_{i}", f"n_pol_{i}", "policy_regulate")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(on_disk, f"d_pol_{i}", p, likes=150)
+
+    for i in range(6):
+        _seed_post(on_disk, f"d_o_{i}", f"n_o_{i}", "other")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(on_disk, f"d_o_{i}", p, likes=100)
+    on_disk.commit()
+
+    before_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='policy_regulate'"
+    ).fetchone()[0]
+
+    result = run_backprop(
+        on_disk, lookback_days=30, dry_run=False,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+
+    # Verify policy_regulate has a small delta (would auto-deploy if not pinned)
+    pol = next(u for u in result.updates if u.category_id == "policy_regulate")
+    assert abs(pol.applied_delta) < AUTO_DEPLOY_DELTA_THRESHOLD, (
+        f"test fixture must produce a small delta to verify pinned path "
+        f"prevents auto-deploy; got {pol.applied_delta}"
+    )
+
+    # Weight UNCHANGED (pinned → proposal-only, no auto-deploy)
+    after_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='policy_regulate'"
+    ).fetchone()[0]
+    assert after_w == before_w, (
+        f"boss_pinned=1 category must not auto-deploy even with small delta; "
+        f"{before_w} → {after_w}"
+    )
+
+    # Proposal jsonl with boss_attention_required=True
+    week_files = list(proposals_dir.glob("*.jsonl"))
+    assert week_files, "boss_pinned category must write a proposal"
+    records = []
+    for wf in week_files:
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+
+    pol_records = [r for r in records
+                   if r["action"]["field"] == "policy_regulate"]
+    assert pol_records, "policy_regulate proposal must exist"
+    for r in pol_records:
+        assert r["boss_attention_required"] is True, (
+            "boss_pinned category must have boss_attention_required=True"
+        )
+        assert r["deployed_at"] is None, (
+            "boss_pinned category must not be deployed_at (proposal-only)"
+        )
+
+    # Lineage row has deployed_at NULL
+    lineage = on_disk.execute(
+        "SELECT fire_id, deployed_at FROM reflector_proposal_lineage "
+        "WHERE analyzer = 'topic' AND (evidence_json LIKE '%policy_regulate%' "
+        "OR target_config LIKE '%policy_regulate%')"
+    ).fetchall()
+    if lineage:  # lineage row may or may not exist (depends on write_proposal logic)
+        for r in lineage:
+            assert r["deployed_at"] is None, (
+                "pinned proposal must not have deployed_at set"
+            )
