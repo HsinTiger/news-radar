@@ -123,6 +123,7 @@ is `HOME_DIR/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` (see
 |---|---|---|
 | `pipeline.yml` | `cron: 0 * * * *` (hourly on :00) | Clone main → restore DB from `state` → `python run_publish_queue.py` → push `state` |
 | `reflect_topic.yml` | `cron: 0 22 * * 0` (Sun 22:00 UTC ≈ Mon 06:00 Taipei) | Weekly topic-weight back-prop |
+| `reflect_harvest.yml` | `cron: 0 3 * * *` (daily 03:00 UTC ≈ 11:00 Taipei) | Daily harvest analyzer (Phase 9 Item 4) — feed-yield evaluation, proposal-only sunset/investigation entries |
 | `feed_healthcheck.yml` | daily | Pings feed URLs, opens GH Issue on failure |
 
 ### 4.3 Concurrency & race windows
@@ -331,6 +332,73 @@ unchanged by Item 3) which already includes the proposals dir via the
 extended push_state.sh contract — the in-process trigger is the
 fallback for non-CI cron contexts (e.g. launchd-only deployments).
 Items 4-7 will reuse this same trigger pattern.
+
+### 6.4 reflect_harvest analyzer (Phase 9 Item 4, 2026-04-28)
+
+`src/reflector/harvest.py` is the second Phase 9 sub-analyzer. **Daily**
+cron (`.github/workflows/reflect_harvest.yml`, 03:00 UTC ≈ 11:00 TW),
+non-overlapping with `reflect_topic.yml` (Sun 22:00 UTC weekly). Reads
+`v_feed_yield_7d` (Item 1, no Item 1.6 dependency) and writes per-feed
+proposals to `data/05_reflect/proposals/YYYY-WW.jsonl` via
+`src.reflector.proposals.write_proposal` — same Item 2 substrate as
+Item 3.
+
+**Two proposal lanes, both PROPOSAL-ONLY** (`boss_attention_required=True`):
+
+| Lane | Trigger | `evidence.metrics.signal` | `action.proposed_value` |
+|---|---|---|---|
+| **sunset_feed** | `engagement_yield_ratio < 0.05` AND `feed_age_days ≥ grace_days` (cadence-aware: 28d standard / 56d for `source_tier: official` or unknown cadence) AND `publish_count_7d ≥ 3` AND not boss-pinned | `low_yield_sunset` | `sunset` |
+| **investigation** (modeled as `proposal_type: sunset_feed`) | `publish_count_7d == 0` AND feed has historical `status='published'` rows older than 7 days | `zero_publish_with_history` | `investigate` |
+
+**Skip reasons** (no proposal written, surfaced in per-run report):
+`skip:null_score` (NULL `avg_score_7d` per Cowork 2026-04-27 ruling —
+DEBUG-log emitted, never silent), `skip:samples`, `skip:grace`,
+`skip:pinned`, `skip:unconfigured` (feed in view but absent from
+`config/config.yaml`), `skip:ok` (yield healthy), `skip:zero_no_history`
+(brand-new feed with no historical publishes).
+
+**Cadence signal source:** the feed cadence is read from
+`config/config.yaml`'s `feeds:` block. There is no explicit
+`expected_cadence_per_week` field today — cadence is *derived* from
+`source_tier: official` / `source_class: official` (low-cadence, ~1/week)
+with all other tiers treated as high-cadence (≥ 4/week). Unknown cadence
+defaults to **8-week grace** (conservative). The single point of update
+is `derive_expected_cadence()` in `harvest.py`.
+
+**`feed_added_at` source:** parsed from `config/config.yaml` per-feed
+ISO-8601 string. Pre-Phase-8.24 feeds (most of the list) do not carry
+`feed_added_at` — those feeds get `skip:unconfigured` rather than a
+sunset proposal, since we cannot defend an age claim without the field.
+This intentionally narrows Item 4's blast radius to the 6 boss-driven
+international-official feeds added 2026-04-26 (and any future feeds with
+explicit `feed_added_at`).
+
+**Boss-pinned feed gate:** currently a forward-compat stub
+(`_is_feed_boss_pinned`) — Item 8 will introduce the real signal
+(either a `boss_pinned: true` field per feed in `config/config.yaml`
+OR a `feeds.boss_pinned` column). Until then no feed is pinned in
+production. The defensive PRAGMA-based check picks up either path
+without code change. Same pattern as Item 3's `_is_boss_pinned`.
+
+**No auto-deploy:** harvest analyzer never modifies `feeds.yml`
+directly. Sunset is a destructive operation that always requires Hsin
+sign-off. Therefore `mark_deployed()` is never called from this module
+(unlike `topic.py`'s auto-deploy lane).
+
+**Per-run markdown report (Task C absorption):** every non-dry-run
+cycle writes `reports/harvest_<YYYY-MM-DD>.md` with feeds_evaluated /
+sunset_count / investigation_count / per-feed verdict + reason. This
+subsumes the audit-flagged gap that `tools/dryrun_official_feeds.py`
+didn't write reports to disk — that tool's role is satisfied by this
+analyzer's natural output. Workflow commits the markdown to `main`
+(same shape as `reflect_topic.yml`'s `docs/topic_weight_log/` commit
+step).
+
+**State-branch propagation:** `_maybe_push_state_branch()` mirrors
+`topic.py`'s env-var-gated subprocess pattern. Same trigger conditions:
+non-dry-run AND ≥ 1 proposal written AND `PUSH_STATE` env var set.
+The cron workflow's own "Persist state" step is the production
+propagation path; the in-process trigger is the launchd-fallback.
 
 ---
 

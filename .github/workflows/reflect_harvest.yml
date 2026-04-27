@@ -1,0 +1,182 @@
+name: News Radar · Harvest Analyzer (Daily)
+
+# ------------------------------------------------------------
+# Phase 9 Item 4 (2026-04-28) — daily feed-yield evaluation.
+#
+# Reads `v_feed_yield_7d` (Item 1 view substrate) and writes per-feed
+# proposals to `data/05_reflect/proposals/YYYY-WW.jsonl` via the
+# Item 2 write-path API. Two lanes:
+#   - sunset_feed (low yield + 4w/8w grace + samples ≥ 3 + not pinned)
+#   - investigation (zero publishes 7d + has historical publish)
+#
+# All proposals are PROPOSAL-ONLY (boss_attention_required=True) —
+# this analyzer never auto-deploys. Hsin reviews + signs off via the
+# (eventual) settings-page UI, then deploy happens out-of-band.
+#
+# Runs daily at 03:00 UTC (≈ 11:00 Asia/Taipei) — chosen so it lands
+# AFTER the daily engagement-worker pass (which runs every 4h on Mac
+# launchd) and BEFORE the human review hour. Doesn't collide with
+# `reflect_topic.yml` (Sun 22:00 UTC weekly).
+#
+# Safety: treats NULL `avg_score_7d` as insufficient-data (Cowork ruling
+# 2026-04-27); respects 4-week grace + cadence-aware 8-week grace for
+# low-cadence official sources. Even on a fresh DB the analyzer just
+# emits "0 evaluated" and exits 0.
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    # Daily 03:00 UTC = 11:00 Asia/Taipei
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run (no proposals written, no report file)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+concurrency:
+  # Shares DB writes (proposals lineage table) with pipeline.yml +
+  # reflect_topic.yml — serialize via the same group key.
+  group: news-radar-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  reflect_harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Checkout state branch
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore DB from state branch
+        id: restore
+        run: |
+          mkdir -p data/01_harvest data/05_reflect/proposals logs
+          if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "has_db=true" >> "$GITHUB_OUTPUT"
+            echo "[restore] DB restored: $(du -h data/01_harvest/news_radar.db | cut -f1)"
+          else
+            echo "has_db=false" >> "$GITHUB_OUTPUT"
+            echo "[restore] state branch has no DB → analyzer will emit 0-feed report"
+          fi
+          # Carry over any existing proposals dir so this run appends to
+          # the right ISO-week jsonl file rather than starting from empty.
+          if [ -d _state/data/05_reflect/proposals ]; then
+            cp -r _state/data/05_reflect/proposals/. data/05_reflect/proposals/ 2>/dev/null || true
+          fi
+
+      - name: Run harvest analyzer
+        env:
+          TZ: Asia/Taipei
+          PYTHONUNBUFFERED: "1"
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            FLAGS="--dry-run"
+          fi
+          echo "[reflect_harvest] flags=$FLAGS"
+          python -m src.reflector.harvest $FLAGS | tee logs/reflect_harvest_last.log
+
+      - name: Commit harvest report to main
+        if: inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -d reports ] || [ -z "$(ls -A reports 2>/dev/null)" ]; then
+            echo "[report] no harvest report produced; skipping commit"
+            exit 0
+          fi
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+          git add reports/ 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "reflect: daily harvest analyzer (run ${{ github.run_id }})"
+            git push
+          else
+            echo "[report] no new report files; skipping commit"
+          fi
+
+      - name: Persist state (DB + proposals dir)
+        if: always() && inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+
+          mkdir -p data/01_harvest data/05_reflect/proposals logs state archive
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
+            cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE/logs" ]; then
+            cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
+
+          cat > LAST_RUN.txt <<EOF
+          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_id: ${RUN_ID}
+          kind: reflect_harvest
+          EOF
+
+          if [ -f data/01_harvest/news_radar.db ]; then
+            echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] no changes; skipping push"
+            exit 0
+          fi
+          git commit -q -m "state: reflect_harvest run ${RUN_ID}"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            state
+
+      - name: Upload report + log as artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: reflect-harvest-${{ github.run_id }}
+          path: |
+            reports/
+            logs/reflect_harvest_last.log
+            data/05_reflect/proposals/
+          retention-days: 30
+          if-no-files-found: warn
