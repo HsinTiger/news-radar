@@ -1,23 +1,30 @@
 """News Radar · Phase 9 unified reflector package.
 
-Created 2026-04-27 (Phase 9 Item 2). Will host the analyzer modules
+Created 2026-04-27 (Phase 9 Item 2). Hosts the analyzer modules
 introduced by Items 3-7:
 
-  - topic.py     (Item 3 — refactor of legacy src/reflector_topic.py)
-  - harvest.py   (Item 4)
-  - composer.py  (Item 5)
-  - scorer.py    (Item 6)
-  - gate.py      (Item 7)
-  - proposals.py (Item 2 — write-path API for proposals.jsonl + lineage)
+  - topic.py          (Item 3 — refactor of legacy src/reflector_topic.py)
+  - composer_rules.py (legacy soul-rule reflection — was src/reflector.py
+                       prior to 2026-04-27; relocated here as part of Item 3
+                       to free the ``src.reflector`` name for the package.
+                       ``run_reflection`` is re-exported below so existing
+                       callers (``run_pipeline.py``, ``run_reflect.py``)
+                       remain unchanged.)
+  - harvest.py        (Item 4)
+  - composer.py       (Item 5)
+  - scorer.py         (Item 6)
+  - gate.py           (Item 7)
+  - proposals.py      (Item 2 — write-path API for proposals.jsonl + lineage)
 
 All analyzers write through ``proposals.write_proposal``; no analyzer
 opens the jsonl file or the lineage table directly.
 
 The package-level helper ``mark_deployed`` (Item 2.5) is the deployment
-counterpart: once Hsin approves a proposal and the analyzer applies it,
-the analyzer calls ``mark_deployed(fire_id)`` to record the deploy
-timestamp on both the jsonl record and the lineage row. Item 3 will
-be the first caller.
+counterpart: once an analyzer auto-deploys a proposal (or once Hsin
+approves a pending one and the analyzer applies it), the analyzer calls
+``mark_deployed(fire_id)`` to record the deploy timestamp on both the
+jsonl record and the lineage row. Item 3's topic analyzer is the first
+caller (auto-deploy path for non-pinned + small-delta categories).
 
 Spec  : PM_Radar/specs/phase_9_implementation_plan.md §3
 Canon : PM_Radar/roadmap/phase_9_unified_reflector.md
@@ -41,6 +48,21 @@ from .proposals import (
     _resolve_proposals_dir,
     _utcnow_iso,
 )
+
+# Re-export legacy soul-rule reflection entrypoint so existing callers
+# (run_pipeline.py:39, run_reflect.py:18) keep working unchanged after the
+# Item 3 import-shadow fix relocated src/reflector.py -> composer_rules.py.
+# The submodule import is lazy-guarded: composer_rules pulls in pydantic +
+# google.genai via src.engagement, which is fine for the production
+# pipeline but heavy for unit tests of the topic / proposals subpackages.
+# If the import fails (missing optional deps in a minimal test env), we
+# expose ``run_reflection = None`` so ``from src.reflector import
+# run_reflection`` doesn't itself raise — the actual call site still
+# fails loudly if invoked, which is the correct behavior.
+try:
+    from .composer_rules import run_reflection  # noqa: F401
+except Exception:  # pragma: no cover — defensive for minimal test envs
+    run_reflection = None  # type: ignore[assignment]
 
 
 def mark_deployed(

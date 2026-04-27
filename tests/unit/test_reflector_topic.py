@@ -1,25 +1,30 @@
-"""Phase 8.20 Step 4：驗證 src/reflector_topic.py 的 math + DB IO。
+"""Phase 9 Item 3 (originally Phase 8.20 Step 4):
+驗證 src/reflector/topic.py 的 math + DB IO + auto-deploy / proposal-only branching.
 
-兩類測試：
+三類測試：
   A. Pure 函式（無 DB 依賴）— engagement 公式、中位數、normalized_delta、
-     apply_weight_update guard rails、detect_trend。
-  B. End-to-end：synthetic engagement_stats 餵進 in-memory SQLite，跑
-     run_backprop，驗 topic_weights / topic_weight_history / reflection_events
-     三張表寫入正確。
+     apply_weight_update guard rails、detect_trend、_classify_branch、
+     _confidence_level。
+  B. End-to-end (legacy / write_proposals=False)：synthetic engagement_stats
+     餵進 in-memory SQLite，跑 run_backprop，驗 topic_weights /
+     topic_weight_history / reflection_events 三張表寫入正確。Math regression.
+  C. Phase 9 Item 3 — auto-deploy + proposal-only paths against jsonl +
+     reflector_proposal_lineage table.
 """
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import sys
 from pathlib import Path
 
-# 讓測試能 import src.reflector_topic（不經過 pydantic-依賴的 src.db）
+# 讓測試能 import src.reflector.topic（不經過 pydantic-依賴的 src.db）
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.reflector_topic import (  # noqa: E402
+from src.reflector.topic import (  # noqa: E402
     EngagementRow,
     compute_engagement_score,
     compute_platform_medians,
@@ -29,6 +34,11 @@ from src.reflector_topic import (  # noqa: E402
     detect_trend,
     run_backprop,
     format_markdown_report,
+    _classify_branch,
+    _confidence_level,
+    _is_boss_pinned,
+    AUTO_DEPLOY_DELTA_THRESHOLD,
+    HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
     ETA,
     MAX_WEEKLY_DELTA,
     MIN_SAMPLES_TOTAL,
@@ -375,7 +385,15 @@ def test_e2e_dryrun_no_db_writes():
     assert ai.total_samples == 12  # 4 posts × 3 platforms
 
 
-def test_e2e_real_run_updates_db():
+def test_e2e_real_run_legacy_path_updates_db():
+    """Legacy fallback path: write_proposals=False → direct UPDATE on
+    topic_weights via _write_updates (pre-Phase-9 behavior).
+
+    Validates math regression: even with the new dispatch wrapper, when
+    legacy semantics are explicitly requested, the topic_weights table
+    receives the same update it always did, history gets one row per
+    category, and a single reflection_events row is written.
+    """
     conn = _make_conn_with_schema()
     # ai_model 超強
     for i in range(4):
@@ -396,7 +414,7 @@ def test_e2e_real_run_updates_db():
         "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
     ).fetchone()[0]
 
-    run_backprop(conn, lookback_days=30, dry_run=False)
+    run_backprop(conn, lookback_days=30, dry_run=False, write_proposals=False)
 
     after_w = conn.execute(
         "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
@@ -416,8 +434,9 @@ def test_e2e_real_run_updates_db():
     assert ev_count == 1
 
 
-def test_e2e_skips_categories_without_samples():
-    """沒發文的類別（ai_agent / supply_chain）應 skip，不該被 UPDATE。"""
+def test_e2e_skips_categories_without_samples_legacy_path():
+    """沒發文的類別（ai_agent / supply_chain）應 skip，不該被 UPDATE。
+    Legacy fallback path."""
     conn = _make_conn_with_schema()
     # 只有 ai_model 有樣本，其它類別零樣本
     for i in range(4):
@@ -430,7 +449,7 @@ def test_e2e_skips_categories_without_samples():
         "SELECT weight FROM topic_weights WHERE category_id='ai_agent'"
     ).fetchone()[0]
 
-    run_backprop(conn, lookback_days=30, dry_run=False)
+    run_backprop(conn, lookback_days=30, dry_run=False, write_proposals=False)
 
     after_agent = conn.execute(
         "SELECT weight FROM topic_weights WHERE category_id='ai_agent'"
@@ -455,3 +474,494 @@ def test_format_markdown_report_contains_expected_sections():
     assert "類別權重變動" in md
     assert "每類別 × 3 平台分解" in md
     assert "`ai_model`" in md
+
+
+# ======================================================================
+# C. Phase 9 Item 3 — auto-deploy + proposal-only branching
+# ======================================================================
+
+def test_classify_branch_pure():
+    """Pure-function gate logic. No DB."""
+    # Non-pinned, small delta → auto_deploy
+    assert _classify_branch(False, 0.05) == "auto_deploy"
+    assert _classify_branch(False, -0.05) == "auto_deploy"
+    # Non-pinned, large delta → proposal_only
+    assert _classify_branch(False, AUTO_DEPLOY_DELTA_THRESHOLD) == "proposal_only"
+    assert _classify_branch(False, AUTO_DEPLOY_DELTA_THRESHOLD + 0.01) == "proposal_only"
+    assert _classify_branch(False, -0.15) == "proposal_only"
+    # Pinned with any delta → pinned
+    assert _classify_branch(True, 0.0) == "pinned"
+    assert _classify_branch(True, 0.05) == "pinned"
+    assert _classify_branch(True, 0.5) == "pinned"
+
+
+def test_confidence_level_pure():
+    assert _confidence_level(HIGH_CONFIDENCE_SAMPLE_THRESHOLD) == "HIGH"
+    assert _confidence_level(HIGH_CONFIDENCE_SAMPLE_THRESHOLD - 1) == "MED"
+    assert _confidence_level(5) == "MED"  # MIN_SAMPLES_TOTAL
+
+
+def test_is_boss_pinned_returns_false_when_column_absent():
+    """Item 3 forward-compat: until Item 8 adds boss_pinned column,
+    every category must classify as not-pinned."""
+    conn = _make_conn_with_schema()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(topic_weights)").fetchall()}
+    assert "boss_pinned" not in cols, (
+        "test fixture should reflect production schema BEFORE Item 8; "
+        "if this fails, Item 8 has shipped and the helper now needs a "
+        "real-pinned-row test"
+    )
+    for cat in ("ai_model", "ai_agent", "supply_chain", "other"):
+        assert _is_boss_pinned(conn, cat) is False
+
+
+def test_is_boss_pinned_returns_true_when_column_present_and_set():
+    """Forward-compat exercise of the Item 8 lane: simulate the column
+    existing + value=1 by ALTERing the test DB. Documents the shape
+    Item 8 must respect."""
+    conn = _make_conn_with_schema()
+    conn.execute("ALTER TABLE topic_weights ADD COLUMN boss_pinned INTEGER DEFAULT 0")
+    conn.execute(
+        "UPDATE topic_weights SET boss_pinned = 1 WHERE category_id = 'ai_model'"
+    )
+    conn.commit()
+    assert _is_boss_pinned(conn, "ai_model") is True
+    assert _is_boss_pinned(conn, "ai_agent") is False
+
+
+def _seed_high_engagement_category(conn):
+    """Seed ai_model + other so ai_model produces a SMALL +Δ that lands
+    inside the auto-deploy band (|Δ| < AUTO_DEPLOY_DELTA_THRESHOLD).
+
+    Tuning rationale (recorded so future tweaks remain calibrated):
+      - ai_model raw scores per platform ≈ 150 (post = likes 150)
+      - other  raw scores per platform ≈ 100 (post = likes 100)
+      - plat_median ≈ 100 (other has 6 posts vs ai_model 4)
+      - ai_model norm_delta ≈ 150/100 - 1 = 0.50
+      - eta × raw_delta = 0.1 × 0.50 = 0.05
+      - applied_delta on old_w=1.70 → 1.70 × 0.05 = 0.085  (< 0.10 threshold)
+    """
+    for i in range(4):
+        _seed_post(conn, f"d_ai_{i}", f"n_ai_{i}", "ai_model")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(conn, f"d_ai_{i}", p, likes=150)
+    for i in range(6):
+        _seed_post(conn, f"d_o_{i}", f"n_o_{i}", "other")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(conn, f"d_o_{i}", p, likes=100)
+    conn.commit()
+
+
+def test_auto_deploy_path_writes_proposal_updates_weight_marks_deployed(tmp_path):
+    """Phase 9 Item 3 auto-deploy lane:
+    non-pinned category + |delta| < 0.10 → topic_weights UPDATEd AND
+    proposal jsonl entry written AND lineage row's deployed_at populated
+    AND jsonl entry's deployed_at populated.
+
+    Uses an on-disk tmp DB rather than :memory: because write_proposal
+    opens its own sqlite3.connect for the lineage INSERT — :memory: DBs
+    are connection-private and the second connect would see an empty DB.
+    """
+    proposals_dir = tmp_path / "proposals"
+    db_file = tmp_path / "test.db"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+    # Replay schema + seed onto the on-disk DB.
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute("PRAGMA table_info(drafts)").fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    for cat, w in [("ai_model", 1.70), ("ai_agent", 1.60),
+                   ("supply_chain", 1.40), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+    # Re-seed engagement on the on-disk DB
+    _seed_high_engagement_category(on_disk)
+
+    before_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+
+    result = run_backprop(
+        on_disk, lookback_days=30, dry_run=False,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+
+    # 1. ai_model UPDATEd (auto-deploy lane fires).
+    after_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+    ai = next(u for u in result.updates if u.category_id == "ai_model")
+    assert abs(ai.applied_delta) < AUTO_DEPLOY_DELTA_THRESHOLD, (
+        f"test fixture must produce a small delta to exercise auto-deploy; "
+        f"got {ai.applied_delta}"
+    )
+    assert after_w > before_w, (
+        f"auto-deploy must raise topic_weights.weight; "
+        f"{before_w} → {after_w}"
+    )
+
+    # 2. lineage row exists with deployed_at populated for ai_model fire_id.
+    lineage_rows = on_disk.execute(
+        "SELECT fire_id, deployed_at FROM reflector_proposal_lineage "
+        "WHERE analyzer = 'topic'"
+    ).fetchall()
+    assert len(lineage_rows) >= 1
+    ai_lineage = [r for r in lineage_rows if r["deployed_at"] is not None]
+    assert len(ai_lineage) >= 1, (
+        "auto-deploy lane must populate deployed_at on at least one lineage row"
+    )
+
+    # 3. proposals jsonl exists with matching fire_id and deployed_at populated.
+    week_files = list(proposals_dir.glob("*.jsonl"))
+    assert week_files, "auto-deploy must write at least one proposals jsonl line"
+    # Build fire_id → record map
+    fire_to_record: dict = {}
+    for wf in week_files:
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            fire_to_record[rec["fire_id"]] = rec
+    deployed_jsonl = [r for r in fire_to_record.values()
+                      if r.get("deployed_at") is not None]
+    assert deployed_jsonl, (
+        "auto-deploy must populate deployed_at on at least one jsonl record"
+    )
+    # The auto-deployed jsonl record must NOT have boss_attention_required.
+    for rec in deployed_jsonl:
+        assert rec["boss_attention_required"] is False, (
+            f"auto-deploy lane must set boss_attention_required=False; "
+            f"got record {rec['fire_id']}"
+        )
+        assert rec["analyzer"] == "topic"
+        assert rec["proposal_type"] == "adjust_weight"
+        assert rec["action"]["target_config"] == "topic_weights"
+
+
+def test_proposal_only_path_large_delta_does_not_update_weight(tmp_path):
+    """Phase 9 Item 3 proposal-only lane (large delta):
+    non-pinned + |delta| ≥ 0.10 → topic_weights UNCHANGED, jsonl entry
+    written with boss_attention_required=True, lineage deployed_at NULL."""
+    db_file = tmp_path / "test.db"
+    proposals_dir = tmp_path / "proposals"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(drafts)"
+        ).fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    # Seed ai_model with weight FAR enough that even after eta-clip the
+    # category gate clamps to MAX_WEEKLY_DELTA = 0.30 → triggers
+    # proposal-only lane (≥ 0.10).
+    for cat, w in [("ai_model", 1.00), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+
+    # Seed engagement with extreme top-vs-baseline gap so eta×raw_delta
+    # hits the +0.30 weekly clip (applied_delta == 0.30 ≥ 0.10).
+    for i in range(4):
+        _seed_post(on_disk, f"d_ai_{i}", f"n_ai_{i}", "ai_model")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(on_disk, f"d_ai_{i}", p,
+                             likes=10000, comments=2000, shares=600,
+                             saves=400, reposts=200, quotes=100,
+                             replies=1000, views=200000, reach=400000)
+    for i in range(6):
+        _seed_post(on_disk, f"d_o_{i}", f"n_o_{i}", "other")
+        for p in ("facebook", "instagram", "threads"):
+            _seed_engagement(on_disk, f"d_o_{i}", p,
+                             likes=1, comments=0, shares=0)
+    on_disk.commit()
+
+    before_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+
+    result = run_backprop(
+        on_disk, lookback_days=30, dry_run=False,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+    ai = next(u for u in result.updates if u.category_id == "ai_model")
+    assert abs(ai.applied_delta) >= AUTO_DEPLOY_DELTA_THRESHOLD, (
+        f"test fixture must trigger weekly clip → big delta to exercise "
+        f"proposal-only lane; got {ai.applied_delta}"
+    )
+
+    # Weight UNCHANGED (proposal-only).
+    after_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+    assert after_w == before_w, (
+        f"proposal-only lane must NOT change topic_weights.weight; "
+        f"{before_w} → {after_w}"
+    )
+
+    # jsonl entry exists with boss_attention_required=True, deployed_at NULL.
+    week_files = list(proposals_dir.glob("*.jsonl"))
+    assert week_files
+    records = []
+    for wf in week_files:
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+    ai_records = [r for r in records
+                  if r["action"]["field"] == "ai_model"]
+    assert ai_records, "proposal-only lane must write a jsonl entry"
+    for r in ai_records:
+        assert r["boss_attention_required"] is True
+        assert r["deployed_at"] is None
+        assert r["evidence"]["confidence"] in {"HIGH", "MED"}
+
+    # Lineage row for the ai_model fire_id has deployed_at NULL.
+    # (Other categories may legitimately auto-deploy; we only assert
+    # the specific proposal-only lane's lineage shape.)
+    ai_fire_ids = [r["fire_id"] for r in ai_records]
+    placeholders = ",".join("?" for _ in ai_fire_ids)
+    lineage = on_disk.execute(
+        f"SELECT fire_id, deployed_at FROM reflector_proposal_lineage "
+        f"WHERE fire_id IN ({placeholders})",
+        ai_fire_ids,
+    ).fetchall()
+    assert lineage
+    assert all(r["deployed_at"] is None for r in lineage), (
+        "proposal-only lane must not populate lineage.deployed_at "
+        "for the proposal-only fire_id"
+    )
+
+
+def test_proposal_only_path_pinned_category(tmp_path, monkeypatch):
+    """Phase 9 Item 3 pinned-category branch: simulate the Item 8
+    forward-compat scenario by monkeypatching `_is_boss_pinned` so a
+    small-delta non-pinned-DB-row still classifies as 'pinned'.
+
+    The point of this test is to pin the contract — when Item 8 ships
+    and a real boss_pinned=1 row exists, the analyzer must take the
+    proposal-only lane regardless of delta magnitude. Without this
+    test the pinned branch is dead code until Item 8.
+    """
+    from src.reflector import topic as topic_mod
+
+    db_file = tmp_path / "test.db"
+    proposals_dir = tmp_path / "proposals"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(drafts)"
+        ).fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    for cat, w in [("ai_model", 1.70), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+    _seed_high_engagement_category(on_disk)  # produces small +Δ on ai_model
+
+    before_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+
+    # Force ai_model to look pinned without ALTERing schema.
+    def _fake_pinned(conn, category_id):
+        return category_id == "ai_model"
+    monkeypatch.setattr(topic_mod, "_is_boss_pinned", _fake_pinned)
+
+    run_backprop(
+        on_disk, lookback_days=30, dry_run=False,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+
+    # Weight UNCHANGED — pinned branch never deploys.
+    after_w = on_disk.execute(
+        "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+    ).fetchone()[0]
+    assert after_w == before_w, (
+        f"pinned branch must not deploy regardless of delta; "
+        f"{before_w} → {after_w}"
+    )
+
+    # jsonl entry on ai_model with boss_attention_required=True.
+    week_files = list(proposals_dir.glob("*.jsonl"))
+    records = []
+    for wf in week_files:
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+    ai_records = [r for r in records if r["action"]["field"] == "ai_model"]
+    assert ai_records
+    for r in ai_records:
+        assert r["boss_attention_required"] is True
+        assert r["deployed_at"] is None
+
+
+def test_dry_run_writes_no_proposals(tmp_path):
+    """dry_run=True must suppress all jsonl + lineage writes even when
+    write_proposals=True (the default)."""
+    db_file = tmp_path / "test.db"
+    proposals_dir = tmp_path / "proposals"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(drafts)"
+        ).fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    for cat, w in [("ai_model", 1.70), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+    _seed_high_engagement_category(on_disk)
+
+    run_backprop(
+        on_disk, lookback_days=30, dry_run=True,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+
+    # No proposals dir contents.
+    if proposals_dir.exists():
+        files = list(proposals_dir.glob("*.jsonl"))
+        for f in files:
+            assert f.stat().st_size == 0, (
+                "dry_run must not append to proposals jsonl"
+            )
+
+    # No lineage rows.
+    n = on_disk.execute(
+        "SELECT COUNT(*) FROM reflector_proposal_lineage"
+    ).fetchone()[0]
+    assert n == 0
+
+
+def test_view_aggregates_picked_up_when_view_present(tmp_path):
+    """v_topic_engagement_x_platform aggregates flow into proposal evidence
+    metrics. Validates that Item 1 substrate connects to Item 3 output."""
+    db_file = tmp_path / "test.db"
+    proposals_dir = tmp_path / "proposals"
+    on_disk = sqlite3.connect(str(db_file))
+    on_disk.row_factory = sqlite3.Row
+    schema = (_ROOT / "data" / "01_harvest" / "schema.sql").read_text(encoding="utf-8")
+    on_disk.executescript(schema)
+    # Bring in views.sql (Item 1 substrate).
+    views = (_ROOT / "data" / "01_harvest" / "views.sql").read_text(encoding="utf-8")
+    for col_ddl in [("publish_at", "TEXT"), ("queue_status", "TEXT")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(drafts)"
+        ).fetchall()]
+        if col_ddl[0] not in cols:
+            on_disk.execute(f"ALTER TABLE drafts ADD COLUMN {col_ddl[0]} {col_ddl[1]}")
+    for col, ddl in [("topic_category", "TEXT"), ("topic_confidence", "REAL"),
+                     ("topic_rationale", "TEXT"), ("weighted_score", "REAL")]:
+        cols = [r[1] for r in on_disk.execute(
+            "PRAGMA table_info(news_items)"
+        ).fetchall()]
+        if col not in cols:
+            on_disk.execute(f"ALTER TABLE news_items ADD COLUMN {col} {ddl}")
+    on_disk.executescript(views)
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    for cat, w in [("ai_model", 1.70), ("other", 0.70)]:
+        on_disk.execute(
+            "INSERT INTO topic_weights (category_id, display_name, weight, "
+            "last_updated_at, update_reason, sample_count) VALUES (?,?,?,?,?,?)",
+            (cat, cat, w, now, "initial_seed", 0),
+        )
+    on_disk.commit()
+
+    # Need queue_status='published' OR status='published' on drafts
+    # for v_post_engagement_aggregated to pick up the rows.
+    _seed_high_engagement_category(on_disk)
+
+    run_backprop(
+        on_disk, lookback_days=30, dry_run=False,
+        write_proposals=True,
+        proposals_db_path=db_file,
+        proposals_base_dir=proposals_dir,
+    )
+
+    week_files = list(proposals_dir.glob("*.jsonl"))
+    records = []
+    for wf in week_files:
+        for line in wf.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+    assert records, "auto-deploy must write at least one proposal"
+    ai = next((r for r in records
+               if r["action"]["field"] == "ai_model"), None)
+    assert ai is not None
+    metrics = ai["evidence"]["metrics"]
+    # The view-prefixed keys MUST be present (even if value is None).
+    assert "view_sample_count" in metrics, (
+        "Phase 9 Item 1 substrate (v_topic_engagement_x_platform) must "
+        "feed into the proposal evidence metrics; absence indicates the "
+        "view is not being queried"
+    )

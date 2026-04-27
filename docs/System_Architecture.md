@@ -7,13 +7,18 @@
 > ambiguous, this file is the ground truth; if it contradicts code, fix the code or
 > the doc — no third source wins.
 >
-> **Last ground-truth pass:** 2026-04-27, verified against code (`src/db.py`,
+> **Last ground-truth pass:** 2026-04-28, verified against code (`src/db.py`,
 > `run_pipeline.py`, `run_publish_queue.py`, `scripts/compose_hourly.sh`,
 > `scripts/news_radar_engagement.sh`, `src/engagement.py`,
 > `scripts/com.hsin.news-radar.compose.plist`,
 > `scripts/com.hsin.news-radar.engagement.plist`), the DB itself, all three
 > installed launchd plists at `~/Library/LaunchAgents/`, and last 24 h of
-> compose + engagement logs (case study §7.4 added).
+> compose + engagement logs (case study §7.4 added). Phase 9 Item 3
+> refactor (2026-04-28) folded `src/reflector_topic.py` into
+> `src/reflector/topic.py` and resolved the `src/reflector.py` ↔
+> `src/reflector/` import shadow by relocating legacy soul-rule
+> reflection into `src/reflector/composer_rules.py` with a re-export
+> from `src/reflector/__init__.py`.
 
 ---
 
@@ -261,7 +266,7 @@ via `CREATE VIEW IF NOT EXISTS`; cheap to re-run on every init.
 | `v_post_engagement_aggregated` | **Foundation.** One row per published draft (`drafts.queue_status='published' OR drafts.status='published'`) joined to `news_items`, with the latest per-platform engagement snapshot pulled from `engagement_stats` via correlated subqueries (NULL when a platform has no row). **Item 1.5 (2026-04-27):** added `confidence_score` column (from `drafts.confidence_score`) so downstream analyzers can correlate composer's pre-publish self-rating against realized engagement. | Item 5 composer analyzer + Item 6 scorer analyzer; also feeds the three derived views below. |
 | `v_drafts_with_outcome` | Adds `engagement_quartile` via `NTILE(4) OVER (PARTITION BY topic_category)` over the trailing 14-day window. | Item 5 composer analyzer's top-Q vs bot-Q sibling sampler (canonical §8.3 row 4). |
 | `v_feed_yield_7d` | Per-feed 7-day publish/fetch counts, average weighted_score, and `engagement_yield_ratio` (share of fetched items that ended up published with non-zero engagement). | Item 4 harvest analyzer's feed sunset/boost proposals (canonical §8.3 row 1). |
-| `v_topic_engagement_x_platform` | Per-topic × platform engagement averages over the trailing 30-day window, plus `sample_count` for the §1.2 sample-size gate. | Item 3 reflector_topic refactor (canonical §8.3 row 2). |
+| `v_topic_engagement_x_platform` | Per-topic × platform engagement averages over the trailing 30-day window, plus `sample_count` for the §1.2 sample-size gate. | **Consumed by Item 3 reflector topic analyzer (`src/reflector/topic.py`, 2026-04-27)** — supplies per-platform aggregates that flow into proposal evidence metrics + sample_count cross-check. Math inputs (median+normalize on per-row scores) still come from base tables; see `audits/2026-04-27_phase9_item3_reflector_topic_refactor.md` for the view-coverage gap (current view exposes only avg-likes/comments/replies, but the math needs full per-row engagement for the Hsin-pinned formula). |
 | `v_draft_hook_by_platform` (Item 1.5, 2026-04-27) | Per-platform-per-draft "hook" extraction joined (LEFT JOIN) to engagement metadata. Hook rule: facebook = first 100 chars of `platform_drafts.full_text`; instagram = substring before first newline (or full text if none); threads = first 30 chars. Engagement columns are NULL for drafts not yet published. | Item 5 composer analyzer (hook-pattern correlation) + Item 6 scorer analyzer (per-platform first-impression scoring). |
 
 `v_post_engagement_aggregated` is the foundation; `v_drafts_with_outcome` /
@@ -310,11 +315,22 @@ Item 4 daily, etc.) and call `write_proposal` directly. Hsin's
 review cadence is weekly — Items 3-7 set `boss_attention_required`
 appropriately, Item 2 just records.
 
-**State-branch propagation:** explicitly deferred. Items 3+ may need
-to push the per-week jsonl into the state branch so the dashboard
-boss-review UI can read them. That belongs to whichever analyzer
-first writes from cron context — not the substrate. See audit
-`PM_Radar/audits/2026-04-27_phase9_item2_proposals_jsonl.md`.
+**State-branch propagation:** wired by Item 3 (2026-04-27).
+`src/reflector/topic.py::_maybe_push_state_branch` invokes
+`scripts/push_state.sh` (extended in Amendment B `708ed93` to include
+`data/05_reflect/proposals/`) when ALL of these hold:
+  1. The run wasn't dry-run.
+  2. ≥1 category crossed the sample gate this run (i.e. produced a
+     proposal entry, regardless of branch).
+  3. The `PUSH_STATE` env var is set to `1`/`true`/`yes`.
+
+The env-var gate keeps local dev runs from accidentally pushing to the
+state branch. The cron workflow `.github/workflows/reflect_topic.yml`
+runs its own state-branch push step (the existing "Persist state" step,
+unchanged by Item 3) which already includes the proposals dir via the
+extended push_state.sh contract — the in-process trigger is the
+fallback for non-CI cron contexts (e.g. launchd-only deployments).
+Items 4-7 will reuse this same trigger pattern.
 
 ---
 

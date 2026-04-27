@@ -101,7 +101,10 @@ jobs:
             FLAGS="$FLAGS --dry-run"
           fi
           echo "[reflect_topic] flags=$FLAGS"
-          python -m src.reflector_topic $FLAGS | tee logs/reflect_topic_last.log
+          # Phase 9 Item 3 (2026-04-27): module relocated from
+          # src.reflector_topic to src.reflector.topic as part of the
+          # unified-reflector package refactor. Math + CLI flags unchanged.
+          python -m src.reflector.topic $FLAGS | tee logs/reflect_topic_last.log
 
       # 只有非 dry-run 才 commit report + DB state
       - name: Commit weekly report to main

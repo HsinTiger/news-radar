@@ -1,43 +1,61 @@
 """
-News Radar · Topic Weight Back-Prop Reflector（Phase 8.20 Step 4）
+News Radar · Topic Weight Back-Prop Reflector
 ==================================================================
 每週一跑一次：把過去 N 天的 engagement 回饋到 topic_weights 表。
 
-**系統設計原則**：
-  - 純函式核心 + DB IO 薄殼（為了測試性）
-    → compute_engagement_score / median / normalized_delta 全都 pure，可獨立測
-    → run_backprop 才碰 SQL
-  - 冪等：同一天跑兩次，第二次會把 history 裡今天那筆 UPDATE 覆蓋（以 recorded_at 為 PK 不行，用 (category_id, DATE(recorded_at)) 當 dedup key 由呼叫端決定——我們的 launchd/GH Actions cron 一週一次，這邊不做 dedup，信任 cron 排程）
-  - dry_run 模式：計算全部、印報告、不寫 DB（給 Hsin 人工驗算用）
-  - guard rails 完全對齊 Hsin 2026-04-21 拍板 spec：
-      · 樣本數（跨平台合計）< 5 的類別不調
-      · 單週變動 abs(new - old) > 0.3 時 clip
-      · 連續 3 週 delta 同方向才視為趨勢（report-only，不改 math）
-      · other 類別永遠不自動降到 0.3 以下
-      · 全域 clip 到 [0.3, 2.0]
+**Lineage**: originally `src/reflector_topic.py` (Phase 8.20 Step 4,
+2026-04-21). Relocated here as part of Phase 9 Item 3 (2026-04-27)
+when the unified-reflector substrate (Items 1, 1.5, 2, Amendments B+C)
+landed. **Math is byte-identical to the legacy module.** What changed:
 
-**engagement 公式**（Hsin 拍板）：
+  1. Sample-count gate + per-platform aggregate proposal evidence
+     are sourced from `v_topic_engagement_x_platform` (Phase 9 Item 1).
+     Per-row engagement (needed by the median+normalize math) is still
+     fetched from base tables — see audit "view-coverage gap" note for
+     why the view alone cannot drive the math today.
+  2. Every category that crosses the sample-count gate writes a
+     `proposals.jsonl` entry via `src.reflector.proposals.write_proposal`
+     (Item 2).
+  3. Branching:
+        - non-pinned + |delta| <  0.10  → AUTO-DEPLOY
+              direct UPDATE on `topic_weights.weight` AND
+              `mark_deployed(fire_id)` so the lineage row carries
+              `deployed_at` immediately. Hsin can audit retroactively.
+        - non-pinned + |delta| >= 0.10  → PROPOSAL-ONLY
+              jsonl entry only, `boss_attention_required=True`,
+              no auto-deploy.
+        - boss-pinned (any delta)       → PROPOSAL-ONLY (Item 8 gate)
+              **TODO(phase-9-item-8)**: queries `topic_weights.boss_pinned`
+              once Item 8 adds the column. Until then ALL categories are
+              treated as not-pinned (no boss-pinned categories exist in
+              production today; documented in this file at the call site).
+  4. After a cron run that wrote ≥1 proposal (auto-deploy or
+     proposal-only), the orchestrator triggers `scripts/push_state.sh`
+     (Amendment B 708ed93) to propagate the `data/05_reflect/proposals/`
+     dir + DB to the state branch. Skipped on dry-run.
+
+**系統設計原則**（unchanged from Phase 8.20）：
+  - 純函式核心 + DB IO 薄殼（為了測試性）
+  - dry_run 模式：計算全部、印報告、不寫 DB / 不寫 proposals
+  - guard rails 完全對齊 Hsin 2026-04-21 拍板 spec（math constants below）
+
+**engagement 公式**（Hsin 拍板，未動）：
   FB：      likes + 2*comments + 3*shares + 0.01*reach
   IG：      likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach
   Threads： likes + 2*replies + 3*reposts + 1.5*quotes + 0.005*views
 
-**正規化**：每平台分開用該平台『全站中位數』當基準線，避免 Threads 天生
-exposure 高就把 Threads 上表現好的類別過度獎勵。
-
-**類別 delta**：三平台 normalized_delta 的平均（某平台樣本 < 3 → 該平台不算
-進平均；三平台都不夠 → 該類整個跳過）。
-
 用法：
-    # 乾跑（不寫 DB，印 markdown）
-    python -m src.reflector_topic --dry-run
+    # 乾跑（不寫 DB / 不寫 proposals，印 markdown）
+    python -m src.reflector.topic --dry-run
 
     # 實跑（週一 06:00 TW 自動觸發；也能手動 rerun）
-    python -m src.reflector_topic
+    python -m src.reflector.topic
 
     # 回溯過去 60 天
-    python -m src.reflector_topic --lookback-days 60
+    python -m src.reflector.topic --lookback-days 60
 
-—— 2026-04-21 overnight, Cowork Claude
+Spec  : PM_Radar/specs/phase_9_implementation_plan.md §3 Item 3
+Canon : PM_Radar/roadmap/phase_9_unified_reflector.md
 """
 from __future__ import annotations
 
@@ -65,6 +83,20 @@ TREND_CONSECUTIVE_WEEKS = 3      # 連續 N 週同方向才標 trend
 DEFAULT_LOOKBACK_DAYS = 30
 
 PLATFORMS = ("facebook", "instagram", "threads")
+
+# ---------- Phase 9 Item 3 constants ----------
+# Auto-deploy threshold: |applied_delta| strictly less than this is
+# eligible for auto-deploy on non-pinned categories. ≥ this magnitude
+# becomes proposal-only (boss_attention_required=True).
+AUTO_DEPLOY_DELTA_THRESHOLD = 0.10
+
+# Confidence cutoff for proposal evidence: HIGH if total samples meets
+# this bar (about 4× the existing per-platform threshold of 3, ~12 total
+# across 3 platforms — i.e. each platform is materially represented).
+# Below this, MED. The math's MIN_SAMPLES_TOTAL=5 floor still gates
+# whether we propose anything at all; this is a finer-grained signal
+# attached to the proposal evidence so reviewers can scan confidence.
+HIGH_CONFIDENCE_SAMPLE_THRESHOLD = 12
 
 
 # ---------- 資料結構 ----------
@@ -425,18 +457,227 @@ def _write_updates(
     conn.commit()
 
 
+# ---------- Phase 9 Item 3 helpers ----------
+
+def _fetch_view_aggregates(
+    conn: sqlite3.Connection,
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """Read per-topic aggregate engagement metrics + sample_count from
+    `v_topic_engagement_x_platform` (Phase 9 Item 1).
+
+    Returns ``{topic_category: {fb_avg_likes_30d, ig_avg_likes_30d,
+    th_avg_likes_30d, fb_avg_comments_30d, ig_avg_comments_30d,
+    th_avg_replies_30d, sample_count}}``.
+
+    Used to populate the proposal evidence's ``metrics`` field — the
+    auditable per-platform numbers that drove each category's decision.
+
+    NOTE — view-coverage observation (audit-flagged for pm-agent):
+    The view exposes only avg-likes (and a thin slice of comments/replies)
+    per platform plus an aggregate sample_count. The legacy median+
+    normalize math operates on per-row engagement scores using the full
+    Hsin-pinned formula (likes + 2c + 3s + 0.01r etc.), which the view
+    cannot reproduce from its current columns. Until the view is
+    extended (or the math is reframed in terms of avg-likes alone),
+    Item 3 sources the math inputs from base tables via
+    `_fetch_engagement_rows` and uses the view ONLY for proposal-evidence
+    metrics + a defensive sample_count cross-check. Documented in
+    `audits/2026-04-27_phase9_item3_reflector_topic_refactor.md`.
+
+    Idempotent + read-only. Returns {} if the view is missing (older DBs).
+    """
+    try:
+        cur = conn.execute(
+            """
+            SELECT topic_category,
+                   fb_avg_likes_30d, ig_avg_likes_30d, th_avg_likes_30d,
+                   fb_avg_comments_30d, ig_avg_comments_30d,
+                   th_avg_replies_30d,
+                   sample_count
+              FROM v_topic_engagement_x_platform
+            """
+        )
+    except sqlite3.OperationalError:
+        # View not present (e.g. minimal test fixture). Caller treats
+        # absent aggregates as "no view evidence" — math still runs.
+        return {}
+
+    out: Dict[str, Dict[str, Optional[float]]] = {}
+    for r in cur.fetchall():
+        # Tuple-or-Row tolerant access (matches the existing fetch helper
+        # style elsewhere in this module).
+        def _g(key: str, idx: int):
+            return r[key] if hasattr(r, "keys") else r[idx]
+        cat = _g("topic_category", 0)
+        if not cat:
+            continue
+        out[cat] = {
+            "fb_avg_likes_30d":     _g("fb_avg_likes_30d", 1),
+            "ig_avg_likes_30d":     _g("ig_avg_likes_30d", 2),
+            "th_avg_likes_30d":     _g("th_avg_likes_30d", 3),
+            "fb_avg_comments_30d":  _g("fb_avg_comments_30d", 4),
+            "ig_avg_comments_30d":  _g("ig_avg_comments_30d", 5),
+            "th_avg_replies_30d":   _g("th_avg_replies_30d", 6),
+            "sample_count":         _g("sample_count", 7),
+        }
+    return out
+
+
+def _is_boss_pinned(conn: sqlite3.Connection, category_id: str) -> bool:
+    """Check whether a topic category is boss-pinned.
+
+    TODO(phase-9-item-8): query `topic_weights.boss_pinned` column once
+    Item 8 adds it. Until then, NO categories are pinned in production
+    (Hsin 2026-04-26 confirmed this is acceptable interim behavior;
+    the auto-deploy path therefore exercises the small-delta branch
+    today and Items 4-7 can dispatch in parallel without waiting for
+    Item 8).
+
+    The defensive PRAGMA-based check below means: the day Item 8
+    deploys the column, this helper transparently picks it up without
+    requiring a code change here. If the column is absent (today), we
+    return False uniformly.
+    """
+    try:
+        cols = {
+            row[1] if not hasattr(row, "keys") else row["name"]
+            for row in conn.execute("PRAGMA table_info(topic_weights)")
+        }
+    except sqlite3.OperationalError:
+        return False
+    if "boss_pinned" not in cols:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT boss_pinned FROM topic_weights WHERE category_id = ?",
+            (category_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    if row is None:
+        return False
+    val = row[0] if not hasattr(row, "keys") else row["boss_pinned"]
+    return bool(val)
+
+
+def _classify_branch(
+    is_pinned: bool,
+    applied_delta: float,
+) -> str:
+    """Return one of:
+        'auto_deploy'    — non-pinned + |delta| < AUTO_DEPLOY_DELTA_THRESHOLD
+        'proposal_only'  — non-pinned + |delta| >= AUTO_DEPLOY_DELTA_THRESHOLD
+        'pinned'         — pinned (any delta) — proposal-only with
+                           boss_attention_required=True
+    Pure function; safe to unit-test without DB.
+    """
+    if is_pinned:
+        return "pinned"
+    if abs(applied_delta) < AUTO_DEPLOY_DELTA_THRESHOLD:
+        return "auto_deploy"
+    return "proposal_only"
+
+
+def _confidence_level(total_samples: int) -> str:
+    """Bucket sample-count into HIGH/MED for proposal evidence.
+
+    Anything below MIN_SAMPLES_TOTAL has already been skipped by
+    `apply_weight_update`, so this only sees skips != 'low_samples'.
+    """
+    if total_samples >= HIGH_CONFIDENCE_SAMPLE_THRESHOLD:
+        return "HIGH"
+    return "MED"
+
+
+def _build_proposal_payload(
+    update: "CategoryUpdate",
+    view_metrics: Optional[Dict[str, Optional[float]]],
+    branch: str,
+) -> dict:
+    """Construct the proposal dict for `proposals.write_proposal`.
+
+    `branch` ∈ {'auto_deploy', 'proposal_only', 'pinned'}.
+    boss_attention_required is True for non-auto-deploy branches.
+    """
+    metrics: Dict[str, object] = {
+        "raw_delta":      round(update.raw_delta, 6),
+        "applied_delta":  round(update.applied_delta, 6),
+        "total_samples":  update.total_samples,
+        "old_weight":     round(update.old_weight, 6),
+        "new_weight":     round(update.new_weight, 6),
+        "trend":          update.trend,
+    }
+    if view_metrics:
+        # View-sourced per-platform aggregates (Phase 9 Item 1 substrate).
+        # Marshalled defensively in case the view delivered NULL columns
+        # (no engagement on a platform → SQLite AVG returns NULL).
+        for k, v in view_metrics.items():
+            if v is None:
+                metrics[f"view_{k}"] = None
+            elif isinstance(v, (int, float)):
+                metrics[f"view_{k}"] = round(float(v), 6)
+            else:
+                metrics[f"view_{k}"] = v
+
+    boss_attention = (branch != "auto_deploy")
+    return {
+        "analyzer":       "topic",
+        "platform":       "all",  # topic weights apply across platforms
+        "proposal_type":  "adjust_weight",
+        "evidence": {
+            "sample_ids": [],  # not naturally available from aggregate path
+            "metrics":    metrics,
+            "confidence": _confidence_level(update.total_samples),
+        },
+        "action": {
+            "target_config":  "topic_weights",
+            "field":          update.category_id,
+            "current_value":  round(update.old_weight, 6),
+            "proposed_value": round(update.new_weight, 6),
+        },
+        "boss_attention_required": boss_attention,
+    }
+
+
 # ---------- Orchestrator ----------
 
 def run_backprop(
     conn: sqlite3.Connection,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     dry_run: bool = False,
+    *,
+    write_proposals: bool = True,
+    proposals_db_path: Optional[Path] = None,
+    proposals_base_dir: Optional[Path] = None,
 ) -> BackpropResult:
-    """完整一輪 back-prop（fetch → compute → (UPDATE|dry) → return result）。"""
+    """完整一輪 back-prop（fetch → compute → (UPDATE|dry) → return result）.
+
+    Phase 9 Item 3 additions:
+      * For every CategoryUpdate that crossed the sample gate (i.e.
+        ``skipped_reason is None``), classify as auto_deploy /
+        proposal_only / pinned and write a `proposals.jsonl` entry via
+        `src.reflector.proposals.write_proposal`.
+      * Auto-deploy entries also call `mark_deployed(fire_id)` so the
+        lineage row carries `deployed_at` immediately.
+      * Skipped categories (low_samples) generate NO proposal — there's
+        nothing to propose.
+      * dry_run=True OR write_proposals=False suppresses all proposal
+        writes (test-mode escape hatch).
+
+    The ``proposals_db_path`` / ``proposals_base_dir`` kwargs exist
+    solely to let unit tests redirect the proposal write-path to a
+    tmp_path; production callers omit both.
+
+    Returns ``BackpropResult`` with `applied_fire_ids` populated (auto-
+    deploy fire_ids only — proposal-only fire_ids are still recorded in
+    the jsonl via write_proposal but the orchestrator doesn't need them
+    in the result struct for further action).
+    """
     rows = _fetch_engagement_rows(conn, lookback_days)
     platform_medians = compute_platform_medians(rows)
     stats = compute_category_platform_stats(rows, platform_medians)
     weights_now = _fetch_current_weights(conn)
+    view_aggs = _fetch_view_aggregates(conn)
 
     # taxonomy 只是用來確保 display_name 齊全；若 DB 還沒 seed 就跳過
     try:
@@ -482,9 +723,177 @@ def run_backprop(
     )
 
     if not dry_run:
-        _write_updates(conn, result)
+        # Phase 9 Item 3: proposal write + auto-deploy / proposal-only
+        # branching happens BEFORE the legacy _write_updates path. The
+        # legacy path is preserved for the auto-deploy categories
+        # (direct UPDATE on topic_weights + history insert) — this
+        # matches the spec's "auto-deploy direct UPDATE AND write a
+        # proposal AND mark_deployed".
+        #
+        # For pinned / proposal-only categories the legacy
+        # _write_updates path is suppressed (no UPDATE on
+        # topic_weights), but a topic_weight_history audit row is
+        # still appended below so the cron's audit trail is intact.
+        if write_proposals:
+            _write_proposals_and_classify(
+                conn,
+                result,
+                view_aggs,
+                proposals_db_path=proposals_db_path,
+                proposals_base_dir=proposals_base_dir,
+            )
+        else:
+            # write_proposals=False → fall through to legacy behavior
+            # (auto-deploy everything that crossed the gate). Used by
+            # tests + by callers that want pre-Phase-9 semantics.
+            _write_updates(conn, result)
 
     return result
+
+
+def _write_proposals_and_classify(
+    conn: sqlite3.Connection,
+    result: "BackpropResult",
+    view_aggs: Dict[str, Dict[str, Optional[float]]],
+    *,
+    proposals_db_path: Optional[Path] = None,
+    proposals_base_dir: Optional[Path] = None,
+) -> None:
+    """Phase 9 Item 3 write-path.
+
+    For each non-skipped CategoryUpdate:
+      1. Classify branch (auto_deploy / proposal_only / pinned).
+      2. write_proposal(...) to jsonl + lineage.
+      3. If auto_deploy: UPDATE topic_weights + mark_deployed(fire_id).
+      4. Append topic_weight_history audit row regardless of branch
+         (matches legacy behavior — every observation is logged).
+
+    Also appends one reflection_events row at the end, mirroring the
+    legacy _write_updates contract.
+    """
+    # Lazy imports (proposals module pulls in src.db, which pulls in
+    # pydantic). Done here rather than at module top so the math
+    # functions remain importable in minimal test environments.
+    from src.reflector.proposals import write_proposal
+    from src.reflector import mark_deployed
+
+    now_iso = result.ran_at
+
+    # ---- Phase 1: classify each category + write proposals BEFORE any
+    # write to the analyzer's own conn. Reason: write_proposal opens its
+    # own sqlite3 connection to the same DB file (for the lineage
+    # INSERT). If we hold a write transaction on `conn` first, the
+    # second connection blocks ("database is locked"). Order is:
+    #   1a. classify + write_proposal (own connection, commits its
+    #       lineage row independently).
+    #   1b. THEN open a single batch on `conn` for topic_weights
+    #       UPDATEs + topic_weight_history INSERTs + reflection_events.
+    plan: List[Tuple[Optional[str], str, "CategoryUpdate"]] = []
+    # plan items: (fire_id_or_None, branch_or_'skipped', update)
+
+    for u in result.updates:
+        if u.skipped_reason is not None:
+            plan.append((None, "skipped", u))
+            continue
+
+        is_pinned = _is_boss_pinned(conn, u.category_id)
+        branch = _classify_branch(is_pinned, u.applied_delta)
+        view_metrics = view_aggs.get(u.category_id)
+        payload = _build_proposal_payload(u, view_metrics, branch)
+
+        # Best-effort proposal write. write_proposal is atomic on its
+        # own (jsonl truncate-on-lineage-failure); we don't try/except
+        # silently because a write failure here means the analyzer's
+        # output never reaches the audit trail and that's a real bug
+        # to surface.
+        fire_id = write_proposal(
+            payload,
+            db_path=proposals_db_path,
+            base_dir=proposals_base_dir,
+        )
+        plan.append((fire_id, branch, u))
+
+    # ---- Phase 2: single batched mutation on `conn` for the analyzer's
+    # own writes. This whole block is one transaction → one commit.
+    fire_ids_for_auto: List[Tuple[str, "CategoryUpdate"]] = []
+    for fire_id, branch, u in plan:
+        if branch == "skipped":
+            conn.execute(
+                "INSERT INTO topic_weight_history "
+                "(category_id, recorded_at, weight_before, weight_after, "
+                " update_reason, delta, samples_in_window, rationale) "
+                "VALUES (?, ?, ?, ?, 'back_prop', ?, ?, ?)",
+                (u.category_id, now_iso, u.old_weight, u.new_weight,
+                 u.applied_delta, u.total_samples,
+                 u.skipped_reason),
+            )
+            continue
+
+        if branch == "auto_deploy":
+            conn.execute(
+                "UPDATE topic_weights SET weight = ?, last_updated_at = ?, "
+                "update_reason = 'back_prop', last_delta = ?, "
+                "sample_count = sample_count + ? "
+                "WHERE category_id = ?",
+                (u.new_weight, now_iso, u.applied_delta,
+                 u.total_samples, u.category_id),
+            )
+            fire_ids_for_auto.append((fire_id, u))  # type: ignore[arg-type]
+
+        conn.execute(
+            "INSERT INTO topic_weight_history "
+            "(category_id, recorded_at, weight_before, weight_after, "
+            " update_reason, delta, samples_in_window, rationale) "
+            "VALUES (?, ?, ?, ?, 'back_prop', ?, ?, ?)",
+            (u.category_id, now_iso, u.old_weight,
+             u.new_weight if branch == "auto_deploy" else u.old_weight,
+             u.applied_delta if branch == "auto_deploy" else 0.0,
+             u.total_samples,
+             f"branch={branch} trend={u.trend} fire_id={fire_id[:8] if fire_id else 'n/a'}"),
+        )
+
+    # reflection_events log (preserves legacy contract)
+    status = (
+        "skipped_low_samples"
+        if result.total_samples_all < MIN_SAMPLES_TOTAL
+        else "completed"
+    )
+    conn.execute(
+        "INSERT INTO reflection_events "
+        "(ran_at, signals_summary, samples_used, patch_markdown, rationale, status) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (now_iso, result.to_summary_json(), result.total_samples_all,
+         None, f"topic_backprop lookback={result.lookback_days}d", status),
+    )
+
+    conn.commit()
+
+    # Post-condition + mark_deployed pass for auto-deploy lane.
+    # Done AFTER commit so the topic_weights UPDATE is durable; the
+    # mark_deployed call mutates the jsonl + lineage row's
+    # `deployed_at` and is itself atomic.
+    for fire_id, u in fire_ids_for_auto:
+        # Verify the UPDATE actually landed (scoped-vdd: SELECT
+        # asserts the side-effect rather than trusting the rowcount).
+        row = conn.execute(
+            "SELECT weight FROM topic_weights WHERE category_id = ?",
+            (u.category_id,),
+        ).fetchone()
+        assert row is not None, (
+            f"topic_weights row for {u.category_id!r} vanished after "
+            "auto-deploy UPDATE; refusing to mark_deployed"
+        )
+        observed = float(row[0] if not hasattr(row, "keys") else row["weight"])
+        assert abs(observed - u.new_weight) < 1e-9, (
+            f"topic_weights.weight for {u.category_id!r} = {observed} "
+            f"but expected {u.new_weight}; rolling forward to "
+            "mark_deployed anyway would corrupt lineage"
+        )
+        mark_deployed(
+            fire_id,
+            db_path=proposals_db_path,
+            base_dir=proposals_base_dir,
+        )
 
 
 # ---------- Markdown 報告 ----------
@@ -596,7 +1005,8 @@ def format_markdown_report(result: BackpropResult) -> str:
         lines.append("")
 
     lines.append("---")
-    lines.append("_自動產出 by `src/reflector_topic.py` (Phase 8.20 Step 4)_")
+    lines.append("_自動產出 by `src/reflector/topic.py` (Phase 9 Item 3, "
+                 "originally Phase 8.20 Step 4)_")
     return "\n".join(lines)
 
 
@@ -612,6 +1022,67 @@ def write_markdown_report(result: BackpropResult, base_dir: Optional[Path] = Non
 
 
 # ---------- CLI ----------
+
+def _maybe_push_state_branch(result: BackpropResult) -> None:
+    """Trigger condition (Phase 9 Item 3 sub-task 5): if any auto-deploy
+    or proposal-only categories produced output this run, invoke
+    `scripts/push_state.sh` (Amendment B 708ed93) to propagate the
+    proposals dir + DB to the state branch.
+
+    Skipped when:
+      - dry_run (no side effects to propagate)
+      - no proposals were written (every category was skipped_low_samples)
+      - PUSH_STATE env var is unset (e.g. local dev runs); cron sets it.
+
+    The env-var gate matches the existing reflect_topic.yml pattern of
+    only persisting state from the GitHub Actions runner; local
+    invocations stay local. Failures are logged but non-fatal — the
+    next cron cycle will re-attempt and the analyzer's primary output
+    (jsonl + DB) is durable regardless.
+    """
+    import os
+    import subprocess
+
+    if result.dry_run:
+        return
+    proposed_count = sum(
+        1 for u in result.updates if u.skipped_reason is None
+    )
+    if proposed_count == 0:
+        return
+    if os.getenv("PUSH_STATE", "0") not in {"1", "true", "yes"}:
+        return
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "push_state.sh"
+    if not script.exists():
+        print(f"[reflector.topic] push_state.sh not found at {script}; "
+              "skipping state-branch propagation", file=sys.stderr)
+        return
+
+    try:
+        # No --expect-draft assertion; the analyzer's auto-deploy
+        # post-condition already verified topic_weights row was
+        # updated, and write_proposal already verified jsonl+lineage.
+        # push_state.sh's own sha-compare is the cross-host check.
+        result_proc = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result_proc.returncode == 0:
+            print("[reflector.topic] state-branch propagation OK")
+        else:
+            print(
+                f"[reflector.topic] push_state.sh exited "
+                f"{result_proc.returncode}; stderr tail:\n"
+                f"{result_proc.stderr[-1000:]}",
+                file=sys.stderr,
+            )
+    except Exception as exc:  # pragma: no cover — defensive
+        print(f"[reflector.topic] push_state.sh invocation failed: {exc}",
+              file=sys.stderr)
+
 
 def _main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -641,6 +1112,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
     if not args.no_report_file:
         path = write_markdown_report(result)
         print(f"\n[reflector] 報告寫入: {path}", file=sys.stderr)
+
+    # Phase 9 Item 3 sub-task 5: state-branch propagation (gated).
+    _maybe_push_state_branch(result)
     return 0
 
 
