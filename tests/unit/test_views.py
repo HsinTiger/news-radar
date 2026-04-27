@@ -78,9 +78,10 @@ def _insert_min_fixture(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """INSERT INTO drafts
-           (id, news_id, persona_version, generated_at, status, queue_status)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        ("d1", "n1", "v1", now, "published", "published"),
+           (id, news_id, persona_version, generated_at, status, queue_status,
+            confidence_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("d1", "n1", "v1", now, "published", "published", 0.85),
     )
     for platform, likes in (("facebook", 5), ("instagram", 7), ("threads", 11)):
         conn.execute(
@@ -115,6 +116,8 @@ def test_v_post_engagement_aggregated_returns_rows(view_db):
     assert row["th_likes"] == 11
     assert row["draft_id"] == "d1"
     assert row["latest_engagement_at"] is not None
+    # Item 1.5 fold-in: confidence_score column surfaced from drafts.
+    assert row["confidence_score"] == pytest.approx(0.85)
 
 
 def test_v_drafts_with_outcome_returns_rows(view_db):
@@ -156,3 +159,103 @@ def test_v_topic_engagement_x_platform_returns_rows(view_db):
     assert row["fb_avg_likes_30d"] == pytest.approx(5.0)
     assert row["ig_avg_likes_30d"] == pytest.approx(7.0)
     assert row["th_avg_likes_30d"] == pytest.approx(11.0)
+
+
+# ---------------------------------------------------------------------------
+# Item 1.5 fold-in: v_draft_hook_by_platform
+# ---------------------------------------------------------------------------
+
+# 50-char + 60-char strings (110 total) → FB hook = first 100 chars.
+_FB_PART_A = "A" * 50          # 50 chars
+_FB_PART_B = "B" * 60          # 60 chars
+_FB_FULL = _FB_PART_A + _FB_PART_B  # 110 chars total
+
+_IG_FULL_WITH_NEWLINE = "first line\nsecond line"
+_IG_FULL_NO_NEWLINE = "no newlines here at all"
+
+_TH_FULL = "T" * 35  # 35 chars → hook = first 30 chars
+
+
+def test_v_draft_hook_by_platform_returns_rows(view_db):
+    """Per-platform hook truncation rules + LEFT JOIN to engagement view."""
+    _insert_min_fixture(view_db)
+
+    now = _now_iso()
+    # Use the existing fixture draft 'd1' for FB / Threads / IG-with-newline,
+    # and a second draft 'd2' (no engagement) for the IG-no-newline case
+    # so we exercise the LEFT JOIN NULL-engagement branch too.
+    view_db.execute(
+        """INSERT INTO platform_drafts
+           (draft_id, platform, full_text, created_at)
+           VALUES (?, ?, ?, ?)""",
+        ("d1", "facebook", _FB_FULL, now),
+    )
+    view_db.execute(
+        """INSERT INTO platform_drafts
+           (draft_id, platform, full_text, created_at)
+           VALUES (?, ?, ?, ?)""",
+        ("d1", "instagram", _IG_FULL_WITH_NEWLINE, now),
+    )
+    view_db.execute(
+        """INSERT INTO platform_drafts
+           (draft_id, platform, full_text, created_at)
+           VALUES (?, ?, ?, ?)""",
+        ("d1", "threads", _TH_FULL, now),
+    )
+    # Second draft for IG-no-newline branch (not published → engagement NULL).
+    view_db.execute(
+        """INSERT INTO news_items
+           (id, feed_name, feed_tier, url, title, published_at, fetched_at,
+            status, topic_category, weighted_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "n2", "TestFeed", "primary", "https://example.com/b",
+            "Second Article", now, now, "pending", "ai_model", 1.0,
+        ),
+    )
+    view_db.execute(
+        """INSERT INTO drafts
+           (id, news_id, persona_version, generated_at, status, queue_status)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("d2", "n2", "v1", now, "pending_review", "pending"),
+    )
+    view_db.execute(
+        """INSERT INTO platform_drafts
+           (draft_id, platform, full_text, created_at)
+           VALUES (?, ?, ?, ?)""",
+        ("d2", "instagram", _IG_FULL_NO_NEWLINE, now),
+    )
+    view_db.commit()
+
+    assert _view_exists(view_db, "v_draft_hook_by_platform")
+
+    rows = view_db.execute(
+        "SELECT * FROM v_draft_hook_by_platform "
+        "ORDER BY draft_id, platform"
+    ).fetchall()
+    by_key = {(r["draft_id"], r["platform"]): r for r in rows}
+
+    # Facebook: hook = first 100 chars of 110-char full_text.
+    fb = by_key[("d1", "facebook")]
+    assert fb["hook"] == _FB_FULL[:100]
+    assert len(fb["hook"]) == 100
+
+    # Instagram (with newline): hook = pre-newline substring.
+    ig_nl = by_key[("d1", "instagram")]
+    assert ig_nl["hook"] == "first line"
+
+    # Threads: hook = first 30 chars of 35-char full_text.
+    th = by_key[("d1", "threads")]
+    assert th["hook"] == _TH_FULL[:30]
+    assert len(th["hook"]) == 30
+
+    # Instagram (no newline): hook = full text unchanged.
+    ig_plain = by_key[("d2", "instagram")]
+    assert ig_plain["hook"] == _IG_FULL_NO_NEWLINE
+
+    # Engagement metadata: d1 is published with engagement → fb_likes set;
+    # d2 is unpublished → engagement columns NULL via LEFT JOIN.
+    assert fb["fb_likes"] == 5
+    assert fb["confidence_score"] == pytest.approx(0.85)
+    assert ig_plain["fb_likes"] is None
+    assert ig_plain["latest_engagement_at"] is None
