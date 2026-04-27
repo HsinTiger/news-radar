@@ -1,4 +1,4 @@
--- News Radar · SQL view layer (Phase 9 Item 1 + Item 1.5 fold-in)
+-- News Radar · SQL view layer (Phase 9 Item 1 + Item 1.5 fold-in + Item 1.6)
 -- =====================================================================
 -- Substrate views consumed by Phase 9 unified-reflector sub-analyzers.
 -- Spec source : PM_Radar/specs/phase_9_implementation_plan.md §3 Item 1
@@ -6,6 +6,15 @@
 -- Item 1.5    : 2026-04-27 fold-in approved during Item 2 dispatch —
 --               adds drafts.confidence_score onto v_post_engagement_aggregated
 --               and a new v_draft_hook_by_platform view.
+-- Item 1.6    : 2026-04-28 Cowork-ruling option (a) on view-coverage gap
+--               raised by Item 3's audit. Extends v_topic_engagement_x_platform
+--               with the full per-platform AVG metric set (shares / reach /
+--               saves / reposts / quotes / views) so analyzers no longer have
+--               to re-derive them off the base tables. The per-row columns
+--               on v_post_engagement_aggregated were already complete since
+--               Item 1; no changes needed there. See:
+--                 audits/2026-04-28_phase9_item1_6_substrate_extension.md
+--                 audits/2026-04-28_phase9_item3_reflector_topic_refactor.md
 --
 -- Init order  : sourced AFTER schema.sql by src/db.py::init_db, so all
 --               base tables + columns (incl. Phase 8.18 queue_status,
@@ -160,16 +169,41 @@ GROUP BY ni.feed_name;
 -- per-platform topic-multiplier discussion in §8.3. sample_count is
 -- the gate the analyzer uses against the §1.2 sample-size rule
 -- ("cross-platform total < 5 = skip").
+--
+-- Item 1.6 (2026-04-28, Cowork-ruling option a on the view-coverage gap
+-- raised by Item 3's audit, see audits/2026-04-28_phase9_item3_*.md):
+-- expanded to cover the full per-platform metric set the Hsin-pinned
+-- engagement formula requires. The base view v_post_engagement_aggregated
+-- already exposed the per-row columns since Item 1; this view now
+-- aggregates them into 30-day averages so analyzers don't have to
+-- re-derive them. Existing AVG columns + sample_count + GROUP BY
+-- intentionally untouched. DROP-then-CREATE so existing DBs pick up
+-- the new columns on next init_db (CREATE VIEW IF NOT EXISTS would
+-- otherwise leave the older shape in place).
 -- ======================================================================
-CREATE VIEW IF NOT EXISTS v_topic_engagement_x_platform AS
+DROP VIEW IF EXISTS v_topic_engagement_x_platform;
+CREATE VIEW v_topic_engagement_x_platform AS
 SELECT
     base.topic_category AS topic_category,
+    -- likes (since Item 1)
     AVG(base.fb_likes) AS fb_avg_likes_30d,
     AVG(base.ig_likes) AS ig_avg_likes_30d,
     AVG(base.th_likes) AS th_avg_likes_30d,
+    -- existing comments / replies (since Item 1)
     AVG(base.fb_comments) AS fb_avg_comments_30d,
     AVG(base.ig_comments) AS ig_avg_comments_30d,
     AVG(base.th_replies)  AS th_avg_replies_30d,
+    -- Item 1.6: facebook full per-platform set
+    AVG(base.fb_shares)   AS fb_avg_shares_30d,
+    AVG(base.fb_reach)    AS fb_avg_reach_30d,
+    -- Item 1.6: instagram full per-platform set
+    AVG(base.ig_shares)   AS ig_avg_shares_30d,
+    AVG(base.ig_saves)    AS ig_avg_saves_30d,
+    AVG(base.ig_reach)    AS ig_avg_reach_30d,
+    -- Item 1.6: threads full per-platform set
+    AVG(base.th_reposts)  AS th_avg_reposts_30d,
+    AVG(base.th_quotes)   AS th_avg_quotes_30d,
+    AVG(base.th_views)    AS th_avg_views_30d,
     COUNT(*) AS sample_count
 FROM v_post_engagement_aggregated AS base
 WHERE base.published_at > datetime('now', '-30 days')

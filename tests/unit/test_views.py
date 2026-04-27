@@ -162,6 +162,137 @@ def test_v_topic_engagement_x_platform_returns_rows(view_db):
 
 
 # ---------------------------------------------------------------------------
+# Item 1.6: per-platform extras (Cowork option-a fix to view-coverage gap).
+# ---------------------------------------------------------------------------
+# The per-row columns on v_post_engagement_aggregated were already added
+# in Item 1 (fb_comments/fb_shares/fb_reach, ig_comments/ig_shares/
+# ig_saves/ig_reach, th_replies/th_reposts/th_quotes/th_views). Item 1.6
+# extends v_topic_engagement_x_platform with the corresponding 30-day
+# AVG columns. These tests exercise non-default fixture values for every
+# engagement_stats column so the AVG path is observable.
+
+
+def _insert_extras_fixture(conn: sqlite3.Connection) -> None:
+    """One published draft × engagement on all 3 platforms, with non-default
+    values for every column the per-platform-extras checks assert against.
+
+    Distinct prime-ish values per (platform, metric) make any column-mixup
+    bug visible in the assertion diff.
+    """
+    now = _now_iso()
+    recent = _ago_iso(1)
+
+    conn.execute(
+        """INSERT INTO news_items
+           (id, feed_name, feed_tier, url, title, published_at, fetched_at,
+            status, topic_category, weighted_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "nx", "ExtrasFeed", "primary", "https://example.com/extras",
+            "Extras Article", recent, recent, "published",
+            "ai_model", 1.5,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO drafts
+           (id, news_id, persona_version, generated_at, status, queue_status,
+            confidence_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("dx", "nx", "v1", now, "published", "published", 0.9),
+    )
+    # Facebook: likes=5, comments=13, shares=17, views=23, reach=29
+    conn.execute(
+        """INSERT INTO engagement_stats
+           (draft_id, platform, platform_post_id, fetched_at,
+            likes, comments, shares, saves, reposts, quotes, replies,
+            views, reach)
+           VALUES (?, 'facebook', 'pp_fb_x', ?, 5, 13, 17, 0, 0, 0, 0,
+                   23, 29)""",
+        ("dx", recent),
+    )
+    # Instagram: likes=7, comments=19, shares=31, saves=37, reach=41
+    conn.execute(
+        """INSERT INTO engagement_stats
+           (draft_id, platform, platform_post_id, fetched_at,
+            likes, comments, shares, saves, reposts, quotes, replies,
+            views, reach)
+           VALUES (?, 'instagram', 'pp_ig_x', ?, 7, 19, 31, 37, 0, 0, 0,
+                   0, 41)""",
+        ("dx", recent),
+    )
+    # Threads: likes=11, replies=43, reposts=47, quotes=53, views=59
+    conn.execute(
+        """INSERT INTO engagement_stats
+           (draft_id, platform, platform_post_id, fetched_at,
+            likes, comments, shares, saves, reposts, quotes, replies,
+            views, reach)
+           VALUES (?, 'threads', 'pp_th_x', ?, 11, 0, 0, 0, 47, 53, 43,
+                   59, 0)""",
+        ("dx", recent),
+    )
+    conn.commit()
+
+
+def test_v_post_engagement_aggregated_per_platform_extras(view_db):
+    """Per-row extras on v_post_engagement_aggregated.
+
+    Columns were added in Item 1; Item 1.6 just asserts they're load-bearing
+    so a future view edit can't silently regress them.
+    """
+    _insert_extras_fixture(view_db)
+    row = view_db.execute(
+        "SELECT * FROM v_post_engagement_aggregated WHERE draft_id = 'dx'"
+    ).fetchone()
+    assert row is not None
+
+    # Facebook
+    assert row["fb_likes"] == 5
+    assert row["fb_comments"] == 13
+    assert row["fb_shares"] == 17
+    assert row["fb_reach"] == 29
+    # Instagram
+    assert row["ig_likes"] == 7
+    assert row["ig_comments"] == 19
+    assert row["ig_shares"] == 31
+    assert row["ig_saves"] == 37
+    assert row["ig_reach"] == 41
+    # Threads
+    assert row["th_likes"] == 11
+    assert row["th_replies"] == 43
+    assert row["th_reposts"] == 47
+    assert row["th_quotes"] == 53
+    assert row["th_views"] == 59
+
+
+def test_v_topic_engagement_x_platform_per_platform_extras(view_db):
+    """Item 1.6: full per-platform AVG metric set on the topic view."""
+    _insert_extras_fixture(view_db)
+    row = view_db.execute(
+        "SELECT * FROM v_topic_engagement_x_platform "
+        "WHERE topic_category = 'ai_model'"
+    ).fetchone()
+    assert row is not None
+    # sample_count + likes path stay green (regression guard).
+    assert row["sample_count"] == 1
+    assert row["fb_avg_likes_30d"] == pytest.approx(5.0)
+    assert row["ig_avg_likes_30d"] == pytest.approx(7.0)
+    assert row["th_avg_likes_30d"] == pytest.approx(11.0)
+    # Existing comments / replies AVG columns (since Item 1).
+    assert row["fb_avg_comments_30d"] == pytest.approx(13.0)
+    assert row["ig_avg_comments_30d"] == pytest.approx(19.0)
+    assert row["th_avg_replies_30d"] == pytest.approx(43.0)
+    # Item 1.6 new AVG columns.
+    assert row["fb_avg_shares_30d"] == pytest.approx(17.0)
+    assert row["fb_avg_reach_30d"] == pytest.approx(29.0)
+    assert row["ig_avg_shares_30d"] == pytest.approx(31.0)
+    assert row["ig_avg_saves_30d"] == pytest.approx(37.0)
+    assert row["ig_avg_reach_30d"] == pytest.approx(41.0)
+    assert row["th_avg_reposts_30d"] == pytest.approx(47.0)
+    assert row["th_avg_quotes_30d"] == pytest.approx(53.0)
+    assert row["th_avg_views_30d"] == pytest.approx(59.0)
+
+
+# ---------------------------------------------------------------------------
 # Item 1.5 fold-in: v_draft_hook_by_platform
 # ---------------------------------------------------------------------------
 
