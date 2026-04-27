@@ -7,7 +7,7 @@
 > ambiguous, this file is the ground truth; if it contradicts code, fix the code or
 > the doc — no third source wins.
 >
-> **Last ground-truth pass:** 2026-04-26, verified against code (`src/db.py`,
+> **Last ground-truth pass:** 2026-04-27, verified against code (`src/db.py`,
 > `run_pipeline.py`, `run_publish_queue.py`, `scripts/compose_hourly.sh`,
 > `scripts/news_radar_engagement.sh`, `src/engagement.py`,
 > `scripts/com.hsin.news-radar.compose.plist`,
@@ -246,6 +246,34 @@ status='published'      qs='published'   n=1
 The three `qs=NULL` rows from 2026-04-20 are the **last real composer outputs
 on this system**. Everything since then is no-ops due to §7.1. Nothing is
 eligible for today's publish without either new compose or manual promotion.
+
+### 6.2 Substrate views (Phase 9 Item 1, 2026-04-27)
+
+Phase 9's unified reflector reads from a thin SQL-view layer rather than
+issuing direct queries against base tables. Views live in
+`data/01_harvest/views.sql` and are sourced by `src/db.py::init_db` **after**
+`schema.sql` + all column migrations (Phase 8.18 `queue_status`, Phase 8.20
+`topic_category` / `weighted_score`, Phase 8.16 video columns). Idempotent
+via `CREATE VIEW IF NOT EXISTS`; cheap to re-run on every init.
+
+| View | Purpose | Downstream Phase 9 consumer |
+|---|---|---|
+| `v_post_engagement_aggregated` | **Foundation.** One row per published draft (`drafts.queue_status='published' OR drafts.status='published'`) joined to `news_items`, with the latest per-platform engagement snapshot pulled from `engagement_stats` via correlated subqueries (NULL when a platform has no row). | Item 5 composer analyzer + Item 6 scorer analyzer; also feeds the three derived views below. |
+| `v_drafts_with_outcome` | Adds `engagement_quartile` via `NTILE(4) OVER (PARTITION BY topic_category)` over the trailing 14-day window. | Item 5 composer analyzer's top-Q vs bot-Q sibling sampler (canonical §8.3 row 4). |
+| `v_feed_yield_7d` | Per-feed 7-day publish/fetch counts, average weighted_score, and `engagement_yield_ratio` (share of fetched items that ended up published with non-zero engagement). | Item 4 harvest analyzer's feed sunset/boost proposals (canonical §8.3 row 1). |
+| `v_topic_engagement_x_platform` | Per-topic × platform engagement averages over the trailing 30-day window, plus `sample_count` for the §1.2 sample-size gate. | Item 3 reflector_topic refactor (canonical §8.3 row 2). |
+
+`v_post_engagement_aggregated` is the foundation; `v_drafts_with_outcome` /
+`v_feed_yield_7d` / `v_topic_engagement_x_platform` are derived layers that
+read from it (or from the same base tables in the same join shape, for
+consistency). No materialization, no indexes added — view evaluation is
+SELECT-time. If analyzer query patterns later surface a hot path, indexes
+get added against the base tables (out of scope for Item 1, see spec).
+
+State-branch implication: views are evaluated against whichever DB the
+consumer reads from. The state branch carries the base tables only —
+each consumer's local `init_db` re-creates the views on top of the
+state-restored schema. No view DDL is committed to the state branch.
 
 ---
 

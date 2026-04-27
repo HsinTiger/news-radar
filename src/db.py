@@ -19,6 +19,7 @@ PLATFORM_LABEL = {"fb": "📘 FB", "ig": "📸 IG", "threads": "🧵 Threads"}
 _BASE = Path(__file__).resolve().parent.parent
 DB_PATH = _BASE / "data" / "01_harvest" / "news_radar.db"
 SCHEMA_PATH = _BASE / "data" / "01_harvest" / "schema.sql"
+VIEWS_PATH = _BASE / "data" / "01_harvest" / "views.sql"
 
 
 def get_conn() -> sqlite3.Connection:
@@ -100,6 +101,13 @@ def init_db() -> None:
         # 2026-04-25: log-scale time-series engagement polling
         # （詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql）
         _migrate_log_scale_engagement(conn)
+        # Phase 9 Item 1 (2026-04-27): substrate views for unified reflector.
+        # Sourced AFTER schema.sql + all column migrations so views can rely
+        # on Phase 8.18 queue_status / Phase 8.20 topic_category etc.
+        # Idempotent (CREATE VIEW IF NOT EXISTS); cheap to re-run on every init.
+        if VIEWS_PATH.exists():
+            views_sql = VIEWS_PATH.read_text(encoding="utf-8")
+            conn.executescript(views_sql)
         conn.commit()
     print("[DB]  ↳ schema 套用完成")
 

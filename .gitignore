@@ -49,11 +49,14 @@ news_radar.db-journal
 news_radar.db-wal
 news_radar.db-shm
 # 整個 data/ 都是運行期 / 策略性內容 → 不入 main
-# 唯一例外：data/01_harvest/schema.sql（結構定義，要可 code review）
+# 例外：結構定義要可 code review（schema.sql、views.sql、migrations/）
 data/*
 !data/01_harvest
 data/01_harvest/*
 !data/01_harvest/schema.sql
+!data/01_harvest/views.sql
+!data/01_harvest/migrations
+!data/01_harvest/migrations/*.sql
 logs/
 archive/
 scratch/
