@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from src.reflector import mark_deployed
 from src.reflector import proposals as proposals_mod
 from src.reflector.proposals import (
     ProposalValidationError,
@@ -339,3 +340,84 @@ def test_multiweek_partitioning(env):
             ("harvest",),
         ).fetchall()
     assert [r[0] for r in rows] == [fid_b]
+
+
+# ---------------------------------------------------------------------------
+# (f) mark_deployed (Item 2.5)
+# ---------------------------------------------------------------------------
+
+def test_mark_deployed_roundtrip(env):
+    """Item 2.5: mark_deployed flips deployed_at on jsonl + lineage in lockstep."""
+    db_path, base_dir = env
+    fire_id = write_proposal(
+        _sample_proposal(fire_at="2026-04-27T10:00:00+00:00"),
+        db_path=db_path,
+        base_dir=base_dir,
+    )
+
+    # Pre-condition: deployed_at is None on both surfaces.
+    rec_before = read_proposals(base_dir=base_dir)[0]
+    assert rec_before["deployed_at"] is None
+    with sqlite3.connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT deployed_at FROM reflector_proposal_lineage WHERE fire_id = ?",
+            (fire_id,),
+        ).fetchone()[0] is None
+
+    # Default deployed_at (current UTC).
+    mark_deployed(fire_id, db_path=db_path, base_dir=base_dir)
+
+    rec_after = read_proposals(base_dir=base_dir)[0]
+    assert rec_after["fire_id"] == fire_id
+    assert rec_after["deployed_at"] is not None
+    # ISO-8601 with explicit +00:00 suffix (matches _utcnow_iso format).
+    assert rec_after["deployed_at"].endswith("+00:00")
+    # Parses cleanly as ISO-8601.
+    from datetime import datetime as _dt
+    parsed = _dt.fromisoformat(rec_after["deployed_at"])
+    assert parsed.tzinfo is not None
+
+    # Lineage row matches.
+    with sqlite3.connect(str(db_path)) as conn:
+        lineage_deployed = conn.execute(
+            "SELECT deployed_at FROM reflector_proposal_lineage WHERE fire_id = ?",
+            (fire_id,),
+        ).fetchone()[0]
+    assert lineage_deployed == rec_after["deployed_at"]
+
+    # Other fields untouched.
+    assert rec_after["analyzer"] == "topic"
+    assert rec_after["hsin_decision"] is None
+
+
+def test_mark_deployed_explicit_timestamp(env):
+    """Override path: caller supplies an explicit deployed_at."""
+    db_path, base_dir = env
+    fire_id = write_proposal(
+        _sample_proposal(fire_at="2026-04-27T10:00:00+00:00"),
+        db_path=db_path,
+        base_dir=base_dir,
+    )
+
+    explicit = "2026-05-01T12:34:56+00:00"
+    mark_deployed(fire_id, deployed_at=explicit, db_path=db_path, base_dir=base_dir)
+
+    rec = read_proposals(base_dir=base_dir)[0]
+    assert rec["deployed_at"] == explicit
+    with sqlite3.connect(str(db_path)) as conn:
+        lineage_deployed = conn.execute(
+            "SELECT deployed_at FROM reflector_proposal_lineage WHERE fire_id = ?",
+            (fire_id,),
+        ).fetchone()[0]
+    assert lineage_deployed == explicit
+
+
+def test_mark_deployed_unknown_fire_id_raises(env):
+    """Cannot deploy a fire_id that was never proposed — explicit raise."""
+    db_path, base_dir = env
+    with pytest.raises(LookupError, match="fire_id"):
+        mark_deployed(
+            "no-such-fire-id-12345",
+            db_path=db_path,
+            base_dir=base_dir,
+        )
