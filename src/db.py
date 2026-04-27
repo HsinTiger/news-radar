@@ -101,6 +101,13 @@ def init_db() -> None:
         # 2026-04-25: log-scale time-series engagement polling
         # （詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql）
         _migrate_log_scale_engagement(conn)
+        # Phase 9 Item 2 (2026-04-27): reflector_proposal_lineage table is
+        # defined inline in schema.sql §9 with IF NOT EXISTS guards (pure new
+        # table — no ALTER needed). Re-execute the migration SQL file too so
+        # the canonical migration record is the source of truth on disk; the
+        # statements are idempotent. See:
+        #   data/01_harvest/migrations/2026-04-27_phase9_proposal_lineage.sql
+        _migrate_proposal_lineage(conn)
         # Phase 9 Item 1 (2026-04-27): substrate views for unified reflector.
         # Sourced AFTER schema.sql + all column migrations so views can rely
         # on Phase 8.18 queue_status / Phase 8.20 topic_category etc.
@@ -110,6 +117,32 @@ def init_db() -> None:
             conn.executescript(views_sql)
         conn.commit()
     print("[DB]  ↳ schema 套用完成")
+
+
+_MIGRATION_PROPOSAL_LINEAGE_PATH = (
+    _BASE / "data" / "01_harvest" / "migrations"
+    / "2026-04-27_phase9_proposal_lineage.sql"
+)
+
+
+def _migrate_proposal_lineage(conn: sqlite3.Connection) -> None:
+    """Idempotent migration for Phase 9 Item 2 reflector_proposal_lineage.
+
+    The CREATE TABLE / CREATE INDEX statements live in schema.sql §9 (already
+    sourced earlier in init_db) AND in the canonical migration file.
+    Re-running the migration script here is a belt-and-suspenders idempotent
+    no-op on fresh DBs and an effective replay on older DBs that pre-date
+    the §9 amendment. All statements use IF NOT EXISTS.
+    """
+    if not _MIGRATION_PROPOSAL_LINEAGE_PATH.exists():
+        return
+    sql = _MIGRATION_PROPOSAL_LINEAGE_PATH.read_text(encoding="utf-8")
+    try:
+        conn.executescript(sql)
+    except sqlite3.OperationalError:
+        # IF NOT EXISTS should make this unreachable, but defend the
+        # init path against future migration-file edits.
+        pass
 
 
 def _migrate_log_scale_engagement(conn: sqlite3.Connection) -> None:

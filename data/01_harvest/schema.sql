@@ -208,3 +208,28 @@ CREATE TABLE IF NOT EXISTS topic_weight_history (
 
 CREATE INDEX IF NOT EXISTS idx_topic_weight_history_category
     ON topic_weight_history(category_id, recorded_at);
+
+
+-- ============ 9. Phase 9 Item 2 · Reflector proposal lineage ============
+-- 2026-04-27 · Spec: PM_Radar/specs/phase_9_implementation_plan.md §3 Item 2
+--
+-- Dual-record substrate for Phase 9 unified reflector. Canonical record
+-- is the per-ISO-week jsonl under data/05_reflect/proposals/YYYY-WW.jsonl;
+-- this table is the queryable mirror. src/reflector/proposals.py is the
+-- only writer (Items 3-7 analyzers call write_proposal()).
+--
+-- See also: data/01_harvest/migrations/2026-04-27_phase9_proposal_lineage.sql
+CREATE TABLE IF NOT EXISTS reflector_proposal_lineage (
+    fire_id            TEXT PRIMARY KEY,
+    fire_at            TEXT NOT NULL,
+    analyzer           TEXT NOT NULL,
+    proposal_type      TEXT NOT NULL,
+    target_config      TEXT NOT NULL,
+    hsin_decision      TEXT,                    -- 'approve'|'reject'|'amend' OR NULL while pending
+    hsin_decision_at   TEXT,
+    deployed_at        TEXT,
+    evidence_json      TEXT NOT NULL            -- full evidence sub-doc (JSON string)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reflector_proposal_lineage_analyzer_fire_at
+    ON reflector_proposal_lineage (analyzer, fire_at);

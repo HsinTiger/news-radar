@@ -276,6 +276,46 @@ consumer reads from. The state branch carries the base tables only —
 each consumer's local `init_db` re-creates the views on top of the
 state-restored schema. No view DDL is committed to the state branch.
 
+### 6.3 Reflector proposal substrate (Phase 9 Item 2, 2026-04-27)
+
+Phase 9 analyzers (Items 3-7) record every proposal-firing in two
+storage layers, kept in lockstep by `src/reflector/proposals.py`:
+
+| Layer | Path / object | Role |
+|---|---|---|
+| **JSONL (canonical)** | `data/05_reflect/proposals/YYYY-WW.jsonl` | Append-only, human-readable, git-friendly audit trail. One file per ISO week, one JSON object per line. Schema per spec §3 Item 2 lines 134-156 of `PM_Radar/specs/phase_9_implementation_plan.md`. |
+| **SQLite (mirror)** | `reflector_proposal_lineage` table | Queryable mirror for cross-analyzer SQL (recent proposals from analyzer X, pending decisions, approved-but-not-deployed). Schema in `data/01_harvest/schema.sql §9` + migration `2026-04-27_phase9_proposal_lineage.sql`. Index on `(analyzer, fire_at)` for the cooldown-window hot query. |
+
+**Why both:** the JSONL is the durable, easy-to-grep, easy-to-PR-review
+record (git diff of `data/05_reflect/proposals/2026-W18.jsonl` shows a
+boss exactly what an analyzer fired this week). The sqlite mirror lets
+analyzers and the (future) review UI run set queries without parsing
+N week-files.
+
+**Write-path API:** `news_radar/src/reflector/proposals.py`. Public
+functions: `write_proposal(proposal) -> fire_id`, `read_proposals(week=None)`,
+`update_decision(fire_id, decision, comment)`. Validation rejects
+malformed proposals (missing fields, out-of-enum analyzer/platform/
+proposal_type/target_config/confidence) BEFORE any side effect.
+`write_proposal` appends jsonl first, inserts the lineage row second,
+and rolls back the jsonl line by truncation on lineage failure.
+`update_decision` rewrites the entire week-file via tmp + `os.replace`
+(atomic on POSIX) and updates the lineage row in the same call;
+in-place jsonl line edits are deliberately avoided because line
+length is variable.
+
+**Cadence:** there is **no standalone proposal-substrate cron**. Items
+3-7 each fire on their own schedule (Item 3 weekly Mon 06:00 TW,
+Item 4 daily, etc.) and call `write_proposal` directly. Hsin's
+review cadence is weekly — Items 3-7 set `boss_attention_required`
+appropriately, Item 2 just records.
+
+**State-branch propagation:** explicitly deferred. Items 3+ may need
+to push the per-week jsonl into the state branch so the dashboard
+boss-review UI can read them. That belongs to whichever analyzer
+first writes from cron context — not the substrate. See audit
+`PM_Radar/audits/2026-04-27_phase9_item2_proposals_jsonl.md`.
+
 ---
 
 ## 7. Case studies — failures that forced doc updates
