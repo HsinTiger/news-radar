@@ -59,6 +59,54 @@ FB_GRAPH = "https://graph.facebook.com/v20.0"
 TH_GRAPH = "https://graph.threads.net/v1.0"
 
 
+# ---------- 低互動偵測 (Phase 9 2026-04-28) ----------
+#
+# Meta Insights API 對於互動不足的貼文會回傳 error response（非 200 status），
+# 而非回傳空的 insights 陣列。E.g.:
+#   - IG/Threads: `(#10) Insights cannot be accessed for this post` (OAuth error)
+#   - FB: `(#100) Tried accessing nonexisting field (reactions)` (GraphMethod error)
+#
+# 這些是合法的「零互動」信號，應視為 OK_zero_engagement（已 poll、無資料）
+# 而非 Fail（API 呼叫失敗、應重試）。Phase 9 engagement coverage 需要區分：
+#   - OK_zero_engagement：計入統計，但互動值為 0
+#   - Fail：API 失敗、token 過期、network 錯誤（需要診斷）
+#   - RateLimit：暫時被限流（會在下一個 cycle 重試）
+#
+# Spec: PM_Radar/specs/engagement_fail3_diagnosis.md §3 H1
+
+def _is_low_engagement_error(error_response: Dict) -> bool:
+    """Check if a Meta API error response is a 'no engagement yet' signal.
+
+    Low-engagement error codes:
+      - #10 (OAuthException): "Insights cannot be accessed for this post" (IG/Threads)
+      - #100 (GraphMethodException): "Tried accessing nonexisting field (...)" (FB)
+
+    These indicate the post exists but has insufficient engagement to surface metrics.
+    Should be treated as OK_zero_engagement, not Fail.
+    """
+    if not error_response:
+        return False
+    error_obj = error_response.get("error", {})
+    if not isinstance(error_obj, dict):
+        return False
+    code = error_obj.get("code")
+    message = error_obj.get("message", "").lower()
+
+    # Check for known low-engagement error codes
+    if code in (10, 100):
+        return True
+    # Also check message patterns in case error code format varies
+    if "insights cannot be accessed" in message:
+        return True
+    if "insufficient data" in message:
+        return True
+    if "nonexisting field" in message and "reactions" in message:
+        return True
+
+    return False
+
+
+
 # ---------- 單平台抓取 ----------
 
 async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
@@ -145,13 +193,32 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
             step2_ok = True
     except Exception:
         pass
+    # 兩個 step 都掛 → 檢查是否為低互動錯誤
+    # 如果都是低互動錯誤（特定 error code），視為 OK_zero_engagement；
+    # 否則才回 ok=False 讓上層記錯誤。
+    step1_low_engagement = _is_low_engagement_error(data_basic)
+    step2_low_engagement = _is_low_engagement_error(insights_data)
 
-    # likes 的 final 值：Step 1 拿到就用 Step 1（精確 reactions.summary），
-    # Step 1 失敗就用 Step 2 的 reactions_by_type 加總當 backup
-    if not step1_ok and reactions_from_insights:
-        likes = reactions_from_insights
+    if (not step1_ok or step1_low_engagement) and (not step2_ok or step2_low_engagement):
+        if (step1_low_engagement or step2_low_engagement):
+            # 低互動信號（API 有回，但無資料）→ OK_zero_engagement
+            return {
+                "ok": True,
+                "likes": 0,
+                "comments": 0,
+                "shares": 0,
+                "views": 0,
+                "reach": 0,
+                "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
+            }
+        else:
+            # 真的 API 失敗（token 過期、網路錯誤等）→ Fail
+            return {
+                "ok": False,
+                "error": data_basic,
+                "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
+            }
 
-    # 兩個 step 都掛 → 才回 ok=False，讓上層記錯誤
     if not step1_ok and not step2_ok:
         return {
             "ok": False,
@@ -200,7 +267,23 @@ async def fetch_ig_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
         resp = await client.get(f"{FB_GRAPH}/{post_id}", params=params_basic, timeout=30.0)
         data_basic = resp.json()
         if resp.status_code != 200:
-            return {"ok": False, "error": data_basic, "raw": data_basic}
+            # 檢查是否為低互動錯誤
+            if _is_low_engagement_error(data_basic):
+                # 低互動信號 → OK_zero_engagement
+                return {
+                    "ok": True,
+                    "likes": 0,
+                    "comments": 0,
+                    "shares": 0,
+                    "saves": 0,
+                    "views": 0,
+                    "reach": 0,
+                    "total_interactions": 0,
+                    "raw": data_basic,
+                }
+            else:
+                # 真的 API 失敗 → Fail
+                return {"ok": False, "error": data_basic, "raw": data_basic}
 
         likes = int(data_basic.get("like_count") or 0)
         comments = int(data_basic.get("comments_count") or 0)
@@ -281,7 +364,25 @@ async def fetch_threads_insights(client: httpx.AsyncClient, post_id: str) -> Dic
         resp = await client.get(f"{TH_GRAPH}/{post_id}/insights", params=params, timeout=30.0)
         data = resp.json()
         if resp.status_code != 200:
-            return {"ok": False, "error": data, "raw": data}
+            # 檢查是否為低互動錯誤
+            if _is_low_engagement_error(data):
+                # 低互動信號 → OK_zero_engagement
+                return {
+                    "ok": True,
+                    "likes": 0,
+                    "replies": 0,
+                    "reposts": 0,
+                    "quotes": 0,
+                    "comments": 0,
+                    "shares": 0,
+                    "saves": 0,
+                    "views": 0,
+                    "reach": 0,
+                    "raw": data,
+                }
+            else:
+                # 真的 API 失敗 → Fail
+                return {"ok": False, "error": data, "raw": data}
 
         # insights 回傳 data: [{name, values: [{value: int}]}]
         pulled = {m: 0 for m in metrics.split(",")}
