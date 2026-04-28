@@ -199,7 +199,172 @@ def sample_top_bot_quartiles_per_platform(
     return result
 
 
-# ---------- LLM augmentor placeholder ----------
+# ---------- LLM augmentor: prompt template + helper ----------
+
+# Per-platform context (KOL benchmarks per ORIGIN_VISION §2)
+_PLATFORM_CONTEXT = {
+    "facebook": (
+        "FB · 戰略解讀(IEObserve benchmark)— 高頻長文、Bloomberg/Reuters/FT/Economist 級頂層來源、"
+        "聚焦結構性改變、宏觀切入具體事件、品牌化資訊圖。讀者來這裡看「這個事件對產業版圖的長"
+        "期影響」、不是當天熱搜。"
+    ),
+    "instagram": (
+        "IG · 市場週期 / 總體經濟科普(游庭皓 benchmark)— FED 談話、券商研究、官方指標、週期變"
+        "換敏感、數據圖表 + 快節奏金句。讀者期待具體 Fed 數字 / 央行立場 / 官方文件級評論,不"
+        "是 lifestyle 圖文。"
+    ),
+    "threads": (
+        "Threads · 系統架構拆解(Fox Hsiao benchmark)— 第一手官方資訊(Release Notes / API Doc / "
+        "創辦人訪談)、「輸入/處理/輸出/整合」四層系統架構、冷靜一針見血、把對手拉進來看。"
+        "讀者要「為什麼這個產品這樣設計」的工匠拆解,不是 PR 通稿。"
+    ),
+}
+
+# Brand DNA — 規則生成必須遵守的 voice 邊界(從 ORIGIN_VISION + Phase 8.20 reflector 紀錄萃取)
+_BRAND_DNA = """
+✅ DO 偏好(這些是 brand 賺錢路徑的訊號):
+- 具體數字(百分比、貨幣金額、時間戳記、產量、比例)
+- 專有名詞(人名、公司名、產品名、政策名、Fed 官員、API endpoint)
+- 結論前置(hook 第一句就放結論,不鋪陳)
+- 第一手實作體悟 / 真實踩坑(「我發現…」「實測下來…」「這條跟去年那條的差別是…」)
+- 結構性框架(輸入/處理/輸出/整合;或產業價值鏈位置)
+- 把對手 / 競品 / 同業拉進來看(從一個工具升級到產業版圖)
+- 一氣呵成 narrative(段落間有邏輯銜接,不是條列堆砌)
+
+❌ DON'T(這些是 anti-brand,即使 engagement 高也不能寫進規則):
+- 摘要味語言(「綜合來看」「值得注意的是」「整體而言」「在這個瞬息萬變的時代」)
+- 抽象化沒人名沒數字(「許多人」「業界」「市場專家認為」)
+- 鋪陳式開頭(浪費 hook 黃金 N 字)
+- 條列式功能流水帳(「該產品有以下特色:1...2...3...」)
+- 標題黨句式(「驚!」「沒想到…」「這個現象 99% 的人都不知道」)
+- 情緒煽動(「太離譜了」「不能再忍」「快來看」)
+- 改變 voice DNA 的建議(「應該加 emoji」「應該更口語」「應該縮短到 30 字」屬於 brand-side
+  call,不是 reflector 該動的)
+"""
+
+
+_COMPOSER_PROMPT_TEMPLATE = """你是分析 News Radar 中文評論帳號 engagement pattern 的助手。這個帳號**不是** clickbait 商品,
+變現路徑長期靠受眾信任資產,短期靠平台演算法觸及。你的任務是**從數據找出可重複的結構性模式**,
+不是把 brand 訓練成標題黨。
+
+# 平台脈絡
+
+{platform_context}
+
+# Brand DNA(規則生成必須遵守的硬邊界)
+{brand_dna}
+
+# 任務
+
+我給你同一個主題類別在 {platform} 平台的 top-quartile(高 engagement)跟 bot-quartile
+(低 engagement)drafts。找出**結構性差異**,寫成可實作的規則,讓 composer 下次寫該主題
+時能 hit 高 engagement 區塊的形狀 — 但**不能違背上面 Brand DNA**。
+
+主題類別: {topic_category}
+Hook 字數限制(此平台): {hook_chars}
+
+# Top-quartile drafts({top_n} 篇,engagement 高)
+
+{top_q_block}
+
+# Bot-quartile drafts({bot_n} 篇,engagement 低)
+
+{bot_q_block}
+
+# 重要過濾原則
+
+如果 top-Q 高 engagement 是因為**違反 Brand DNA 的 anti-pattern**(標題黨、煽情、AI 摘要味、
+抽象化、條列式),**不要**寫成規則。寧願 body_rules / hook_rules 兩條都空陣列,把該觀察記
+進 anti_patterns_filtered 欄位。寫進規則的東西會直接餵給 composer 訓練下一輪寫稿,放錯規則
+等於主動腐蝕 brand。
+
+# 規則品質要求
+
+- 每條規則必須**可實作**(composer LLM 看到能直接遵守)。寫「使用具體數字」是空規則,寫
+  「在前 {hook_chars} 字 hook 內必須含 ≥1 個百分比、貨幣金額、或具名 Fed 官員」才可實作。
+- WHEN/DO 框架: WHEN <輸入條件> DO <具體動作>。不要寫感想式的「應該更…」「最好…」。
+- HIGH confidence 條件: 該模式在 top-Q 出現 ≥3 次,且 bot-Q 從未出現。
+- MED: 該模式在 top-Q 出現 ≥2 次,bot-Q 出現 ≤1 次。
+- LOW: 只在 top-Q 出現 1 次,無法確認是否系統性 — **預設不要 propose LOW**,除非真的有獨立
+  論據(例如該模式在三個 KOL benchmark 文章裡也常見)。
+- 每條規則附 ≤30 字 evidence_quote(從某篇 top-Q draft 直接抽出來的字串)。
+
+# Output(嚴格 JSON,不要 markdown 包裹)
+
+{{
+  "body_rules": [
+    {{
+      "rule": "WHEN <條件> DO <具體動作>",
+      "evidence_quote": "≤30 字 quote",
+      "confidence": "HIGH" | "MED" | "LOW"
+    }}
+  ],
+  "hook_rules": [
+    {{
+      "rule": "WHEN 寫前 {hook_chars} 字 hook DO <具體動作>",
+      "evidence_quote": "≤30 字 quote(從 top-Q draft 的前 {hook_chars} 字內抽)",
+      "confidence": "HIGH" | "MED" | "LOW"
+    }}
+  ],
+  "rationale": "1-2 句中文總結 top-Q vs bot-Q 的結構性差異主軸",
+  "anti_patterns_filtered": [
+    "如果有 top-Q pattern 因 brand DNA 違反被過濾,列在這。空陣列 OK。"
+  ]
+}}
+
+# 禁止項
+
+- 不要 propose 違反 Brand DNA 的規則
+- 不要 propose 改變 voice tone 的規則(改 emoji / 改長度 / 改人稱屬 brand-side call)
+- 不要 propose 違反三 KOL benchmark 結構的規則
+- 不要把 evidence_quote 寫成你腦補的句子,必須是某篇 top-Q draft 裡實際出現的字串
+- 規則 ≤ 5 條(body 跟 hook 加總),寧少勿多;每多一條規則 composer 多一條限制
+"""
+
+
+def _format_draft_for_prompt(d: DraftSample, max_body_chars: int = 400) -> str:
+    """Format one draft sample into a compact block for the LLM prompt."""
+    body = (d.news_body or "").strip()
+    if len(body) > max_body_chars:
+        body = body[:max_body_chars] + "…[truncated]"
+    eng_hint = []
+    if d.fb_likes is not None:
+        eng_hint.append(f"FB likes={d.fb_likes}")
+    if d.ig_likes is not None:
+        eng_hint.append(f"IG likes={d.ig_likes}")
+    if d.th_likes is not None:
+        eng_hint.append(f"Threads likes={d.th_likes}")
+    eng_str = " · ".join(eng_hint) if eng_hint else "no engagement signal"
+    return (
+        f"--- draft_id={d.draft_id[:8]} | quartile={d.engagement_quartile} | {eng_str} ---\n"
+        f"標題: {d.news_title}\n"
+        f"內容: {body}\n"
+    )
+
+
+def _build_composer_prompt(
+    top_q_samples: List[DraftSample],
+    bot_q_samples: List[DraftSample],
+    platform: str,
+    topic_category: str,
+) -> str:
+    """Construct the LLM prompt by injecting samples + per-platform context."""
+    hook_chars = HOOK_LENGTHS.get(platform)
+    hook_chars_str = f"{hook_chars}" if hook_chars else "第一行(換行符前)"
+    top_q_block = "\n".join(_format_draft_for_prompt(d) for d in top_q_samples)
+    bot_q_block = "\n".join(_format_draft_for_prompt(d) for d in bot_q_samples)
+    return _COMPOSER_PROMPT_TEMPLATE.format(
+        platform=platform,
+        platform_context=_PLATFORM_CONTEXT.get(platform, ""),
+        brand_dna=_BRAND_DNA,
+        topic_category=topic_category,
+        hook_chars=hook_chars_str,
+        top_n=len(top_q_samples),
+        bot_n=len(bot_q_samples),
+        top_q_block=top_q_block,
+        bot_q_block=bot_q_block,
+    )
+
 
 def analyze_with_llm(
     top_q_samples: List[DraftSample],
@@ -210,20 +375,76 @@ def analyze_with_llm(
     """
     Call LLM to extract body rules + hook rules from top vs bot quartile samples.
 
-    TODO: This is a PLACEHOLDER. Hsin reviews/edits the prompt template before
-    first cron fire (Mon 06:00 TW).
+    Prompt template baked in by Hsin 2026-04-28 (per character + brand DNA from
+    ORIGIN_VISION §2 + Phase 8.20 reflector log + accumulated PM ratifications).
 
     Returns dict with:
-      - body_rules: List[str]  (language pattern observations)
-      - hook_rules: List[str]  (opening structure patterns)
+      - body_rules: List[Dict]  (rule + evidence_quote + confidence)
+      - hook_rules: List[Dict]  (rule + evidence_quote + confidence)
       - rationale: str
+      - anti_patterns_filtered: List[str]
       - token_usage: Dict[str, int]  {input, output}
+      - truncated: bool
 
-    Or None if insufficient samples / token budget exceeded.
+    Or None if LLM call fails / unavailable.
+
+    **Activation**: This function is wired to call `src.llm_brain.call_for_json`.
+    On import / call failure (e.g. llm_brain API mismatch), returns None safely
+    so cron continues without crashing. To verify Hsin's prompt before first
+    real fire: `python3 -m src.reflector.composer --dry-run` prints the prompt
+    that would be sent (see CLI `--print-prompt` flag).
     """
-    # Mock implementation for tests (no real API calls)
-    # Production: would call src.llm_brain or similar
-    return None
+    # Build prompt
+    prompt = _build_composer_prompt(top_q_samples, bot_q_samples, platform, topic_category)
+
+    # Token-budget pre-check (rough estimate: 1 token ≈ 3 chars for Chinese)
+    estimated_input_tokens = len(prompt) // 3
+    truncated = False
+    if estimated_input_tokens > LLM_HARD_CAP_INPUT_TOKENS:
+        # Refuse to send oversize prompt — return truncation marker for audit
+        return {
+            "body_rules": [],
+            "hook_rules": [],
+            "rationale": "input exceeded hard cap; sample truncation needed",
+            "anti_patterns_filtered": [],
+            "truncated": True,
+            "token_usage": {"input": estimated_input_tokens, "output": 0},
+        }
+
+    # Try LLM call (lazy import; gracefully degrade on import / call failure)
+    try:
+        from src.llm_brain import call_for_json  # type: ignore
+        response = call_for_json(
+            prompt=prompt,
+            model_tier="primary",  # Gemini Flash; falls back to Claude CLI per llm_brain
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "body_rules": {"type": "array"},
+                    "hook_rules": {"type": "array"},
+                    "rationale": {"type": "string"},
+                    "anti_patterns_filtered": {"type": "array"},
+                },
+            },
+        )
+        if not isinstance(response, dict):
+            return None
+        return {
+            "body_rules": response.get("body_rules", []),
+            "hook_rules": response.get("hook_rules", []),
+            "rationale": response.get("rationale", ""),
+            "anti_patterns_filtered": response.get("anti_patterns_filtered", []),
+            "truncated": truncated,
+            "token_usage": response.get("_usage", {"input": estimated_input_tokens, "output": 0}),
+        }
+    except (ImportError, AttributeError) as e:
+        # llm_brain API mismatch — log but don't crash cron
+        print(f"[composer] llm_brain unavailable ({e}); skipping LLM analysis", file=sys.stderr)
+        return None
+    except Exception as e:
+        # Any other LLM call failure (rate limit, network, schema mismatch)
+        print(f"[composer] LLM call failed: {e}; skipping this (topic, platform)", file=sys.stderr)
+        return None
 
 
 # ---------- Proposal writer ----------
