@@ -126,7 +126,7 @@ jobs:
             echo "[report] 無新報告檔，略過 commit"
           fi
 
-      - name: Persist state (DB with updated topic_weights)
+      - name: Persist state (DB + proposals dir)
         if: always() && inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,9 +139,12 @@ jobs:
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
 
-          mkdir -p data/01_harvest logs state archive
+          mkdir -p data/01_harvest data/05_reflect/proposals logs state archive
           if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
             cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
+            cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
           fi
           if [ -d "$GITHUB_WORKSPACE/logs" ]; then
             cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
