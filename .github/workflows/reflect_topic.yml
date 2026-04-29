@@ -76,7 +76,7 @@ jobs:
       - name: Restore DB from state branch
         id: restore
         run: |
-          mkdir -p data/01_harvest logs
+          mkdir -p data/01_harvest data/05_reflect/proposals logs
           if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
             cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
             echo "has_db=true" >> "$GITHUB_OUTPUT"
@@ -87,6 +87,11 @@ jobs:
           fi
           if [ -d _state/logs ]; then
             cp -r _state/logs/. logs/ 2>/dev/null || true
+          fi
+          # Carry over any existing proposals dir so this run appends to
+          # the right ISO-week jsonl file rather than starting from empty.
+          if [ -d _state/data/05_reflect/proposals ]; then
+            cp -r _state/data/05_reflect/proposals/. data/05_reflect/proposals/ 2>/dev/null || true
           fi
 
       - name: Run topic back-prop
