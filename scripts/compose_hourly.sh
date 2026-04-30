@@ -72,7 +72,7 @@ fi
 echo "🔄 fetch state branch..."
 if git fetch --quiet origin state 2>/dev/null; then
     # 從 state branch 取 DB（用 git show 直接把 blob 倒到工作區）
-    mkdir -p data/01_harvest state archive
+    mkdir -p data/01_harvest state archive data/05_reflect/proposals
     if git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db 2>/dev/null; then
         echo "✅ DB 從 state branch 還原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
     else
@@ -82,6 +82,19 @@ if git fetch --quiet origin state 2>/dev/null; then
         :
     else
         rm -f state/last_harvest.txt
+    fi
+    # Phase 9 Item 2: carry proposals dir forward so reflector cron contributions
+    # survive each hourly compose cycle. Without this, compose's orphan-push wipes
+    # any proposals/ jsonl files written by reflect_*.yml workflows.
+    if git show origin/state:data/05_reflect/proposals 2>/dev/null | head -1 > /dev/null 2>&1; then
+        # state branch has proposals dir; checkout into a temp + copy
+        TMP_PROPOSALS=$(mktemp -d)
+        git archive origin/state -- data/05_reflect/proposals/ 2>/dev/null | tar -x -C "$TMP_PROPOSALS" 2>/dev/null
+        if [ -d "$TMP_PROPOSALS/data/05_reflect/proposals" ]; then
+            cp -r "$TMP_PROPOSALS/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
+            echo "✅ proposals/ carried forward from state branch ($(ls data/05_reflect/proposals/ 2>/dev/null | wc -l) jsonl files)"
+        fi
+        rm -rf "$TMP_PROPOSALS"
     fi
 else
     echo "⚠️ state branch 尚未存在 → 這是第一次跑，DB 會初始化"
@@ -116,13 +129,17 @@ STATE_DIR="$(mktemp -d)"
     git config user.name "news-radar-mac-compose"
     git config user.email "noreply@local"
 
-    mkdir -p data/01_harvest state archive
+    mkdir -p data/01_harvest state archive data/05_reflect/proposals
     cp "$LOCAL_REPO/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db 2>/dev/null || true
     if [ -f "$LOCAL_REPO/state/last_harvest.txt" ]; then
         cp "$LOCAL_REPO/state/last_harvest.txt" state/last_harvest.txt
     fi
     if [ -d "$LOCAL_REPO/archive" ]; then
         cp -r "$LOCAL_REPO/archive/." archive/ 2>/dev/null || true
+    fi
+    # Phase 9 Item 2: include proposals dir in orphan-push staging
+    if [ -d "$LOCAL_REPO/data/05_reflect/proposals" ]; then
+        cp -r "$LOCAL_REPO/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
     fi
 
     cat > LAST_RUN.txt <<EOF

@@ -66,7 +66,7 @@ jobs:
 
       - name: Restore DB from state branch
         run: |
-          mkdir -p data/01_harvest logs state archive
+          mkdir -p data/01_harvest logs state archive data/05_reflect/proposals
           if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
             cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
             echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
@@ -78,6 +78,12 @@ jobs:
           fi
           if [ -d _state/archive ]; then
             cp -r _state/archive/. archive/ 2>/dev/null || true
+          fi
+          # Phase 9 Item 2: carry proposals dir forward so reflector cron contributions
+          # survive each hourly compose cycle. Without this, compose's orphan-push wipes
+          # any proposals/ jsonl files written by reflect_*.yml workflows.
+          if [ -d _state/data/05_reflect/proposals ]; then
+            cp -r _state/data/05_reflect/proposals/. data/05_reflect/proposals/ 2>/dev/null || true
           fi
 
       - name: Run publish queue
@@ -132,7 +138,7 @@ jobs:
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
 
-          mkdir -p data/01_harvest logs state archive
+          mkdir -p data/01_harvest logs state archive data/05_reflect/proposals
           if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
             cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
           fi
@@ -144,6 +150,10 @@ jobs:
           fi
           if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
             cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
+          # Phase 9 Item 2: include proposals dir in orphan-push staging
+          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
+            cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
           fi
 
           cat > LAST_RUN.txt <<EOF
