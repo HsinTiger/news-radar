@@ -34,6 +34,7 @@ from src.content_quality_guard import (
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.publisher import publish_to_fb, publish_to_threads, publish_to_ig
+from src.cover_pipeline import prepare_publish_image
 from src.token_utils import refresh_threads_token
 from src.analyst import run_analysis_cycle
 from src.reflector import run_reflection
@@ -322,9 +323,15 @@ async def _publish_platform(
     full_text: str,
     ok: bool,
     image_url: Optional[str],
+    topic_category: Optional[str] = None,
 ) -> bool:
     """單平台發布 + publish_log。ok=False 或缺圖 → 不呼叫 API，直接記失敗。
     回傳：True 表示 API 回報成功；False 表示任何原因失敗。
+
+    Phase 9.5: image goes through ``cover_pipeline.prepare_publish_image``
+    first — FB gets a rendered branded cover via bytes upload, Threads /
+    IG keep their pre-cover behaviour (Threads no cover by design; IG
+    cover-URL hosting is Phase 2).
     """
     db_name = dbmod.PLATFORM_DB_NAME[platform_key]
     posted_at = datetime.now(timezone.utc).isoformat()
@@ -338,30 +345,40 @@ async def _publish_platform(
         ))
         return False
 
+    # Render branded cover (or pass-through, per platform). ``prep`` has
+    # exactly one of {image_url, local_file_path} populated when a
+    # rendered cover lands; both can be None if the source had no image.
+    prep = await prepare_publish_image(
+        platform_key=platform_key,
+        original_image_url=image_url,
+        title=variant.title or "",
+        topic_category=topic_category,
+    )
+
     # 呼叫對應 API
     result = {"success": False}
-    
+
     if platform_key == "fb":
-        # --- Facebook 智慧備援 (Plan A -> Plan B) ---
-        print(f"   ↳ [📘 FB] 嘗試 Plan A (網址抓取)...")
-        result = await publish_to_fb(full_text, image_url=image_url)
-        
-        # 偵測是否為圖片抓取失敗 (通常包含 "download failed" 或代碼 1353045)
-        error_msg = str(result.get("error", ""))
-        is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
-        
-        if not result.get("success") and is_fetch_fail and image_url:
-            print(f"   ⚠️ [📘 FB] Plan A 圖片抓取失敗，觸發備援 Plan B (下載後上傳)...")
-            local_path = await image_manager.download_image(image_url)
-            if local_path:
-                result = await publish_to_fb(full_text, local_file_path=local_path)
-                # 清除快取 (選配)
-                image_manager.cleanup_cache()
-            else:
-                print(f"   ❌ [📘 FB] Plan B 下載圖片也失敗了，將記錄最終錯誤")
-    
+        if prep["local_file_path"]:
+            print(f"   ↳ [📘 FB] 上傳 rendered cover ({prep['local_file_path']})")
+            result = await publish_to_fb(full_text, local_file_path=prep["local_file_path"])
+        else:
+            # Cover render skipped/failed — fall back to legacy Plan A → Plan B path
+            print(f"   ↳ [📘 FB] cover 不可用，退回 Plan A (網址抓取)...")
+            result = await publish_to_fb(full_text, image_url=image_url)
+            error_msg = str(result.get("error", ""))
+            is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
+            if not result.get("success") and is_fetch_fail and image_url:
+                print(f"   ⚠️ [📘 FB] Plan A 圖片抓取失敗，觸發備援 Plan B (下載後上傳)...")
+                local_path = await image_manager.download_image(image_url)
+                if local_path:
+                    result = await publish_to_fb(full_text, local_file_path=local_path)
+                    image_manager.cleanup_cache()
+                else:
+                    print(f"   ❌ [📘 FB] Plan B 下載圖片也失敗了，將記錄最終錯誤")
+
     elif platform_key == "threads":
-        if not image_url:
+        if not prep["image_url"]:
             msg = "Threads 需要 image_url 才能發布"
             print(f"   ↳ [🧵 Threads Skip] {msg}")
             dbmod.log_publish(conn, PublishResult(
@@ -369,9 +386,9 @@ async def _publish_platform(
                 posted_at=posted_at, success=False, error_message=msg,
             ))
             return False
-        result = await publish_to_threads(full_text, image_url)
+        result = await publish_to_threads(full_text, prep["image_url"])
     elif platform_key == "ig":
-        if not image_url:
+        if not prep["image_url"]:
             msg = "IG 需要 image_url 才能發布"
             print(f"   ↳ [📸 IG Skip] {msg}")
             dbmod.log_publish(conn, PublishResult(
@@ -379,7 +396,7 @@ async def _publish_platform(
                 posted_at=posted_at, success=False, error_message=msg,
             ))
             return False
-        result = await publish_to_ig(full_text, image_url)
+        result = await publish_to_ig(full_text, prep["image_url"])
     else:
         raise ValueError(f"未知平台 key: {platform_key}")
 
@@ -610,6 +627,7 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
             variant, full_text, ok = finalized[platform_key]
             success = await _publish_platform(
                 conn, draft_id, platform_key, variant, full_text, ok, bundle.image_url,
+                topic_category=row["topic_category"] if "topic_category" in row.keys() else None,
             )
             publish_results[platform_key] = success
             if success:

@@ -40,6 +40,7 @@ from src.content_quality_guard import (
 )
 from src.local_notify import notify_quality_block
 from src.publisher import publish_to_fb, publish_to_ig, publish_to_threads
+from src.cover_pipeline import prepare_publish_image
 from src.schema import PublishResult
 from src.token_utils import refresh_threads_token
 
@@ -160,6 +161,15 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
     # og_video_url 暫不主動使用（Phase 8.18 範圍內；影片 path 已在 Phase 8.16 實作，
     # 需 composer 決定是否走影片發文，此處維持純文字 + 圖片路徑）
 
+    # Phase 9.5: topic_category drives the cover-image topic chip color.
+    # Older queue rows may not carry it — fall back to None and the
+    # cover_pipeline defaults to "macro" (gray chip).
+    topic_category = row["topic_category"] if "topic_category" in row.keys() else None
+
+    # Map DB-side platform names ("facebook"/"instagram"/"threads") to the
+    # cover_pipeline platform_key codes ("fb"/"ig"/"threads").
+    _COVER_KEY = {"facebook": "fb", "instagram": "ig", "threads": "threads"}
+
     any_success = False
     for pd_row in platform_drafts:
         platform = pd_row["platform"]          # facebook / instagram / threads
@@ -170,27 +180,43 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
             print(f"   · [dry-run] {platform} ({len(full_text)} 字) → 不呼叫 API")
             continue
 
+        # Render branded cover (or pass-through, per platform).
+        cover_key = _COVER_KEY.get(platform)
+        if cover_key is None:
+            print(f"   ⚠️ 未知平台 {platform}，跳過")
+            continue
+        prep = await prepare_publish_image(
+            platform_key=cover_key,
+            original_image_url=image_url,
+            title=pd_row["title"] or "",
+            topic_category=topic_category,
+        )
+
         if platform == "facebook":
-            print(f"   ↳ [📘 FB] Plan A (image_url)...")
-            result = await publish_to_fb(full_text, image_url=image_url)
-            error_msg = str(result.get("error", ""))
-            is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
-            if not result.get("success") and is_fetch_fail and image_url:
-                print(f"   ⚠️ [📘 FB] Plan A 失敗 → Plan B 下載後上傳...")
-                local_path = await image_manager.download_image(image_url)
-                if local_path:
-                    result = await publish_to_fb(full_text, local_file_path=local_path)
-                    image_manager.cleanup_cache()
+            if prep["local_file_path"]:
+                print(f"   ↳ [📘 FB] 上傳 rendered cover ({prep['local_file_path']})")
+                result = await publish_to_fb(full_text, local_file_path=prep["local_file_path"])
+            else:
+                print(f"   ↳ [📘 FB] cover 不可用，退回 Plan A (image_url)...")
+                result = await publish_to_fb(full_text, image_url=image_url)
+                error_msg = str(result.get("error", ""))
+                is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
+                if not result.get("success") and is_fetch_fail and image_url:
+                    print(f"   ⚠️ [📘 FB] Plan A 失敗 → Plan B 下載後上傳...")
+                    local_path = await image_manager.download_image(image_url)
+                    if local_path:
+                        result = await publish_to_fb(full_text, local_file_path=local_path)
+                        image_manager.cleanup_cache()
         elif platform == "instagram":
-            if not image_url:
+            if not prep["image_url"]:
                 result = {"success": False, "error": {"local_reject": "IG 需要 image_url"}}
             else:
-                result = await publish_to_ig(full_text, image_url)
+                result = await publish_to_ig(full_text, prep["image_url"])
         elif platform == "threads":
-            if not image_url:
+            if not prep["image_url"]:
                 result = {"success": False, "error": {"local_reject": "Threads 需要 image_url"}}
             else:
-                result = await publish_to_threads(full_text, image_url)
+                result = await publish_to_threads(full_text, prep["image_url"])
         else:
             print(f"   ⚠️ 未知平台 {platform}，跳過")
             continue
