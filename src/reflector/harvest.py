@@ -425,6 +425,28 @@ def _build_sunset_payload(
         ),
         "source_tier":              feed_cfg.source_tier,
     }
+    # One-line rationale for the dashboard's boss-pinned reviewer — the UI
+    # truncates raw metrics to the first two keys, so a synthesized reason
+    # carries the load-bearing "why we want to sunset this feed" signal.
+    yield_str = (
+        f"yield={yield_row.engagement_yield_ratio:.3f}"
+        if yield_row.engagement_yield_ratio is not None else "yield=n/a"
+    )
+    avg_str = (
+        f"avg_score_7d={yield_row.avg_score_7d:.2f}"
+        if yield_row.avg_score_7d is not None else "avg_score_7d=n/a"
+    )
+    age_str = f"feed_age={age_days}d" if age_days is not None else "feed_age=unknown"
+    cadence_str = (
+        f"expected ~{cadence_per_week:.1f}/wk"
+        if cadence_per_week is not None else "no cadence target"
+    )
+    reason = (
+        f"Past 7d: {yield_row.publish_count_7d} publishes from "
+        f"{yield_row.fetch_count_7d} fetches ({yield_str}, {avg_str}); "
+        f"{age_str} past {grace_days}d grace, {cadence_str}."
+    )
+
     return {
         "analyzer":      "harvest",
         "platform":      "all",
@@ -432,6 +454,7 @@ def _build_sunset_payload(
         "evidence": {
             "sample_ids": [],  # feed-level proposal, no draft IDs
             "metrics":    metrics,
+            "reason":     reason,
             "confidence": confidence_for(
                 yield_row.publish_count_7d, MIN_SAMPLES_THRESHOLD
             ),
@@ -482,6 +505,23 @@ def _build_investigation_payload(
         ),
         "source_tier":              feed_cfg.source_tier,
     }
+    # One-line investigation rationale for the dashboard reviewer.
+    age_str = f"feed_age={age_days}d" if age_days is not None else "feed_age=unknown"
+    cadence_str = (
+        f"expected ~{cadence_per_week:.1f}/wk"
+        if cadence_per_week is not None else "no cadence target"
+    )
+    avg_str = (
+        f"avg_score_7d={yield_row.avg_score_7d:.2f}"
+        if yield_row.avg_score_7d is not None else "avg_score_7d=n/a"
+    )
+    reason = (
+        f"0 publishes in past 7d but feed has historical publishes "
+        f"({yield_row.fetch_count_7d} fetches; {avg_str}; {age_str}, "
+        f"{cadence_str}). Could be platform breakage, source going dark, "
+        "or benign quiet — needs eyeball, not auto-sunset."
+    )
+
     return {
         "analyzer":      "harvest",
         "platform":      "all",
@@ -489,6 +529,7 @@ def _build_investigation_payload(
         "evidence": {
             "sample_ids": [],
             "metrics":    metrics,
+            "reason":     reason,
             "confidence": "MED",  # zero-publish signal is intrinsically uncertain
         },
         "action": {

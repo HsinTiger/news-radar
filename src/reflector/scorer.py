@@ -544,6 +544,42 @@ def evaluate_platform(
 # Proposal payload + lineage-skip builders
 # ---------------------------------------------------------------------------
 
+def _format_reason(verdict: PlatformVerdict) -> str:
+    """One-line human-readable rationale, surfaced in the dashboard's
+    boss-pinned approval queue.
+
+    The dashboard truncates ``evidence.metrics`` to its first two keys, so
+    raw metrics alone don't tell the reviewer WHY a proposal moved. This
+    string compresses the load-bearing decision drivers (sample size,
+    tail-mean engagement delta, clamp status) into one sentence so a
+    reviewer can sanity-check without expanding the JSON.
+
+    Kept stable & deterministic — no float-format surprises across runs.
+    """
+    parts: List[str] = []
+    parts.append(
+        f"{verdict.sample_count} polled samples in last {WINDOW_DAYS}d"
+    )
+    cur_obj = verdict.engagement_per_post_at_current
+    prop_obj = verdict.engagement_per_post_at_proposed
+    if cur_obj is not None and prop_obj is not None:
+        try:
+            lift = prop_obj - cur_obj
+            sign = "+" if lift >= 0 else ""
+            parts.append(
+                f"tail-mean engagement {cur_obj:.2f} → {prop_obj:.2f} "
+                f"({sign}{lift:.2f} per published post)"
+            )
+        except (TypeError, ValueError):
+            pass
+    if verdict.bound_hit:
+        parts.append(
+            f"clamped at sanity {verdict.bound_hit} bound "
+            f"({SANITY_LO:.2f}–{SANITY_HI:.2f})"
+        )
+    return "; ".join(parts) + "."
+
+
 def _build_threshold_payload(verdict: PlatformVerdict) -> dict:
     """Construct the jsonl proposal dict for an actionable verdict."""
     metrics = {
@@ -571,6 +607,7 @@ def _build_threshold_payload(verdict: PlatformVerdict) -> dict:
         "evidence": {
             "sample_ids": [],  # curve-level proposal, not draft-level
             "metrics": metrics,
+            "reason": _format_reason(verdict),
             "confidence": verdict.confidence or "MED",
         },
         "action": {
