@@ -88,6 +88,17 @@ tmp/
 .tmp/
 AGENT_WORKLOG.md
 
+# --- Cover-renderer assets (large + per-machine) ---
+# Fonts are downloaded once locally per docs/brand_visual.md. Large files,
+# OFL-licensed, no need to track in git.
+assets/fonts/*.otf
+assets/fonts/*.ttf
+assets/fonts/*.ttc
+# Generated cover PNGs are runtime cache, not source.
+assets/cover_cache/
+# Stale sandbox-leftover (delete locally then drop this line)
+assets/fonts/_sample_cjk.ttf
+
 # --- Emergency oneshot ephemeral state ---
 # Breadcrumb written by tools/emergency_oneshot.py so the bash wrapper can
 # pick up the draft_id for push_state.sh --expect-draft. Regenerated every run.

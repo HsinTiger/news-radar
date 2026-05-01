@@ -1,0 +1,449 @@
+"""News Radar · Cover image renderer (Phase 9.5 brand-unification).
+
+Takes a downloaded news image + draft metadata and produces a unified-brand
+cover: dark overlay → big bold title → topic chip → brand bar.
+
+Visual spec source of truth: ``docs/brand_visual.md`` (Hsin-signed
+2026-05-01). When you change a number in this module, update the spec doc
+in the same commit.
+
+Why this lives at top-level (not inside ``src/composer/``)
+----------------------------------------------------------
+``src/composer.py`` is the legacy MultiPlatformDraft producer; making a
+package directory of the same name shadows it and breaks every caller.
+Cover rendering is image-pipeline work anyway, so this module sits
+alongside ``image_prep.py`` / ``image_manager.py`` which already own the
+image lane.
+
+Public API
+----------
+    inp = CoverInput(
+        image_path=Path("..."),
+        title="OpenAI 把垂直 AI 鎖進企業圍牆",
+        subtitle="Rosalind 的二度被剝奪",   # optional
+        topic_category="ai_model",
+        brand_name="smartmmmoney",         # or "主力爸爸我錯了" for FB
+        date_str="2026/05/01",
+    )
+    ig_path = render_cover(inp, aspect="ig")
+    fb_path = render_cover(inp, aspect="fb")
+
+Inputs
+------
+- ``image_path``: a local file (use ``image_manager.download_image`` to
+  cache the original news image first). Cover renderer never reaches the
+  network.
+- ``title``: main hook, expected ≤ 24 Chinese chars for best layout.
+  Renderer will auto-shrink + line-wrap up to 3 lines, beyond that the
+  output starts to look cramped — composer should pre-trim.
+- ``subtitle``: optional secondary line. Pass ``None`` or empty to skip.
+- ``topic_category``: one of the keys in ``TOPIC_CHIP_COLORS``. Unknown
+  categories fall back to gray + raw category string as label.
+- ``brand_name``: literal string rendered in the brand bar.
+- ``date_str``: pre-formatted, no parsing here.
+
+Outputs
+-------
+PNG written to ``assets/cover_cache/{stem}_{ig_4x5|fb_1x1}.png``. Returns
+the absolute Path. Idempotent: same input yields same output bytes.
+
+Fonts
+-----
+Adobe Source Han Sans/Serif TC at ``assets/fonts/`` — see
+``docs/brand_visual.md`` for download links. If the font files are
+missing, renderer falls back to PIL's default font (latin-only, mostly
+useful for testing the layout structure without rendering CJK glyphs
+correctly).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Literal, Optional, Tuple
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ASSETS_DIR = PROJECT_ROOT / "assets"
+FONT_DIR = ASSETS_DIR / "fonts"
+COVER_CACHE_DIR = ASSETS_DIR / "cover_cache"
+
+FONT_TITLE_PATH = FONT_DIR / "SourceHanSansTC-Bold.otf"
+FONT_SUBTITLE_PATH = FONT_DIR / "SourceHanSerifTC-Light.otf"
+FONT_BRAND_PATH = FONT_DIR / "SourceHanSansTC-Regular.otf"
+
+# ---------------------------------------------------------------------------
+# Visual constants — all values mirror docs/brand_visual.md
+# ---------------------------------------------------------------------------
+
+# Per-aspect output specs
+SPECS: Dict[str, Dict] = {
+    "ig": {"size": (1080, 1350), "suffix": "ig_4x5"},
+    "fb": {"size": (1080, 1080), "suffix": "fb_1x1"},
+}
+
+# Background processing
+BLUR_RADIUS_PX = 10
+OVERLAY_RGB = (10, 14, 29)  # deep navy
+
+# Topic-chip color map (RGB). Keys match composer's topic_category enum.
+TOPIC_CHIP_COLORS: Dict[str, Tuple[int, int, int]] = {
+    "ai_model":       (127, 119, 221),  # purple
+    "semi_chips":     (55, 138, 221),   # blue
+    "biotech_pharma": (99, 153, 34),    # green
+    "crypto_web3":    (186, 117, 23),   # amber
+    "big_tech":       (212, 83, 126),   # pink
+    "hardware_robot": (136, 135, 128),  # gray
+    "macro":          (136, 135, 128),  # gray
+}
+
+# Topic-chip Chinese labels (separate from category key for i18n flexibility)
+TOPIC_CHIP_LABELS: Dict[str, str] = {
+    "ai_model":       "AI 模型",
+    "semi_chips":     "半導體",
+    "biotech_pharma": "生技",
+    "crypto_web3":    "加密",
+    "big_tech":       "大廠",
+    "hardware_robot": "硬體機器人",
+    "macro":          "宏觀",
+}
+
+# Topic-chip layout
+CHIP_PAD_LEFT = 60
+CHIP_PAD_TOP = 60
+CHIP_W = 280
+CHIP_H = 80
+CHIP_RADIUS = 12
+CHIP_FONT_PT = 38
+
+# Title typography
+TITLE_LARGE_PT = 95   # used when title ≤ 16 chars
+TITLE_MEDIUM_PT = 80  # used when 17–24 chars
+TITLE_SMALL_PT = 65   # used when ≥ 25 chars
+TITLE_CHAR_BUDGET_LARGE = 16
+TITLE_CHAR_BUDGET_MEDIUM = 24
+TITLE_LINE_HEIGHT_RATIO = 1.25
+TITLE_MAX_LINES = 3
+TITLE_HORIZONTAL_PAD = 100  # px on each side
+TITLE_VERTICAL_OFFSET = -50  # negative = above true vertical center
+
+# Subtitle typography
+SUBTITLE_PT = 48
+SUBTITLE_GAP_FROM_TITLE = 30  # px below title block
+
+# Brand-bar layout
+BRAND_BAR_BOTTOM_OFFSET = 80  # distance of hairline from bottom edge
+BRAND_BAR_HORIZONTAL_PAD = 60
+BRAND_BAR_FONT_PT = 28
+BRAND_BAR_TEXT_GAP = 22  # px between hairline and text
+
+# Drop-shadow for title (hairline letter outline; not "shadow effect")
+TITLE_SHADOW_OFFSET = 2
+TITLE_SHADOW_ALPHA = 160  # ~0.63
+
+# Dynamic-overlay alpha thresholds
+LUMINANCE_BRIGHT = 160
+LUMINANCE_DARK = 90
+ALPHA_BRIGHT = 178   # 0.70
+ALPHA_DEFAULT = 166  # 0.65
+ALPHA_DARK = 140     # 0.55
+
+
+# ---------------------------------------------------------------------------
+# Data class
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CoverInput:
+    """Pure input for ``render_cover``. No I/O happens here."""
+    image_path: Path
+    title: str
+    subtitle: Optional[str]
+    topic_category: str
+    brand_name: str
+    date_str: str
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
+
+def compute_overlay_alpha(image: Image.Image) -> int:
+    """Tune overlay alpha to image luminance.
+
+    Brighter image → heavier overlay (title needs to fight more contrast).
+    Darker image → lighter overlay (don't flatten an already-dark image).
+
+    Returns an int in [140, 178] — the 0.55-0.70 band documented in
+    ``docs/brand_visual.md``.
+    """
+    stat = ImageStat.Stat(image.convert("L"))
+    luminance = stat.mean[0]
+    if luminance > LUMINANCE_BRIGHT:
+        return ALPHA_BRIGHT
+    if luminance < LUMINANCE_DARK:
+        return ALPHA_DARK
+    return ALPHA_DEFAULT
+
+
+def _crop_to_aspect(img: Image.Image, target_size: Tuple[int, int]) -> Image.Image:
+    """Center-crop and resize to ``target_size`` (object-fit: cover semantics)."""
+    tw, th = target_size
+    sw, sh = img.size
+    target_ratio = tw / th
+    src_ratio = sw / sh
+    if src_ratio > target_ratio:
+        # source too wide — crop sides
+        new_w = int(sh * target_ratio)
+        x = (sw - new_w) // 2
+        img = img.crop((x, 0, x + new_w, sh))
+    elif src_ratio < target_ratio:
+        # source too tall — crop top/bottom
+        new_h = int(sw / target_ratio)
+        y = (sh - new_h) // 2
+        img = img.crop((0, y, sw, y + new_h))
+    return img.resize(target_size, Image.Resampling.LANCZOS)
+
+
+def _pick_title_font_pt(title: str) -> int:
+    """Choose title font size from char count."""
+    n = len(title)
+    if n <= TITLE_CHAR_BUDGET_LARGE:
+        return TITLE_LARGE_PT
+    if n <= TITLE_CHAR_BUDGET_MEDIUM:
+        return TITLE_MEDIUM_PT
+    return TITLE_SMALL_PT
+
+
+def _wrap_chinese_title(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    max_lines: int = TITLE_MAX_LINES,
+) -> List[str]:
+    """Greedy line-wrap by character (no word boundaries in CJK).
+
+    Returns at most ``max_lines`` lines. If the input doesn't fit, the
+    final line gets the remainder + ellipsis so it's visually obvious
+    something was cut. Composer should ideally pre-trim long titles —
+    this is graceful-degradation, not the primary path.
+    """
+    if not title:
+        return []
+
+    lines: List[str] = []
+    current = ""
+    for i, ch in enumerate(title):
+        candidate = current + ch
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        w = bbox[2] - bbox[0]
+        if w > max_width and current:
+            lines.append(current)
+            current = ch
+            if len(lines) == max_lines - 1:
+                # Last line gets the rest; ellipsize if it overflows again.
+                rest = title[i:]
+                bbox_rest = draw.textbbox((0, 0), rest, font=font)
+                if bbox_rest[2] - bbox_rest[0] > max_width:
+                    # Trim from the right and append ellipsis.
+                    while rest and (
+                        draw.textbbox((0, 0), rest + "…", font=font)[2] > max_width
+                    ):
+                        rest = rest[:-1]
+                    rest = rest + "…" if rest else "…"
+                lines.append(rest)
+                return lines
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines[:max_lines]
+
+
+def _load_font(path: Path, pt: int) -> ImageFont.ImageFont:
+    """Load a TrueType font, falling back to PIL default if absent.
+
+    The fallback only covers latin glyphs — CJK content will render as
+    placeholder boxes. That's intentional: it makes a missing-font
+    situation visually obvious in tests and dev runs.
+    """
+    if path.exists():
+        return ImageFont.truetype(str(path), pt)
+    return ImageFont.load_default()
+
+
+# ---------------------------------------------------------------------------
+# Drawing primitives
+# ---------------------------------------------------------------------------
+
+def _draw_topic_chip(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    topic_category: str,
+) -> None:
+    """Top-left rounded-rect chip with topic label."""
+    color = TOPIC_CHIP_COLORS.get(topic_category, (136, 135, 128))
+    label = TOPIC_CHIP_LABELS.get(topic_category, topic_category)
+
+    box = (
+        CHIP_PAD_LEFT,
+        CHIP_PAD_TOP,
+        CHIP_PAD_LEFT + CHIP_W,
+        CHIP_PAD_TOP + CHIP_H,
+    )
+    draw.rounded_rectangle(box, radius=CHIP_RADIUS, fill=color + (255,))
+
+    chip_font = _load_font(FONT_TITLE_PATH, CHIP_FONT_PT)
+    bbox = draw.textbbox((0, 0), label, font=chip_font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    # PIL's textbbox top is the ascender baseline; nudge up a few px so
+    # the label sits visually centered.
+    cx = CHIP_PAD_LEFT + (CHIP_W - tw) // 2
+    cy = CHIP_PAD_TOP + (CHIP_H - th) // 2 - 8
+    draw.text((cx, cy), label, fill=(255, 255, 255, 255), font=chip_font)
+
+
+def _draw_title_block(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    canvas_size: Tuple[int, int],
+) -> Tuple[int, int]:
+    """Render the multi-line title centered. Returns (top_y, total_h)."""
+    pt = _pick_title_font_pt(title)
+    font = _load_font(FONT_TITLE_PATH, pt)
+    max_text_width = canvas_size[0] - 2 * TITLE_HORIZONTAL_PAD
+    lines = _wrap_chinese_title(draw, title, font, max_text_width)
+    line_h = int(pt * TITLE_LINE_HEIGHT_RATIO)
+    total_h = len(lines) * line_h
+    top_y = (canvas_size[1] - total_h) // 2 + TITLE_VERTICAL_OFFSET
+
+    cx = canvas_size[0] // 2
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        line_w = bbox[2] - bbox[0]
+        x = cx - line_w // 2
+        y = top_y + i * line_h
+        # Hairline letter shadow for legibility against blurred backgrounds.
+        draw.text(
+            (x + TITLE_SHADOW_OFFSET, y + TITLE_SHADOW_OFFSET),
+            line,
+            fill=(0, 0, 0, TITLE_SHADOW_ALPHA),
+            font=font,
+        )
+        draw.text((x, y), line, fill=(255, 255, 255, 255), font=font)
+
+    return top_y, total_h
+
+
+def _draw_subtitle(
+    draw: ImageDraw.ImageDraw,
+    subtitle: str,
+    canvas_size: Tuple[int, int],
+    title_top: int,
+    title_h: int,
+) -> None:
+    """Render subtitle centered, below the title block."""
+    if not subtitle:
+        return
+    font = _load_font(FONT_SUBTITLE_PATH, SUBTITLE_PT)
+    bbox = draw.textbbox((0, 0), subtitle, font=font)
+    tw = bbox[2] - bbox[0]
+    x = (canvas_size[0] - tw) // 2
+    y = title_top + title_h + SUBTITLE_GAP_FROM_TITLE
+    draw.text((x, y), subtitle, fill=(255, 255, 255, 191), font=font)  # 0.75 alpha
+
+
+def _draw_brand_bar(
+    draw: ImageDraw.ImageDraw,
+    canvas_size: Tuple[int, int],
+    brand_name: str,
+    date_str: str,
+) -> None:
+    """Bottom hairline + brand text."""
+    bar_y = canvas_size[1] - BRAND_BAR_BOTTOM_OFFSET
+    draw.line(
+        (
+            (BRAND_BAR_HORIZONTAL_PAD, bar_y),
+            (canvas_size[0] - BRAND_BAR_HORIZONTAL_PAD, bar_y),
+        ),
+        fill=(255, 255, 255, 51),  # 0.20 alpha
+        width=1,
+    )
+    font = _load_font(FONT_BRAND_PATH, BRAND_BAR_FONT_PT)
+    text = f"{brand_name} · {date_str}"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    x = (canvas_size[0] - tw) // 2
+    y = bar_y + BRAND_BAR_TEXT_GAP
+    draw.text((x, y), text, fill=(255, 255, 255, 166), font=font)  # 0.65 alpha
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def render_cover(
+    inp: CoverInput,
+    aspect: Literal["ig", "fb"],
+    *,
+    output_dir: Optional[Path] = None,
+) -> Path:
+    """Render one cover image. Returns saved PNG path.
+
+    Process order (mirrors brand_visual.md §Background composition):
+      1. Open + center-crop + resize to aspect target.
+      2. Gaussian blur.
+      3. Compute dynamic overlay alpha from blurred-image luminance.
+      4. Composite navy overlay on top.
+      5. Draw topic chip → title → subtitle → brand bar.
+      6. Write PNG to ``assets/cover_cache/`` (or ``output_dir`` if given).
+    """
+    if aspect not in SPECS:
+        raise ValueError(f"aspect must be 'ig' or 'fb', got {aspect!r}")
+    spec = SPECS[aspect]
+    target_size = spec["size"]
+
+    # 1) Background image: crop + resize
+    src = Image.open(inp.image_path).convert("RGB")
+    base = _crop_to_aspect(src, target_size)
+
+    # 2) Blur
+    base = base.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS_PX))
+
+    # 3 + 4) Overlay
+    alpha = compute_overlay_alpha(base)
+    overlay = Image.new("RGBA", target_size, OVERLAY_RGB + (alpha,))
+    canvas = Image.alpha_composite(base.convert("RGBA"), overlay)
+
+    # 5) Text + chip
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    _draw_topic_chip(canvas, draw, inp.topic_category)
+    title_top, title_h = _draw_title_block(draw, inp.title, target_size)
+    _draw_subtitle(draw, inp.subtitle or "", target_size, title_top, title_h)
+    _draw_brand_bar(draw, target_size, inp.brand_name, inp.date_str)
+
+    # 6) Save
+    out_dir = output_dir or COVER_CACHE_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{inp.image_path.stem}_{spec['suffix']}.png"
+    out_path = out_dir / fname
+    canvas.convert("RGB").save(out_path, "PNG", optimize=True)
+    return out_path
+
+
+def render_cover_pair(inp: CoverInput, *, output_dir: Optional[Path] = None) -> Dict[str, Path]:
+    """Convenience: render both IG (4:5) and FB (1:1) versions in one call.
+
+    Returns ``{"ig": Path, "fb": Path}``. Threads is intentionally NOT
+    rendered — Threads strategy is text-first per ``docs/brand_visual.md``.
+    """
+    return {
+        "ig": render_cover(inp, "ig", output_dir=output_dir),
+        "fb": render_cover(inp, "fb", output_dir=output_dir),
+    }
