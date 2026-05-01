@@ -1,0 +1,48 @@
+name: Cleanup cover-cdn
+
+# Weekly TTL prune of the cover-cdn branch — removes PNGs older than
+# 30 days so the branch doesn't accumulate forever. Meta caches images
+# after the first fetch, so 30 days is a generous safety window.
+#
+# Spec: scripts/cleanup_cover_cdn.sh + docs/brand_visual.md "Future revisions".
+
+on:
+  schedule:
+    # Sunday 03:00 UTC = Sunday 11:00 Asia/Taipei. Pre-dawn so it
+    # doesn't compete with publish workflow for cover-cdn lock.
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (list files, don't delete)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  # cover_uploader (publish workflow) and this cleanup both write
+  # cover-cdn — serialize them so we don't race.
+  group: news-radar-cover-cdn-write
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout main (for the script)
+        uses: actions/checkout@v5
+
+      - name: Run cleanup
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETENTION_DAYS: "30"
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            bash scripts/cleanup_cover_cdn.sh --dry-run --verbose
+          else
+            bash scripts/cleanup_cover_cdn.sh --verbose
+          fi

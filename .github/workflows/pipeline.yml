@@ -64,6 +64,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Phase 9.5 / Phase 2: cover_renderer needs Source Han Sans/Serif TC
+      # at assets/fonts/. Repo .gitignore excludes the .otf files (large +
+      # OFL-licensed, easier to fetch than vendor), so we download them
+      # fresh on each run. ~50 MB total, cached by setup-python's pip cache
+      # is unrelated; a real cache would help but is overkill for now.
+      - name: Download cover fonts
+        run: |
+          mkdir -p assets/fonts
+          BASE_SANS="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
+          BASE_SERIF="https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/TraditionalChinese"
+          curl -sSL --fail-with-body -o assets/fonts/SourceHanSansTC-Bold.otf "$BASE_SANS/SourceHanSansTC-Bold.otf"
+          curl -sSL --fail-with-body -o assets/fonts/SourceHanSansTC-Regular.otf "$BASE_SANS/SourceHanSansTC-Regular.otf"
+          curl -sSL --fail-with-body -o assets/fonts/SourceHanSerifTC-Light.otf "$BASE_SERIF/SourceHanSerifTC-Light.otf"
+          ls -la assets/fonts/
+
       - name: Restore DB from state branch
         run: |
           mkdir -p data/01_harvest logs state archive data/05_reflect/proposals
@@ -89,6 +104,10 @@ jobs:
       - name: Run publish queue
         id: run
         env:
+          # Phase 9.5 / Phase 2: cover_uploader pushes rendered PNGs to
+          # the cover-cdn branch using this token. Default GITHUB_TOKEN
+          # already has contents:write via the top-level permissions block.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Meta App（refresh_threads_token 會用到）
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}

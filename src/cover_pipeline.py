@@ -1,34 +1,38 @@
-"""News Radar · Cover-pipeline orchestrator.
+"""News Radar · Cover-pipeline orchestrator (Phase 2 — symmetric URL flow).
 
-Sits between composer and publisher. Given the original news image URL +
-draft metadata, returns the publish-API kwargs for each platform.
+Sits between composer and publisher. Given the original news image URL
++ draft metadata, returns the publish-API kwargs for each platform.
+
+Phase 2 design change
+---------------------
+Both **FB and IG** now go through the same flow:
+
+    download original → render cover PNG → upload to cover-cdn branch
+    → return public raw URL → publisher passes URL to Graph API.
+
+The earlier asymmetric design (FB used bytes upload, IG used URL) was
+revisited 2026-05-02 — symmetric is simpler to maintain, gives a
+unified audit trail (one branch = every cover ever shipped), and lets
+the dashboard preview both platforms with one URL pattern.
 
 Why this is its own module
 --------------------------
-``cover_renderer`` is pure pixel work — given an input dataclass, it
-writes a PNG and returns its path. This module wraps that with the
-runtime concerns: download the original image to local cache, decide
-which platform gets a cover, decide whether the publish call should use
-``image_url`` (URL-fetch) or ``local_file_path`` (bytes upload), and
-fall back gracefully when any step fails.
+``cover_renderer`` does pure pixel work. ``cover_uploader`` does pure
+git/network work. This module wires them together and decides what
+the publisher should ultimately receive.
 
 Per-platform behavior
 ---------------------
-* **FB**: render 1080×1080 cover, upload via bytes path
-  (``local_file_path=...``). FB Graph API accepts multipart bytes via the
-  ``source`` form field; this is the cleanest way to ship a freshly
-  rendered file without round-tripping through a public URL.
-* **IG**: render 1080×1350 cover and SAVE it locally for future use, but
-  Phase 1 still publishes the original news image URL — IG Graph API
-  rejects bytes uploads and requires a public URL, which means we need a
-  CDN / branch-hosting step that's deferred to Phase 2 (see
-  ``docs/brand_visual.md`` and ``image_prep.py`` design notes).
-* **Threads**: pass through the original image URL. Threads strategy is
-  text-first per ``brand_visual.md``; covers would read as 廣告感.
+* **FB**: render 1080×1080 → upload → URL.
+* **IG**: render 1080×1350 → upload → URL.
+* **Threads**: pass through original. Threads strategy stays text-first
+  per ``docs/brand_visual.md``.
 
-If anything in the chain fails (download, render, missing fonts), this
-module falls back to the original ``image_url`` and logs the reason.
-Publishing must never fail because cover rendering failed.
+Failure handling
+----------------
+If ANY step fails (download / render / upload / missing fonts / network
+hiccup), this module returns the original ``image_url`` unchanged.
+Publishing never breaks because cover rendering or upload broke.
 
 Public API
 ----------
@@ -37,13 +41,14 @@ Public API
     prep = await prepare_publish_image(
         platform_key="fb",                # "fb" | "ig" | "threads"
         original_image_url=row["og_image_url"],
+        draft_id=draft_id,
         title=variant.title,
-        topic_category=row["topic_category"],   # may be None
-        subtitle=None,                          # composer doesn't emit yet
+        topic_category=row["topic_category"],
+        subtitle=None,
     )
-    # prep == {"image_url": Optional[str], "local_file_path": Optional[str]}
-    # — exactly one will be populated for FB-with-cover; one or both
-    # may be None when the original URL is missing.
+    # prep == {"image_url": Optional[str], "local_file_path": None}
+    # local_file_path is now ALWAYS None — kept in shape for backwards
+    # compatibility with publisher.publish_to_fb's local upload path.
 """
 from __future__ import annotations
 
@@ -54,6 +59,7 @@ from typing import Dict, Optional
 
 from . import image_manager
 from .cover_renderer import CoverInput, render_cover
+from .cover_uploader import upload_cover
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +92,21 @@ async def prepare_publish_image(
     original_image_url: Optional[str],
     title: str,
     topic_category: Optional[str],
+    draft_id: Optional[str] = None,
     subtitle: Optional[str] = None,
     date_str: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> PrepResult:
     """Decide what image kwargs to pass to ``publisher.publish_to_<platform>``.
 
-    Returns a dict with two keys: ``image_url`` and ``local_file_path``.
-    Exactly one is populated when a rendered cover is ready for bytes
-    upload (FB path); ``image_url`` is populated for URL-based publish
-    (IG, Threads, FB-fallback). Both may be ``None`` if the input had
-    no image at all.
+    Returns a dict ``{"image_url": str|None, "local_file_path": None}``.
+
+    The ``local_file_path`` slot is preserved (always None in Phase 2) so
+    callers in run_pipeline.py / run_publish_queue.py can keep their
+    same-shape unpacking. Old FB bytes-upload path is gone.
+
+    ``draft_id`` is required for FB/IG covers — it determines the
+    upload filename. If absent, falls back to the original URL.
     """
     if not original_image_url:
         return _passthrough(None)
@@ -109,22 +119,24 @@ async def prepare_publish_image(
         logger.warning("[cover_pipeline] unknown platform %r — passthrough", platform_key)
         return _passthrough(original_image_url)
 
-    # Download the original image so cover_renderer can read it as bytes.
+    if not draft_id:
+        logger.info(
+            "[cover_pipeline] no draft_id given for %s — passthrough (cover URL needs stable filename)",
+            platform_key,
+        )
+        return _passthrough(original_image_url)
+
+    # 1) Download the original image so cover_renderer can read its bytes.
     try:
         local_orig = await image_manager.download_image(original_image_url)
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("[cover_pipeline] download_image raised: %s; passthrough", exc)
         return _passthrough(original_image_url)
     if not local_orig:
-        logger.info(
-            "[cover_pipeline] download failed for %s; passthrough",
-            platform_key,
-        )
+        logger.info("[cover_pipeline] download failed for %s; passthrough", platform_key)
         return _passthrough(original_image_url)
 
-    # Build CoverInput. Topic_category may be None on legacy rows — fall
-    # back to "macro" (gray chip) so render still produces something
-    # useful instead of crashing on KeyError.
+    # 2) Render the cover.
     when = now or datetime.now(timezone.utc)
     inp = CoverInput(
         image_path=Path(local_orig),
@@ -134,7 +146,6 @@ async def prepare_publish_image(
         brand_name=BRAND_NAME_FOR_PLATFORM[platform_key],
         date_str=date_str or when.strftime("%Y/%m/%d"),
     )
-
     aspect = ASPECT_FOR_PLATFORM[platform_key]
     try:
         cover_path = render_cover(inp, aspect)
@@ -145,17 +156,22 @@ async def prepare_publish_image(
         )
         return _passthrough(original_image_url)
 
-    if platform_key == "fb":
-        # FB takes bytes via local_file_path → use the rendered cover.
-        logger.info("[cover_pipeline] FB cover rendered: %s", cover_path)
-        return {"image_url": None, "local_file_path": str(cover_path)}
+    # 3) Upload to cover-cdn → public URL.
+    try:
+        raw_url = upload_cover(
+            local_png=cover_path,
+            draft_id=draft_id,
+            platform_key=platform_key,
+        )
+    except Exception as exc:  # pragma: no cover — uploader returns None on failure
+        logger.warning("[cover_pipeline] upload raised %s; passthrough", exc)
+        return _passthrough(original_image_url)
+    if not raw_url:
+        logger.warning(
+            "[cover_pipeline] upload failed for %s; passthrough to original URL",
+            platform_key,
+        )
+        return _passthrough(original_image_url)
 
-    # IG: cover is rendered (kept on disk for later URL hosting) but we
-    # still publish the original URL because IG Graph API only accepts
-    # public URLs. URL hosting wire-up is Phase 2.
-    logger.info(
-        "[cover_pipeline] IG cover rendered (%s) — Phase 2 hosting NYI; "
-        "publishing with original URL",
-        cover_path,
-    )
-    return _passthrough(original_image_url)
+    logger.info("[cover_pipeline] %s cover live at %s", platform_key, raw_url)
+    return {"image_url": raw_url, "local_file_path": None}

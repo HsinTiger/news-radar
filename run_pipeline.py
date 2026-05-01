@@ -345,40 +345,47 @@ async def _publish_platform(
         ))
         return False
 
-    # Render branded cover (or pass-through, per platform). ``prep`` has
-    # exactly one of {image_url, local_file_path} populated when a
-    # rendered cover lands; both can be None if the source had no image.
+    # Phase 2: FB and IG both go through render → upload → URL.
+    # prep["image_url"] is the cover-cdn raw URL (when render+upload
+    # succeed) or the original news image URL (any failure step).
+    # local_file_path is preserved in the shape but always None now.
     prep = await prepare_publish_image(
         platform_key=platform_key,
         original_image_url=image_url,
+        draft_id=draft_id,
         title=variant.title or "",
         topic_category=topic_category,
     )
+    publish_image_url = prep["image_url"]
+    used_cover_cdn = (publish_image_url is not None
+                      and publish_image_url != image_url
+                      and platform_key in ("fb", "ig"))
 
     # 呼叫對應 API
     result = {"success": False}
 
     if platform_key == "fb":
-        if prep["local_file_path"]:
-            print(f"   ↳ [📘 FB] 上傳 rendered cover ({prep['local_file_path']})")
-            result = await publish_to_fb(full_text, local_file_path=prep["local_file_path"])
+        if used_cover_cdn:
+            print(f"   ↳ [📘 FB] 用 rendered cover URL: {publish_image_url}")
         else:
-            # Cover render skipped/failed — fall back to legacy Plan A → Plan B path
-            print(f"   ↳ [📘 FB] cover 不可用，退回 Plan A (網址抓取)...")
-            result = await publish_to_fb(full_text, image_url=image_url)
-            error_msg = str(result.get("error", ""))
-            is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
-            if not result.get("success") and is_fetch_fail and image_url:
-                print(f"   ⚠️ [📘 FB] Plan A 圖片抓取失敗，觸發備援 Plan B (下載後上傳)...")
-                local_path = await image_manager.download_image(image_url)
-                if local_path:
-                    result = await publish_to_fb(full_text, local_file_path=local_path)
-                    image_manager.cleanup_cache()
-                else:
-                    print(f"   ❌ [📘 FB] Plan B 下載圖片也失敗了，將記錄最終錯誤")
+            print(f"   ↳ [📘 FB] cover 不可用，用原圖網址")
+        result = await publish_to_fb(full_text, image_url=publish_image_url)
+        # Legacy fallback: if the IMAGE itself can't be fetched by FB
+        # (rare — cover-cdn rarely fails this way), fall through to
+        # downloading + bytes upload as last-resort.
+        error_msg = str(result.get("error", ""))
+        is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
+        if not result.get("success") and is_fetch_fail and publish_image_url:
+            print(f"   ⚠️ [📘 FB] URL 抓取失敗 → 下載後 bytes 上傳備援...")
+            local_path = await image_manager.download_image(publish_image_url)
+            if local_path:
+                result = await publish_to_fb(full_text, local_file_path=local_path)
+                image_manager.cleanup_cache()
+            else:
+                print(f"   ❌ [📘 FB] 下載 fallback 也失敗")
 
     elif platform_key == "threads":
-        if not prep["image_url"]:
+        if not publish_image_url:
             msg = "Threads 需要 image_url 才能發布"
             print(f"   ↳ [🧵 Threads Skip] {msg}")
             dbmod.log_publish(conn, PublishResult(
@@ -386,9 +393,9 @@ async def _publish_platform(
                 posted_at=posted_at, success=False, error_message=msg,
             ))
             return False
-        result = await publish_to_threads(full_text, prep["image_url"])
+        result = await publish_to_threads(full_text, publish_image_url)
     elif platform_key == "ig":
-        if not prep["image_url"]:
+        if not publish_image_url:
             msg = "IG 需要 image_url 才能發布"
             print(f"   ↳ [📸 IG Skip] {msg}")
             dbmod.log_publish(conn, PublishResult(
@@ -396,7 +403,11 @@ async def _publish_platform(
                 posted_at=posted_at, success=False, error_message=msg,
             ))
             return False
-        result = await publish_to_ig(full_text, prep["image_url"])
+        if used_cover_cdn:
+            print(f"   ↳ [📸 IG] 用 rendered cover URL: {publish_image_url}")
+        else:
+            print(f"   ↳ [📸 IG] cover 不可用，用原圖網址")
+        result = await publish_to_ig(full_text, publish_image_url)
     else:
         raise ValueError(f"未知平台 key: {platform_key}")
 
