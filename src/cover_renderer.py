@@ -81,35 +81,54 @@ FONT_BRAND_PATH = FONT_DIR / "SourceHanSansTC-Regular.otf"
 # ---------------------------------------------------------------------------
 
 # Per-aspect output specs
+# Phase 9.5 / 2026-05-02 update: Threads added per Hsin's brand-consistency
+# call. Same 4:5 aspect as IG (Threads feed handles tall images well).
 SPECS: Dict[str, Dict] = {
-    "ig": {"size": (1080, 1350), "suffix": "ig_4x5"},
-    "fb": {"size": (1080, 1080), "suffix": "fb_1x1"},
+    "ig":      {"size": (1080, 1350), "suffix": "ig_4x5"},
+    "fb":      {"size": (1080, 1080), "suffix": "fb_1x1"},
+    "threads": {"size": (1080, 1350), "suffix": "threads_4x5"},
 }
 
 # Background processing
 BLUR_RADIUS_PX = 10
 OVERLAY_RGB = (10, 14, 29)  # deep navy
 
-# Topic-chip color map (RGB). Keys match composer's topic_category enum.
+# Topic-chip color map (RGB). Keys MUST match category_ids in
+# src/topic_taxonomy.py. Adding a new category there requires adding a
+# row here AND in TOPIC_CHIP_LABELS below; a missing key falls back to
+# gray + raw English category text (visually obvious failure mode).
+#
+# Color assignment groups by family:
+#   AI cluster    → purple shades
+#   Industrial    → blue / teal
+#   Money         → green / amber / pink
+#   Other         → gray
 TOPIC_CHIP_COLORS: Dict[str, Tuple[int, int, int]] = {
-    "ai_model":       (127, 119, 221),  # purple
-    "semi_chips":     (55, 138, 221),   # blue
-    "biotech_pharma": (99, 153, 34),    # green
-    "crypto_web3":    (186, 117, 23),   # amber
-    "big_tech":       (212, 83, 126),   # pink
-    "hardware_robot": (136, 135, 128),  # gray
-    "macro":          (136, 135, 128),  # gray
+    "ai_model":            (127, 119, 221),  # purple — AI base model
+    "ai_agent":            (107, 93, 213),   # deeper purple — autonomous AI
+    "ai_application":      (157, 148, 232),  # lighter purple — AI app layer
+    "supply_chain":        (55, 138, 221),   # blue — industrial chain
+    "earnings":            (99, 153, 34),    # green — financials
+    "tw_stocks":           (212, 83, 126),   # pink — TW market
+    "us_stocks":           (186, 117, 23),   # amber — US market
+    "tech_product_launch": (43, 179, 155),   # teal — non-AI tech launch
+    "policy_geopolitics":  (136, 135, 128),  # gray — policy
+    "other":               (136, 135, 128),  # gray — fallback
 }
 
-# Topic-chip Chinese labels (separate from category key for i18n flexibility)
+# Topic-chip Chinese labels — short form for the 86×24px chip.
+# Full display_name is in topic_taxonomy.py for week-report / DocsUI.
 TOPIC_CHIP_LABELS: Dict[str, str] = {
-    "ai_model":       "AI 模型",
-    "semi_chips":     "半導體",
-    "biotech_pharma": "生技",
-    "crypto_web3":    "加密",
-    "big_tech":       "大廠",
-    "hardware_robot": "硬體機器人",
-    "macro":          "宏觀",
+    "ai_model":            "AI 模型",
+    "ai_agent":            "AI Agent",
+    "ai_application":      "AI 應用",
+    "supply_chain":        "產業鏈",
+    "earnings":            "財報",
+    "tw_stocks":           "台股",
+    "us_stocks":           "美股",
+    "tech_product_launch": "科技新品",
+    "policy_geopolitics":  "政策",
+    "other":               "其它",
 }
 
 # Topic-chip layout

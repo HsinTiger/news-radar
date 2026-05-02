@@ -1,18 +1,32 @@
 # Brand Visual Spec — Cover Image Template
 
-**Status**: Hsin-signed 2026-05-01. Authoritative for all auto-generated cover images going forward.
-**Scope**: IG + FB. Threads stays text-first (no auto-cover) per current strategy.
-**Owner**: composer pipeline (`src/composer/cover_renderer.py`). NOT a reflector concern.
+**Status**: Hsin-signed 2026-05-01, Threads added 2026-05-02. Authoritative for all auto-generated cover images going forward.
+**Scope**: IG + FB + Threads. (Earlier text-first Threads policy reversed — see "Strategy reversal" note below.)
+**Owner**: composer pipeline (`src/cover_renderer.py`). NOT a reflector concern.
 
 ## Brand identity decision
 
-Two account names, ONE visual line:
+Two account names, ONE visual line — across ALL three platforms:
 
 | Platform | Account name | Cover visual | Caption tone |
 |---|---|---|---|
-| IG | `smartmmmoney` | unified dark / silicon-valley / capitalist sage | analytical, elite framing |
-| Threads | `smartmmmoney` | text-first, no cover | analytical, conversational |
-| FB | `主力爸爸我錯了` | unified dark / silicon-valley / capitalist sage | analytical with occasional 韭菜-self-deprecation as caption flavor |
+| IG | `smartmmmoney` | unified dark / silicon-valley / capitalist sage (1080×1350) | analytical, elite framing |
+| Threads | `smartmmmoney` | unified dark cover (1080×1350) | analytical, conversational |
+| FB | `主力爸爸我錯了` | unified dark cover (1080×1080) | analytical with occasional 韭菜-self-deprecation as caption flavor |
+
+### Strategy reversal note (Threads cover, 2026-05-02)
+
+Initial strategy (2026-05-01) was "Threads stays text-first, no cover" based on the
+generalization that Threads users skip image-heavy posts. Hsin reversed this 2026-05-02
+after seeing real FB+IG covers in production: the actual aesthetic reads as KOL-grade
+brand identity, not 廣告感. Reversal cost was near-zero (one config flag in
+`cover_pipeline.py`), and reversibility remains high (one-line revert if data shows
+regression).
+
+**Watch signal:** if `engagement_yield_ratio` for Threads drops more than 20% from
+baseline within 14 days of this change landing, revert by adding back the
+`if platform_key == "threads": return _passthrough(...)` short-circuit. Reflector's
+weekly report will surface the trend automatically.
 
 The FB account name keeps the legacy "主力爸爸我錯了" IP but the cover visual unifies to the smartmmmoney aesthetic. This lets cross-platform readers recognize the same author while preserving the brand-recognition equity already built in the FB name.
 
@@ -31,6 +45,7 @@ The FB account name keeps the legacy "主力爸爸我錯了" IP but the cover vi
 |---|---|---|
 | IG | 1080×1350 (4:5) | Max vertical real estate in IG feed without crop |
 | FB | 1080×1080 (1:1) | Renders cleanly in FB feed AND link-preview cards |
+| Threads | 1080×1350 (4:5) | Threads feed handles tall images well; same aspect as IG simplifies caching/CDN |
 
 ### Background composition
 
@@ -52,16 +67,23 @@ The 0.55-0.70 range is the empirical "balance" point: less than 0.55 leaves char
 - Fill color: per `topic_category` (see table below)
 - Label: short Chinese tag in 思源黑體 Bold 38pt white, centered
 
-| topic_category | RGB hex | Label |
-|---|---|---|
-| `ai_model` | `#7F77DD` (purple) | AI 模型 |
-| `semi_chips` | `#378ADD` (blue) | 半導體 |
-| `biotech_pharma` | `#639922` (green) | 生技 |
-| `crypto_web3` | `#BA7517` (amber) | 加密 |
-| `big_tech` | `#D4537E` (pink) | 大廠 |
-| `hardware_robot` | `#888780` (gray) | 硬體機器人 |
-| `macro` | `#888780` (gray) | 宏觀 |
-| _unknown_ | `#888780` (gray) | _topic_category as-is_ |
+Keys MUST match `category_id`s in `src/topic_taxonomy.py`. Adding a new category
+there REQUIRES adding both label + color here in the same commit, or the chip
+falls back to gray + raw English category text (visually obvious failure).
+
+| topic_category | RGB hex | Label | Cluster |
+|---|---|---|---|
+| `ai_model` | `#7F77DD` (purple) | AI 模型 | AI |
+| `ai_agent` | `#6B5DD5` (deep purple) | AI Agent | AI |
+| `ai_application` | `#9D94E8` (light purple) | AI 應用 | AI |
+| `supply_chain` | `#378ADD` (blue) | 產業鏈 | Industrial |
+| `earnings` | `#639922` (green) | 財報 | Money |
+| `tw_stocks` | `#D4537E` (pink) | 台股 | Money |
+| `us_stocks` | `#BA7517` (amber) | 美股 | Money |
+| `tech_product_launch` | `#2BB39B` (teal) | 科技新品 | Industrial |
+| `policy_geopolitics` | `#888780` (gray) | 政策 | Other |
+| `other` | `#888780` (gray) | 其它 | Other |
+| _unknown_ | `#888780` (gray) | _topic_category as-is_ | — |
 
 ### Title (main hook)
 

@@ -110,8 +110,8 @@ def cover_filename(draft_id: str, platform_key: str) -> str:
     dashboard's ``CoverPage.jsx`` so any change here MUST land in both
     repos in the same commit.
     """
-    if platform_key not in ("fb", "ig"):
-        raise ValueError(f"platform_key must be 'fb' or 'ig', got {platform_key!r}")
+    if platform_key not in ("fb", "ig", "threads"):
+        raise ValueError(f"platform_key must be 'fb', 'ig', or 'threads', got {platform_key!r}")
     if not draft_id:
         raise ValueError("draft_id must be non-empty")
     return f"{draft_id}_{platform_key}.png"

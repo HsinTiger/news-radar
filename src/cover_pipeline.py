@@ -25,8 +25,11 @@ Per-platform behavior
 ---------------------
 * **FB**: render 1080×1080 → upload → URL.
 * **IG**: render 1080×1350 → upload → URL.
-* **Threads**: pass through original. Threads strategy stays text-first
-  per ``docs/brand_visual.md``.
+* **Threads**: render 1080×1350 → upload → URL.
+  Phase 9.5 / 2026-05-02 update: previously passed through original
+  image (text-first strategy assumption); reversed after Hsin's call
+  that brand consistency outweighs the "廣告感" risk. Reflector will
+  catch any engagement_yield_ratio regression within 14 days.
 
 Failure handling
 ----------------
@@ -67,14 +70,14 @@ logger = logging.getLogger(__name__)
 BRAND_NAME_FOR_PLATFORM: Dict[str, str] = {
     "ig":      "smartmmmoney",
     "fb":      "主力爸爸我錯了",
-    "threads": "smartmmmoney",  # never used — Threads gets no cover
+    "threads": "smartmmmoney",
 }
 
-# Aspects covered by the renderer
+# Aspects covered by the renderer (key into cover_renderer.SPECS)
 ASPECT_FOR_PLATFORM: Dict[str, str] = {
-    "ig": "ig",
-    "fb": "fb",
-    # threads intentionally absent — guard against accidental call
+    "ig":      "ig",
+    "fb":      "fb",
+    "threads": "threads",
 }
 
 
@@ -110,10 +113,6 @@ async def prepare_publish_image(
     """
     if not original_image_url:
         return _passthrough(None)
-
-    # Threads: never gets a cover, pass through.
-    if platform_key == "threads":
-        return _passthrough(original_image_url)
 
     if platform_key not in ASPECT_FOR_PLATFORM:
         logger.warning("[cover_pipeline] unknown platform %r — passthrough", platform_key)

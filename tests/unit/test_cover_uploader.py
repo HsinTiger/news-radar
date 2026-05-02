@@ -41,9 +41,14 @@ def test_filename_format_for_ig():
     assert cover_filename("abc123def456", "ig") == "abc123def456_ig.png"
 
 
-def test_filename_rejects_unknown_platform():
+def test_filename_format_for_threads():
+    """Phase 9.5: Threads now uses cover-cdn flow too."""
+    assert cover_filename("abc123def456", "threads") == "abc123def456_threads.png"
+
+
+def test_filename_rejects_truly_unknown_platform():
     with pytest.raises(ValueError):
-        cover_filename("abc123", "threads")
+        cover_filename("abc123", "bluesky")
 
 
 def test_filename_rejects_empty_draft_id():

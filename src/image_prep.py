@@ -57,9 +57,15 @@ import httpx
 
 # ─── Meta IG 官方規格（2026-04 driver） ────────────────────────────────────────
 # Graph API docs: aspect ratio 0.8 – 1.91；filesize ≤ 8 MB；format JPEG/PNG
-# 留 1% 內縮 buffer：浮點 0.8 / 1.91 邊緣會被 Meta 拒，實務上用 0.81 / 1.90 穩。
-IG_RATIO_MIN = 0.81
-IG_RATIO_MAX = 1.90
+#
+# 2026-05-02 fix: lowered MIN from 0.81 → 0.80 to match the spec exactly.
+# The earlier 1% inward buffer was over-paranoid and ended up rejecting
+# our OWN spec-compliant covers (1080×1350 = 0.800 exactly), causing 25h
+# of silent IG publish failures. If Meta API actually rejects an edge
+# value, that surfaces as a Meta-side error (clear, actionable) rather
+# than a silent local_reject from us. MAX kept at 1.91 (spec value).
+IG_RATIO_MIN = 0.80
+IG_RATIO_MAX = 1.91
 IG_FILESIZE_MAX = 8 * 1024 * 1024  # 8 MB
 
 # Rewrite 時 target 用的 ratio；1.6 = 8:5，落在安全區正中，兩邊都有 breathing room

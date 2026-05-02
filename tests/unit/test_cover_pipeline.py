@@ -33,10 +33,24 @@ async def test_no_image_url_returns_both_none():
 
 
 @pytest.mark.asyncio
-async def test_threads_passes_through_no_io():
-    """Threads strategy is text-first — never rendered, never downloaded, never uploaded."""
-    with patch("src.cover_pipeline.image_manager.download_image", new=AsyncMock()) as m_dl, \
-         patch("src.cover_pipeline.upload_cover") as m_up:
+async def test_threads_now_renders_cover_like_fb_ig(tmp_path: Path):
+    """Phase 9.5 / 2026-05-02: Threads added to symmetric cover flow.
+
+    Previously this test asserted Threads passed through with zero IO;
+    after Hsin's brand-consistency call, Threads renders a cover like
+    FB and IG do. If this test starts passing again with the old
+    "no IO" expectation, someone broke the strategy reversion.
+    """
+    fake_local = tmp_path / "orig.jpg"
+    fake_local.write_bytes(b"\xff\xd8\xff")
+    fake_cover = tmp_path / "threads.png"
+    fake_cover.write_bytes(b"\x89PNG")
+    fake_raw_url = "https://raw.githubusercontent.com/HsinTiger/news-radar/cover-cdn/draft_abc_threads.png"
+
+    with patch("src.cover_pipeline.image_manager.download_image",
+               new=AsyncMock(return_value=str(fake_local))), \
+         patch("src.cover_pipeline.render_cover", return_value=fake_cover) as m_render, \
+         patch("src.cover_pipeline.upload_cover", return_value=fake_raw_url) as m_up:
         result = await prepare_publish_image(
             platform_key="threads",
             original_image_url="https://example.com/img.jpg",
@@ -44,9 +58,12 @@ async def test_threads_passes_through_no_io():
             title="t",
             topic_category="ai_model",
         )
-    assert result == {"image_url": "https://example.com/img.jpg", "local_file_path": None}
-    m_dl.assert_not_called()
-    m_up.assert_not_called()
+
+    assert result == {"image_url": fake_raw_url, "local_file_path": None}
+    cover_input = m_render.call_args.args[0]
+    assert cover_input.brand_name == "smartmmmoney"
+    assert m_render.call_args.args[1] == "threads"  # aspect key
+    assert m_up.call_args.kwargs["platform_key"] == "threads"
 
 
 @pytest.mark.asyncio
