@@ -109,8 +109,8 @@ TOPIC_CHIP_COLORS: Dict[str, Tuple[int, int, int]] = {
     "ai_application":      (157, 148, 232),  # lighter purple — AI app layer
     "supply_chain":        (55, 138, 221),   # blue — industrial chain
     "earnings":            (99, 153, 34),    # green — financials
-    "tw_stocks":           (212, 83, 126),   # pink — TW market
-    "us_stocks":           (186, 117, 23),   # amber — US market
+    "tw_stocks":           (226, 75, 74),    # warm red — market-alert punch (2026-05-02 升級)
+    "us_stocks":           (239, 159, 39),   # vivid orange — market-alert punch
     "tech_product_launch": (43, 179, 155),   # teal — non-AI tech launch
     "policy_geopolitics":  (136, 135, 128),  # gray — policy
     "other":               (136, 135, 128),  # gray — fallback
@@ -151,7 +151,9 @@ TITLE_HORIZONTAL_PAD = 100  # px on each side
 TITLE_VERTICAL_OFFSET = -50  # negative = above true vertical center
 
 # Subtitle typography
-SUBTITLE_PT = 48
+# 2026-05-02 升級：從 48pt → 58pt。原本 48 跟 title 95pt 差 ~2x 太懸殊、
+# 副標看起來像可有可無。58pt 跟 title 1.6x 比例符合 typographic best practice。
+SUBTITLE_PT = 58
 SUBTITLE_GAP_FROM_TITLE = 30  # px below title block
 
 # Brand-bar layout
@@ -165,11 +167,14 @@ TITLE_SHADOW_OFFSET = 2
 TITLE_SHADOW_ALPHA = 160  # ~0.63
 
 # Dynamic-overlay alpha thresholds
+# 2026-05-02 升級：整體下調約 10 個百分點。原本 65% default 太重、原圖細節
+# 被吃掉 90%，犧牲了「真的有事在發生」的紀實感。新值讓原圖透出來更多。
+# 字體可讀性靠 title shadow（已有）+ blur 10px 維持。
 LUMINANCE_BRIGHT = 160
 LUMINANCE_DARK = 90
-ALPHA_BRIGHT = 178   # 0.70
-ALPHA_DEFAULT = 166  # 0.65
-ALPHA_DARK = 140     # 0.55
+ALPHA_BRIGHT = 153   # 0.60 (was 0.70)
+ALPHA_DEFAULT = 140  # 0.55 (was 0.65) — 預設值
+ALPHA_DARK = 115     # 0.45 (was 0.55)
 
 
 # ---------------------------------------------------------------------------

@@ -142,6 +142,92 @@ Download from <https://github.com/adobe-fonts/source-han-sans/tree/release/OTF/T
 - **Not a reflector concern.** Reflector tunes engagement parameters, not visual style. Brand DNA decisions land here, not in `proposals.jsonl`.
 - **Not a soul.md addition.** Soul is voice/editorial; this is purely visual layout. Keeping them separate makes future visual revisions cheaper.
 
-## Future revisions
+## Future revisions — when to change this spec
 
-If reader feedback or `engagement_yield_ratio` data forces visual changes (e.g. 4 weeks of declining IG saves after launch), update THIS file and bump cover_renderer version. Do NOT route visual changes through reflector proposals.
+Visual decisions belong to Hsin (per `feedback_reflector_scope.md` — reflector
+optimizes engagement, not brand DNA). But "Hsin's intuition" is not a reliable
+trigger by itself; we need explicit signals to know WHEN to question the
+current spec, otherwise the visuals slowly drift toward staleness.
+
+### Three layers of triggers (any one fires → schedule a visual audit)
+
+#### Layer 1 — quantitative warnings (auto-detectable)
+
+| Signal | Trigger threshold | Why it matters |
+|---|---|---|
+| **Engagement yield drop (per platform)** | ≥ 25% decline over 30 days **while** `weighted_score` (content quality) holds steady | Content didn't change but response did → most likely visual fatigue |
+| **IG saves rate drop** | ≥ 30% decline over 30 days | Saves is IG's gold metric — covers attract clicks but content fails to deliver, OR cover signals "another lazy AI post, skip" |
+| **Per-platform CTR imbalance** | One platform drops while others hold | That platform's visual is specifically dated |
+| **Cover render fail rate** | > 5% of posts falling back to passthrough | Tech problem masquerading as visual; fix tech first then re-evaluate |
+
+Today these are NOT yet on the dashboard — adding them is open work
+(see PM_Radar `roadmap/`).
+
+#### Layer 2 — qualitative warnings (humans notice)
+
+| Signal | Source | Why it matters |
+|---|---|---|
+| **3+ independent reader mentions** of visual | DMs, comments, in-person | 1 reader is noise, 3 is pattern (today's IG-feedback incident started from 1 reader → triggered the whole cover initiative) |
+| **KOL benchmark evolution we didn't follow** | E.g. 游庭皓 changes their cover style and 6 months pass | Visual is also fashion — staying static while peers iterate = relatively dated |
+| **Platform UI change** | Meta changes IG feed crop ratio, Threads adds new visual elements | Our spec is calibrated to 2026-05 Meta UI; UI changes → spec changes |
+| **Hsin's gut while scrolling own grid** | Weekly habit: scroll, write down "this is feeling fatigued" | **Most important leading signal — never suppress because "no data backs it up"** |
+
+The fourth one is critical. Today's whole cover work started because Hsin
+saw that IG's smartmmmoney lacked recognition vs the smartmmmoney brand.
+That intuition predated any data signal. **Boss intuition is a load-bearing
+input — write it down, don't override it with "but the metric says fine"**.
+
+#### Layer 3 — calendar checkpoint (forces the question)
+
+**Quarterly visual audit, ~30 minutes, regardless of whether layers 1 & 2 fired:**
+
+- Q1 / Q2 / Q3 / Q4 review
+- Process:
+  1. Pull dashboard signals (when those widgets exist)
+  2. Scroll own grid (last 90 posts) on each platform
+  3. Scroll 3 KOL benchmark grids same period
+  4. Write 1 paragraph: "This quarter the brand feels [better / same / worse] than last because ___"
+- Decision: **Hold / Tweak / Pivot**
+
+Reason for calendar trigger: gradual decay (boiling frog) doesn't trip
+threshold alarms. The 90-day forced audit catches long-tail drift that
+no single metric can flag.
+
+### Hold / Tweak / Pivot — decision tree
+
+| Outcome | Example | Action |
+|---|---|---|
+| **Hold** | Data stable, no taste fatigue, KOL benchmarks stable | 1 line in changelog: "Q3 maintained spec, no changes". Audit again Q4. |
+| **Tweak** | One or two dimensions need refresh (color / layout / font size) but overall direction is right | Change one dimension, ship, A/B compare 14 days, keep the winner |
+| **Pivot** | Whole visual feels dated, brand positioning may also be shifting | brand_visual.md major version bump, write new spec, all NEW posts use new spec, **don't backfill old posts** |
+
+**Key discipline**: every Tweak or Pivot writes a changelog entry below.
+Without history, future PM agents repeat past mistakes.
+
+### Anti-patterns (do not do these)
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| Change visual because of **one bad post** | Noise, not signal. Any < 30-day trend is too short |
+| Change visual because **competitor's cover looked cool yesterday** | FOMO-driven rebrands die faster than disciplined evolution |
+| Change spec **without changelog** | Lose compounding learning, repeat past mistakes |
+| Change **multiple dimensions at once** (color + font + layout simultaneously) | Can't attribute which lever moved engagement → can't validate |
+| **Iterate while still validating** previous change | Data contamination → no clean ship decision |
+
+### Changelog
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-05-01 | Initial spec (smartmmmoney unified visual) | Hsin's brand-recognition concern after IG reader feedback |
+| 2026-05-02 | Threads added to symmetric cover flow (was text-first) | Hsin reversed initial "no Threads cover" call after seeing real production output |
+| 2026-05-02 | Topic chip taxonomy aligned to topic_taxonomy.py | Discovered chip was missing real categories (earnings/other etc.) |
+| 2026-05-02 | Overlay alpha 0.65 → 0.55 (default), grain noise added to fallback, subtitle 48pt → 58pt, market chips warmer (red/orange) | First Tweak round after seeing production samples — overlay too heavy, fallback too flat, subtitle too small relative to title, palette too cold |
+| _next_ | _to be filled at next audit_ | _to be filled_ |
+
+### What this section is NOT
+
+- NOT a "brand image score" system. We deliberately don't quantify brand
+  visual quality (Goodhart's Law, see `AI_COLLABORATION_PRINCIPLES.md`).
+- NOT a reflector proposal source. Reflector NEVER touches brand spec.
+- NOT a daily review burden. Quarterly cadence is by design — daily
+  obsessing about visual destroys focus on content.

@@ -56,6 +56,7 @@ Public API
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
@@ -68,22 +69,62 @@ from .cover_uploader import upload_cover
 
 logger = logging.getLogger(__name__)
 
-# Fallback image for news with no usable og:image. Solid deep-navy fill
-# matching the cover overlay color, so the rendered cover looks intentional
-# (not "broken — original image missing"). Cached in assets/image_cache to
-# avoid regenerating each call.
-_FALLBACK_IMAGE_NAME = "_cover_fallback_dark_navy.jpg"
+# Fallback image for news with no usable og:image. NOT a flat color block —
+# we synthesize a film-grain-like texture so the rendered cover doesn't look
+# "lazy / template-y" when it lands in feed alongside cover with real news
+# images. The texture is generated at low resolution then upscaled bicubic,
+# so each "noise pixel" survives the 10px gaussian blur cover_renderer
+# applies during render (see brand_visual.md §Background composition).
+#
+# 2026-05-02 升級：原本是 solid color、視覺極無聊 + 一眼看出「沒有原圖」。
+# Noise texture 解這兩個問題、cost 是 ~30k 次 random.randint。Cached 後
+# 後續呼叫直接 reuse、不會每次重生成。
+_FALLBACK_IMAGE_NAME = "_cover_fallback_textured_navy.jpg"
 _FALLBACK_IMAGE_SIZE = (1920, 1080)
+_FALLBACK_NOISE_DOWNSCALE = 8       # 8x downscale → noise blocks of 8x8 in final
+_FALLBACK_NOISE_AMPLITUDE = 15      # ±15 RGB units around base color
+_FALLBACK_NOISE_SEED = 42           # deterministic — same fallback every run
 
 
 def _ensure_fallback_image() -> Path:
-    """Generate-or-reuse the synthetic fallback. Lazy so tests + first run
-    don't pay the cost until needed."""
+    """Generate-or-reuse the synthetic fallback. Lazy: only generates on
+    first call (test + first-run pay the cost, then cached forever).
+
+    Texture method: low-res random luminance jitter around the navy base,
+    upscaled bicubic to target size. The downscale + bicubic combination
+    yields organic-feeling grain that's coarse enough to survive the
+    cover_renderer's gaussian blur (otherwise per-pixel noise would
+    average out invisible).
+
+    Determinism: seeded RNG so the fallback is byte-identical across
+    machines / CI / re-runs. Important for the sha256 round-trip
+    verification path in verification_logs.
+    """
     cache_dir = ASSETS_DIR / "image_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     out = cache_dir / _FALLBACK_IMAGE_NAME
-    if not out.exists():
-        Image.new("RGB", _FALLBACK_IMAGE_SIZE, OVERLAY_RGB).save(out, "JPEG", quality=80)
+    if out.exists():
+        return out
+
+    # Generate at 1/N resolution
+    small_w = _FALLBACK_IMAGE_SIZE[0] // _FALLBACK_NOISE_DOWNSCALE
+    small_h = _FALLBACK_IMAGE_SIZE[1] // _FALLBACK_NOISE_DOWNSCALE
+    small = Image.new("RGB", (small_w, small_h), OVERLAY_RGB)
+    pixels = small.load()
+    rng = random.Random(_FALLBACK_NOISE_SEED)
+    base_r, base_g, base_b = OVERLAY_RGB
+    for y in range(small_h):
+        for x in range(small_w):
+            d = rng.randint(-_FALLBACK_NOISE_AMPLITUDE, _FALLBACK_NOISE_AMPLITUDE)
+            pixels[x, y] = (
+                max(0, min(255, base_r + d)),
+                max(0, min(255, base_g + d)),
+                max(0, min(255, base_b + d)),
+            )
+
+    # Upscale to target with bicubic — smooths block edges, gives organic feel
+    result = small.resize(_FALLBACK_IMAGE_SIZE, Image.Resampling.BICUBIC)
+    result.save(out, "JPEG", quality=85)
     return out
 
 # Brand-bar string per platform (per docs/brand_visual.md decision table)
