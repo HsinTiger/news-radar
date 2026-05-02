@@ -222,7 +222,8 @@ Without history, future PM agents repeat past mistakes.
 | 2026-05-02 | Threads added to symmetric cover flow (was text-first) | Hsin reversed initial "no Threads cover" call after seeing real production output |
 | 2026-05-02 | Topic chip taxonomy aligned to topic_taxonomy.py | Discovered chip was missing real categories (earnings/other etc.) |
 | 2026-05-02 | Overlay alpha 0.65 → 0.55 (default), grain noise added to fallback, subtitle 48pt → 58pt, market chips warmer (red/orange) | First Tweak round after seeing production samples — overlay too heavy, fallback too flat, subtitle too small relative to title, palette too cold |
-| _next_ | _to be filled at next audit_ | _to be filled_ |
+| 2026-05-02 (after preview) | _Hold_ — Hsin reviewed 6-sample gallery (PREVIEW_v2_*.png in PM_Radar/cover_samples), opted to wait for real reader feedback instead of further tweaking. Honors the discipline: collect 14 days of data + qualitative signals before next audit. | Discipline check passed: avoided FOMO/over-iteration. |
+| _next_ | _to be filled at next audit (Q3 2026 calendar trigger OR signal trigger fires)_ | _to be filled_ |
 
 ### What this section is NOT
 
