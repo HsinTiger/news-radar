@@ -21,15 +21,30 @@ from src.cover_pipeline import (
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_no_image_url_returns_both_none():
-    result = await prepare_publish_image(
-        platform_key="fb",
-        original_image_url=None,
-        draft_id="draft_abc",
-        title="t",
-        topic_category="ai_model",
-    )
-    assert result == {"image_url": None, "local_file_path": None}
+async def test_no_image_url_uses_fallback_and_renders(tmp_path: Path):
+    """Phase 9.5 follow-up (2026-05-02): no original image → render with synthetic
+    fallback background. Earlier behavior (passthrough None → IG/Threads skipped
+    by composer) caused ~30% of drafts to ship FB-only."""
+    fake_cover = tmp_path / "rendered.png"
+    fake_cover.write_bytes(b"\x89PNG")
+    fake_url = "https://raw.githubusercontent.com/HsinTiger/news-radar/cover-cdn/dx_fb.png"
+
+    with patch("src.cover_pipeline.image_manager.download_image", new=AsyncMock()) as m_dl, \
+         patch("src.cover_pipeline.render_cover", return_value=fake_cover) as m_render, \
+         patch("src.cover_pipeline.upload_cover", return_value=fake_url):
+        result = await prepare_publish_image(
+            platform_key="fb",
+            original_image_url=None,
+            draft_id="dx",
+            title="t",
+            topic_category="ai_model",
+        )
+    assert result == {"image_url": fake_url, "local_file_path": None}
+    m_dl.assert_not_called()  # nothing to download
+    # Render still ran with the fallback Path
+    cover_input = m_render.call_args.args[0]
+    assert cover_input.image_path is not None
+    assert cover_input.image_path.exists()  # fallback was generated
 
 
 @pytest.mark.asyncio
@@ -130,11 +145,18 @@ async def test_fb_renders_uploads_and_returns_raw_url(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_fb_falls_back_when_download_fails():
+async def test_fb_uses_fallback_when_download_fails(tmp_path: Path):
+    """Download fails → render with synthetic fallback (not passthrough).
+    Phase 9.5 follow-up: previously this passed through original URL,
+    causing IG/Threads to silently lose covers."""
+    fake_cover = tmp_path / "rendered.png"
+    fake_cover.write_bytes(b"\x89PNG")
+    fake_url = "https://raw.githubusercontent.com/HsinTiger/news-radar/cover-cdn/draft_x_fb.png"
+
     with patch("src.cover_pipeline.image_manager.download_image",
                new=AsyncMock(return_value=None)), \
-         patch("src.cover_pipeline.render_cover") as m_render, \
-         patch("src.cover_pipeline.upload_cover") as m_up:
+         patch("src.cover_pipeline.render_cover", return_value=fake_cover) as m_render, \
+         patch("src.cover_pipeline.upload_cover", return_value=fake_url):
         result = await prepare_publish_image(
             platform_key="fb",
             original_image_url="https://example.com/img.jpg",
@@ -142,9 +164,9 @@ async def test_fb_falls_back_when_download_fails():
             title="t",
             topic_category="ai_model",
         )
-    assert result == {"image_url": "https://example.com/img.jpg", "local_file_path": None}
-    m_render.assert_not_called()
-    m_up.assert_not_called()
+    assert result == {"image_url": fake_url, "local_file_path": None}
+    cover_input = m_render.call_args.args[0]
+    assert cover_input.image_path.exists()  # fallback was generated
 
 
 @pytest.mark.asyncio

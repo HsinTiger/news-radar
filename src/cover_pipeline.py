@@ -60,11 +60,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
+from PIL import Image
+
 from . import image_manager
-from .cover_renderer import CoverInput, render_cover
+from .cover_renderer import ASSETS_DIR, CoverInput, OVERLAY_RGB, render_cover
 from .cover_uploader import upload_cover
 
 logger = logging.getLogger(__name__)
+
+# Fallback image for news with no usable og:image. Solid deep-navy fill
+# matching the cover overlay color, so the rendered cover looks intentional
+# (not "broken — original image missing"). Cached in assets/image_cache to
+# avoid regenerating each call.
+_FALLBACK_IMAGE_NAME = "_cover_fallback_dark_navy.jpg"
+_FALLBACK_IMAGE_SIZE = (1920, 1080)
+
+
+def _ensure_fallback_image() -> Path:
+    """Generate-or-reuse the synthetic fallback. Lazy so tests + first run
+    don't pay the cost until needed."""
+    cache_dir = ASSETS_DIR / "image_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out = cache_dir / _FALLBACK_IMAGE_NAME
+    if not out.exists():
+        Image.new("RGB", _FALLBACK_IMAGE_SIZE, OVERLAY_RGB).save(out, "JPEG", quality=80)
+    return out
 
 # Brand-bar string per platform (per docs/brand_visual.md decision table)
 BRAND_NAME_FOR_PLATFORM: Dict[str, str] = {
@@ -111,9 +131,6 @@ async def prepare_publish_image(
     ``draft_id`` is required for FB/IG covers — it determines the
     upload filename. If absent, falls back to the original URL.
     """
-    if not original_image_url:
-        return _passthrough(None)
-
     if platform_key not in ASPECT_FOR_PLATFORM:
         logger.warning("[cover_pipeline] unknown platform %r — passthrough", platform_key)
         return _passthrough(original_image_url)
@@ -125,15 +142,27 @@ async def prepare_publish_image(
         )
         return _passthrough(original_image_url)
 
-    # 1) Download the original image so cover_renderer can read its bytes.
-    try:
-        local_orig = await image_manager.download_image(original_image_url)
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("[cover_pipeline] download_image raised: %s; passthrough", exc)
-        return _passthrough(original_image_url)
+    # 1) Try to download the original news image so cover_renderer can use
+    #    it as the (heavily blurred + dimmed) backdrop. If that fails OR
+    #    the news has no image at all, fall back to a synthetic dark navy
+    #    background. Either way the rendered cover is brand-consistent and
+    #    publishable — earlier behavior of skipping IG/Threads when the
+    #    news source had no og:image is the bug we're undoing here
+    #    (Phase 9.5 follow-up, 2026-05-02).
+    local_orig: Optional[str] = None
+    if original_image_url:
+        try:
+            local_orig = await image_manager.download_image(original_image_url)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[cover_pipeline] download_image raised: %s; using fallback", exc)
+            local_orig = None
     if not local_orig:
-        logger.info("[cover_pipeline] download failed for %s; passthrough", platform_key)
-        return _passthrough(original_image_url)
+        fallback = _ensure_fallback_image()
+        logger.info(
+            "[cover_pipeline] no usable source image for %s — using synthetic fallback (%s)",
+            platform_key, fallback.name,
+        )
+        local_orig = str(fallback)
 
     # 2) Render the cover.
     when = now or datetime.now(timezone.utc)

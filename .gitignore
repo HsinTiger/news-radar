@@ -96,6 +96,10 @@ assets/fonts/*.ttf
 assets/fonts/*.ttc
 # Generated cover PNGs are runtime cache, not source.
 assets/cover_cache/
+# Downloaded news images (image_manager.download_image) + the synthetic
+# fallback cover_pipeline generates when news has no usable og:image.
+# All runtime, all regenerable, none belong in main.
+assets/image_cache/
 # Stale sandbox-leftover (delete locally then drop this line)
 assets/fonts/_sample_cjk.ttf
 

@@ -180,6 +180,15 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
             print(f"   · [dry-run] {platform} ({len(full_text)} 字) → 不呼叫 API")
             continue
 
+        # Idempotency guard (Phase 9.5+, 2026-05-02): if publish_log already
+        # has success=1 for this (draft, platform), skip the API call to
+        # prevent duplicate posts on retry/restart. Counts toward any_success
+        # because the post IS live, just from an earlier run.
+        if dbmod.has_successful_publish(conn, draft_id, platform):
+            print(f"   ↳ [{platform} Skip] 已成功發過此 (draft, platform)，跳過防重複")
+            any_success = True
+            continue
+
         # Phase 2: FB + IG both go through render → upload → URL.
         cover_key = _COVER_KEY.get(platform)
         if cover_key is None:

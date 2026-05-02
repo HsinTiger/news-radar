@@ -731,6 +731,64 @@ def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row
     ).fetchone()
 
 
+def has_successful_publish(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    platform: str,
+) -> bool:
+    """Idempotency guard for the publisher.
+
+    Returns True iff ``publish_log`` already contains a ``success=1`` row
+    for this (draft_id, platform) pair. Callers MUST treat True as
+    "publish has already happened — do NOT call the platform API again".
+
+    Why this exists (2026-05-02 incident)
+    -------------------------------------
+    Mac shutdown during a publish cycle ended up posting the same draft
+    3-4 times to the platforms after recovery: the publisher had no
+    memory of "did we already do this", so each restart re-tried the
+    queued draft and the API actually accepted the duplicate posts.
+
+    With this guard wired into ``run_pipeline._publish_platform`` and
+    ``run_publish_queue._publish_one``:
+
+      * publish_log row with success=1 already exists → publisher skips
+        the API call, increments any_success counter (since the post IS
+        live), does NOT write a duplicate row.
+      * publish_log only has success=0 (prior failure) → guard returns
+        False; publisher retries normally. The new attempt's row stacks
+        on top of the failed one, and a future success=1 row blocks
+        further retries.
+
+    The platform argument MUST be one of the canonical publish_log
+    values: ``"facebook"`` / ``"instagram"`` / ``"threads"`` (NOT the
+    short "fb"/"ig" forms used in run_pipeline). Wire-up code is
+    responsible for the mapping.
+
+    Limitations (deliberate, documented):
+      * Does NOT defend against two concurrent publishers reading the
+        same "no success row" state simultaneously and racing to write
+        their own success rows. That requires DB-level advisory lock or
+        application-side mutex; out of scope for the 2026-05-02 fix
+        which targets the much more common single-publisher restart
+        case.
+      * Idempotency is platform-scoped: the same draft can still be
+        legitimately published to FB then IG then Threads in sequence;
+        each (draft, platform) tuple is independently guarded.
+    """
+    row = conn.execute(
+        """
+        SELECT 1 FROM publish_log
+         WHERE draft_id = ?
+           AND platform = ?
+           AND success  = 1
+         LIMIT 1
+        """,
+        (draft_id, platform),
+    ).fetchone()
+    return row is not None
+
+
 def mark_queue_published(conn: sqlite3.Connection, draft_id: str) -> None:
     """Publisher 成功發文後呼叫。同時更新 drafts.status='published' 和 news_items.status='published'。
 

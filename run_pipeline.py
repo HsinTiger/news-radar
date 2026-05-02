@@ -345,6 +345,17 @@ async def _publish_platform(
         ))
         return False
 
+    # Idempotency guard (Phase 9.5+, 2026-05-02): if this (draft, platform)
+    # already has a success=1 row in publish_log, skip the API call to
+    # prevent duplicate posts on retry/restart. Treat as success — the
+    # post IS live, just from an earlier run.
+    if dbmod.has_successful_publish(conn, draft_id, db_name):
+        print(
+            f"   ↳ [{dbmod.PLATFORM_LABEL[platform_key]} Skip] "
+            "已成功發過此 (draft, platform)，跳過防重複"
+        )
+        return True
+
     # Phase 2: FB and IG both go through render → upload → URL.
     # prep["image_url"] is the cover-cdn raw URL (when render+upload
     # succeed) or the original news image URL (any failure step).
@@ -512,18 +523,19 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     
     # 2. 一次 LLM call 產三版（帶入主編指令）
     print(" ↳ [Composer] 接收主編指令，產出三平台變體...")
-    
-    platforms = ["fb", "ig", "threads"]
-    active_platforms = []
-    for p in platforms:
-        if p in ["ig", "threads"] and not is_accessible:
-            print(f"   ↳ [Skip] {p} 因無有效圖片跳過")
-            continue
-        active_platforms.append(p)
 
-    if not active_platforms:
-        print(" ↳ [Error] 無可用平台（媒介門檻限制）")
-        return "dropped"
+    # Phase 9.5+ change (2026-05-02): no longer skip IG/Threads when the
+    # news source has no usable og:image. cover_pipeline now generates a
+    # branded fallback cover (deep-navy + title + brand bar) for any
+    # missing-image case, so all three platforms are always publishable.
+    # The earlier `is_accessible` gate caused ~30% of drafts to ship
+    # FB-only.
+    active_platforms = ["fb", "ig", "threads"]
+    if not is_accessible:
+        print(
+            "   ↳ [Note] 原圖不可存取，IG/Threads 將使用 cover_pipeline 的 "
+            "fallback 背景渲染封面（不再 skip）"
+        )
 
     bundle = await compose_multi_platform(
         title, 
