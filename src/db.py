@@ -687,7 +687,8 @@ def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
                n.url          AS news_url,
                n.og_image_url,
                n.og_video_url,
-               n.og_video_is_direct
+               n.og_video_is_direct,
+               n.topic_category
         FROM drafts d
         JOIN news_items n ON d.news_id = n.id
         WHERE d.queue_status = 'queued'
