@@ -343,14 +343,11 @@ def append_metaphor_domain(domain: str, limit: int = 30) -> None:
 async def maybe_generate_ai_cover(
     *, cover_image_prompt: str, output_dir: Path
 ) -> Optional[Path]:
-    """Optional: generate AI Moleskine cover via Gemini image gen.
+    """Legacy: AI cover generation via Gemini. **Deprecated 2026-05-12**.
 
-    Gated by SUBSTACK_AI_COVER=1 in env. Returns the generated PNG path,
-    or None if disabled / failed. On None, render_substack_cover falls
-    back to the photo-overlay path (existing behavior).
-
-    Why this lives in tools/ and not src/cover_pipeline.py: keeps the
-    Substack-specific opt-in completely out of the social-publish flow.
+    Default-OFF (gated by SUBSTACK_AI_COVER=1). Kept for archeology; primary
+    flow is now ``append_cover_prompt_block`` which embeds the prompt into
+    Article_Substack.md for human-driven generation via GPT web / NanoBanana.
     """
     try:
         from src.image_brain import generate_cover_image, is_ai_cover_enabled
@@ -365,6 +362,70 @@ async def maybe_generate_ai_cover(
         out_path=target,
         size=(1456, 816),
     )
+
+
+# 2026-05-12 Hsin directive — every Substack article ends with this tagline +
+# subscribe placeholder. Tagline is fixed text per substack_soul.md §12.
+BRAND_TAGLINE = (
+    "「我專門拆解：那些你已經被市場說服、但其實正在害你的共識。」"
+)
+
+
+def build_footer_block() -> str:
+    """Brand tagline + Substack subscribe placeholder.
+
+    Path A markdown approach: emit visible placeholder text + HTML comment.
+    Hsin opens draft in Substack editor and replaces the placeholder block
+    with the native Subscribe button widget (slash menu / + button).
+    Path B (auto-insert via python-substack subscribeWithCaption node) is
+    a future enhancement; for now Path A is reliable and idempotent.
+    """
+    return (
+        "\n\n---\n\n"
+        f"> **{BRAND_TAGLINE}**\n\n"
+        "<!-- substack-editor: 將此段替換為 Subscribe button widget "
+        "(toolbar 的 + → Subscribe button) -->\n\n"
+        "*點此訂閱 → 不錯過下一篇拆解。*\n"
+    )
+
+
+def append_footer_block(*, article_md_path: Path) -> None:
+    """Append brand tagline + subscribe placeholder. **Order matters**:
+    call this BEFORE append_cover_prompt_block so the footer sits between
+    the article body and the cover-prompt instructions."""
+    block = build_footer_block()
+    existing = article_md_path.read_text(encoding="utf-8")
+    article_md_path.write_text(existing.rstrip() + block, encoding="utf-8")
+    print(f"[Footer] ✅ tagline + subscribe placeholder appended")
+
+
+def append_cover_prompt_block(
+    *, article_md_path: Path, draft, output_dir: Path
+) -> None:
+    """Append the image prompt block to Article_Substack.md (and write a
+    standalone cover_prompts.md for easy copy-paste).
+
+    Why this is the new primary path (2026-05-12): Claude's text descriptions
+    of visual composition consistently beat Gemini's text-to-image output for
+    Moleskine handdrawn aesthetic. Hsin drives the actual generation in
+    GPT web / NanoBanana with full control.
+    """
+    try:
+        from src.image_brain import build_cover_prompt_block
+    except Exception as exc:
+        print(f"[CoverPrompt] ⚠️ image_brain unavailable: {exc}")
+        return
+    block = build_cover_prompt_block(
+        draft.cover_image_prompt,
+        title=draft.title,
+        subtitle=draft.subtitle,
+    )
+    # Append to the main markdown so Hsin sees it when he opens the file
+    existing = article_md_path.read_text(encoding="utf-8")
+    article_md_path.write_text(existing.rstrip() + block, encoding="utf-8")
+    # Also write standalone for quick copy-paste
+    (output_dir / "cover_prompts.md").write_text(block.lstrip(), encoding="utf-8")
+    print(f"[CoverPrompt] ✅ appended to {article_md_path.name} + cover_prompts.md")
 
 
 def render_substack_cover(
@@ -722,11 +783,48 @@ async def run(args: argparse.Namespace) -> int:
             "topic_category": topic_category,
         }
     else:
-        raw_title, raw_content, topic_category = pick_evening_topic(args.topic)
-        source = {
-            "title": raw_title,
-            "topic_category": topic_category,
-        }
+        # Evening source selection priority:
+        #   1. --source-file present → read file as raw_content (Hsin-provided material).
+        #      title = --topic > first H1 in file > filename stem.
+        #   2. --topic only → pass to pick_evening_topic as free-text override
+        #      (existing behavior, no external material).
+        #   3. neither → round-robin from substack_evening_topics.yaml.
+        if args.source_file:
+            sf = Path(args.source_file).expanduser().resolve()
+            if not sf.exists():
+                print(f"[ERROR] --source-file not found: {sf}")
+                return 4
+            raw_content = sf.read_text(encoding="utf-8")
+            # Title resolution
+            if args.topic:
+                raw_title = args.topic
+            else:
+                # Try to extract first markdown H1
+                first_h1 = next(
+                    (
+                        ln[2:].strip()
+                        for ln in raw_content.splitlines()
+                        if ln.startswith("# ")
+                    ),
+                    None,
+                )
+                raw_title = first_h1 or sf.stem.replace("_", " ").replace("-", " ")
+            topic_category = args.topic_category or "other"
+            source = {
+                "title": raw_title,
+                "topic_category": topic_category,
+                "source_file": str(sf),
+                "source_bytes": sf.stat().st_size,
+            }
+            print(f"[Source] --source-file {sf.name} ({sf.stat().st_size} bytes)")
+        else:
+            raw_title, raw_content, topic_category = pick_evening_topic(args.topic)
+            if args.topic_category:
+                topic_category = args.topic_category  # explicit override wins
+            source = {
+                "title": raw_title,
+                "topic_category": topic_category,
+            }
     print(f"[Source] mode={mode} title={raw_title!r} topic={topic_category}")
 
     # 2) Compose
@@ -766,16 +864,32 @@ async def run(args: argparse.Namespace) -> int:
     write_article_full_md(local_dir, draft, mode=mode, source=source, audit_warnings=warnings)
     write_prompts_and_metadata(local_dir, draft, mode, source, warnings)
 
-    # 5a) Optional: Gemini AI cover image (opt-in via SUBSTACK_AI_COVER=1)
+    # 5a-pre) Brand footer: tagline + Subscribe placeholder (per soul.md §12).
+    # Order matters — footer sits BETWEEN article body and cover-prompt block.
+    append_footer_block(article_md_path=article_md)
+
+    # 5a) PRIMARY image flow (2026-05-12): append cover prompt block to article.
+    # Hsin copies the prompt → GPT web / NanoBanana → manually swaps in the
+    # generated image when publishing. No Gemini API call.
+    append_cover_prompt_block(
+        article_md_path=article_md,
+        draft=draft,
+        output_dir=local_dir,
+    )
+
+    # 5b) Legacy: optional Gemini AI cover image (default OFF, set
+    # SUBSTACK_AI_COVER=1 to opt in). Kept for fallback; new flow is 5a.
     ai_cover = await maybe_generate_ai_cover(
         cover_image_prompt=draft.cover_image_prompt,
         output_dir=local_dir,
     )
     if ai_cover:
-        print(f"[Cover] ✅ AI-generated base image: {ai_cover.name}")
+        print(f"[Cover] ⚠️  AI-gen (legacy) ran: {ai_cover.name}")
 
-    # 5b) Composite branded cover (text/chip/brand-bar on top of AI image or
-    # synthetic fallback if AI gen skipped/failed).
+    # 5c) Composite branded cover (synthetic-base photo-overlay for Substack
+    # draft hero). Hsin will likely replace this with the human-generated
+    # version after picking from prompts in step 5a, but a placeholder helps
+    # the draft look complete in the Substack dashboard.
     cover_path = render_substack_cover(
         title=draft.title,
         subtitle=draft.subtitle,
@@ -813,7 +927,21 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("mode", choices=["morning", "evening"], help="Which slot to compose")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
-    p.add_argument("--topic", default=None, help="(evening) override: free-text topic")
+    p.add_argument("--topic", default=None, help="(evening) override: free-text topic / 文章主題")
+    p.add_argument(
+        "--source-file",
+        default=None,
+        help=(
+            "(evening) path to markdown/text file used as raw material. "
+            "Equivalent to morning's news_items.clean_markdown — LLM 看 file 內容當素材。"
+            "Title 取自 --topic > file 第一行 H1 > 檔名。需要 --topic 比較保險。"
+        ),
+    )
+    p.add_argument(
+        "--topic-category",
+        default=None,
+        help="(evening) override topic_category (e.g. ai_application / policy_geopolitics). 預設 'other'.",
+    )
     p.add_argument("--editorial-note", default="", help="Editor's mandate to the writer")
     p.add_argument(
         "--no-draft",

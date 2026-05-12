@@ -63,7 +63,9 @@ class SubstackDraft(BaseModel):
     body_markdown: str = Field(
         ...,
         description=(
-            "本文正體中文 markdown。1400–1600 字（含全形標點，不含 hashtag）。"
+            "本文正體中文 markdown。目標字數由 env SUBSTACK_WORD_CAP 控制（預設"
+            " 2000–3500 字，含全形標點不含 hashtag）。長文允許多層展開、"
+            "deep-research 結果可以攤開細節，但仍受反 AI 味與 Anti-Conclusion 規範。"
             "使用 §4 Mode A 結構（▉ 為小節錨點）或 Mode B 敘事結構。"
             "Anti-Conclusion：結尾必須是提問／懸念／更深觀察，禁止『總而言之』收尾。"
         ),
@@ -149,6 +151,69 @@ _BAD_RHETORICAL_PATTERNS = [
 
 _AI_FILLER_WORDS = ["其實", "很清楚", "很簡單"]
 
+# 大陸用法 banned list — 2026-05-12 加入。
+# 命中時為 warning（非 hard reject）。完整對應表見 config/substack_soul.md §11。
+# 排序：(found_term, suggested_replacement, category)
+_MAINLAND_TERMS = [
+    # 人名
+    ("特朗普",   "川普",            "人名"),
+    ("奧巴馬",   "歐巴馬",          "人名"),
+    ("默克爾",   "梅克爾",          "人名"),
+    ("扎克伯格", "祖克柏",          "人名"),
+    ("普京",     "普丁",            "人名"),
+    ("澤連斯基", "澤倫斯基",        "人名"),
+    ("內塔尼亞胡","納坦雅胡",       "人名"),
+    ("默多克",   "梅鐸",            "人名"),
+    ("朔爾茨",   "蕭茲",            "人名"),
+    ("馬克龍",   "馬克宏",          "人名"),
+    # 資訊／網路／軟體 (高 priority)
+    ("互聯網",   "網際網路／網路",  "資訊"),
+    ("視頻",     "影片",            "資訊"),
+    ("軟件",     "軟體",            "資訊"),
+    ("硬件",     "硬體",            "資訊"),
+    ("屏幕",     "螢幕",            "資訊"),
+    ("服務器",   "伺服器",          "資訊"),
+    ("數據庫",   "資料庫",          "資訊"),
+    ("文件夾",   "資料夾",          "資訊"),
+    ("程序員",   "工程師",          "資訊"),
+    ("算法",     "演算法",          "資訊"),
+    ("內存",     "記憶體",          "資訊"),
+    ("帶寬",     "頻寬",            "資訊"),
+    ("接口",     "介面",            "資訊"),
+    ("模塊",     "模組",            "資訊"),
+    ("鏈接",     "連結",            "資訊"),
+    ("點贊",     "按讚",            "資訊"),
+    ("登錄",     "登入",            "資訊"),
+    ("賬號",     "帳號",            "資訊"),
+    ("賬戶",     "帳戶",            "資訊"),
+    ("默認",     "預設",            "資訊"),
+    ("缺省",     "預設",            "資訊"),
+    ("設置",     "設定",            "資訊"),
+    ("兼容",     "相容",            "資訊"),
+    ("並發",     "並行",            "資訊"),
+    ("性能",     "效能",            "資訊"),
+    ("反饋",     "回饋",            "資訊"),
+    ("標簽",     "標籤",            "資訊"),
+    ("在線",     "線上",            "資訊"),
+    ("黑客",     "駭客",            "資訊"),
+    # 商業／市場
+    ("創始人",   "創辦人",          "商業"),
+    ("短信",     "簡訊",            "商業"),
+    # 度量
+    ("千米",     "公里",            "度量"),
+    ("厘米",     "公分",            "度量"),
+    ("千克",     "公斤",            "度量"),
+]
+
+
+# Word cap envelope (2026-05-12 升級):
+#   Hsin 把 1500 字 hard cap 撤掉，因為 deep-research 後的素材值得長文展開。
+#   新預設 3500 字上限，下限按 60% 比例縮為 ~2000 字（避免短打硬填到上限）。
+#   可由 env override：SUBSTACK_WORD_CAP=N。
+#   下限自動 = max(1200, cap * 0.55)，讓使用者只需設一個值。
+SUBSTACK_WORD_CAP = int(os.getenv("SUBSTACK_WORD_CAP", "3500"))
+SUBSTACK_WORD_FLOOR = max(1200, int(SUBSTACK_WORD_CAP * 0.55))
+
 
 def _count_chinese_chars(text: str) -> int:
     """數中文字＋全形標點。半形字符／英文不計。"""
@@ -168,12 +233,18 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
     warnings: List[str] = []
     body = draft.body_markdown
 
-    # 1. 字數
+    # 1. 字數 — 上下限由 SUBSTACK_WORD_CAP env 控制
     n = _count_chinese_chars(body)
-    if n < 1400:
-        warnings.append(f"[字數低於下限] {n} 字 < 1400。需擴寫。")
-    elif n > 1600:
-        warnings.append(f"[字數超過上限] {n} 字 > 1600。需精煉。")
+    if n < SUBSTACK_WORD_FLOOR:
+        warnings.append(
+            f"[字數低於下限] {n} 字 < {SUBSTACK_WORD_FLOOR}。需擴寫。"
+            f" (上限 {SUBSTACK_WORD_CAP}，env: SUBSTACK_WORD_CAP)"
+        )
+    elif n > SUBSTACK_WORD_CAP:
+        warnings.append(
+            f"[字數超過上限] {n} 字 > {SUBSTACK_WORD_CAP}。需精煉。"
+            f" (env: SUBSTACK_WORD_CAP)"
+        )
 
     # 2. Anti-Conclusion 收尾
     last_para = body.strip().split("\n")[-1] if body.strip() else ""
@@ -206,6 +277,21 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
     # 7. 同篇重複用同 domain（透過 cover_image_prompt 偵測）
     #   這條由 caller 在 history 比對更準，這裡略
 
+    # 8. 大陸用法檢查 (2026-05-12) — soul.md §11 規範
+    # title + subtitle + body 都掃。命中為 warning (false-positive 可能存在,
+    # 例如「質量」在物理脈絡是合法的；作者看到警告自己判斷)。
+    full_text = f"{draft.title}\n{draft.subtitle}\n{body}"
+    hits = []
+    for found, repl, category in _MAINLAND_TERMS:
+        if found in full_text:
+            count = full_text.count(found)
+            hits.append((found, repl, category, count))
+    if hits:
+        for found, repl, category, count in hits:
+            warnings.append(
+                f"[大陸用法] 『{found}』×{count} → 改用『{repl}』 ({category})"
+            )
+
     return warnings
 
 
@@ -216,7 +302,7 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
 def _build_system_instruction(soul: str) -> str:
     return (
         "你是 News Radar 的 Substack 長文寫手——Visionary Analyst。\n"
-        "輸出單篇 1500 字精煉長文，採用『硬商業邏輯 × 暖哲學靈魂』。\n"
+        f"輸出 {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字長文，採用『硬商業邏輯 × 暖哲學靈魂』。\n"
         "\n"
         "=== 唯一靈魂源（必須完整內化）===\n"
         f"{soul}\n"
@@ -227,7 +313,8 @@ def _build_system_instruction(soul: str) -> str:
         "3. §3 Metaphor Diversification：絕不再用熱力學／建築學／生物演化。\n"
         "   從 6 個 domain 抽 1 個（不重複近 7 篇用過的）。\n"
         "4. §5 黑名單：「不是 X、是 Y」「○○感」「穩／撐／懂」一律不准。\n"
-        "5. §6 字數硬上限：1400–1600 字（含全形標點）。超過必砍。\n"
+        f"5. §6 字數區間：{SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字（含全形標點）。"
+        f"超過上限必砍，低於下限必擴。env: SUBSTACK_WORD_CAP。\n"
         "6. §8 五秒拍片測試：每段抽象論述後必須有具體場景錨點。\n"
         "7. §9 完美 = AI：句子長短刻意不平均、留一個沒講完的暗示。\n"
     )
@@ -283,7 +370,7 @@ def _build_user_prompt(
         "{\n"
         '  "title": "...",                  // 8-60 字。用 §6 三種 hook 之一，禁新聞稿陳述式。\n'
         '  "subtitle": "...",               // 10-80 字。不可重複 title。Substack 列表頁勾子。\n'
-        '  "body_markdown": "...",          // 1400-1600 中文字（含全形標點，不含 hashtag）。\n'
+        f'  "body_markdown": "...",          // {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 中文字。\n'
         "                                   //   Mode A：▉ 小節錨點；Mode B：敘事弧。\n"
         "                                   //   結尾禁『總而言之』；必為提問/懸念/更深觀察。\n"
         '  "metaphor_domain_used": "...",   // ENUM，必為以下其一：\n'

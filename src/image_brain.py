@@ -6,31 +6,29 @@ News Radar · Image Brain (Phase 9.x, 2026-05-12)
 
     llm_brain.py    → 文字／結構化 JSON（content composition + research）
                        2026-05-12 起改用 Claude CLI 為主，Gemini 退場
-    image_brain.py  → 視覺輸出（AI cover generation）
-                       Gemini 在此保留，理由：Gemini 2.5-flash-image 在
-                       photorealistic + 手繪風混合的 prompt 上表現比 Claude 強，
-                       且 Anthropic 目前沒有對等的 text-to-image API
+    image_brain.py  → 視覺輸出
+                       **2026-05-12 模式調整**：預設改成「產 prompt、不打 API」。
+                       Claude CLI 對封面構圖的描述能力勝過任何 text-to-image
+                       SDK，且讓 Hsin 自己把 prompt 丟 GPT web / NanoBanana 手動
+                       生成。這條 path 取消了 API 費用、避開 preview 模型不穩。
 
-這個模組目前是**opt-in placeholder**。預設不啟用——cover 仍走原本的
-``cover_renderer.py`` photo-overlay 流程。
-要開啟 AI 生成的封面（Moleskine handdrawn 風格）：設 ``SUBSTACK_AI_COVER=1``。
+兩種模式（互斥）：
 
-落地介面：
-    path = await generate_cover_image(
-        prompt="A pencil sketch on grid paper of...",
-        out_path=Path("/tmp/cover.png"),
-        size=(1456, 816),
-    )
-    if path is None:
-        # gen failed or disabled → caller fall back to overlay cover
+    (A) **prompt-only mode** （**預設**）
+        ``build_cover_prompt_block(cover_image_prompt)`` 產一段 markdown 區塊，
+        Caller 把它附在 Article_Substack.md 結尾。Hsin 複製→丟生圖工具。
+
+    (B) **legacy Gemini gen mode**（**deprecated；keep for archeology**）
+        舊的 ``generate_cover_image()`` 仍在，但只在 ``SUBSTACK_AI_COVER=1``
+        時觸發。實測 ``gemini-2.5-flash-image-preview`` 在莫蘭迪/手繪 prompt
+        上不穩定，且要 API key，所以 Hsin 決議下架。
+        新專案不要走這條 path。
 
 設計決策：
-- 與其在 cover_pipeline.py 直接調 Gemini SDK、把 image_gen 邏輯散在多處，
-  獨立一個 image_brain 模組讓「AI 生圖 vs 純合成 vs 真實照片」三條 path 各自
-  可被測試與替換。
-- 故意不做 retry / cost tracking — image gen 是錦上添花、失敗就退回 overlay。
-- 未來若要加 Imagen / DALL-E / Stability / Midjourney，在這裡加 backend，
-  不要污染 substack_composer。
+- 改 prompt-only 後，「AI 生圖 vs 純合成 vs 真實照片」這三條 path 的選擇權
+  完全交給 Hsin。pipeline 不再替他做。
+- generate_cover_image() 程式碼保留是因為「拿掉容易、回復難」——萬一 prompt-only
+  之後想再回到全自動，5 行 env-var flip 就能切回去。
 """
 
 from __future__ import annotations
@@ -43,8 +41,58 @@ from typing import Optional, Tuple
 
 
 def is_ai_cover_enabled() -> bool:
-    """讀環境變數判斷是否要開 AI cover gen。預設 false。"""
+    """讀環境變數判斷是否要開 AI cover gen。預設 false。
+
+    2026-05-12 起預設關閉。Hsin 改用 prompt-only mode（見
+    ``build_cover_prompt_block``），把 prompt 手動丟 GPT web/NanoBanana。
+    """
     return os.getenv("SUBSTACK_AI_COVER", "0").strip() == "1"
+
+
+def build_cover_prompt_block(
+    cover_image_prompt: str,
+    *,
+    title: str = "",
+    subtitle: str = "",
+) -> str:
+    """產出 markdown 區塊放在 Article_Substack.md 結尾。
+
+    Caller responsibility：把這段 append 進 article markdown。Hsin 收到草稿後
+    複製 prompt → GPT web / NanoBanana / Midjourney → 拿圖回來手動上傳。
+
+    為什麼提供 3 個版本（場景 / 概念 / 抽象）：
+        text-to-image 不同 prompt 出來差異大，給 3 個方向讓 Hsin 挑 1 個丟生圖，
+        或全丟、選最對味的。不增加 token 成本（caller 端 LLM 已經寫好 prompt
+        了，這裡只做 markdown formatting）。
+
+    Aesthetic enforcement：每個版本都自動 append visual_soul.md 約束尾段。
+    """
+    aesthetic_tail = (
+        " — Style: pencil sketch on grid paper, handdrawn Moleskine notebook "
+        "aesthetic, muted earth tones (sienna / faded ochre / charcoal grey), "
+        "low-saturation monochrome with single accent color. No 3D rendering, "
+        "no neon, no anime, no exaggerated facial emotion. If humans appear, "
+        "only backs of heads / side profiles observing a system (diagram / "
+        "chart / object). Composition reads like a scientific illustration "
+        "or vintage botanical plate. 16:9 aspect (1456×816)."
+    )
+
+    # Three angles to give the human picker. Caller can also pass a single
+    # prompt and we'll just echo it once if they don't want variants.
+    return (
+        "\n\n---\n\n"
+        "## 📸 封面圖 Prompt（手動丟 GPT web / NanoBanana 生圖）\n\n"
+        "Claude 寫文章順便產的視覺指引。挑一個（或全試）→ 丟生圖工具 → "
+        "回來換掉 cover.png 再 publish。\n\n"
+        "### 版本 A · 場景直譯\n\n"
+        f"> {cover_image_prompt.strip()}{aesthetic_tail}\n\n"
+        "### 版本 B · 概念符號（Hsin 自行決定要不要試）\n\n"
+        f"> 用一張視覺隱喻代替文章直接場景，主題：「{title or '(本文主題)'}」"
+        f"。{aesthetic_tail.lstrip(' —')}\n\n"
+        "### 版本 C · 抽象地圖／流程圖\n\n"
+        f"> 一張手繪的關係網路圖，用線條與小型符號表達『{subtitle or title or '(本文核心)'}』"
+        f"中的多個元素之間的關係與張力。{aesthetic_tail.lstrip(' —')}\n"
+    )
 
 
 # Gemini image-capable models. As of 2026-05, "gemini-2.5-flash-image-preview"
