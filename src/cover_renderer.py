@@ -84,9 +84,14 @@ FONT_BRAND_PATH = FONT_DIR / "SourceHanSansTC-Regular.otf"
 # Phase 9.5 / 2026-05-02 update: Threads added per Hsin's brand-consistency
 # call. Same 4:5 aspect as IG (Threads feed handles tall images well).
 SPECS: Dict[str, Dict] = {
-    "ig":      {"size": (1080, 1350), "suffix": "ig_4x5"},
-    "fb":      {"size": (1080, 1080), "suffix": "fb_1x1"},
-    "threads": {"size": (1080, 1350), "suffix": "threads_4x5"},
+    "ig":       {"size": (1080, 1350), "suffix": "ig_4x5"},
+    "fb":       {"size": (1080, 1080), "suffix": "fb_1x1"},
+    "threads":  {"size": (1080, 1350), "suffix": "threads_4x5"},
+    # 2026-05-12 — Substack hero (preview/list/email). 1456×816 is the
+    # exact dimension Substack renders post previews at; smaller images
+    # get upscaled (blurry) and taller images get center-cropped (head
+    # cut off). 16:9-ish so it works as Substack email-to-draft hero too.
+    "substack": {"size": (1456, 816),  "suffix": "substack_hero"},
 }
 
 # Background processing
@@ -414,7 +419,7 @@ def _draw_brand_bar(
 
 def render_cover(
     inp: CoverInput,
-    aspect: Literal["ig", "fb"],
+    aspect: Literal["ig", "fb", "threads", "substack"],
     *,
     output_dir: Optional[Path] = None,
 ) -> Path:
@@ -429,7 +434,7 @@ def render_cover(
       6. Write PNG to ``assets/cover_cache/`` (or ``output_dir`` if given).
     """
     if aspect not in SPECS:
-        raise ValueError(f"aspect must be 'ig' or 'fb', got {aspect!r}")
+        raise ValueError(f"aspect must be one of {list(SPECS)}, got {aspect!r}")
     spec = SPECS[aspect]
     target_size = spec["size"]
 

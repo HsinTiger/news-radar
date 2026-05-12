@@ -367,6 +367,7 @@ async def call_for_json(
     gemini_model: str = "gemini-2.0-flash-lite",
     temperature: float = 0.2,
     timeout_s: int = 180,
+    backends: Optional[tuple] = None,
 ) -> LLMResult[T]:
     """核心 API：先試 Claude CLI (Max 方案)，失敗才退 Gemini。
 
@@ -377,6 +378,17 @@ async def call_for_json(
         每篇 ~4 calls 的量級在限制內綽綽有餘。
         Gemini 保留作備援：哪天 Max 掛掉或使用者換 key，這條 path 還在。
 
+    Phase 9.x (2026-05-12) — selective backend opt-out:
+        新 ``backends`` 參數允許呼叫端指定**只用某些 backend**。
+        - None (預設)        → 維持 ("claude_cli", "gemini") 行為：Claude 主、Gemini 備
+        - ("claude_cli",)    → 只試 Claude CLI；失敗直接回 None，**不退 Gemini**
+        - ("gemini",)        → 只試 Gemini；跳過 Claude
+        起源：Substack 長文 composer 改為「Claude CLI only」——實測 Gemini
+        2.5-flash-lite 在 1500 字 hard cap 跟反 AI 味規則上守不住，Claude CLI
+        對 prompt 約束遵守度高很多。Gemini 在 Substack path 等於品質回退，
+        不該被當成 fallback 觸發。Caller 寧可看 Claude CLI fail 也不要拿到
+        Gemini 的次級輸出。
+
     Args:
         system: System instruction（全部前綴）
         prompt: User prompt / 新聞內容 / 評閱指令
@@ -384,50 +396,56 @@ async def call_for_json(
         gemini_model: Gemini 模型名稱（備援用），預設 `gemini-2.0-flash-lite`
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
+        backends: 可指定的 backend 順序與白名單。None = 預設行為。
 
     Returns:
-        LLMResult，data 為 None 表兩條路都失敗（呼叫端要自己 skip）。
+        LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
+    allowed = backends or ("claude_cli", "gemini")
+
     # Path 1: Claude CLI (primary — Claude Max brain)
-    if _claude_cli_available():
-        r1 = await _try_claude_cli(
-            system=system,
-            prompt=prompt,
-            response_model=response_model,
-            timeout_s=timeout_s,
-        )
-        if r1.data is not None:
-            return r1
-        print(
-            f"[llm_brain] ⚠️ Claude CLI 失敗，嘗試 Gemini fallback。"
-            f" reason={r1.raw_error}"
-        )
-    else:
-        print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，嘗試 Gemini fallback。")
+    if "claude_cli" in allowed:
+        if _claude_cli_available():
+            r1 = await _try_claude_cli(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                timeout_s=timeout_s,
+            )
+            if r1.data is not None:
+                return r1
+            tail = "; Gemini 不在 backends 白名單內" if "gemini" not in allowed else "，嘗試 Gemini fallback"
+            print(
+                f"[llm_brain] ⚠️ Claude CLI 失敗{tail}。"
+                f" reason={r1.raw_error}"
+            )
+        else:
+            print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH。")
 
-    # Path 2: Gemini (fallback)
-    if _has_gemini_key():
-        r2 = await _try_gemini(
-            system=system,
-            prompt=prompt,
-            response_model=response_model,
-            model=gemini_model,
-            temperature=temperature,
-        )
-        if r2.data is not None:
-            return r2
-        print(
-            f"[llm_brain] ⚠️ Gemini ({gemini_model}) 失敗。"
-            f" reason={r2.raw_error}"
-        )
-    else:
-        print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，略過 Gemini fallback。")
+    # Path 2: Gemini (fallback or sole, depending on `backends`)
+    if "gemini" in allowed:
+        if _has_gemini_key():
+            r2 = await _try_gemini(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                model=gemini_model,
+                temperature=temperature,
+            )
+            if r2.data is not None:
+                return r2
+            print(
+                f"[llm_brain] ⚠️ Gemini ({gemini_model}) 失敗。"
+                f" reason={r2.raw_error}"
+            )
+        else:
+            print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，略過 Gemini。")
 
-    # Path 3: 全部失敗
+    # Path 3: 所有指定 backend 都失敗
     return LLMResult(
         data=None,
         provider="none",
-        raw_error="both claude_cli and gemini unavailable or failed",
+        raw_error=f"all requested backends failed: {list(allowed)}",
     )
 
 

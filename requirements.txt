@@ -26,3 +26,8 @@ Pillow==11.0.0
 rich==13.9.4              # 終端漂亮輸出（log / table）
 python-dateutil==2.9.0    # 時區處理
 pytest>=7.0
+# ===== Substack draft API（Phase 1, 2026-05-12）=====
+# ma2za/python-substack：非官方但活躍維護（v0.1.18, 2026-03-07）。
+# 用 cookies_string 認證（從 Chrome DevTools 抓），不存密碼。
+# SUBSTACK_AUTO_DRAFT=1 才會被啟用，預設關閉走純 OneDrive paste 流程。
+python-substack==0.1.18
