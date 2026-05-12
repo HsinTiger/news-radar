@@ -43,7 +43,7 @@ ENV_OK=$(
     .venv/bin/python <<'PYEOF'
 from dotenv import load_dotenv
 import os, sys
-load_dotenv()
+load_dotenv(".env")
 required = ('SUBSTACK_AUTO_DRAFT', 'SUBSTACK_COOKIES_STRING', 'SUBSTACK_PUBLICATION_URL')
 missing = [k for k in required if not os.getenv(k)]
 if missing:
