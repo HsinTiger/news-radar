@@ -603,7 +603,9 @@ def push_to_substack_draft(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
             f"audience={audience} cover={'yes' if cover_path else 'no'}"
         )
-        return True
+        # Return draft_id (int) on success, None on failure, so caller can
+        # build the public URL for notify email.
+        return draft_id
     except Exception as exc:
         print(
             f"[Substack] ❌ Draft push failed: {type(exc).__name__}: {exc}\n"
@@ -613,7 +615,7 @@ def push_to_substack_draft(
             f"    - python-substack version mismatch with Substack backend\n"
             f"    Article still saved on disk; paste manually from OneDrive."
         )
-        return False
+        return None
 
 
 def _strip_title_subtitle_lines(md: str, *, title: str, subtitle: str) -> str:
@@ -767,14 +769,55 @@ def mirror_to_onedrive(local_dir: Path, mirror_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 async def run(args: argparse.Namespace) -> int:
+    """Outer wrapper catches any unexpected failure and routes to notify.
+
+    Normal flow returns 0 on success, non-zero exit codes on specific
+    failure modes (LLM, source-pick, etc.). Each documented failure
+    point notifies before returning.
+    """
+    try:
+        return await _run_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        tb_short = "\n".join(_tb.format_exc().splitlines()[-30:])
+        try:
+            from src.notify import notify_substack_failure
+            notify_substack_failure(
+                mode=args.mode,
+                error_msg=f"{type(exc).__name__}: {exc}",
+                traceback_short=tb_short,
+                extra_context={"unexpected_exception": True},
+            )
+        except Exception as notify_exc:
+            print(f"[notify] ❌ failure-path notify itself failed: {notify_exc}")
+        raise
+
+
+async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
+
+    # Import notify lazily so missing src/notify.py (unlikely) doesn't break the
+    # pipeline. Wrap every notify call in try/except inside the helper itself.
+    try:
+        from src.notify import notify_substack_failure, notify_substack_success
+    except Exception:
+        notify_substack_failure = lambda **kw: None  # type: ignore[assignment]
+        notify_substack_success = lambda **kw: None  # type: ignore[assignment]
 
     # 1) Pick source
     if mode == "morning":
         pick = pick_morning_news(news_id=args.news_id)
         if pick is None:
             print("[ERROR] No suitable morning news found in last 48h.")
+            notify_substack_failure(
+                mode=mode,
+                error_msg="No suitable morning news found in last 48h",
+                extra_context={
+                    "likely_cause": "news_radar.db has no news_items rows — main pipeline broken",
+                    "fix_hint": ".venv/bin/python run_pipeline.py --harvest-now --compose-only --buffer-target 2",
+                },
+            )
             return 2
         news_id, raw_title, raw_content, topic_category = pick
         source = {
@@ -840,6 +883,15 @@ async def run(args: argparse.Namespace) -> int:
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")
+        notify_substack_failure(
+            mode=mode,
+            error_msg="LLM 寫稿失敗（Claude CLI + Gemini 兩條路都掛）",
+            extra_context={
+                "backends": os.getenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli"),
+                "fix_hint": "check claude CLI auth: claude -p --output-format json ping",
+                "source_title": raw_title,
+            },
+        )
         return 3
     print(f"[Compose] ✅ title={draft.title!r}")
 
@@ -903,8 +955,9 @@ async def run(args: argparse.Namespace) -> int:
     mirror_to_onedrive(local_dir, mirror_dir)
 
     # 7) Optional Substack draft push (opt-in via SUBSTACK_AUTO_DRAFT=1)
+    draft_id: Optional[int] = None
     if not args.no_draft:
-        push_to_substack_draft(
+        draft_id = push_to_substack_draft(
             article_md_path=article_md,
             title=draft.title,
             subtitle=draft.subtitle,
@@ -913,6 +966,34 @@ async def run(args: argparse.Namespace) -> int:
 
     # 8) Update metaphor history
     append_metaphor_domain(draft.metaphor_domain_used)
+
+    # 9) Notify Hsin via configured channel (Gmail / macOS / both).
+    # Read final article markdown back (footer + cover prompts already appended).
+    try:
+        final_body_md = article_md.read_text(encoding="utf-8")
+    except Exception:
+        final_body_md = draft.body_markdown
+    pub_url = os.getenv("SUBSTACK_PUBLICATION_URL", "https://hsin73.substack.com")
+    draft_url = f"{pub_url}/publish/post/{draft_id}" if draft_id else None
+    from src.substack_composer import SUBSTACK_WORD_FLOOR, SUBSTACK_WORD_CAP, _count_chinese_chars
+    notify_substack_success(
+        mode=mode,
+        draft_title=draft.title,
+        draft_subtitle=draft.subtitle,
+        draft_url=draft_url,
+        body_markdown=final_body_md,
+        metadata={
+            "chinese_chars": _count_chinese_chars(draft.body_markdown),
+            "word_floor": SUBSTACK_WORD_FLOOR,
+            "word_cap": SUBSTACK_WORD_CAP,
+            "metaphor_domain_used": draft.metaphor_domain_used,
+            "hook_type": draft.hook_type,
+            "open_ending_form": draft.open_ending_form,
+            "reading_time_minutes": draft.reading_time_minutes,
+        },
+        audit_warnings=warnings,
+        onedrive_path=str(mirror_dir),
+    )
 
     print(f"\n✨ Draft ready:")
     print(f"    Local:    {local_dir}")

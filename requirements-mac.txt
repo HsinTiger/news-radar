@@ -1,0 +1,18 @@
+# News Radar · Mac-only 相依套件
+# 只在 Mac 端跑 tools/substack_compose.py 才需要這些。
+# Cloud GH Actions workflows (publish_queue / reflect_*) 不需要。
+#
+# 安裝（Mac 端 .venv 內）：
+#   pip install -r requirements.txt -r requirements-mac.txt
+#
+# ============================================================
+# Substack draft API (Phase 1, 2026-05-12)
+# ============================================================
+# ma2za/python-substack：非官方但活躍維護的 Substack draft API wrapper。
+# 走 cookie auth（從 Chrome DevTools 抓），不存密碼。
+# SUBSTACK_AUTO_DRAFT=1 才會被啟用，預設關閉走純 OneDrive paste 流程。
+#
+# 版本選擇：不 pin 版本，讓 pip 自動取最新可用版（避免 0.1.18 偶爾 PyPI 拉
+# 不到的問題）。0.1.18+ 的 API 表面穩定，from_markdown / post_draft /
+# put_draft 都 backward compatible。
+python-substack>=0.1.18

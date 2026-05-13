@@ -25,12 +25,17 @@ echo ""
 # ----------------------------------------------------------------------
 # Step 1: python-substack
 # ----------------------------------------------------------------------
-echo "[1/5] Checking python-substack..."
+echo "[1/6] Checking python-substack..."
 if .venv/bin/python -c "import substack" 2>/dev/null; then
     echo "  → already installed"
 else
-    echo "  → installing..."
-    .venv/bin/pip install -q python-substack
+    echo "  → installing (from requirements-mac.txt)..."
+    if [ -f requirements-mac.txt ]; then
+        .venv/bin/pip install -q -r requirements-mac.txt
+    else
+        # Legacy fallback if requirements-mac.txt is missing
+        .venv/bin/pip install -q "python-substack>=0.1.18"
+    fi
     echo "  → installed"
 fi
 echo ""
@@ -38,7 +43,7 @@ echo ""
 # ----------------------------------------------------------------------
 # Step 2: .env sanity check
 # ----------------------------------------------------------------------
-echo "[2/5] Checking .env..."
+echo "[2/6] Checking .env..."
 ENV_OK=$(
     .venv/bin/python <<'PYEOF'
 from dotenv import load_dotenv
@@ -78,13 +83,13 @@ TS=$(date +%Y%m%d_%H%M%S)
 MORNING_LOG="logs/substack_morning_${TS}.log"
 EVENING_LOG="logs/substack_evening_${TS}.log"
 
-echo "[3/5] Triggering morning draft in background..."
+echo "[3/6] Triggering morning draft in background..."
 nohup .venv/bin/python tools/substack_compose.py morning > "$MORNING_LOG" 2>&1 &
 MORNING_PID=$!
 echo "  → PID $MORNING_PID  log: $MORNING_LOG"
 echo ""
 
-echo "[4/5] Triggering evening draft in background..."
+echo "[4/6] Triggering evening draft in background..."
 nohup .venv/bin/python tools/substack_compose.py evening > "$EVENING_LOG" 2>&1 &
 EVENING_PID=$!
 echo "  → PID $EVENING_PID  log: $EVENING_LOG"
@@ -93,7 +98,7 @@ echo ""
 # ----------------------------------------------------------------------
 # Step 5: Install launchd plists for daily 09:00 + 18:00
 # ----------------------------------------------------------------------
-echo "[5/5] Installing launchd cron (daily 09:00 morning + 18:00 evening)..."
+echo "[5/6] Installing launchd cron (daily 09:00 morning + 18:00 evening)..."
 AGENT_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$AGENT_DIR"
 
@@ -176,6 +181,35 @@ launchctl load -w "$EVENING_PLIST"
 echo "  → installed: $MORNING_PLIST"
 echo "  → installed: $EVENING_PLIST"
 echo "  → cron active. Next fire: tomorrow 09:00 (morning) + today 18:00 (evening if not yet passed)."
+echo ""
+
+# ----------------------------------------------------------------------
+# Step 6: Notify channel verification (2026-05-13)
+# ----------------------------------------------------------------------
+echo "[6/6] Notify channel test..."
+NOTIFY_CH=$(grep "^SUBSTACK_NOTIFY_CHANNEL=" .env 2>/dev/null | cut -d= -f2 | tr -d '"')
+if [ -z "$NOTIFY_CH" ] || [ "$NOTIFY_CH" = "none" ]; then
+    echo "  ⚠️ SUBSTACK_NOTIFY_CHANNEL not set → 跑完不會自動通知你"
+    echo ""
+    echo "  要打開的話, 在 .env 加："
+    echo "    SUBSTACK_NOTIFY_CHANNEL=gmail   # 或 macos / both"
+    echo "    SUBSTACK_NOTIFY_EMAIL=hsin290525@gmail.com"
+    echo "    GMAIL_APP_PASSWORD=<16-字 app password>"
+    echo ""
+    echo "  取得 App Password: https://myaccount.google.com/apppasswords"
+    echo "  （Google 帳號 → 2FA → App passwords → 給此 app 取名「news_radar」"
+    echo "    → 複製 16 字字串貼進 .env）"
+else
+    echo "  → channel=$NOTIFY_CH, sending test ping..."
+    if .venv/bin/python -m src.notify; then
+        echo "  ✅ test 已送出。檢查手機 Gmail 看有沒有收到「[Substack 🧪] notify channel 測試 OK」"
+    else
+        echo "  ⚠️ test 出錯。常見原因："
+        echo "     - Gmail App Password 不對（拿一般密碼塞進去不會成功）"
+        echo "     - 寄件 Gmail 帳號還沒開 2FA (App Password 必須先 2FA)"
+        echo "     - GMAIL_APP_PASSWORD 環境變數沒設"
+    fi
+fi
 echo ""
 
 # ----------------------------------------------------------------------
