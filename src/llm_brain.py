@@ -164,10 +164,15 @@ def _extract_json_blob(text: str) -> Optional[str]:
 
     stripped = text.strip()
 
+    # 注意 (2026-05-13): Claude CLI 有時會在 string value 內塞「真實換行字元」
+    # （不是合法 JSON 的 \n escape）→ strict 模式的 json.loads 會 reject。
+    # 全部用 strict=False（允許 string value 內含 control chars: \n \r \t）。
+    # 標準 JSON spec 不允許，但實務上 Claude CLI / LLM 經常這樣輸出。
+
     # 1) 整段即 JSON
     if stripped.startswith(("{", "[")):
         try:
-            json.loads(stripped)
+            json.loads(stripped, strict=False)
             return stripped
         except json.JSONDecodeError:
             pass  # 繼續試其他策略
@@ -182,7 +187,7 @@ def _extract_json_blob(text: str) -> Optional[str]:
     if fence_match:
         candidate = fence_match.group(1).strip()
         try:
-            json.loads(candidate)
+            json.loads(candidate, strict=False)
             return candidate
         except json.JSONDecodeError:
             pass
@@ -193,7 +198,7 @@ def _extract_json_blob(text: str) -> Optional[str]:
     if first_brace != -1 and last_brace > first_brace:
         candidate = stripped[first_brace:last_brace + 1]
         try:
-            json.loads(candidate)
+            json.loads(candidate, strict=False)
             return candidate
         except json.JSONDecodeError:
             pass
@@ -204,7 +209,7 @@ def _extract_json_blob(text: str) -> Optional[str]:
     if first_br != -1 and last_br > first_br:
         candidate = stripped[first_br:last_br + 1]
         try:
-            json.loads(candidate)
+            json.loads(candidate, strict=False)
             return candidate
         except json.JSONDecodeError:
             pass
@@ -325,9 +330,9 @@ async def _try_claude_cli(
             raw_error=f"no JSON blob in claude output; first 300 chars: {result_text[:300]!r}",
         )
 
-    # 解 + Pydantic validate
+    # 解 + Pydantic validate（strict=False 同上：允許 control chars in string）
     try:
-        obj = json.loads(json_blob)
+        obj = json.loads(json_blob, strict=False)
         parsed = response_model.model_validate(obj)
     except (json.JSONDecodeError, ValidationError) as e:
         return LLMResult(

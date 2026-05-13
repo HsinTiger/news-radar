@@ -119,8 +119,8 @@ cat > "$MORNING_PLIST" <<EOF
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>-lc</string>
-    <string>cd $REPO &amp;&amp; .venv/bin/python tools/substack_compose.py morning</string>
+    <string>-c</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u tools/substack_compose.py morning</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -136,7 +136,11 @@ cat > "$MORNING_PLIST" <<EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
   </dict>
 </dict>
 </plist>
@@ -152,8 +156,8 @@ cat > "$EVENING_PLIST" <<EOF
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>-lc</string>
-    <string>cd $REPO &amp;&amp; .venv/bin/python tools/substack_compose.py evening</string>
+    <string>-c</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u tools/substack_compose.py evening</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -169,7 +173,11 @@ cat > "$EVENING_PLIST" <<EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
   </dict>
 </dict>
 </plist>
