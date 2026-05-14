@@ -58,6 +58,7 @@ from dotenv import load_dotenv
 
 from src.llm_brain import call_for_json
 from src.schema import MultiPlatformDraft, PlatformVariant
+from src.cta_pool import decide_cta, get_cta_prompt_fragment
 
 # 定位 .env 與設定
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -364,6 +365,19 @@ async def compose_multi_platform(
     # 只保留被選中的平台指令
     filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
     system_instruction = _build_system_instruction(main_soul, filtered_appendices)
+
+    # === Phase 2 (2026-05-14): Threads Substack CTA 注入（threads_v2.md §14.6）===
+    # 只在 threads 在 active platforms 內時擲骰；中籤就把 prompt fragment 接到
+    # system_instruction 尾端，由同一個 LLM call 自然帶出 CTA。風格選取會自動
+    # 排除最近 2 篇用過的類，避免演算法 fingerprint。
+    cta_style = None
+    if "threads" in platforms:
+        cta_style = decide_cta()
+        if cta_style is not None:
+            system_instruction += get_cta_prompt_fragment(cta_style)
+            print(f"   ↳ [CTA] 本篇 Threads 注入 Substack CTA，風格類={cta_style}")
+        else:
+            print(f"   ↳ [CTA] 本篇 Threads 不注入 CTA（保持純內容篇）")
 
     # 組裝 Prompt
     prompt = f"""
