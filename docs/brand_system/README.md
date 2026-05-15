@@ -6,8 +6,10 @@ Visual brand system 交付物索引（claude design 設計、Hsin 2026-05-15 收
 
 | 檔案 | 說明 | 用途 |
 |---|---|---|
-| `visual_brand_system_v0.1.html` | claude design 原 HTML scroll-spec doc | 視覺 reference、跨裝置看（瀏覽器打開） |
-| `../../config/visual_brand_system.md` | canonical text spec（從 HTML 萃取要點）| Pipeline / PM agent 寫 image prompt 時讀 |
+| `visual_brand_system_v0.2.html` | claude design v0.2（**current**、real articles + Chinese masthead）| 視覺 reference、PM agent 寫 prompt 時看 |
+| `visual_brand_system_v0.1.html` | claude design v0.1（historic、representative samples）| 版本對照、不再使用 |
+| `prompt_library/` | 6 個 template prompt 模板、calibrated for ChatGPT image | 每篇 dispatch 時 PM agent 抽 hero text 後填空、給你 copy 給生圖工具 |
+| `../../config/visual_brand_system.md` | canonical text spec（從 v0.2 HTML 萃取）| Pipeline / cron / PM agent 機器讀 |
 
 ## 兩處設計
 
@@ -30,8 +32,16 @@ claude design 後續迭代版（v0.2、v0.3...）放同一資料夾、檔名遞�
 
 舊版保留作 reference、不刪除。
 
-## 已知 placeholder
+## v0.2 變更摘要（2026-05-15 晚）
 
-- T04 photo 是 striped block + Unsplash tag note（之後換真實 B&W photo）
-- T02 hourglass 是 basic vector stand-in（之後可用 Noun Project / Streamline icon library）
+- **Masthead pivot**: 主力爸爸我錯了 (Noto Serif TC 700 28px) 左上 為主、NEWS RADAR · Nº · date (mono) 右上 為副
+- **6 covers swap 進 real article hero text**（對應今天 6 篇 real ad-hoc）
+- **§4.5 Do #4 重寫**：「Chinese masthead + EN watermark」取代原「NEWS RADAR top-left」規則
+- **cv5/cv6 visual zone 從 380 → 280px**、hero font 從 124 → 112px（修正 visual 與 hero text overlap）
+- **cv3 duplicate OPENAI label 移除**
+
+## 已知 placeholder（v0.2 仍存在）
+
+- T04 photo 仍 striped block + Unsplash tag note（之後給真實 B&W photo source）
+- T02 coffee cup 是 vector stand-in（Cerebras 篇可考慮 swap 成 wafer chip 視覺、v0.3 議題）
 - 不是 Figma file —— spec doc only、templates 後續可用 Figma 重建

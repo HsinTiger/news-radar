@@ -1,8 +1,9 @@
 # News Radar · Visual Brand System (canonical text spec)
 
 > **Source of truth** for cover design + visual brand language.
-> 從 `docs/brand_system/visual_brand_system_v0.1.html`（claude design 2026-05-15 交付）萃取。
+> 從 `docs/brand_system/visual_brand_system_v0.2.html`（claude design 2026-05-15 晚交付）萃取。
 > 視覺 reference 看 HTML、機器讀 / pipeline / PM agent 寫 image prompt 讀此檔。
+> Current version: **v0.2** · Previous: v0.1（archived in same dir）
 
 ---
 
@@ -107,22 +108,32 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 - 邊距: 上下左右各 64 px
 - Safe zone: 1328 × 688 px
 
-### 區塊分配
+### 區塊分配（v0.2 · Chinese-primary masthead）
 
 ```
 ┌──────────────────────────────────────────┐
 │ TOP BAR  (64px from top, 14px tall)      │
-│ • masthead L  • issue/date R · 雙欄 grid │
+│ • L: 主力爸爸我錯了 (Noto Serif TC 700,   │
+│      28px, letter-spacing .04em)         │
+│ • R: NEWS RADAR · Nº xxx · 2026·MM·DD    │
+│      (JetBrains Mono 11px, .32em,        │
+│      RADAR 著 Sienna)                    │
 │ ───── 2px ink rule ─────                  │
 │                                          │
 │  HERO REGION                             │
 │  • 中文 4-8 字、Noto Serif TC 900        │
-│  • size 120-280 px depending on template │
+│  • size 112-280 px depending on template │
 │  • 占 canvas 30-50% 高度                 │
+│  • 含 ONE Sienna 著色字（hero phrase 內）│
+│                                          │
+│  KICKER（hero 上方）                     │
+│  • JetBrains Mono 13px UPPERCASE         │
+│  • 例：CONTRARIAN · 投資                 │
 │                                          │
 │  ───── 1px ink hairline rule ─────       │
 │ BOT BAR  (64px from bot, 14px tall)      │
-│ • URL L  • category/issue №R · 雙欄 grid │
+│ • L: hsin73.substack.com (gray mono 11px)│
+│ • R: Category / Nº (Sienna mono 11px)    │
 └──────────────────────────────────────────┘
 ```
 
@@ -150,7 +161,8 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 3. **Two colours, period** —— Paper + Ink + 一處 Sienna。Reserved Red 取代 Sienna、絕不共存。
    - 多色 = 讀成「磚牆」、不是「dispatch」。
 
-4. **Masthead + issue stamp visible** —— `NEWS RADAR` 左上、`ISSUE №` 右上、每張封面都要有。
+4. **Chinese masthead + EN watermark visible**（v0.2 修正） —— 「主力爸爸我錯了」Noto Serif TC 700 28px 左上、`NEWS RADAR · Nº xxx · date` JetBrains Mono 右上、每張封面都要有。
+   - Feed thumbnail 一秒識別「中文 newsletter」、英文 wordmark 為 secondary 不搶視覺。
    - 52 期放一起的 feed 必須讀成同一刊物。
 
 5. **Read at 60 × 40 px** —— 打開 thumbnail 列表、讀不到 hero = 整張封面 reject。
@@ -206,20 +218,20 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 - **Source**: Unsplash desaturated 或 in-house photography
 - **Rule**: 沒有 portrait、沒有人臉看鏡頭、沒有 face
 
-### T05 · Diagram
+### T05 · Diagram（v0.2 修正：visual zone 380→280px、hero 124→112px）
 
-- **Formula**: 雙欄對照（直覺 vs 事實 / before vs after / 你以為 vs 真的）
+- **Formula**: 雙欄對照（直覺 vs 事實 / before vs after / 你以為 vs 真的）放上 280px、HERO 在底
 - **When**: 文章核心是一個 reframing
-- **Specs**: HERO（左+右各一）54px / 中央分隔欄 80px wide / TIME 4 min
-- 左欄: Paper 底 + Ink hero
-- 右欄: Ink 底 + Paper hero（反白突顯 contrarian）
+- **Specs**: 對照 diagram 280px 高 / HERO 112px / 中央分隔欄 80px wide / TIME 4 min
+- 左欄: Paper 底 + Ink hero（直覺 / INTUITION 標籤）
+- 右欄: Ink 底 + Paper hero（事實 / TRUTH 標籤、反白突顯 contrarian）
 - 中央 `VS` 用 Mono vertical-rl
 
-### T06 · Scene / stage
+### T06 · Scene / stage（v0.2 修正：visual zone 380→280px、hero 124→112px）
 
-- **Formula**: 場景 wash + foreground hero
+- **Formula**: 場景 wash 上 280px + HERO 在底 112px
 - **When**: 敘事性開場（凌晨一點 / 觀眾席 / 廚房）
-- **Specs**: HERO 168px / scene flat-fill 或 stage spotlight / TIME 5 min
+- **Specs**: scene 280px 高 / HERO 112px / scene flat-fill 或 stage spotlight / TIME 5 min
 
 ---
 
@@ -279,20 +291,19 @@ Step 5 · Render 1456 × 816
 
 ---
 
-## §9 Wordmark · Masthead 決策
+## §9 Wordmark · Masthead（v0.2 confirmed Option A）
 
-### claude design 預設
+### 規格
 
-`NEWS RADAR` 英文 monospace、左上、Sienna 強調 `RADAR`。
+- **左上 primary**: 「主力爸爸我錯了」Noto Serif TC weight 700、28px、letter-spacing .04em、color Press Ink #141414
+- **右上 secondary**: `NEWS RADAR · Nº xxx · 2026·MM·DD` JetBrains Mono 11px、letter-spacing .32em UPPERCASE、color Press Ink #141414、`RADAR` 著 Sienna #C84A32
+- **底下 2px solid #141414 horizontal rule** 隔開 top bar 跟 hero region
 
-### Hsin 決策（待定 · 2026-05-15）
+### 邏輯
 
-選項：
-- **A**: 「主力爸爸我錯了」中文 masthead 為主、`NEWS RADAR` 為 secondary watermark
-- **B**: `NEWS RADAR` 英文 only（claude design 預設）
-- **C**: 中英並列
+訂閱者看 feed thumbnail 那一秒要立刻認出「中文 newsletter」。`NEWS RADAR` 英文太通用易跟其他英文 newsletter 混淆。中文 masthead 在 thumbnail 是 differentiator、英文 wordmark 為 secondary issue ID 旁的小字即可。
 
-PM agent 推薦 A：訂閱者 thumbnail 一秒識別「中文 newsletter」、英文太通用易混淆。
+Dark cover (T04 / invert mode) 同樣規則、masthead 用 Paper #F2EEE5 色。
 
 ---
 
@@ -319,6 +330,18 @@ PM agent 推薦 A：訂閱者 thumbnail 一秒識別「中文 newsletter」、�
 
 | 版本 | 日期 | 來源 | 變更 |
 |---|---|---|---|
-| v0.1 | 2026-05-15 | claude design 首次交付 | initial |
+| v0.1 | 2026-05-15 早 | claude design 首次交付 | initial · representative samples · NEWS RADAR-only masthead |
+| **v0.2** | **2026-05-15 晚** | **claude design 第二輪迭代** | **Chinese masthead pivot (主力爸爸我錯了 primary + NEWS RADAR secondary) · real article hero text 對應 6 covers · cv5/cv6 visual zone 380→280 + hero 124→112 · cv3 duplicate OPENAI label 移除** |
 
-下次迭代 → `visual_brand_system_v0.2.md`、舊版保留 reference。
+### v0.2 · 6 covers real article 對應
+
+| Template | Article | Hero text | Hero size | Sienna 落點 | Kicker | Issue / Cat |
+|---|---|---|---|---|---|---|
+| T01 Pure type | 精美的廢話（網-樹-線投資寫作）| 精美的**廢話**。| 240px | 「廢話」字 | CONTRARIAN · 決策 | Nº 023 / Decision |
+| T02 Single object | OpenAI 要喝 200 億美元的單品咖啡 | 200億的**單品**咖啡。| 160px | 「單品」字 | MARKET · AI 資本 | Nº 019 / Capital |
+| T03 Data / chart | 9% → 34.4% Anthropic | 9% → **34.4%** | 138px | 「34.4%」字 | MARKET · AI 採用 | Nº 047 / AI |
+| T04 B&W photo | 我發現自己是個討厭的講師 | 學會**閉嘴**。 | 236px | 「閉嘴」字（dark bg）| ESSAY · 個人 | Nº 011 / Essay |
+| T05 Diagram | 為什麼學最多 AI 框架的人最先出局？ | 學最多，最先**出局**。 | 112px | 「出局」字 | CONTRARIAN · 學習 | Nº 034 / Learning |
+| T06 Scene | 主角會死、配角會富 | 主角會死，配角**會富**。 | 112px | 「會富」字 | THESIS · 投資 | Nº 042 / Thesis |
+
+下次迭代 → `visual_brand_system_v0.3.html` + 同步更新本檔 §12 + 整體相關章節。舊版保留 reference。
