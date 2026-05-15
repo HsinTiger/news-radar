@@ -1,0 +1,1229 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280" />
+<title>News Radar · Visual Brand System v0.1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F2EEE5;
+    --paper-2:#E8E3D6;
+    --ink:#141414;
+    --ink-2:#2A2724;
+    --stone:#8A8378;
+    --hair:#1F1F1F;
+    --accent:#C84A32;      /* Sienna — house accent */
+    --alert:#B0241D;       /* Reserved: market/crisis pieces */
+    --quiet:#5B544A;
+    --rule:rgba(20,20,20,.85);
+    --rule-hair:rgba(20,20,20,.35);
+
+    --serif:'Noto Serif TC', 'Songti TC', 'PingFang TC', Georgia, serif;
+    --sans:'Noto Sans TC','PingFang TC','Helvetica Neue', Arial, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --display:'Instrument Serif', 'Noto Serif TC', Georgia, serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  ::selection{background:var(--accent);color:var(--paper)}
+
+  /* ---------- Document chrome ---------- */
+  .doc{max-width:1280px;margin:0 auto;padding:64px 56px 160px}
+  .masthead{
+    display:grid;grid-template-columns:1fr auto;align-items:end;
+    padding-bottom:18px;border-bottom:2px solid var(--ink);
+    margin-bottom:48px;
+  }
+  .masthead .pub{
+    font-family:var(--mono);
+    font-size:11px;letter-spacing:.32em;text-transform:uppercase;
+    color:var(--ink);
+  }
+  .masthead .pub b{color:var(--accent);font-weight:700}
+  .masthead .meta{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--stone);text-transform:uppercase;text-align:right;
+  }
+  .docTitle{
+    font-family:var(--display);
+    font-weight:400;
+    font-size:clamp(64px, 8.2vw, 104px);
+    line-height:1.02;
+    letter-spacing:-.02em;
+    margin:8px 0 28px;
+    color:var(--ink);
+  }
+  .docTitle em{font-style:italic;color:var(--accent);font-family:var(--display)}
+  .docLede{
+    font-family:var(--serif);
+    font-size:22px;line-height:1.45;max-width:780px;
+    color:var(--ink-2);font-weight:500;
+  }
+  .docLede .stamp{
+    display:inline-block;border:1.5px solid var(--accent);color:var(--accent);
+    padding:1px 8px 2px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.18em;text-transform:uppercase;vertical-align:3px;margin-right:6px;
+  }
+
+  /* ---------- Section system ---------- */
+  section{margin-top:96px;scroll-margin-top:32px}
+  .secHead{
+    display:grid;grid-template-columns:120px 1fr;gap:24px;align-items:baseline;
+    padding-bottom:14px;border-bottom:1px solid var(--rule);
+    margin-bottom:28px;
+  }
+  .secNum{
+    font-family:var(--mono);font-size:12px;letter-spacing:.24em;
+    color:var(--accent);text-transform:uppercase;
+  }
+  .secTitleRow{display:grid;grid-template-columns:1fr auto;align-items:end;gap:24px}
+  .secTitle{
+    font-family:var(--display);font-weight:400;font-size:48px;line-height:1;
+    margin:0;letter-spacing:-.01em;
+  }
+  .secTag{
+    font-family:var(--mono);font-size:11px;letter-spacing:.22em;
+    color:var(--stone);text-transform:uppercase;
+    align-self:end;white-space:nowrap;padding-bottom:6px;
+  }
+  .secLede{
+    font-family:var(--serif);font-size:18px;line-height:1.55;
+    max-width:760px;color:var(--ink-2);margin:0 0 28px;
+  }
+
+  /* ---------- 4.1 Brand DNA ---------- */
+  .dna{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:32px}
+  .dna .cell{background:var(--paper);padding:22px 18px 24px;display:flex;flex-direction:column;gap:10px;min-height:200px}
+  .dna .cell .n{font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--accent)}
+  .dna .cell .adj{font-family:var(--display);font-size:36px;line-height:1.02;color:var(--ink)}
+  .dna .cell .zh{font-family:var(--serif);font-weight:700;font-size:17px;color:var(--ink)}
+  .dna .cell .gloss{font-family:var(--sans);font-size:13px;color:var(--quiet);line-height:1.5;margin-top:auto}
+
+  .twoCol{display:grid;grid-template-columns:1.1fr .9fr;gap:48px}
+  .refMap{border:1px solid var(--rule);padding:22px 24px;background:var(--paper)}
+  .refMap h4{font-family:var(--mono);font-size:11px;letter-spacing:.22em;margin:0 0 14px;text-transform:uppercase;color:var(--stone)}
+  .refRow{display:grid;grid-template-columns:160px 1fr;gap:18px;padding:12px 0;border-top:1px dashed var(--rule-hair);align-items:baseline}
+  .refRow:first-of-type{border-top:0;padding-top:2px}
+  .refRow .name{font-family:var(--serif);font-weight:700;font-size:16px}
+  .refRow .name em{font-style:italic;font-weight:500;color:var(--quiet);font-size:13px;display:block;font-family:var(--sans)}
+  .refRow .take{font-family:var(--sans);font-size:14px;color:var(--ink-2);line-height:1.55}
+  .refRow .take b{color:var(--accent);font-weight:600}
+
+  .voiceAlign{border:1px solid var(--rule);padding:22px 24px;background:var(--paper)}
+  .voiceAlign h4{font-family:var(--mono);font-size:11px;letter-spacing:.22em;margin:0 0 14px;text-transform:uppercase;color:var(--stone)}
+  .voiceRow{display:grid;grid-template-columns:1fr 14px 1fr;align-items:center;gap:12px;padding:10px 0;border-top:1px dashed var(--rule-hair)}
+  .voiceRow:first-of-type{border-top:0}
+  .voiceRow .l{font-family:var(--serif);font-weight:700;font-size:16px}
+  .voiceRow .r{font-family:var(--serif);font-size:16px;color:var(--accent);font-weight:700}
+  .voiceRow .arrow{font-family:var(--mono);color:var(--stone);text-align:center}
+
+  /* ---------- 4.2 Color ---------- */
+  .palette{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:28px}
+  .sw{background:var(--paper);padding:14px 14px 16px;display:flex;flex-direction:column;gap:10px;min-height:220px}
+  .sw .chip{height:88px;border:1px solid rgba(20,20,20,.12)}
+  .sw .role{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--stone);text-transform:uppercase}
+  .sw .nm{font-family:var(--serif);font-weight:700;font-size:18px;color:var(--ink)}
+  .sw .hex{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+  .sw .use{font-family:var(--sans);font-size:12px;color:var(--quiet);line-height:1.45}
+
+  .ratioBar{
+    height:46px;display:flex;border:1px solid var(--rule);font-family:var(--mono);
+    font-size:11px;letter-spacing:.16em;color:var(--paper);overflow:hidden;
+  }
+  .ratioBar > div{display:flex;align-items:center;padding:0 12px;text-transform:uppercase}
+  .ratioLegend{display:flex;gap:24px;margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--quiet);letter-spacing:.14em;text-transform:uppercase;flex-wrap:wrap}
+  .ratioLegend span b{color:var(--ink);font-weight:700}
+
+  .rulesGrid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:32px}
+  .ruleCard{border:1px solid var(--rule);padding:18px 20px 20px;background:var(--paper)}
+  .ruleCard h5{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--stone);margin:0 0 10px}
+  .ruleCard p{margin:0 0 8px;font-family:var(--serif);font-size:15px;line-height:1.55;color:var(--ink-2)}
+  .ruleCard p b{color:var(--ink);font-weight:700}
+  .ruleCard p .a{color:var(--accent);font-weight:700}
+
+  /* ---------- 4.3 Type ---------- */
+  .typeRow{
+    display:grid;grid-template-columns:200px 1fr 280px;gap:24px;
+    padding:24px 0;border-top:1px solid var(--rule-hair);align-items:start;
+  }
+  .typeRow:first-of-type{border-top:1px solid var(--rule)}
+  .typeMeta .role{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
+  .typeMeta .nm{font-family:var(--serif);font-weight:700;font-size:20px;margin-top:4px}
+  .typeMeta .spec{font-family:var(--mono);font-size:11px;color:var(--quiet);margin-top:6px;line-height:1.65}
+  .typeRow .fallbacks{font-family:var(--mono);font-size:11px;color:var(--quiet);line-height:1.7}
+  .typeRow .fallbacks h6{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--stone);margin:0 0 8px;text-transform:uppercase;font-weight:700}
+  .specimen{overflow:hidden;line-height:.95}
+  .sp-hero{font-family:var(--serif);font-weight:900;font-size:112px;letter-spacing:-.02em;color:var(--ink);line-height:.92}
+  .sp-sub{font-family:var(--sans);font-weight:500;font-size:34px;color:var(--ink-2);line-height:1.15;letter-spacing:.01em}
+  .sp-mark{font-family:var(--mono);font-weight:700;font-size:22px;letter-spacing:.32em;text-transform:uppercase;color:var(--ink)}
+  .sp-mark b{color:var(--accent)}
+  .sp-meta{font-family:var(--mono);font-weight:400;font-size:18px;letter-spacing:.06em;color:var(--quiet)}
+
+  /* ---------- 4.4 Grid ---------- */
+  .gridDemoWrap{
+    position:relative;width:100%;
+    aspect-ratio:1456 / 816;
+    border:1px solid var(--rule);background:var(--paper);
+    overflow:hidden;
+  }
+  .gridDemo{
+    position:absolute;inset:0;
+    background:
+      linear-gradient(to right, transparent calc(64/1456*100%), rgba(200,74,50,.18) calc(64/1456*100%), rgba(200,74,50,.18) calc(65/1456*100%), transparent calc(65/1456*100%)),
+      linear-gradient(to right, transparent calc(1391/1456*100%), rgba(200,74,50,.18) calc(1391/1456*100%), rgba(200,74,50,.18) calc(1392/1456*100%), transparent calc(1392/1456*100%)),
+      linear-gradient(to bottom, transparent calc(64/816*100%), rgba(200,74,50,.18) calc(64/816*100%), rgba(200,74,50,.18) calc(65/816*100%), transparent calc(65/816*100%)),
+      linear-gradient(to bottom, transparent calc(751/816*100%), rgba(200,74,50,.18) calc(751/816*100%), rgba(200,74,50,.18) calc(752/816*100%), transparent calc(752/816*100%));
+  }
+  .gridDemo .cols{
+    position:absolute;inset:0 64px;
+    background-image:repeating-linear-gradient(to right,
+      rgba(20,20,20,.06) 0,
+      rgba(20,20,20,.06) calc((1328 - 11*16)/12*1px / (1456 / 100) * 1%),
+      transparent 0,
+      transparent calc(((1328 - 11*16)/12 + 16)*1px / (1456 / 100) * 1%));
+  }
+  .gridDemo .zones{position:absolute;inset:0}
+  .zone{position:absolute;border:1px dashed rgba(20,20,20,.55);background:rgba(200,74,50,.04);
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--ink);text-transform:uppercase;
+    padding:8px 10px;display:flex;flex-direction:column;justify-content:space-between;
+  }
+  .zone .lbl{display:flex;justify-content:space-between;align-items:baseline}
+  .zone .lbl b{color:var(--accent);font-weight:700}
+  .zone .dim{color:var(--quiet);font-size:10px;letter-spacing:.18em}
+  .gridLegend{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:22px;font-family:var(--mono);font-size:12px}
+  .gridLegend > div{border-top:1px solid var(--rule);padding-top:10px}
+  .gridLegend h6{margin:0 0 4px;font-size:10px;letter-spacing:.22em;color:var(--stone);text-transform:uppercase;font-weight:700}
+  .gridLegend p{margin:0;font-size:12px;color:var(--ink-2);line-height:1.55;font-family:var(--sans)}
+  .gridLegend p b{font-family:var(--mono);color:var(--accent)}
+
+  /* ---------- 4.5 Do/Don't ---------- */
+  .dosdonts{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--rule)}
+  .ddCol{padding:24px 28px}
+  .ddCol.do{background:var(--paper);border-right:1px solid var(--rule)}
+  .ddCol.dont{background:#1a1a1a;color:#E8E3D6}
+  .ddHead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid currentColor;padding-bottom:10px;margin-bottom:14px;opacity:.85}
+  .ddHead .h{font-family:var(--display);font-size:30px;line-height:1}
+  .ddHead .h em{font-style:italic}
+  .ddHead .t{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;opacity:.7}
+  .ddCol.do .ddHead .h em{color:var(--accent)}
+  .ddCol.dont .ddHead .h em{color:#E07F66}
+  .ddList{list-style:none;margin:0;padding:0;counter-reset:dd}
+  .ddList li{
+    counter-increment:dd;
+    padding:14px 0 14px 56px;border-top:1px dashed currentColor;
+    position:relative;font-family:var(--serif);font-size:17px;line-height:1.4;
+  }
+  .ddList li:first-child{border-top:0}
+  .ddList li::before{
+    content:counter(dd,decimal-leading-zero);
+    position:absolute;left:0;top:14px;
+    font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+    opacity:.55;
+  }
+  .ddList li .why{
+    display:block;margin-top:6px;
+    font-family:var(--sans);font-size:13px;line-height:1.5;
+    opacity:.7;
+  }
+  .ddCol.do .ddList li b{color:var(--accent)}
+  .ddCol.dont .ddList li b{color:#E07F66}
+
+  /* ---------- 4.6 Templates ---------- */
+  .tplGrid{display:grid;grid-template-columns:1fr;gap:64px}
+  .tpl{display:grid;grid-template-columns:1fr 360px;gap:36px;align-items:start}
+  .tplFrame{
+    position:relative;
+    width:100%;aspect-ratio:1456 / 816;
+    border:1px solid var(--rule);
+    box-shadow:0 30px 60px -40px rgba(20,20,20,.45), 0 6px 14px -8px rgba(20,20,20,.2);
+    overflow:hidden;background:var(--paper);
+  }
+  .tplFrame .canvas{
+    position:absolute;top:0;left:0;
+    width:1456px;height:816px;
+    transform-origin:top left;
+  }
+  .tplSide{padding-top:2px}
+  .tplSide .num{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
+  .tplSide h3{font-family:var(--display);font-size:34px;line-height:1.02;margin:6px 0 4px;font-weight:400;letter-spacing:-.01em}
+  .tplSide .formula{font-family:var(--mono);font-size:11px;color:var(--stone);letter-spacing:.16em;text-transform:uppercase;margin-bottom:14px}
+  .tplSide p{font-family:var(--serif);font-size:15px;line-height:1.55;color:var(--ink-2);margin:0 0 10px}
+  .tplSide p b{color:var(--ink)}
+  .tplSide .when{
+    border-top:1px solid var(--rule);margin-top:14px;padding-top:12px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--quiet);
+    text-transform:uppercase;line-height:1.7;
+  }
+  .tplSide .when b{color:var(--accent);font-weight:700}
+  .specStrip{
+    display:flex;gap:18px;margin-top:14px;flex-wrap:wrap;
+    font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--quiet);text-transform:uppercase;
+  }
+  .specStrip span b{color:var(--ink);font-weight:700}
+
+  /* ---------- Cover canvas shared ---------- */
+  .cover{
+    position:relative;width:1456px;height:816px;background:var(--paper);
+    color:var(--ink);font-family:var(--serif);
+    overflow:hidden;
+  }
+  .cover .safe{position:absolute;inset:64px 64px 64px 64px}
+  .cover .topBar{
+    position:absolute;left:64px;right:64px;top:64px;
+    display:flex;justify-content:space-between;align-items:flex-end;
+    padding-bottom:14px;border-bottom:2px solid var(--ink);
+  }
+  .cover .topBar .mark{
+    font-family:var(--mono);font-weight:700;font-size:18px;letter-spacing:.34em;text-transform:uppercase;
+  }
+  .cover .topBar .mark b{color:var(--accent);font-weight:700}
+  .cover .topBar .issue{
+    font-family:var(--mono);font-size:14px;letter-spacing:.18em;color:var(--ink-2);text-transform:uppercase;
+  }
+  .cover .botBar{
+    position:absolute;left:64px;right:64px;bottom:64px;
+    display:flex;justify-content:space-between;align-items:baseline;
+    padding-top:14px;border-top:1px solid var(--ink);
+  }
+  .cover .botBar .url{font-family:var(--mono);font-size:14px;letter-spacing:.16em;color:var(--ink-2)}
+  .cover .botBar .cat{font-family:var(--mono);font-size:14px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase;font-weight:700}
+
+  /* Type-specific styles */
+  .hero{
+    font-family:var(--serif);font-weight:900;color:var(--ink);
+    letter-spacing:-.02em;line-height:.92;
+  }
+  .hero .acc{color:var(--accent)}
+  .kicker{
+    font-family:var(--mono);font-size:14px;letter-spacing:.28em;
+    color:var(--accent);text-transform:uppercase;font-weight:700;
+  }
+  .deck{
+    font-family:var(--sans);font-weight:500;font-size:22px;
+    line-height:1.45;color:var(--ink-2);max-width:780px;
+  }
+
+  /* ---------- Thumbnail test strip ---------- */
+  .thumbTest{
+    margin-top:48px;padding:28px 32px;border:1px solid var(--rule);
+    background:#1a1a1a;color:var(--paper);
+  }
+  .thumbTest h4{font-family:var(--mono);font-size:12px;letter-spacing:.24em;color:var(--accent);margin:0;text-transform:uppercase;font-weight:700}
+  .thumbTest .lede{font-family:var(--serif);font-size:18px;line-height:1.5;margin:8px 0 22px;color:var(--paper-2);max-width:760px}
+  .thumbStrip{display:grid;grid-template-columns:repeat(6,1fr);gap:18px}
+  .thumbCell{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .thumbWrap{
+    width:90px;height:50px;border:1px solid rgba(242,238,229,.25);
+    overflow:hidden;background:var(--paper);position:relative;
+  }
+  .thumbWrap .canvas{position:absolute;top:0;left:0;transform-origin:top left}
+  .thumbCell .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:rgba(242,238,229,.65);text-align:center}
+
+  /* ---------- 4.7 Workflow ---------- */
+  .tree{display:grid;grid-template-columns:1fr;gap:0;border:1px solid var(--rule);background:var(--paper)}
+  .treeRow{display:grid;grid-template-columns:80px 1fr 200px 160px;gap:18px;align-items:center;padding:14px 18px;border-top:1px solid var(--rule-hair)}
+  .treeRow:first-of-type{border-top:0}
+  .treeRow .step{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
+  .treeRow .q{font-family:var(--serif);font-weight:700;font-size:16px}
+  .treeRow .a{font-family:var(--sans);font-size:13px;color:var(--quiet)}
+  .treeRow .pick{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--ink);text-transform:uppercase;
+    border:1.5px solid var(--accent);padding:6px 10px;text-align:center;
+  }
+  .treeRow .time{font-family:var(--mono);font-size:11px;color:var(--stone);text-align:right;letter-spacing:.16em;text-transform:uppercase}
+
+  .extractGrid{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;margin-top:32px}
+  .extract{border:1px solid var(--rule);padding:22px 24px;background:var(--paper)}
+  .extract h4{font-family:var(--mono);font-size:11px;letter-spacing:.22em;margin:0 0 14px;text-transform:uppercase;color:var(--stone)}
+  .extract ol{padding-left:18px;margin:0;font-family:var(--serif);font-size:15px;line-height:1.7}
+  .extract ol li b{color:var(--accent)}
+  .extract .ex{
+    margin-top:14px;padding-top:14px;border-top:1px dashed var(--rule-hair);
+    font-family:var(--mono);font-size:12px;line-height:1.7;
+  }
+  .extract .ex .from{color:var(--quiet)}
+  .extract .ex .to{color:var(--ink);font-weight:700}
+  .extract .ex .arrow{color:var(--accent);margin:0 8px}
+
+  .assetSources{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule)}
+  .asCell{background:var(--paper);padding:18px 18px 20px}
+  .asCell .role{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase}
+  .asCell .nm{font-family:var(--serif);font-weight:700;font-size:18px;margin:4px 0 8px}
+  .asCell .src{font-family:var(--mono);font-size:12px;color:var(--ink-2);line-height:1.7}
+  .asCell .note{font-family:var(--sans);font-size:13px;color:var(--quiet);margin-top:8px;line-height:1.5}
+
+  /* ---------- Footer ---------- */
+  .colophon{
+    margin-top:120px;padding-top:18px;border-top:2px solid var(--ink);
+    display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:18px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--stone);text-transform:uppercase;
+  }
+  .colophon b{color:var(--accent);font-weight:700}
+
+  /* utility */
+  .accentText{color:var(--accent)}
+  .mono{font-family:var(--mono)}
+  .small{font-size:12px}
+
+  /* tweaks panel offset */
+  body[data-tweaks-on] .doc{padding-right:340px}
+</style>
+</head>
+<body>
+<div class="doc" id="doc">
+
+  <!-- =================== MASTHEAD =================== -->
+  <header class="masthead">
+    <div class="pub">News Radar &nbsp;·&nbsp; <b>主力爸爸我錯了</b> &nbsp;·&nbsp; hsin73.substack.com</div>
+    <div class="meta">Visual Brand System · v0.1 · May 15 2026</div>
+  </header>
+
+  <h1 class="docTitle">A cold dispatch,<br>not a <em>self‑help poster.</em></h1>
+  <p class="docLede">
+    <span class="stamp">Brief</span>
+    News Radar is a contrarian business‑analysis publication. Its covers should read like a
+    printed market dispatch — typographic, restrained, slightly hostile to decoration — and never like
+    a LinkedIn motivational tile. This document is the visual operating system: one accent, one paper,
+    one set of templates, five minutes per cover.
+  </p>
+
+  <!-- =================== 4.1 BRAND DNA =================== -->
+  <section id="dna">
+    <div class="secHead">
+      <div class="secNum">§ 4.1 / Brand DNA</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">Five adjectives, one posture.</h2>
+        <div class="secTag">Visual personality</div>
+      </div>
+    </div>
+    <p class="secLede">Pick five words, not fifty. Every visual decision in this doc must defend itself
+    against one of these. If a layout doesn't read <i>cold, editorial, contrarian, disciplined,</i>
+    or <i>analytic</i> at a glance, it does not ship.</p>
+
+    <div class="dna">
+      <div class="cell">
+        <div class="n">01 / COLD</div>
+        <div class="adj">Cold</div>
+        <div class="zh">冷感</div>
+        <div class="gloss">No grins, no exclamation marks, no warmth tax. The page feels like a Tuesday‑morning briefing.</div>
+      </div>
+      <div class="cell">
+        <div class="n">02 / EDITORIAL</div>
+        <div class="adj">Editorial</div>
+        <div class="zh">編輯感</div>
+        <div class="gloss">Treated like a printed page: masthead, rule, body, byline. Type does the work, not decoration.</div>
+      </div>
+      <div class="cell">
+        <div class="n">03 / CONTRARIAN</div>
+        <div class="adj">Contrarian</div>
+        <div class="zh">逆風</div>
+        <div class="gloss">One hero claim, often inverting the consensus. The cover argues a position, never summarises.</div>
+      </div>
+      <div class="cell">
+        <div class="n">04 / DISCIPLINED</div>
+        <div class="adj">Disciplined</div>
+        <div class="zh">紀律</div>
+        <div class="gloss">Two colours, two type families, one grid. Repetition across 52 issues is the brand.</div>
+      </div>
+      <div class="cell">
+        <div class="n">05 / ANALYTIC</div>
+        <div class="adj">Analytic</div>
+        <div class="zh">分析感</div>
+        <div class="gloss">Numbers, axes, ratios are welcome — as long as they argue. Decorative charts are forbidden.</div>
+      </div>
+    </div>
+
+    <div class="twoCol">
+      <div class="refMap">
+        <h4>Reference map · we look like X, with a Y twist</h4>
+        <div class="refRow">
+          <div class="name">Editorial typography<em>(extreme‑type analyst blogs)</em></div>
+          <div class="take">Take the <b>typographic confidence</b> — hero text dominates, imagery is optional. Reject the all‑white minimalism: we use warm paper, not screen white.</div>
+        </div>
+        <div class="refRow">
+          <div class="name">Financial press dispatch<em>(printed newsletter feel)</em></div>
+          <div class="take">Take the <b>masthead + rule + issue stamp</b> structure. Reject the dense column grid — we leave more negative space.</div>
+        </div>
+        <div class="refRow">
+          <div class="name">Flat‑illustration commentary<em>(market satire publications)</em></div>
+          <div class="take">Take the <b>bold flat headline overlay</b>. Reject the cartoon characters and the joke‑per‑cover energy.</div>
+        </div>
+        <div class="refRow">
+          <div class="name">Photo‑led essay covers<em>(slow, atmospheric blogs)</em></div>
+          <div class="take">Take the <b>single, restrained image</b> as anchor. Reject the moodboard‑and‑sigh tone; our captions argue.</div>
+        </div>
+        <div class="refRow">
+          <div class="name">Info‑dense market notes<em>(retail equity newsletters)</em></div>
+          <div class="take">Take the <b>red date stamp + numeric prominence</b>. Reject the wall‑of‑data cover — we extract one number, not twenty.</div>
+        </div>
+      </div>
+
+      <div class="voiceAlign">
+        <h4>Voice → Visual alignment</h4>
+        <div class="voiceRow">
+          <div class="l">Contrarian claim</div>
+          <div class="arrow">→</div>
+          <div class="r">One hero line, no qualifier</div>
+        </div>
+        <div class="voiceRow">
+          <div class="l">Cold tone</div>
+          <div class="arrow">→</div>
+          <div class="r">Warm paper, near‑black ink, single accent</div>
+        </div>
+        <div class="voiceRow">
+          <div class="l">No 雞湯</div>
+          <div class="arrow">→</div>
+          <div class="r">No gradients, no glow, no exclamation</div>
+        </div>
+        <div class="voiceRow">
+          <div class="l">Business analysis</div>
+          <div class="arrow">→</div>
+          <div class="r">Issue #, date stamp, category tag — always</div>
+        </div>
+        <div class="voiceRow">
+          <div class="l">High‑agency reader</div>
+          <div class="arrow">→</div>
+          <div class="r">Trusts type over imagery; rewards restraint</div>
+        </div>
+        <div class="voiceRow">
+          <div class="l">2 篇/day cadence</div>
+          <div class="arrow">→</div>
+          <div class="r">Templates do the work, not authoring</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.2 COLOR =================== -->
+  <section id="color">
+    <div class="secHead">
+      <div class="secNum">§ 4.2 / Color</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">One paper. One ink. One accent.</h2>
+        <div class="secTag">Palette &amp; usage</div>
+      </div>
+    </div>
+    <p class="secLede">The whole system is two colours doing real work, plus a reserved alert red.
+    Treat <span class="accentText"><b>Sienna</b></span> as a noun you can place once per cover, not a decoration you sprinkle.
+    Crisis red is for crisis pieces only — typically &lt;10% of issues.</p>
+
+    <div class="palette" id="palette">
+      <div class="sw"><div class="chip" style="background:#F2EEE5"></div><div class="role">01 / Paper</div><div class="nm">Cold Paper</div><div class="hex">#F2EEE5 &nbsp; oklch .94 .012 84</div><div class="use">Default background. Never pure white.</div></div>
+      <div class="sw"><div class="chip" style="background:#141414"></div><div class="role">02 / Ink</div><div class="nm">Press Ink</div><div class="hex">#141414 &nbsp; oklch .19 .001 0</div><div class="use">Hero text, rules, masthead. Near‑black, never #000.</div></div>
+      <div class="sw"><div class="chip" style="background:#C84A32"></div><div class="role">03 / Accent</div><div class="nm">Sienna Mark</div><div class="hex">#C84A32 &nbsp; oklch .56 .15 35</div><div class="use">House accent. One placement per cover.</div></div>
+      <div class="sw"><div class="chip" style="background:#B0241D"></div><div class="role">04 / Reserved</div><div class="nm">Alert Red</div><div class="hex">#B0241D &nbsp; oklch .47 .17 28</div><div class="use">Crisis / crash pieces only. Replaces Sienna entirely.</div></div>
+      <div class="sw"><div class="chip" style="background:#8A8378"></div><div class="role">05 / Mute</div><div class="nm">Stone</div><div class="hex">#8A8378 &nbsp; oklch .60 .013 80</div><div class="use">Meta lines, secondary mono.</div></div>
+      <div class="sw"><div class="chip" style="background:#E8E3D6"></div><div class="role">06 / Tone</div><div class="nm">Bone</div><div class="hex">#E8E3D6 &nbsp; oklch .90 .015 84</div><div class="use">Hairline panels, table rows. Optional only.</div></div>
+    </div>
+
+    <div class="ratioBar">
+      <div style="flex:0 0 70%;background:#F2EEE5;color:#141414">PAPER · 70%</div>
+      <div style="flex:0 0 24%;background:#141414">INK · 24%</div>
+      <div style="flex:0 0 4%;background:#C84A32">SIENNA · 4%</div>
+      <div style="flex:0 0 2%;background:#8A8378">STONE · 2%</div>
+    </div>
+    <div class="ratioLegend">
+      <span><b>Target ink coverage</b> across all 52 covers</span>
+      <span>Accent &gt; 6% reads as "tile", not "dispatch"</span>
+      <span>Stone is mortar — never a focal element</span>
+    </div>
+
+    <div class="rulesGrid">
+      <div class="ruleCard">
+        <h5>Where Sienna goes</h5>
+        <p><b>One</b> of: (a) <span class="a">brand mark word</span> "RADAR", (b) one <span class="a">underline</span> beneath a hero phrase, (c) a <span class="a">date stamp</span> top‑right, (d) a single <span class="a">numeric</span> figure (e.g. <span class="a">$3.4T</span>).</p>
+        <p>If you have used it once, you are done. Two placements = breach.</p>
+      </div>
+      <div class="ruleCard">
+        <h5>Where Sienna never goes</h5>
+        <p>Body copy, deck text, kickers across &gt;3 words, drop shadows, gradients, photo tinting, page borders, decorative shapes, icon fills.</p>
+        <p>If unsure: leave it black.</p>
+      </div>
+      <div class="ruleCard">
+        <h5>When Alert Red replaces Sienna</h5>
+        <p>Triggers: crash, sell‑off, bankruptcy, layoffs, war/sanction, regulatory action. <b>Replaces</b> Sienna for that one cover — never coexists with it.</p>
+        <p>Budget: &lt; 10% of issues per quarter or it loses signal.</p>
+      </div>
+      <div class="ruleCard">
+        <h5>Light vs Dark covers</h5>
+        <p>Default is paper. <b>Invert</b> (Ink background, Paper text) for obituaries, year‑end retrospectives, and "the case against X" pieces. Not more than 1 in 8.</p>
+        <p>Dark covers keep the same accent rules. No additional colours unlocked.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.3 TYPE =================== -->
+  <section id="type">
+    <div class="secHead">
+      <div class="secNum">§ 4.3 / Typography</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">Serif argues. Mono stamps. Sans explains.</h2>
+        <div class="secTag">Type hierarchy</div>
+      </div>
+    </div>
+    <p class="secLede">Three families do all the work. Noto Serif TC carries every hero claim — its weight 900 has the necessary <i>impact at 60×40 px</i>. JetBrains Mono handles the masthead, issue, and date stamp. Noto Sans TC fills decks and supporting copy.</p>
+
+    <div class="typeRow">
+      <div class="typeMeta">
+        <div class="role">Hero · 中文 4–8 字</div>
+        <div class="nm">Noto Serif TC</div>
+        <div class="spec">Weight 900<br>Size 200–280 px @ 1456w<br>Tracking −2%<br>Leading .92</div>
+      </div>
+      <div class="specimen"><div class="sp-hero">越便宜<br>越貴。</div></div>
+      <div class="fallbacks">
+        <h6>Fallbacks</h6>
+        Songti TC · 思源宋體<br>
+        PingFang TC Heavy<br>
+        Georgia Bold (latin only)<br><br>
+        <h6>Notes</h6>
+        Period at sentence end is part of<br>the hero — not optional.
+      </div>
+    </div>
+
+    <div class="typeRow">
+      <div class="typeMeta">
+        <div class="role">Deck · subtitle</div>
+        <div class="nm">Noto Sans TC</div>
+        <div class="spec">Weight 500<br>Size 28–36 px<br>Leading 1.35<br>Tracking +1%</div>
+      </div>
+      <div class="specimen"><div class="sp-sub">便宜的決定<br>會在三年後寄帳單給你。</div></div>
+      <div class="fallbacks">
+        <h6>Fallbacks</h6>
+        PingFang TC Medium<br>
+        Helvetica Neue Medium<br><br>
+        <h6>Use</h6>
+        One line, max two. Never more than<br>40 全形 chars. Italic forbidden.
+      </div>
+    </div>
+
+    <div class="typeRow">
+      <div class="typeMeta">
+        <div class="role">Brand mark</div>
+        <div class="nm">JetBrains Mono</div>
+        <div class="spec">Weight 700<br>Size 18 px (locked)<br>Tracking +34%<br>UPPERCASE</div>
+      </div>
+      <div class="specimen"><div class="sp-mark">NEWS <b>RADAR</b></div></div>
+      <div class="fallbacks">
+        <h6>Fallbacks</h6>
+        IBM Plex Mono Bold<br>
+        Menlo Bold<br><br>
+        <h6>Use</h6>
+        "RADAR" in Sienna, "NEWS" in Ink.<br>Never re‑coloured.
+      </div>
+    </div>
+
+    <div class="typeRow">
+      <div class="typeMeta">
+        <div class="role">Meta · issue / date / URL</div>
+        <div class="nm">JetBrains Mono</div>
+        <div class="spec">Weight 400<br>Size 14 px (locked)<br>Tracking +18%<br>UPPERCASE</div>
+      </div>
+      <div class="specimen"><div class="sp-meta">ISSUE №&nbsp;053 &nbsp;·&nbsp; 2026·05·15</div></div>
+      <div class="fallbacks">
+        <h6>Fallbacks</h6>
+        IBM Plex Mono · Menlo<br><br>
+        <h6>Use</h6>
+        Always paired: ISSUE № + DATE.<br>URL bottom‑left, separate line.
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.4 GRID =================== -->
+  <section id="grid">
+    <div class="secHead">
+      <div class="secNum">§ 4.4 / Layout grid</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">1456 × 816, four fixed zones.</h2>
+        <div class="secTag">Canvas spec</div>
+      </div>
+    </div>
+    <p class="secLede">The grid below is identical on every template. Hero text always lives in Zone C.
+    The masthead never moves. New designers should not invent new zones — they should choose which
+    zones to leave empty.</p>
+
+    <div class="gridDemoWrap">
+      <div class="gridDemo">
+        <div class="cols"></div>
+        <div class="zones">
+          <!-- Zone A: Masthead -->
+          <div class="zone" style="left:4.39%;right:4.39%;top:7.84%;height:5.5%">
+            <div class="lbl"><span>Zone A · <b>Masthead</b></span><span class="dim">1328 × 44 px · top@64</span></div>
+          </div>
+          <!-- Zone B: Imagery slot (optional) -->
+          <div class="zone" style="left:4.39%;right:4.39%;top:16.5%;height:48%">
+            <div class="lbl"><span>Zone B · <b>Imagery / Diagram (optional)</b></span><span class="dim">1328 × 392 px</span></div>
+            <div class="dim">May be empty (Template 1), partial (right half), or full‑bleed bg</div>
+          </div>
+          <!-- Zone C: Hero -->
+          <div class="zone" style="left:4.39%;right:35%;top:48%;height:38%">
+            <div class="lbl"><span>Zone C · <b>Hero text</b></span><span class="dim">880 × 310 px max</span></div>
+            <div class="dim">200–280 px · 1–3 lines · always left‑aligned · always bottom‑seated</div>
+          </div>
+          <!-- Zone D: Bot bar -->
+          <div class="zone" style="left:4.39%;right:4.39%;bottom:7.84%;height:5%">
+            <div class="lbl"><span>Zone D · <b>Footer</b></span><span class="dim">1328 × 40 px · bot@64</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gridLegend">
+      <div>
+        <h6>Canvas</h6>
+        <p><b>1456 × 816 px</b> · 16:9 · Substack cover spec · export PNG ≤ 4 MB / JPG q92</p>
+      </div>
+      <div>
+        <h6>Safe zone</h6>
+        <p>64 px margin on all sides. Nothing semantic outside.</p>
+      </div>
+      <div>
+        <h6>Column grid</h6>
+        <p>12 cols · 16 px gutter · 100 px col‑width inside safe zone. Hero spans 8 cols.</p>
+      </div>
+      <div>
+        <h6>Baseline</h6>
+        <p>8 px grid. All type sits to baseline. Hero leading is .92, snap to grid only at meta sizes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.5 DO / DON'T =================== -->
+  <section id="rules">
+    <div class="secHead">
+      <div class="secNum">§ 4.5 / Discipline</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">Five to keep. Five to refuse.</h2>
+        <div class="secTag">Do / Don't</div>
+      </div>
+    </div>
+    <p class="secLede">If a cover violates any "don't", it ships only after explicit override from editor. The "do" column is the cover's pass/fail rubric — five out of five.</p>
+
+    <div class="dosdonts">
+      <div class="ddCol do">
+        <div class="ddHead"><div class="h">Always <em>do.</em></div><div class="t">5 / 5</div></div>
+        <ol class="ddList">
+          <li><b>Hero text dominates.</b> Largest object on the page, every time. If imagery is louder than type, cut imagery.<span class="why">Test: squint. The headline still wins.</span></li>
+          <li><b>One subject, one claim.</b> Cover argues a single position. No "and also".<span class="why">If you need a comma in the hero, you have two covers.</span></li>
+          <li><b>Two colours, period.</b> Paper + Ink, plus one Sienna placement. Reserved Red replaces Sienna, never joins it.<span class="why">Multi‑colour reads as "tile", not "dispatch".</span></li>
+          <li><b>Masthead + issue stamp visible.</b> NEWS RADAR top‑left, ISSUE № top‑right, every cover.<span class="why">52 issues in a feed must read as one publication.</span></li>
+          <li><b>Read at 60 × 40 px.</b> Open the thumbnail row. If you can't read the hero, the cover is rejected.<span class="why">No exceptions, no "but the layout is nice".</span></li>
+        </ol>
+      </div>
+      <div class="ddCol dont">
+        <div class="ddHead"><div class="h">Never <em>do.</em></div><div class="t">5 / 5</div></div>
+        <ol class="ddList">
+          <li><b>No cartoon people.</b> No mascots, no LinkedIn talking heads, no illustrated 主角.<span class="why">Wrong publication, wrong reader.</span></li>
+          <li><b>No gradients, glows, or 3D.</b> Flat fills only. No drop shadows on type. No gradient overlays on photos.<span class="why">All of these read as 2017 startup deck.</span></li>
+          <li><b>No emoji, no exclamation marks.</b> No 💡 🚀 🔥, no "！", no quoted hot‑take headlines.<span class="why">We are not a 雞湯 channel.</span></li>
+          <li><b>No decorative borders or frames.</b> No double rules, no ornament, no rounded card with shadow.<span class="why">The masthead rule is the only frame the cover gets.</span></li>
+          <li><b>No AI‑generated imagery.</b> Especially no AI‑rendered Chinese characters. Stock photo, icon, or pure type only.<span class="why">Brittle quality + brand risk + slow workflow.</span></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.6 TEMPLATES =================== -->
+  <section id="templates">
+    <div class="secHead">
+      <div class="secNum">§ 4.6 / Templates</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">Six covers. One system.</h2>
+        <div class="secTag">1456 × 816 · live samples</div>
+      </div>
+    </div>
+    <p class="secLede">Each template is rendered below at real cover dimensions, scaled to fit the page.
+    Articles are representative <i>sample</i> titles in the publication's voice — when you ship, swap text only.</p>
+
+    <div class="tplGrid">
+
+      <!-- Template 1: Pure text -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv1">
+            <div class="topBar">
+              <div class="mark">NEWS <b>RADAR</b></div>
+              <div class="issue">ISSUE №&nbsp;053 &nbsp;·&nbsp; 2026·05·15</div>
+            </div>
+            <div style="position:absolute;left:64px;right:200px;bottom:140px">
+              <div class="kicker" style="margin-bottom:28px">CONTRARIAN · 消費</div>
+              <div class="hero" style="font-size:236px">越便宜，<br>越<span class="acc">貴</span>。</div>
+            </div>
+            <div class="botBar">
+              <div class="url">hsin73.substack.com</div>
+              <div class="cat">Decision &nbsp;/&nbsp; 003</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 01</div>
+          <h3>Pure type.</h3>
+          <div class="formula">HERO + MARK · NO IMAGERY</div>
+          <p>The default. Every News Radar cover should start here and earn its way to imagery.
+          A hero claim in Serif 900, a single Sienna character or underline, masthead at top, URL at foot.</p>
+          <p><b>Why it works:</b> survives 60×40 px better than any photo. Treats the headline as the whole product.</p>
+          <div class="when">Use when ↘ headline is <b>punchy ≤ 8 字</b> · piece is a <b>thesis</b> · no good imagery exists</div>
+          <div class="specStrip">
+            <span>HERO <b>236 px</b></span><span>ACCENT <b>1 char</b></span><span>IMAGERY <b>none</b></span><span>TIME <b>3 min</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template 2: Single object + hero -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv2">
+            <div class="topBar">
+              <div class="mark">NEWS <b>RADAR</b></div>
+              <div class="issue">ISSUE №&nbsp;054 &nbsp;·&nbsp; 2026·05·16</div>
+            </div>
+            <!-- single object: hourglass placeholder -->
+            <div style="position:absolute;right:120px;top:140px;width:380px;height:480px;display:flex;align-items:center;justify-content:center">
+              <svg viewBox="0 0 200 280" width="100%" height="100%" fill="none" stroke="#141414" stroke-width="3">
+                <rect x="20" y="10" width="160" height="6" fill="#141414"/>
+                <rect x="20" y="264" width="160" height="6" fill="#141414"/>
+                <path d="M30 16 L170 16 L120 140 L170 264 L30 264 L80 140 Z" stroke="#141414" stroke-width="3" fill="none"/>
+                <path d="M40 26 L160 26 L115 138 L40 26 Z" fill="#141414"/>
+                <path d="M85 140 L115 140 L160 254 L40 254 Z" fill="#C84A32"/>
+                <line x1="100" y1="140" x2="100" y2="155" stroke="#141414" stroke-width="2"/>
+              </svg>
+            </div>
+            <div style="position:absolute;left:64px;bottom:140px;right:560px">
+              <div class="kicker" style="margin-bottom:24px">FINANCE · 複利</div>
+              <div class="hero" style="font-size:172px;line-height:.95">你<span class="acc">等不到</span><br>複利。</div>
+            </div>
+            <div class="botBar">
+              <div class="url">hsin73.substack.com</div>
+              <div class="cat">Finance &nbsp;/&nbsp; 011</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 02</div>
+          <h3>Single object.</h3>
+          <div class="formula">OBJECT (40%) + HERO (60%)</div>
+          <p>One iconic object placed in Zone B right‑half. Object is two colour max — silhouette in ink with one Sienna fill area. Hero text seats bottom‑left.</p>
+          <p><b>Source:</b> <span class="mono">Noun Project</span>, <span class="mono">Streamline</span> (line/duotone), or stock vector — never AI.</p>
+          <div class="when">Use when ↘ topic has <b>1 metaphor object</b> · object recognisable at 60×40 px · &lt; 2 colours</div>
+          <div class="specStrip">
+            <span>HERO <b>172 px</b></span><span>OBJECT <b>~ 50% h</b></span><span>FILL <b>2 col</b></span><span>TIME <b>4 min</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template 3: Data / Chart -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv3">
+            <div class="topBar">
+              <div class="mark">NEWS <b>RADAR</b></div>
+              <div class="issue">ISSUE №&nbsp;055 &nbsp;·&nbsp; 2026·05·17</div>
+            </div>
+            <!-- Chart placeholder -->
+            <div style="position:absolute;left:64px;right:64px;top:140px;height:420px;border:1px solid rgba(20,20,20,.18);background:#E8E3D6">
+              <div style="position:absolute;left:24px;top:18px;font-family:var(--mono);font-size:13px;letter-spacing:.18em;color:#141414">FED FUNDS RATE  vs  US PERSONAL SAVINGS RATE  /  2019 — 2026</div>
+              <div style="position:absolute;right:24px;top:18px;font-family:var(--mono);font-size:13px;letter-spacing:.18em;color:#8A8378">SOURCE: FRED · BLS</div>
+              <!-- axes -->
+              <svg viewBox="0 0 1200 360" preserveAspectRatio="none" style="position:absolute;inset:50px 24px 30px 24px;width:calc(100% - 48px);height:calc(100% - 80px)">
+                <line x1="0" y1="320" x2="1200" y2="320" stroke="#141414" stroke-width="1.5"/>
+                <line x1="0" y1="0" x2="0" y2="320" stroke="#141414" stroke-width="1"/>
+                <!-- Fed funds -->
+                <polyline points="0,300 100,300 200,260 300,180 400,80 600,80 700,90 850,140 1000,200 1200,210" fill="none" stroke="#141414" stroke-width="3"/>
+                <!-- Savings rate -->
+                <polyline points="0,200 80,80 200,180 300,220 400,260 600,280 800,290 1000,300 1200,305" fill="none" stroke="#C84A32" stroke-width="3" stroke-dasharray="6 4"/>
+                <text x="1150" y="195" font-family="JetBrains Mono" font-size="20" fill="#141414" font-weight="700">FFR</text>
+                <text x="1100" y="320" font-family="JetBrains Mono" font-size="20" fill="#C84A32" font-weight="700">SAVINGS</text>
+              </svg>
+            </div>
+            <!-- Headline -->
+            <div style="position:absolute;left:64px;right:64px;bottom:140px;display:flex;justify-content:space-between;align-items:flex-end;gap:40px">
+              <div class="hero" style="font-size:120px;line-height:.95">降息<br>救<span class="acc">不了</span>你。</div>
+              <div style="max-width:420px;text-align:right">
+                <div class="kicker" style="margin-bottom:14px;text-align:right">MARKET · 利率</div>
+                <div style="font-family:var(--sans);font-weight:500;font-size:22px;line-height:1.45;color:var(--ink-2)">過去四個降息週期裡，散戶儲蓄率反而下滑。</div>
+              </div>
+            </div>
+            <div class="botBar">
+              <div class="url">hsin73.substack.com</div>
+              <div class="cat">Market &nbsp;/&nbsp; 027</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 03</div>
+          <h3>Data / chart.</h3>
+          <div class="formula">CHART (top 55%) + HERO (bot 35%)</div>
+          <p>A real chart, framed in a Bone panel with a mono caption row above and source row right. Hero seats below, deck text in Sans, right‑aligned for cadence.</p>
+          <p><b>Rule:</b> chart must argue. If it could be replaced by any other chart, cut it and use Template 01.</p>
+          <div class="when">Use when ↘ piece <b>centres on a chart</b> · ≤ 2 series · time series or comparison</div>
+          <div class="specStrip">
+            <span>HERO <b>120 px</b></span><span>CHART <b>2 series</b></span><span>SRC <b>required</b></span><span>TIME <b>5 min</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template 4: B&W photo + overlay -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv4">
+            <!-- photo placeholder (full bleed under safe zone with overlay) -->
+            <div style="position:absolute;inset:0;background:
+              repeating-linear-gradient(135deg,#2a2724 0 14px,#1a1a1a 14px 28px);
+              "></div>
+            <!-- placeholder label -->
+            <div style="position:absolute;left:64px;top:50%;transform:translateY(-50%);
+              font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:rgba(242,238,229,.35);
+              text-transform:uppercase;mix-blend-mode:normal">
+              ▢ &nbsp; B&amp;W photo · Unsplash tag: <i>data‑center, server, infrastructure</i>
+            </div>
+            <!-- top -->
+            <div style="position:absolute;left:64px;right:64px;top:64px;display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:14px;border-bottom:2px solid #F2EEE5;color:#F2EEE5">
+              <div class="mark" style="color:#F2EEE5">NEWS <b style="color:#C84A32">RADAR</b></div>
+              <div class="issue" style="color:rgba(242,238,229,.7)">ISSUE №&nbsp;056 &nbsp;·&nbsp; 2026·05·18</div>
+            </div>
+            <!-- hero -->
+            <div style="position:absolute;left:64px;bottom:140px;right:400px;color:#F2EEE5">
+              <div class="kicker" style="color:#C84A32;margin-bottom:24px">CONTRARIAN · AI</div>
+              <div class="hero" style="font-size:200px;color:#F2EEE5">AI <span style="color:#C84A32">不是</span><br>泡沫。</div>
+              <div style="font-family:var(--sans);font-weight:500;font-size:22px;color:rgba(242,238,229,.85);margin-top:24px;max-width:680px">它是這個十年裡，唯一還在蓋的基礎建設。</div>
+            </div>
+            <!-- bot -->
+            <div style="position:absolute;left:64px;right:64px;bottom:64px;display:flex;justify-content:space-between;align-items:baseline;padding-top:14px;border-top:1px solid #F2EEE5;color:#F2EEE5">
+              <div class="url" style="color:rgba(242,238,229,.7)">hsin73.substack.com</div>
+              <div class="cat" style="color:#C84A32">Thesis &nbsp;/&nbsp; 042</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 04</div>
+          <h3>B&amp;W photograph.</h3>
+          <div class="formula">PHOTO (full bleed) + HERO OVERLAY (paper)</div>
+          <p>One desaturated photograph — architecture, machinery, infrastructure, never faces. Hero text in Paper colour, accent character in Sienna for legibility. 80% opacity ink wash optional on bottom half if photo is busy.</p>
+          <p><b>Source:</b> Unsplash desaturated, or in‑house photography. No portraits, no people facing camera.</p>
+          <div class="when">Use when ↘ topic has <b>atmospheric anchor</b> · ≥ 1500 words · Thesis category</div>
+          <div class="specStrip">
+            <span>HERO <b>200 px</b></span><span>PHOTO <b>B&amp;W</b></span><span>WASH <b>optional</b></span><span>TIME <b>4 min</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template 5: Diagram -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv5">
+            <div class="topBar">
+              <div class="mark">NEWS <b>RADAR</b></div>
+              <div class="issue">ISSUE №&nbsp;057 &nbsp;·&nbsp; 2026·05·19</div>
+            </div>
+            <!-- Diagram: 對照圖 -->
+            <div style="position:absolute;left:64px;right:64px;top:140px;height:380px;display:grid;grid-template-columns:1fr 80px 1fr;gap:0;align-items:stretch;border:1px solid rgba(20,20,20,.18)">
+              <div style="padding:24px 26px;border-right:1px solid rgba(20,20,20,.18);display:flex;flex-direction:column;justify-content:space-between">
+                <div>
+                  <div style="font-family:var(--mono);font-size:13px;letter-spacing:.22em;color:#8A8378;text-transform:uppercase">直覺 · INTUITION</div>
+                  <div style="font-family:var(--serif);font-weight:900;font-size:54px;line-height:1.02;margin-top:14px;color:#141414">便宜 = 划算</div>
+                </div>
+                <ul style="margin:0;padding:0;list-style:none;font-family:var(--sans);font-size:18px;line-height:1.6;color:#2A2724">
+                  <li>· 單次成本最低</li>
+                  <li>· 預算內最多選項</li>
+                  <li>· 損失可承受</li>
+                </ul>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;background:#E8E3D6">
+                <div style="font-family:var(--mono);font-size:13px;letter-spacing:.22em;color:#8A8378;writing-mode:vertical-rl">VS</div>
+              </div>
+              <div style="padding:24px 26px;background:#141414;color:#F2EEE5;display:flex;flex-direction:column;justify-content:space-between">
+                <div>
+                  <div style="font-family:var(--mono);font-size:13px;letter-spacing:.22em;color:#C84A32;text-transform:uppercase">事實 · TRUTH</div>
+                  <div style="font-family:var(--serif);font-weight:900;font-size:54px;line-height:1.02;margin-top:14px">便宜 = 高頻替換</div>
+                </div>
+                <ul style="margin:0;padding:0;list-style:none;font-family:var(--sans);font-size:18px;line-height:1.6;color:rgba(242,238,229,.85)">
+                  <li>· 3 年總成本 ×2.4</li>
+                  <li>· 機會成本不入帳</li>
+                  <li>· 體驗稅 ＝ 持續支付</li>
+                </ul>
+              </div>
+            </div>
+            <!-- hero -->
+            <div style="position:absolute;left:64px;bottom:140px;right:64px;display:flex;justify-content:space-between;align-items:flex-end;gap:40px">
+              <div class="hero" style="font-size:108px;line-height:.95">Costco<br><span class="acc">悖論</span>。</div>
+              <div style="max-width:380px;text-align:right">
+                <div class="kicker" style="margin-bottom:10px;text-align:right">CONSUMER · 反消費</div>
+                <div style="font-family:var(--sans);font-weight:500;font-size:20px;line-height:1.45;color:#2A2724">會員費，是用來保護你免於自己。</div>
+              </div>
+            </div>
+            <div class="botBar">
+              <div class="url">hsin73.substack.com</div>
+              <div class="cat">Consumer &nbsp;/&nbsp; 008</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 05</div>
+          <h3>Diagram / 對照.</h3>
+          <div class="formula">A‑VS‑B PANEL + HERO</div>
+          <p>Two‑column comparison or flow. Left panel paper, right panel inverted (ink bg, paper text) — the inversion <i>is</i> the argument. Use for 反直覺 pieces.</p>
+          <p><b>Vocabulary:</b> 直覺/事實, 共識/逆風, 表面/底層, before/after.</p>
+          <div class="when">Use when ↘ piece has <b>two opposing frames</b> · structural argument · "case against" tone</div>
+          <div class="specStrip">
+            <span>HERO <b>108 px</b></span><span>PANELS <b>A vs B</b></span><span>INVERT <b>1 side</b></span><span>TIME <b>5 min</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template 6: Scene / stage -->
+      <div class="tpl">
+        <div class="tplFrame" data-cover><div class="canvas">
+          <div class="cover" id="cv6">
+            <div class="topBar">
+              <div class="mark">NEWS <b>RADAR</b></div>
+              <div class="issue">ISSUE №&nbsp;058 &nbsp;·&nbsp; 2026·05·20</div>
+            </div>
+            <!-- staged objects -->
+            <div style="position:absolute;left:64px;right:64px;top:140px;height:380px;background:#E8E3D6;border:1px solid rgba(20,20,20,.18);overflow:hidden">
+              <!-- shelf line -->
+              <div style="position:absolute;left:0;right:0;bottom:60px;height:2px;background:#141414"></div>
+              <!-- shadow -->
+              <div style="position:absolute;left:0;right:0;bottom:0;height:60px;background:linear-gradient(to top, rgba(20,20,20,.08), transparent)"></div>
+              <!-- objects: arrows pointing up, one pointing down red -->
+              <svg viewBox="0 0 1200 320" width="100%" height="100%" preserveAspectRatio="xMidYMax meet" style="position:absolute;inset:0">
+                <!-- up arrows -->
+                <g stroke="#141414" stroke-width="3" fill="none">
+                  <g><line x1="120" y1="260" x2="120" y2="80"/><polygon points="100,100 120,60 140,100" fill="#141414"/></g>
+                  <g><line x1="220" y1="260" x2="220" y2="120"/><polygon points="200,140 220,100 240,140" fill="#141414"/></g>
+                  <g><line x1="320" y1="260" x2="320" y2="60"/><polygon points="300,80 320,40 340,80" fill="#141414"/></g>
+                  <g><line x1="420" y1="260" x2="420" y2="100"/><polygon points="400,120 420,80 440,120" fill="#141414"/></g>
+                  <g><line x1="520" y1="260" x2="520" y2="50"/><polygon points="500,70 520,30 540,70" fill="#141414"/></g>
+                  <g><line x1="720" y1="260" x2="720" y2="90"/><polygon points="700,110 720,70 740,110" fill="#141414"/></g>
+                  <g><line x1="820" y1="260" x2="820" y2="140"/><polygon points="800,160 820,120 840,160" fill="#141414"/></g>
+                  <g><line x1="920" y1="260" x2="920" y2="70"/><polygon points="900,90 920,50 940,90" fill="#141414"/></g>
+                  <g><line x1="1020" y1="260" x2="1020" y2="110"/><polygon points="1000,130 1020,90 1040,130" fill="#141414"/></g>
+                </g>
+                <!-- one red down arrow centered (the contrarian) -->
+                <g>
+                  <line x1="620" y1="40" x2="620" y2="240" stroke="#C84A32" stroke-width="5"/>
+                  <polygon points="595,210 620,260 645,210" fill="#C84A32"/>
+                </g>
+              </svg>
+            </div>
+            <!-- hero -->
+            <div style="position:absolute;left:64px;bottom:140px;right:64px;display:flex;justify-content:space-between;align-items:flex-end;gap:40px">
+              <div class="hero" style="font-size:124px;line-height:.95">市場<span class="acc">永遠對</span>，<br>直到它錯。</div>
+              <div style="max-width:360px;text-align:right">
+                <div class="kicker" style="margin-bottom:10px;text-align:right">MARKET · 共識</div>
+                <div style="font-family:var(--sans);font-weight:500;font-size:20px;line-height:1.45;color:var(--ink-2)">效率市場假說，最有效率地否定自己。</div>
+              </div>
+            </div>
+            <div class="botBar">
+              <div class="url">hsin73.substack.com</div>
+              <div class="cat">Thesis &nbsp;/&nbsp; 019</div>
+            </div>
+          </div>
+        </div></div>
+        <div class="tplSide">
+          <div class="num">Template 06</div>
+          <h3>Scene / stage.</h3>
+          <div class="formula">STAGED COMPOSITION + HERO</div>
+          <p>A small constructed scene that visualises the argument — a row of arrows with one inverted, a stack with one missing, a queue with one out of line. Two‑colour vector only, never photo.</p>
+          <p><b>Vocabulary:</b> the odd one out, the missing piece, the inversion. Always one Sienna element doing the contrarian work.</p>
+          <div class="when">Use when ↘ argument is <b>"everyone X, but you Y"</b> · single visual metaphor · contrarian thesis</div>
+          <div class="specStrip">
+            <span>HERO <b>124 px</b></span><span>SCENE <b>2‑col vector</b></span><span>FOCAL <b>1 Sienna</b></span><span>TIME <b>5 min</b></span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tplGrid -->
+
+    <!-- Thumbnail test -->
+    <div class="thumbTest">
+      <h4>Thumbnail legibility test · 90 × 50 px</h4>
+      <p class="lede">Substack feed renders covers around this size. If the hero word doesn't survive
+      the scale‑down, the cover is rejected — no matter how nice it looks at full size. All six
+      templates below pass.</p>
+      <div class="thumbStrip">
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv1"></div></div><div class="lbl">T01 · TYPE</div></div>
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv2"></div></div><div class="lbl">T02 · OBJECT</div></div>
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv3"></div></div><div class="lbl">T03 · CHART</div></div>
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv4"></div></div><div class="lbl">T04 · PHOTO</div></div>
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv5"></div></div><div class="lbl">T05 · DIAGRAM</div></div>
+        <div class="thumbCell"><div class="thumbWrap"><div class="canvas" data-from="cv6"></div></div><div class="lbl">T06 · SCENE</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== 4.7 WORKFLOW =================== -->
+  <section id="workflow">
+    <div class="secHead">
+      <div class="secNum">§ 4.7 / Workflow</div>
+      <div class="secTitleRow">
+        <h2 class="secTitle">Title in. Cover out. Five minutes.</h2>
+        <div class="secTag">Handoff · for PM agent</div>
+      </div>
+    </div>
+    <p class="secLede">A decision tree the PM agent runs in order. Each step has one question, one answer
+    bucket, and one output. If the agent ever stops to think creatively, it has failed — the system did.</p>
+
+    <div class="tree">
+      <div class="treeRow">
+        <div class="step">Step 01</div>
+        <div class="q">Is this a market crash / sell‑off / bankruptcy / sanction piece?</div>
+        <div class="a">YES → swap accent → Alert Red. NO → keep Sienna.</div>
+        <div class="time">0:30</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 02</div>
+        <div class="q">Does the piece centre on a chart with ≤ 2 series and a source?</div>
+        <div class="a">YES → Template <b>03 Chart</b>.</div>
+        <div class="pick">→ T03 / CHART</div>
+        <div class="time">1:00</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 03</div>
+        <div class="q">Is the structure "common belief X vs reality Y"?</div>
+        <div class="a">YES → Template <b>05 Diagram</b>.</div>
+        <div class="pick">→ T05 / DIAGRAM</div>
+        <div class="time">1:30</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 04</div>
+        <div class="q">Is the argument "everyone goes X, but you should Y"?</div>
+        <div class="a">YES → Template <b>06 Scene</b>.</div>
+        <div class="pick">→ T06 / SCENE</div>
+        <div class="time">2:00</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 05</div>
+        <div class="q">Is the piece &gt; 1500 words and atmospheric (essay, thesis)?</div>
+        <div class="a">YES → Template <b>04 Photo</b>.</div>
+        <div class="pick">→ T04 / PHOTO</div>
+        <div class="time">2:30</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 06</div>
+        <div class="q">Is there one obvious metaphor object (clock, hourglass, key, container)?</div>
+        <div class="a">YES → Template <b>02 Object</b>.</div>
+        <div class="pick">→ T02 / OBJECT</div>
+        <div class="time">3:00</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 07</div>
+        <div class="q">Default fallback — when in doubt, type wins.</div>
+        <div class="a">→ Template <b>01 Pure type</b>.</div>
+        <div class="pick">→ T01 / TYPE</div>
+        <div class="time">3:00</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 08</div>
+        <div class="q">Run hero‑text extraction (next panel) and drop into chosen template.</div>
+        <div class="a">Swap text only. Do not move zones. Do not adjust accent placement count.</div>
+        <div class="time">4:30</div>
+      </div>
+      <div class="treeRow">
+        <div class="step">Step 09</div>
+        <div class="q">Export PNG → check 60 × 40 px thumbnail → ship.</div>
+        <div class="a">If hero unreadable at thumbnail → reduce subtitle, return to Step 02.</div>
+        <div class="time">5:00</div>
+      </div>
+    </div>
+
+    <div class="extractGrid">
+      <div class="extract">
+        <h4>Hero‑text extraction · ≤ 8 字</h4>
+        <ol>
+          <li>Find the <b>verb of disagreement</b> (不是, 救不了, 等不到, 永遠錯).</li>
+          <li>Find the <b>noun of consensus</b> being attacked (AI, 降息, 複利, 市場).</li>
+          <li>Compress to a <b>complete short sentence</b>, ending with 句號 or comma cliff.</li>
+          <li>If &gt; 8 字, split across <b>two lines</b> at the verb.</li>
+          <li>One character or one short phrase carries the <b>Sienna accent</b>.</li>
+        </ol>
+        <div class="ex">
+          <div><span class="from">「為什麼便宜的東西反而最貴」</span><span class="arrow">→</span><span class="to">越便宜，越貴。</span></div>
+          <div><span class="from">「Nvidia 不是泡沫、是基礎建設」</span><span class="arrow">→</span><span class="to">AI 不是泡沫。</span></div>
+          <div><span class="from">「複利是世界第八奇蹟、但你不會等」</span><span class="arrow">→</span><span class="to">你等不到複利。</span></div>
+          <div><span class="from">「降息不會救你的存款」</span><span class="arrow">→</span><span class="to">降息救不了你。</span></div>
+          <div><span class="from">「Costco 的反消費主義悖論」</span><span class="arrow">→</span><span class="to">Costco 悖論。</span></div>
+          <div><span class="from">「市場永遠對、直到它錯」</span><span class="arrow">→</span><span class="to">市場永遠對，直到它錯。</span></div>
+        </div>
+      </div>
+
+      <div class="extract">
+        <h4>Asset sources · zero AI</h4>
+        <div class="assetSources" style="margin-top:6px;border:none">
+          <div class="asCell" style="border:1px solid var(--rule)">
+            <div class="role">T02 / Objects</div>
+            <div class="nm">Vector icons</div>
+            <div class="src">noun‑project.com<br>streamlinehq.com<br>icons8.com (line)</div>
+            <div class="note">Filter: line / duotone. Recolour to Ink + Sienna only.</div>
+          </div>
+          <div class="asCell" style="border:1px solid var(--rule);border-left:none">
+            <div class="role">T03 / Charts</div>
+            <div class="nm">Data → SVG</div>
+            <div class="src">FRED, BLS, ONS<br>company filings<br>Datawrapper export</div>
+            <div class="note">Restyle: Ink + Sienna lines, mono labels, source line right.</div>
+          </div>
+          <div class="asCell" style="border:1px solid var(--rule);border-left:none">
+            <div class="role">T04 / Photos</div>
+            <div class="nm">B&amp;W Unsplash</div>
+            <div class="src">unsplash.com<br>tags: <i>data‑center,<br>warehouse, port, factory,<br>brutalism, machinery</i></div>
+            <div class="note">Desaturate 100%. No people. No faces. No hands.</div>
+          </div>
+        </div>
+        <div class="ex" style="border-top:1px dashed var(--rule-hair);margin-top:18px">
+          <div><span class="from">If asset not found in 3 min</span><span class="arrow">→</span><span class="to">fall back to Template 01.</span></div>
+          <div><span class="from">If hero text &gt; 12 字</span><span class="arrow">→</span><span class="to">rewrite headline, not layout.</span></div>
+          <div><span class="from">If editor requests a 3rd colour</span><span class="arrow">→</span><span class="to">refuse, cite §4.5.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== COLOPHON =================== -->
+  <div class="colophon">
+    <div>News Radar Visual Brand System &nbsp;·&nbsp; <b>v0.1</b> &nbsp;·&nbsp; May 2026</div>
+    <div>1456 × 816 &nbsp;·&nbsp; Noto Serif TC / Sans TC / JetBrains Mono</div>
+    <div><b>hsin73.substack.com</b></div>
+  </div>
+
+</div>
+
+<script>
+  /* Scale every 1456×816 canvas to fit its frame */
+  function scaleCovers(){
+    document.querySelectorAll('[data-cover]').forEach(frame => {
+      const canvas = frame.querySelector('.canvas');
+      if(!canvas) return;
+      const w = frame.clientWidth;
+      const scale = w / 1456;
+      canvas.style.transform = 'scale(' + scale + ')';
+    });
+    /* Clone each cv# into its matching thumbnail wrapper */
+    document.querySelectorAll('[data-from]').forEach(t => {
+      const src = document.getElementById(t.dataset.from);
+      if(!src || t.dataset.cloned) return;
+      const clone = src.cloneNode(true);
+      clone.removeAttribute('id');
+      t.appendChild(clone);
+      t.dataset.cloned = '1';
+      const wrap = t.parentElement;
+      const scale = wrap.clientWidth / 1456;
+      t.style.transform = 'scale(' + scale + ')';
+    });
+  }
+  window.addEventListener('load', () => { scaleCovers(); });
+  window.addEventListener('resize', scaleCovers);
+  document.fonts && document.fonts.ready.then(scaleCovers);
+</script>
+</body>
+</html>

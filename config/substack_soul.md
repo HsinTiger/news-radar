@@ -300,9 +300,20 @@
 ## §10 視覺架構（Substack 專屬）
 
 每篇文章配 1 張封面圖（hero image），規格 1456×816（Substack 預覽用）。
-- 美學遵循 visual_soul.md：莫蘭迪色系、低飽和、手繪 Moleskine 筆記本風
-- 禁止 3D 渲染、霓虹光、誇張臉部情緒
-- 圖片必須是文章「動態敘事透鏡」的視覺註解，不是裝飾
+
+### Source of truth（2026-05-15 加入）
+
+**視覺實作細節（顏色 hex / 字體 / 模板 / 比例）的 source of truth 是 `config/visual_brand_system.md`**，由 claude design 2026-05-15 交付的 v0.1 brand system 萃取。
+
+本檔（`substack_soul.md §10`）負責 voice / 紀律規則（§10.1 視覺編輯角色 + §10.2 五條封面紀律 + §10.3 失敗案例）。`visual_brand_system.md` 負責顏色 + 字體 + 模板 + decision tree 的執行細節。
+
+衝突時優先本檔的紀律、細節走 `visual_brand_system.md`。
+
+### 既有舊規範（淘汰中、被 v0.1 brand system 取代）
+
+- ~~美學遵循 visual_soul.md：莫蘭迪色系、低飽和、手繪 Moleskine 筆記本風~~ → 改 cold-print editorial、見 visual_brand_system.md §1
+- 禁止 3D 渲染、霓虹光、誇張臉部情緒 → 保留、跟 §10.2 + visual_brand_system.md §5 一致
+- 圖片必須是文章「動態敘事透鏡」的視覺註解，不是裝飾 → 保留
 
 可選第二張：機制解構示意圖（位於文章中段轉折處）。
 
