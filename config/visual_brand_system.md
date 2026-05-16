@@ -326,12 +326,83 @@ Dark cover (T04 / invert mode) 同樣規則、masthead 用 Paper #F2EEE5 色。
 
 ---
 
+## §13 Inline Image Workflow · Body 內嵌圖片標記（2026-05-15 加入）
+
+### 設計原則
+
+封面是 hero、inline image 是 body 內的視覺輔助。兩者規範分開：
+
+- 封面：規範在 §1-§12、走 `prompt_library/T01-T06` 模板
+- Inline image：本節規範、**不上傳實際圖、只在 markdown body 插 markers**
+
+### 為什麼不上傳實際圖（5/15 實測 retro）
+
+Path D (PIL placeholder + `api.get_image()` upload + `post.captioned_image()`) 技術上 100% 通（test draft 197911590, 197912645 驗過）。但「找實際好圖」是真正的高摩擦點：
+
+- Sandbox 網路限制 / Wikimedia hot-link block / 版權判斷需 case-by-case
+- Hsin 5 秒看穿的品味我做不到
+- token cost: Path D 17k/篇 vs Path B+C marker 3-5k/篇
+
+**結論**：圖片來源 + 上傳留給 Hsin、PM agent 只做「標記 + 提示」。
+
+### Marker 格式（每個 inline point）
+
+Markdown blockquote、Substack 編輯器渲染為灰底引用區塊：
+
+```markdown
+> 🖼 視覺位置 · {image_label}
+>
+> 場景描述：{detailed_scene_description}
+>
+> 🔍 Path B · Google 搜：「{search_query}」
+> 📰 推薦 source：{2-3 source recommendations}
+>
+> 🎨 Path C · 找不到 → 生圖 prompt：
+> {ready-to-paste prompt for ChatGPT image / NanoBanana}
+```
+
+### 5 個欄位的撰寫紀律
+
+| 欄位 | 規範 |
+|---|---|
+| **image_label** | 3-8 字 short title、用 ` · ` 分隔（例：「Walter Schloss · 1980s 辦公室」）|
+| **scene description** | 1-3 句、第三人稱描述「應該出現什麼畫面」、含具體 time/place/物件 |
+| **search query** | 真實 Google 搜尋字串、英文優先、含 1-2 specific keywords |
+| **sources** | 2-3 個 source 名字、優先序：Wikipedia → 大刊物 archive → photographer 個人 → stock |
+| **gen prompt** | Ready-to-paste、英文、含 brand 風格約束（B&W documentary, no glamour, side profile, 1960s LIFE style 等）|
+
+### Insertion 規則
+
+- **每篇 inline points 3-6 個**（過少視覺單調、過多打斷閱讀）
+- **每個 ▉ section 0-2 個**、總和 ≤ 6
+- 落點挑「概念抽象 → 具體場景」轉折處（讀者最需要視覺錨點）
+- **不要插在開場 hook 跟結尾**（這兩處純文字才有 punch）
+
+### Workflow Integration
+
+`substack_soul.md §10.1` 視覺編輯角色 4 動作擴成 **5 動作**：
+
+1. 標題兩版並陳
+2. 抽 hero text（封面）
+3. 選 cover template
+4. 從 `prompt_library/` 填 cover prompt
+5. **NEW · 標記 3-6 個 inline image points + 寫 marker blockquotes 進 markdown body**
+
+### 已知 working case
+
+- **Substack draft 197913816**「主角會死配角會富（圖文 markers v2）」第一個完整落地
+- 5 個 markers · native subscribe widget · tagline blockquote 完整
+- 通過 `post.subscribe_with_caption(message=...)` 內建原生 widget
+
+---
+
 ## §12 Versioning
 
 | 版本 | 日期 | 來源 | 變更 |
 |---|---|---|---|
 | v0.1 | 2026-05-15 早 | claude design 首次交付 | initial · representative samples · NEWS RADAR-only masthead |
-| **v0.2** | **2026-05-15 晚** | **claude design 第二輪迭代** | **Chinese masthead pivot (主力爸爸我錯了 primary + NEWS RADAR secondary) · real article hero text 對應 6 covers · cv5/cv6 visual zone 380→280 + hero 124→112 · cv3 duplicate OPENAI label 移除** |
+| v0.2 | 2026-05-15 晚 | claude design 第二輪迭代 | Chinese masthead pivot (主力爸爸我錯了 primary + NEWS RADAR secondary) · real article hero text 對應 6 covers · cv5/cv6 visual zone 380→280 + hero 124→112 · cv3 duplicate OPENAI label 移除 |
+| **v0.2.1** | **2026-05-15 深夜** | **inline image workflow §13 加入** | **Body 內嵌圖片改走 markdown marker blockquote（Path B 搜尋 + Path C 生圖 prompt）、不 upload 實際圖。Visual editor 5 動作 codify。第一個 working case: Substack draft 197913816** |
 
 ### v0.2 · 6 covers real article 對應
 

@@ -57,7 +57,7 @@ SUBSTACK_DRAFTS = REPO_ROOT / "data" / "substack_drafts"
 
 def find_article(arg: str) -> Path:
     """Resolve article path from explicit path or fuzzy folder name."""
-    p = Path(arg)
+    p = Path(arg).resolve()
     if p.exists() and p.suffix == ".md":
         return p
 
@@ -266,7 +266,11 @@ def main():
     args = parser.parse_args()
 
     md_path = find_article(args.article)
-    print(f"📄 found article: {md_path.relative_to(REPO_ROOT)}")
+    try:
+        display_path = md_path.relative_to(REPO_ROOT)
+    except ValueError:
+        display_path = md_path
+    print(f"📄 found article: {display_path}")
 
     article = parse_article(md_path)
     print(f"   title:      {article['title']}")

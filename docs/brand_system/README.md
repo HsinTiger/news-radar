@@ -45,3 +45,10 @@ claude design 後續迭代版（v0.2、v0.3...）放同一資料夾、檔名遞�
 - T04 photo 仍 striped block + Unsplash tag note（之後給真實 B&W photo source）
 - T02 coffee cup 是 vector stand-in（Cerebras 篇可考慮 swap 成 wafer chip 視覺、v0.3 議題）
 - 不是 Figma file —— spec doc only、templates 後續可用 Figma 重建
+
+## v0.2.1 變更摘要（2026-05-15 深夜）
+
+- **§13 Inline Image Workflow 加入** —— body 內嵌圖走 markdown marker blockquote（不 upload 實際圖）、含 Path B 搜尋 + Path C 生圖 prompt 雙路徑、Hsin 自己找圖或生圖
+- **Visual editor 5 動作 codify**（substack_soul.md §10.1 連動）
+- 第一個 working case: Substack draft 197913816（配角會富 圖文 markers v2）
+- 補充說明：Path D 全自動 upload 在 5/15 prototype 過 test draft 197911590 + 197912645、技術通但 token cost / 找圖摩擦 / 版權判斷三條 trade-off 後改走 §13 markers 路線
