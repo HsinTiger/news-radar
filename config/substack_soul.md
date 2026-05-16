@@ -501,11 +501,20 @@
 
 ## §12 文章底部模板（每篇必加）
 
-### §12.1 標語（Tagline）
+### §12.1 標語（Tagline）+ Cadence Promise（2026-05-16 加入）
 
-每篇文章結尾、Subscribe widget 上方放一段品牌標語。**固定文字**：
+每篇文章結尾、Subscribe widget 上方放兩段：
 
+**1. 品牌 tagline**（固定）:
 > 「我專門拆解：那些你已經被市場說服、但其實正在害你的共識。」
+
+**2. Cadence promise**（2026-05-16 加入、增強訂閱動機）:
+> 📅 每天 3 分鐘 · 拿走一個被市場藏起來的共識
+> 🔄 365 天複利一個眼光
+
+**Why**: Hsin 5/16 觀察開信率 + 訂閱率不振、insight 是「讀者擔心的不是值不值得讀、是有沒有時間讀」。3 分鐘是低於 commute / 茶水間 friction 線下的數字。「複利」對齊 brand DNA（動詞複利、配角會富、主力爸爸我錯了 整條 thesis）。
+
+**誠實 caveat**：實際文章 ~2500-3500 字 = 8-10 分鐘全讀。「3 分鐘」claim 必須靠**掃讀友好結構**支撐——hero punchline 在 ▉ section 標題 + 第一句明示、bold key sentence、讓掃讀者真的能 3 分鐘抓到。寫稿時記得這條。
 
 ### §12.2 Subscribe widget
 
@@ -518,6 +527,9 @@ Substack 後台支援 native Subscribe button widget。markdown 端做法兩條 
 ---
 
 > **「我專門拆解：那些你已經被市場說服、但其實正在害你的共識。」**
+>
+> 📅 每天 3 分鐘 · 拿走一個被市場藏起來的共識
+> 🔄 365 天複利一個眼光
 
 <!-- substack: 在此位置手動插入 Subscribe button -->
 *點此訂閱 → 不錯過下一篇拆解。*

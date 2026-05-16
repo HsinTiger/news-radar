@@ -372,17 +372,27 @@ BRAND_TAGLINE = (
 
 
 def build_footer_block() -> str:
-    """Brand tagline + Substack subscribe placeholder.
+    """Brand tagline + Cadence promise + Substack subscribe placeholder.
 
     Path A markdown approach: emit visible placeholder text + HTML comment.
     Hsin opens draft in Substack editor and replaces the placeholder block
     with the native Subscribe button widget (slash menu / + button).
     Path B (auto-insert via python-substack subscribeWithCaption node) is
     a future enhancement; for now Path A is reliable and idempotent.
+
+    2026-05-16 加入 Cadence Promise 兩行 (per substack_soul.md §12.1):
+    - 每天 3 分鐘 · 拿走一個被市場藏起來的共識
+    - 365 天複利一個眼光
+    Why: Hsin 5/16 觀察開信率 + 訂閱率不振、insight 是「讀者擔心的不是值不
+    值得讀、是有沒有時間讀」。3 分鐘是低於 commute / 茶水間 friction 線下的
+    數字。「複利」對齊 brand DNA。
     """
     return (
         "\n\n---\n\n"
-        f"> **{BRAND_TAGLINE}**\n\n"
+        f"> **{BRAND_TAGLINE}**\n"
+        "> \n"
+        "> 📅 每天 3 分鐘 · 拿走一個被市場藏起來的共識\n"
+        "> 🔄 365 天複利一個眼光\n\n"
         "<!-- substack-editor: 將此段替換為 Subscribe button widget "
         "(toolbar 的 + → Subscribe button) -->\n\n"
         "*點此訂閱 → 不錯過下一篇拆解。*\n"
