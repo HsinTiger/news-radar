@@ -240,6 +240,9 @@ def _parse_claude_envelope(stdout: str) -> tuple[str, dict]:
     return stdout, {}
 
 
+CLAUDE_CLI_MAX_RETRIES = int(os.getenv("CLAUDE_CLI_MAX_RETRIES", "2"))
+
+
 async def _try_claude_cli(
     *,
     system: str,
@@ -247,7 +250,66 @@ async def _try_claude_cli(
     response_model: Type[T],
     timeout_s: int,
 ) -> LLMResult[T]:
-    """試呼叫 claude CLI。
+    """Retry wrapper around _try_claude_cli_once（2026-05-16 加入）。
+
+    Hsin 5/16 決策：放棄 Gemini fallback、改用 claude_cli retry on transient
+    failures。理由：Gemini quota / API 不穩、且 voice / brand 規範對齊 Claude
+    模型訓練更熟。LLM provider 切換成本 > 同一 provider 重試成本。
+
+    Retry policy:
+    - Retryable: asyncio.TimeoutError, spawn_failed (transient 環境問題)
+    - Non-retryable: non-zero exit (auth / permission), JSON parse failure
+      (deterministic、retry 也是同樣結果)
+    - 預設 2 retries (3 total attempts)、backoff 30s + 60s
+    - ENV override: CLAUDE_CLI_MAX_RETRIES (例：=0 關掉 retry)
+
+    歷史 incident: 5/13 + 5/16 兩次 launchctl morning Claude CLI 480s timeout
+    → abort → 無 Substack draft。加 retry 後預期 ≥ 90% 自動恢復。
+    """
+    last_result = None
+    for attempt in range(CLAUDE_CLI_MAX_RETRIES + 1):
+        if attempt > 0:
+            backoff_s = 30 * attempt
+            err_preview = (last_result.raw_error or "?")[:80] if last_result else "init"
+            print(
+                f"[claude_cli] ⟳ retry {attempt}/{CLAUDE_CLI_MAX_RETRIES} "
+                f"after {backoff_s}s backoff (prev: {err_preview})"
+            )
+            await asyncio.sleep(backoff_s)
+
+        result = await _try_claude_cli_once(
+            system=system,
+            prompt=prompt,
+            response_model=response_model,
+            timeout_s=timeout_s,
+        )
+
+        if result.data is not None:
+            if attempt > 0:
+                print(
+                    f"[claude_cli] ✅ recovered on attempt "
+                    f"{attempt + 1}/{CLAUDE_CLI_MAX_RETRIES + 1}"
+                )
+            return result
+
+        last_result = result
+        err = (result.raw_error or "").lower()
+        retryable = ("timeout" in err) or ("spawn failed" in err)
+        if not retryable:
+            return result  # 非 transient 錯誤（auth / parse）、立刻回
+
+    # All retries exhausted
+    return last_result
+
+
+async def _try_claude_cli_once(
+    *,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    timeout_s: int,
+) -> LLMResult[T]:
+    """試呼叫 claude CLI（單次、無 retry、由 _try_claude_cli wrapper 控制 retry）。
 
     用官方支援的旗標組合（見 https://code.claude.com/docs/en/cli-reference）：
     - `-p` / `--print`：non-interactive 模式
@@ -259,7 +321,7 @@ async def _try_claude_cli(
     ⚠️ 不用 `--bare`：實測會把 auth context 跟 hook/skill/plugin 一起剝掉，
     導致即使 `claude login` 成功、`-p` 也會回 "Not logged in"。
     tradeoff: 每次 call 會載整套 context，成本約 $0.094/call（full caching 後），
-    但 Claude CLI 只在 Gemini 失敗時才觸發，頻率低，可接受。
+    但 Claude CLI 是 Substack composer 的唯一 backend、頻率每天 2-3 次、可接受。
 
     實作細節：
     - 用 asyncio.create_subprocess_exec 避免 block event loop
