@@ -1,8 +1,10 @@
 # T01 · Pure type prompt template
 
-**When to use**: headline punchy ≤ 8 字 · 文章是 thesis · 沒有好 imagery anchor · default 80% 篇用此 template
+**When to use**: headline punchy ≤ 6 字 preferred (≤8 上限) · 文章是 thesis · 沒有好 imagery anchor · default 80% 篇用此 template
 
-**Specs**: HERO 240px / ACCENT 1-2 字 / IMAGERY none / TIME 3 min
+**Specs**: HERO **300-360px** (v0.2.2 加碼) / ACCENT 1-2 字 / IMAGERY none / TIME 3 min
+
+**v0.2.2 加碼提醒**：標題若含數字（%、億、年數、倍數）→ **優先抽數字當 hero**（如「9% → 34.4%」抽「34.4%」、「200 億單品咖啡」抽「200 億」）。詳見 `config/visual_brand_system.md §7`。
 
 ---
 
@@ -34,12 +36,16 @@ TOP BAR (top 64px):
   "RADAR" colored sienna red #C84A32)
 - 2px solid #141414 horizontal rule directly below
 
-HERO REGION (center-left, dominating ~50% of canvas):
+HERO REGION (center-left, dominating 40-60% of canvas area, v0.2.2 加碼):
 - Chinese text "{{HERO_TEXT}}" in Noto Serif TC weight 900
-- Size: 240px, leading 0.92, tracking -2%
+- Size: 300-360px (v0.2.2 加碼、原 240px、加大 thumbnail 讀率)
+- Leading 0.92, tracking -2%
 - Color: Press Ink #141414
 - The character(s) "{{HERO_ACCENT_CHAR}}" colored sienna red #C84A32
   (this is the SINGLE accent on the cover — no other red anywhere)
+- Preferred hero length: ≤ 6 字 (≤ 8 字 absolute max)
+- If title contains numbers (%, 億, 年數, 倍數) → prioritize number extraction
+  over Chinese phrase (per §7 抽取規則 #2)
 
 KICKER (above hero, 28px gap):
 - Text "{{KICKER}}" in JetBrains Mono 13px UPPERCASE

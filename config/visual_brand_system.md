@@ -192,8 +192,8 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 ### T01 · Pure type（DEFAULT）
 
 - **Formula**: HERO + MARK · NO IMAGERY
-- **When**: headline punchy ≤ 8 字 · 文章是 thesis · 沒有好 imagery
-- **Specs**: HERO 236px / ACCENT 1 char / IMAGERY none / TIME 3 min
+- **When**: headline punchy ≤ 6 字 preferred (≤8 上限) · 文章是 thesis · 沒有好 imagery
+- **Specs**: HERO **300-360px** (v0.2.2 加碼、原 240px) / ACCENT 1 char / IMAGERY none / TIME 3 min
 - **Why**: 60×40 px 比任何照片都活、把 headline 當整個產品
 
 ### T02 · Single object
@@ -241,9 +241,10 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 
 ### 規則
 
-1. 從標題挑「**最 punch 的 4-8 字詞組**」當 hero text
-2. 該詞組必須**獨立讀得通**（不需要剩下的標題上下文）
-3. 該詞組必須**讀者第一秒能感受到 emotion / contrarian / curiosity**
+1. 從標題挑「**最 punch 的 4-8 字詞組** preferred ≤ 6 字」當 hero text
+2. **若標題含數字（%、億、年數、倍數）→ 優先抽數字 over 詞組**（v0.2.2 加碼）
+3. 該詞組必須**獨立讀得通**（不需要剩下的標題上下文）
+4. 該詞組必須**讀者第一秒能感受到 emotion / contrarian / curiosity**
 
 ### 範例
 
@@ -280,7 +281,7 @@ Step 5 · Render 1456 × 816
 
 | 條件 | Template |
 |---|---|
-| 沒有 imagery anchor / hero ≤ 8 字 / thesis 篇 | T01 Pure type（**default、80% 篇用這個**）|
+| 沒有 imagery anchor / hero ≤ 6 字 preferred (≤8 上限) / thesis 篇 | T01 Pure type（**default、80% 篇用這個**）|
 | 有自然單一物件 anchor（晶片 / 咖啡杯 / 樹）| T02 Single object |
 | 文章核心是一張 chart | T03 Data / chart |
 | Atmospheric anchor / 長文 ≥ 1500 字 | T04 B&W photo |
@@ -402,7 +403,8 @@ Markdown blockquote、Substack 編輯器渲染為灰底引用區塊：
 |---|---|---|---|
 | v0.1 | 2026-05-15 早 | claude design 首次交付 | initial · representative samples · NEWS RADAR-only masthead |
 | v0.2 | 2026-05-15 晚 | claude design 第二輪迭代 | Chinese masthead pivot (主力爸爸我錯了 primary + NEWS RADAR secondary) · real article hero text 對應 6 covers · cv5/cv6 visual zone 380→280 + hero 124→112 · cv3 duplicate OPENAI label 移除 |
-| **v0.2.1** | **2026-05-15 深夜** | **inline image workflow §13 加入** | **Body 內嵌圖片改走 markdown marker blockquote（Path B 搜尋 + Path C 生圖 prompt）、不 upload 實際圖。Visual editor 5 動作 codify。第一個 working case: Substack draft 197913816** |
+| v0.2.1 | 2026-05-15 深夜 | inline image workflow §13 加入 | Body 內嵌圖片改走 markdown marker blockquote（Path B 搜尋 + Path C 生圖 prompt）、不 upload 實際圖。Visual editor 5 動作 codify。第一個 working case: Substack draft 197913816 |
+| **v0.2.2** | **2026-05-16** | **字大加碼 + 數字優先抽 hero** | **Hero text 從 ≤8 字 → ≤6 字 preferred、字體占面積從 30-50% → 40-60%、T01 hero size 240→300-360px、T03 chart hero 138→180-200px。§7 抽取規則加「數字優先 over 詞組」。借鑑 YouTube 高流量 thumbnail 大字 dominate 60-70% 面積觀察。soul.md §10.2 #1 + §10.1.2 + §6 紀律 #2 同步加碼。從 5/18 Day 1 (A bucket) 起套用、5/29 retro 跟 v0.2 baseline 對照** |
 
 ### v0.2 · 6 covers real article 對應
 

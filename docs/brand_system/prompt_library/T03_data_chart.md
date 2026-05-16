@@ -2,7 +2,9 @@
 
 **When to use**: 文章核心是一張 chart · ≤ 2 series · time series or comparison
 
-**Specs**: CHART top 55% / HERO bot 35% / 120-138px / TIME 5 min
+**Specs**: CHART top 50% (v0.2.2 略縮) / HERO bot 40% / **180-200px** (v0.2.2 加碼、原 138px) / TIME 5 min
+
+**v0.2.2 加碼提醒**：chart 區從 55% 略縮到 50%、hero 區從 35% 增到 40%、hero font 從 138px 加大到 180-200px、整體 hero 字大 dominate。
 
 **Rule**: chart must argue. 可被任何其他 chart 取代 = 砍掉走 T01。
 
@@ -32,7 +34,7 @@ TOP BAR:
   UPPERCASE, "RADAR" sienna #C84A32
 - 2px #141414 rule below
 
-CHART REGION (top 55% of canvas, in a Bone-toned panel):
+CHART REGION (top 50% of canvas, in a Bone-toned panel, v0.2.2 略縮):
 - Background: Bone #E8E3D6 panel with 1px #141414 border
 - A clean editorial chart showing: {{IMAGERY_HINT}}
 - Chart type: bar chart OR line chart, 1-2 series ONLY
@@ -42,10 +44,11 @@ CHART REGION (top 55% of canvas, in a Bone-toned panel):
 - The most important data point colored sienna red #C84A32
   (this is the SINGLE accent — hero text stays all black)
 
-HERO REGION (bottom 35%, right-aligned):
-- Chinese "{{HERO_TEXT}}" Noto Serif TC weight 900, 138px, leading 0.95
+HERO REGION (bottom 40%, right-aligned, v0.2.2 加碼):
+- Chinese "{{HERO_TEXT}}" Noto Serif TC weight 900, 180-200px (v0.2.2 加碼、原 138px), leading 0.95
 - All text color: Press Ink #141414 (no Sienna here, accent is in chart)
 - KICKER above hero already covered by chart caption — skip duplicate
+- 數字優先：if 文章核心數字 e.g. "34.4%" → hero text 用該數字 (其實 T03 通常就是數字、天然 align)
 
 BOTTOM BAR:
 - 1px #141414 hairline rule above
