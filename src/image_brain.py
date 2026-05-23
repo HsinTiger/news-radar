@@ -49,49 +49,96 @@ def is_ai_cover_enabled() -> bool:
     return os.getenv("SUBSTACK_AI_COVER", "0").strip() == "1"
 
 
+# 2026-05-22 brand aesthetic version stamp. Bump when visual_brand_system.md
+# changes so future drift is detectable (grep for "BRAND_AESTHETIC_VERSION"
+# in any rendered cover_prompts.md to verify it's not stale).
+BRAND_AESTHETIC_VERSION = "v0.2.2_cold_print_editorial"
+
+# 2026-05-16 大字 enforcement keyphrases. Per substack_soul.md §10.2 #1, EVERY
+# cover variant (scene / concept / abstract) must contain large hero text
+# occupying 40-60% of canvas area. The 3-version design contract requires
+# all 3 prompts to encode this, not just the abstract T01 one.
+# Validators (in tools/push_pasted_draft.py) grep for these keyphrases in
+# each prompt to assert 大字 compliance before push.
+HERO_TEXT_KEYPHRASES = ("hero text", "≤6 字", "40-60%")
+
+
 def build_cover_prompt_block(
     cover_image_prompt: str,
     *,
     title: str = "",
     subtitle: str = "",
+    scene_prompt: str | None = None,
+    concept_prompt: str | None = None,
+    abstract_prompt: str | None = None,
 ) -> str:
-    """產出 markdown 區塊放在 Article_Substack.md 結尾。
+    """產出 markdown 區塊放在 Article_Substack.md 結尾（或注入 ad-hoc draft body）。
 
     Caller responsibility：把這段 append 進 article markdown。Hsin 收到草稿後
-    複製 prompt → GPT web / NanoBanana / Midjourney → 拿圖回來手動上傳。
+    複製 prompt → ChatGPT image / NanoBanana / Midjourney → 拿圖回來手動上傳。
+
+    兩種 caller 模式：
+      (1) **Auto-fanout**：caller 只提供 `cover_image_prompt`、function 自動展成
+          場景/概念/抽象三版本（給 LLM 走 compose pipeline 的場景）。
+      (2) **Explicit-3**：caller 提供 scene/concept/abstract 三個 prompt（給 PM
+          手寫 ad-hoc draft 的場景；tools/push_pasted_draft.py 走這條）。
 
     為什麼提供 3 個版本（場景 / 概念 / 抽象）：
-        text-to-image 不同 prompt 出來差異大，給 3 個方向讓 Hsin 挑 1 個丟生圖，
-        或全丟、選最對味的。不增加 token 成本（caller 端 LLM 已經寫好 prompt
-        了，這裡只做 markdown formatting）。
+        text-to-image 不同 prompt 出來差異大，給 3 個方向讓 Hsin 挑 1 個丟生圖。
+        場景 = 文章直接畫面；概念 = 視覺隱喻；抽象 = T01 純文字 / T03 chart。
 
-    Aesthetic enforcement：每個版本都自動 append visual_soul.md 約束尾段。
+    2026-05-22 aesthetic_tail 換成 v0.2.2 cold-print editorial（從原本 Moleskine
+    handdrawn 改）。詳見 BRAND_AESTHETIC_VERSION。對應 config/visual_brand_system.md。
+
+    2026-05-16 enforce 大字 rule: aesthetic_tail 加入 HERO_TEXT_KEYPHRASES
+    必須出現的硬規範。每個 prompt（含 scene/concept、不只 abstract）都要有
+    hero text 占 40-60% 面積、≤6 字 preferred。
     """
     aesthetic_tail = (
-        " — Style: pencil sketch on grid paper, handdrawn Moleskine notebook "
-        "aesthetic, muted earth tones (sienna / faded ochre / charcoal grey), "
-        "low-saturation monochrome with single accent color. No 3D rendering, "
-        "no neon, no anime, no exaggerated facial emotion. If humans appear, "
-        "only backs of heads / side profiles observing a system (diagram / "
-        "chart / object). Composition reads like a scientific illustration "
-        "or vintage botanical plate. 16:9 aspect (1456×816)."
+        " — Style: COLD-PRINT EDITORIAL (1950s financial broadsheet). "
+        "Background: warm off-white #F2EEE5 (NEVER pure white). "
+        "Text + lines: near-black #141414 (NEVER pure #000). "
+        "Single accent: sienna red #C84A32, used ONCE total per cover. "
+        "Typography (when text appears): Noto Serif TC weight 900 for hero, "
+        "JetBrains Mono for kicker/labels. "
+        "MANDATORY: hero text must dominate 40-60% of canvas area, "
+        "≤6 字 preferred (≤8 max), thumbnail-readable at 60×40 px. "
+        "Scene variant: documentary photo as base + large overlaid hero text. "
+        "Concept variant: infographic + enlarged core number/concept as hero. "
+        "Abstract variant: T01 typography-only, 300-360px hero. "
+        "Forbidden: gradients, drop shadows, 3D, glows, neon, anime, cartoon, "
+        "cartoon people, faces with visible features, emoji, decorative borders. "
+        "If humans appear: backs of heads / side profiles only, no facial emotion. "
+        "Aesthetic reference: 1960s Wall Street Journal / 1980s Business Week / "
+        "The Economist / Financial Times. Flat 2D editorial print. "
+        "Render aspect 16:9 (1456×816 px). "
+        f"[BRAND_AESTHETIC_VERSION = {BRAND_AESTHETIC_VERSION}]"
     )
 
-    # Three angles to give the human picker. Caller can also pass a single
-    # prompt and we'll just echo it once if they don't want variants.
+    # Resolve the three slots. If explicit prompts not given, fan out from
+    # the single cover_image_prompt as a base + title/subtitle for variants.
+    v_scene = (scene_prompt or cover_image_prompt).strip()
+    v_concept = (concept_prompt or
+        f"用一張視覺隱喻代替文章直接場景，主題：「{title or '(本文主題)'}」"
+    ).strip()
+    v_abstract = (abstract_prompt or
+        f"T01 純文字封面、hero text 從「{title or subtitle or '(本文核心)'}」"
+        f"抽 ≤6 字最強短語，Noto Serif TC 900 / 300-360px、"
+        f"關鍵 1-2 字 sienna #C84A32 single accent。"
+    ).strip()
+
     return (
         "\n\n---\n\n"
-        "## 📸 封面圖 Prompt（手動丟 GPT web / NanoBanana 生圖）\n\n"
-        "Claude 寫文章順便產的視覺指引。挑一個（或全試）→ 丟生圖工具 → "
-        "回來換掉 cover.png 再 publish。\n\n"
-        "### 版本 A · 場景直譯\n\n"
-        f"> {cover_image_prompt.strip()}{aesthetic_tail}\n\n"
-        "### 版本 B · 概念符號（Hsin 自行決定要不要試）\n\n"
-        f"> 用一張視覺隱喻代替文章直接場景，主題：「{title or '(本文主題)'}」"
-        f"。{aesthetic_tail.lstrip(' —')}\n\n"
-        "### 版本 C · 抽象地圖／流程圖\n\n"
-        f"> 一張手繪的關係網路圖，用線條與小型符號表達『{subtitle or title or '(本文核心)'}』"
-        f"中的多個元素之間的關係與張力。{aesthetic_tail.lstrip(' —')}\n"
+        "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
+        "PM 替你寫好的 3 版本封面 prompt（全套 v0.2.2 cold-print editorial 美學）。"
+        "挑 1 個（或全試）→ 丟 ChatGPT image / NanoBanana / Midjourney → "
+        "拿圖回來換掉 cover.png 再 publish。發文前把整段刪掉。\n\n"
+        "### 版本 A · 場景式（documentary photo / scene）\n\n"
+        f"> {v_scene}{aesthetic_tail}\n\n"
+        "### 版本 B · 概念式（visual metaphor / infographic）\n\n"
+        f"> {v_concept}{aesthetic_tail}\n\n"
+        "### 版本 C · 抽象式（T01 typography-only）\n\n"
+        f"> {v_abstract}{aesthetic_tail}\n"
     )
 
 
