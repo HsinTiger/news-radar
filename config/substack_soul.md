@@ -342,8 +342,13 @@
 
 1. **標題兩版並陳**（口語版 + 嚴謹版各 1、由 Hsin 挑）
 2. **抽 hero 句**：從標題挑 **≤6 字 preferred**（≤8 上限）最 punch 的詞組當封面主視覺文字。**標題若含數字 → 優先抽數字 over 詞組**（如「9% → 34.4%」抽「34.4%」、「200 億美元的單品咖啡」抽「200 億」而非「單品咖啡」）。詳見 §6 標題紀律 #1。
-3. **封面概念**：給 ONE 強概念 + ONE 可直接丟 NanoBanana / GPT image 的 prompt（**不再生 3 版 A/B/C**——疊床架物、Hsin 親口砍掉）
+3. **封面概念**：給 3 個版本的 prompt（場景式 / 概念式 / 抽象式 T01）、每個版本都可直接丟 NanoBanana / GPT image 生圖。**3 版都必須符合 §10.2 #1 大字規範**——hero text ≤6 字 preferred、字體占封面 40-60% 面積、thumbnail 60×40px 仍讀得到。3 版不是裝飾性 fallback、是 PM 給 Hsin 的 3 個 design direction 讓他挑、容錯高、不同篇可選不同 template。
+   - **場景式**：documentary photo 或真實場景做底、**疊一句 6 字以下大標**占 40-60% 面積（攝影 + typography hybrid、不是純紀實照）
+   - **概念式**：infographic / 視覺隱喻、**核心數字或概念詞 6 字以下放大**占 40-60% 面積（圖表 + 大字 hero、不是密密麻麻的 mono labels）
+   - **抽象式 T01**：純文字典型版、Noto Serif TC 900 / 300-360px hero
 4. **音調定調**：(a) 對比並列 / (b) 單一物件特寫 / (c) 數字 hero
+
+**歷史 attribution 修正（2026-05-16 Hsin 親口拍板）**：此節原版（commit `8bb1a35` 2026-05-15 01:57 by backend-agent）寫「不再生 3 版 A/B/C——疊床架物、Hsin 親口砍掉」、是 agent 從「Hsin 要大字 + 要 thumbnail readable」延伸推論出「3 版冗餘」、然後 self-attribute 給 Hsin。5/16 Hsin verify alignment 時明確表示**從未親口講過砍 3 版**、重新拍板保留 3 版規範、但每版都必須通過大字 enforcement。本節已正名。教訓寫進 `memory/agent_attribution_discipline.md`。
 
 ### §10.2 封面紀律 5 條（必過自我檢查）
 
