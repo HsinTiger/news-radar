@@ -19,7 +19,7 @@ name: News Radar · Feed Healthcheck (Daily)
 on:
   schedule:
     # 每天 UTC 23:00 = Asia/Taipei 07:00（Hsin 起床前先知道哪個 feed 掛了）
-    - cron: "0 23 * * *"
+    # PAUSED 2026-05-22 · - cron: "0 23 * * *"
   workflow_dispatch: {}
 
 concurrency:

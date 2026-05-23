@@ -28,7 +28,7 @@ name: News Radar · Gate Analyzer (Daily)
 on:
   schedule:
     # Daily 04:30 UTC = 12:30 Asia/Taipei
-    - cron: "30 4 * * *"
+    # PAUSED 2026-05-22 · - cron: "30 4 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

@@ -11,7 +11,7 @@ name: News Radar · Reflect (Daily)
 
 on:
   schedule:
-    - cron: "0 16 * * *"   # UTC 16:00 = Asia/Taipei 00:00
+    # PAUSED 2026-05-22 · - cron: "0 16 * * *"   # UTC 16:00 = Asia/Taipei 00:00
   workflow_dispatch:
     inputs:
       dry_run:

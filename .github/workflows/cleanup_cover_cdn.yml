@@ -10,7 +10,7 @@ on:
   schedule:
     # Sunday 03:00 UTC = Sunday 11:00 Asia/Taipei. Pre-dawn so it
     # doesn't compete with publish workflow for cover-cdn lock.
-    - cron: "0 3 * * 0"
+    # PAUSED 2026-05-22 · - cron: "0 3 * * 0"
   workflow_dispatch:
     inputs:
       dry_run:

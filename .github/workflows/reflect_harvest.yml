@@ -27,7 +27,7 @@ name: News Radar · Harvest Analyzer (Daily)
 on:
   schedule:
     # Daily 03:00 UTC = 11:00 Asia/Taipei
-    - cron: "0 3 * * *"
+    # PAUSED 2026-05-22 · - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

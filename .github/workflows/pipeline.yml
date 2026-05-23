@@ -14,7 +14,7 @@ on:
   schedule:
     # UTC 整點每小時。Cadence 1h upper bound 保證實際不會每小時都發，
     # run_publish_queue.py 自己會 honour min_interval。
-    - cron: "0 * * * *"
+    # PAUSED 2026-05-22 · - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       mode:
