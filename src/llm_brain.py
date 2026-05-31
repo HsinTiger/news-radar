@@ -194,7 +194,13 @@ def _gemini_cli_available() -> bool:
     return shutil.which(GEMINI_CLI_BIN) is not None
 
 def _gemini_cli_dirs() -> list[str]:
-    """收集所有可用的 Gemini CLI config directories (用逗號分隔)，用於多帳號輪替。"""
+    """收集所有可用的 Gemini CLI config directories (用逗號分隔)，用於多帳號輪替。
+
+    ⚠️ 2026-06-01 實測注意：gemini CLI **不吃 GEMINI_CONFIG_DIR**（設了照樣讀預設
+    ~/.gemini、不會換帳號）。真正能隔離/切換帳號的是 **HOME**（gemini 讀 $HOME/.gemini）。
+    所以「多帳號輪替」要真的生效，需把每個帳號做成獨立 HOME（HOME/.gemini 各自登入），
+    呼叫端改設 env['HOME']。目前清單沿用舊 GEMINI_CONFIG_DIR 寫法＝實質單一帳號
+    （現役 ~/.gemini）；2 帳號尚未真正啟用，見 setup 說明。"""
     raw = os.getenv("GEMINI_CLI_CONFIG_DIRS", "").split(",")
     dirs = [d.strip() for d in raw if d.strip()]
     return dirs if dirs else [""] # fallback to default
@@ -295,7 +301,7 @@ async def _try_gemini_cli(
                 # 取得實際帳號 Email (2026-06-01 新增)
                 acct_email = "unknown"
                 try:
-                    target_dir = os.environ.get("GEMINI_CONFIG_DIR") or os.path.expanduser("~/.gemini")
+                    target_dir = os.path.expanduser(config_dir) if config_dir else os.path.expanduser("~/.gemini")
                     acct_path = os.path.join(target_dir, "google_accounts.json")
                     if os.path.exists(acct_path):
                         with open(acct_path, "r") as f:
