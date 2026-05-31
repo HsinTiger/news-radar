@@ -548,6 +548,10 @@ def _resolve_backends() -> Optional[tuple]:
         return ("claude_cli",)
     if SUBSTACK_BACKEND in ("default", "auto", "fallback"):
         return None  # let call_for_json use its default chain
+    # Force a single non-Claude backend (2026-05-31): run token-free w.r.t. the
+    # Claude Max quota — e.g. SUBSTACK_COMPOSER_BACKEND=gemini uses the Gemini key(s).
+    if SUBSTACK_BACKEND in ("gemini", "groq", "cerebras"):
+        return (SUBSTACK_BACKEND,)
     # Unknown value → loud warning, fall back to claude_cli
     print(
         f"[SubstackComposer] ⚠️ Unknown SUBSTACK_COMPOSER_BACKEND={SUBSTACK_BACKEND!r}; "
