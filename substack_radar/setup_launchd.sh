@@ -84,13 +84,13 @@ MORNING_LOG="logs/substack_morning_${TS}.log"
 EVENING_LOG="logs/substack_evening_${TS}.log"
 
 echo "[3/6] Triggering morning draft in background..."
-nohup .venv/bin/python tools/substack_compose.py morning > "$MORNING_LOG" 2>&1 &
+nohup .venv/bin/python substack_radar/compose.py morning --harvest > "$MORNING_LOG" 2>&1 &
 MORNING_PID=$!
 echo "  → PID $MORNING_PID  log: $MORNING_LOG"
 echo ""
 
 echo "[4/6] Triggering evening draft in background..."
-nohup .venv/bin/python tools/substack_compose.py evening > "$EVENING_LOG" 2>&1 &
+nohup .venv/bin/python substack_radar/compose.py evening --harvest > "$EVENING_LOG" 2>&1 &
 EVENING_PID=$!
 echo "  → PID $EVENING_PID  log: $EVENING_LOG"
 echo ""
@@ -120,12 +120,12 @@ cat > "$MORNING_PLIST" <<EOF
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>cd $REPO &amp;&amp; .venv/bin/python -u tools/substack_compose.py morning</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u substack_radar/compose.py morning --harvest</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>9</integer>
+    <integer>8</integer>
     <key>Minute</key>
     <integer>0</integer>
   </dict>
@@ -141,6 +141,8 @@ cat > "$MORNING_PLIST" <<EOF
     <string>$HOME</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
+    <key>SUBSTACK_WORD_CAP</key>
+    <string>2500</string>
   </dict>
 </dict>
 </plist>
@@ -157,12 +159,12 @@ cat > "$EVENING_PLIST" <<EOF
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>cd $REPO &amp;&amp; .venv/bin/python -u tools/substack_compose.py evening</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u substack_radar/compose.py evening --harvest</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>18</integer>
+    <integer>17</integer>
     <key>Minute</key>
     <integer>0</integer>
   </dict>
@@ -178,6 +180,8 @@ cat > "$EVENING_PLIST" <<EOF
     <string>$HOME</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
+    <key>SUBSTACK_WORD_CAP</key>
+    <string>2500</string>
   </dict>
 </dict>
 </plist>

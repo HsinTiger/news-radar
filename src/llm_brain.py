@@ -1,7 +1,7 @@
 """
 News Radar · LLM Brain (Phase 8.19)
 ====================================
-統一的 LLM 呼叫層：Gemini primary → Claude CLI fallback → None。
+統一的 LLM 呼叫層：claude_cli → gemini → groq → cerebras → None（依能力排序）。
 
 為什麼獨立一個模組：
 - scorer.py / composer.py 都各自呼叫 Gemini；現在要加 Claude CLI fallback
@@ -145,6 +145,37 @@ async def _try_gemini(
 
 CLAUDE_CLI_BIN = os.getenv("CLAUDE_CLI_BIN", "claude")
 
+# --- Minimal-context mode (2026-05-30, Optimization A) ----------------------
+# A trivial `-p` ping costs ~$0.03 / ~12K context tokens because the CLI loads
+# the user's CLAUDE.md + skills + plugins + MCP + dynamic env sections on every
+# call. For a self-contained JSON-writing task none of that is needed. We strip
+# it WITHOUT --bare (which breaks Keychain auth — see _try_claude_cli_once doc)
+# by: running from a neutral cwd + `--setting-sources project` (no user/local
+# settings) + `--strict-mcp-config` (no MCP) + `--exclude-dynamic-system-prompt-
+# sections`. Auth keeps working because credentials live in the macOS Keychain
+# and the DEFAULT CLAUDE_CONFIG_DIR is left untouched. Measured: fresh input
+# tokens drop ~1650→3; the irreducible ~10K base system prompt stays cached.
+# Reversible via LLM_BRAIN_MINIMAL_CONTEXT=0.
+LLM_BRAIN_MINIMAL_CONTEXT = os.getenv("LLM_BRAIN_MINIMAL_CONTEXT", "1") == "1"
+
+# Neutral working dir for the subprocess so no project .claude / CLAUDE.md /
+# .mcp.json gets picked up. Kept empty (just a settings.json={}).
+_MIN_CTX_DIR = Path(
+    os.getenv("LLM_BRAIN_MIN_CTX_DIR", str(Path.home() / "news_radar" / ".claude_min"))
+)
+
+
+def _ensure_min_ctx_dir() -> Path:
+    """Create (idempotently) the neutral cwd used for minimal-context calls."""
+    try:
+        _MIN_CTX_DIR.mkdir(parents=True, exist_ok=True)
+        settings = _MIN_CTX_DIR / "settings.json"
+        if not settings.exists():
+            settings.write_text("{}", encoding="utf-8")
+    except Exception:
+        pass  # fall back to default cwd if we can't create it
+    return _MIN_CTX_DIR
+
 
 def _claude_cli_available() -> bool:
     return shutil.which(CLAUDE_CLI_BIN) is not None
@@ -249,6 +280,7 @@ async def _try_claude_cli(
     prompt: str,
     response_model: Type[T],
     timeout_s: int,
+    disallowed_tools: Optional[tuple] = None,
 ) -> LLMResult[T]:
     """Retry wrapper around _try_claude_cli_once（2026-05-16 加入）。
 
@@ -282,6 +314,7 @@ async def _try_claude_cli(
             prompt=prompt,
             response_model=response_model,
             timeout_s=timeout_s,
+            disallowed_tools=disallowed_tools,
         )
 
         if result.data is not None:
@@ -308,6 +341,7 @@ async def _try_claude_cli_once(
     prompt: str,
     response_model: Type[T],
     timeout_s: int,
+    disallowed_tools: Optional[tuple] = None,
 ) -> LLMResult[T]:
     """試呼叫 claude CLI（單次、無 retry、由 _try_claude_cli wrapper 控制 retry）。
 
@@ -319,9 +353,20 @@ async def _try_claude_cli_once(
     - user prompt 透過 argv 傳，非 stdin（docs 的 canonical form）
 
     ⚠️ 不用 `--bare`：實測會把 auth context 跟 hook/skill/plugin 一起剝掉，
-    導致即使 `claude login` 成功、`-p` 也會回 "Not logged in"。
-    tradeoff: 每次 call 會載整套 context，成本約 $0.094/call（full caching 後），
-    但 Claude CLI 是 Substack composer 的唯一 backend、頻率每天 2-3 次、可接受。
+    導致即使 `claude login` 成功、`-p` 也會回 "Not logged in"。同理：**不可**
+    覆寫 `CLAUDE_CONFIG_DIR`——指到空目錄一樣會回 "Not logged in"（auth 認的是
+    Keychain + 預設 config dir）。
+
+    Minimal-context mode (2026-05-30, Optimization A，預設開、env 可關)：
+    改用「中性 cwd + setting 旗標」剝掉 per-call 的隱藏 context，auth 不受影響：
+    - cwd = 一個空目錄（_MIN_CTX_DIR）→ 不會撈到 project .claude / CLAUDE.md / .mcp.json
+    - `--setting-sources project` → 不載 user / local settings（含 user skills / CLAUDE.md）
+    - `--strict-mcp-config` → 不載任何 MCP server
+    - `--exclude-dynamic-system-prompt-sections` → 不塞 env / git 動態區塊
+    實測：fresh input tokens ~1650→3；不可再砍的 base system prompt(~10K)維持 cached。
+
+    disallowed_tools: 額外丟給 `--disallowedTools` 的工具名（例如 Substack composer
+    傳 ("WebSearch","WebFetch") 把 agentic 上網查證關掉，改吃預抓好的素材）。
 
     實作細節：
     - 用 asyncio.create_subprocess_exec 避免 block event loop
@@ -336,18 +381,38 @@ async def _try_claude_cli_once(
             raw_error=f"`{CLAUDE_CLI_BIN}` not found on PATH",
         )
 
+    # ⚠️ Arg ordering matters: `--disallowedTools` is variadic (`<tools...>`),
+    # so it must NOT sit immediately before the positional prompt or the parser
+    # swallows the prompt as another tool name ("Input must be provided…"). We
+    # therefore emit all variadic / value flags first and keep the boolean
+    # `--no-session-persistence` as the last option before the positional prompt.
     args = [
         CLAUDE_CLI_BIN,
         "-p",
         "--output-format", "json",
+    ]
+    if disallowed_tools:
+        args += ["--disallowedTools", ",".join(disallowed_tools)]
+
+    cwd: Optional[str] = None
+    if LLM_BRAIN_MINIMAL_CONTEXT:
+        cwd = str(_ensure_min_ctx_dir())
+        args += [
+            "--setting-sources", "project",
+            "--strict-mcp-config",
+            "--exclude-dynamic-system-prompt-sections",
+        ]
+
+    args += [
         "--system-prompt", system.strip(),
-        "--no-session-persistence",
-        prompt.strip(),  # user prompt as positional argv
+        "--no-session-persistence",  # boolean → safe directly before positional
+        prompt.strip(),              # user prompt as positional argv
     ]
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
+            cwd=cwd,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -375,9 +440,13 @@ async def _try_claude_cli_once(
 
     if proc.returncode != 0:
         stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace")[:500]
+        # 2026-05-30: also capture stdout — `claude -p` puts the real failure
+        # message (usage limit / refusal / overload) in the JSON envelope on
+        # stdout, not stderr. Without this, exit!=0 failures are undiagnosable.
+        stdout_text = (stdout_bytes or b"").decode("utf-8", errors="replace")[:900]
         return LLMResult(
             data=None, provider="claude_cli", model=CLAUDE_CLI_BIN,
-            raw_error=f"claude CLI exit={proc.returncode}, stderr={stderr_text!r}",
+            raw_error=f"claude CLI exit={proc.returncode}; stderr={stderr_text!r}; stdout={stdout_text!r}",
         )
 
     stdout_text = (stdout_bytes or b"").decode("utf-8", errors="replace")
@@ -423,6 +492,160 @@ async def _try_claude_cli_once(
 
 
 # --------------------------------------------------------------------------
+# OpenAI-compatible path（Groq / Cerebras / 任意 OpenAI-format 免費端點）
+# --------------------------------------------------------------------------
+# 為什麼 Gemini 走 SDK、這兩家走這個泛用函式：
+# - Gemini 有 google-genai 的 structured output（response_schema），品質最穩，留原路。
+# - Groq / Cerebras 都是 OpenAI-compatible 的 /chat/completions，差別只有 base_url +
+#   key + model → 一個函式覆蓋，多一家只要在 _OPENAI_COMPAT 加一筆 config。
+#
+# ⚠️ 能力 / 可靠度排序（fallback 觸發順序）：claude_cli → gemini → groq → cerebras。
+#   2026-05 免費 tier 實測限制（務必知道，否則會誤判「為什麼長文 fallback 沒生效」）：
+#   - Groq free：30 RPM / 6,000 TPM / 1,000 req/day。soul bundle(~17KB) 當 system 的
+#     composer 容易撞 TPM；scorer / classifier 這種短 call 沒問題。
+#   - Cerebras free：context 上限只有 8,192 tokens → composer 幾乎必超 → 回 400 →
+#     fall through。短任務可用。
+#   兩家定位都是「Claude + Gemini 同時掛掉」時的最後防線；撞限就記 raw_error、往下一條走。
+
+
+@dataclass(frozen=True)
+class _OpenAICompatProvider:
+    """一個 OpenAI-compatible provider 的環境變數 contract。"""
+    name: str
+    key_env: str
+    base_url_env: str
+    base_url_default: str
+    model_env: str
+    model_default: str
+
+
+_OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
+    "groq": _OpenAICompatProvider(
+        name="groq",
+        key_env="GROQ_API_KEY",
+        base_url_env="GROQ_BASE_URL",
+        base_url_default="https://api.groq.com/openai/v1",
+        model_env="GROQ_MODEL",
+        model_default="openai/gpt-oss-120b",
+    ),
+    "cerebras": _OpenAICompatProvider(
+        name="cerebras",
+        key_env="CEREBRAS_API_KEY",
+        base_url_env="CEREBRAS_BASE_URL",
+        base_url_default="https://api.cerebras.ai/v1",
+        model_env="CEREBRAS_MODEL",
+        model_default="zai-glm-4.7",
+    ),
+}
+
+
+async def _try_openai_compatible(
+    *,
+    provider: _OpenAICompatProvider,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    temperature: float,
+    timeout_s: int,
+) -> LLMResult[T]:
+    """試呼叫任一 OpenAI-compatible /chat/completions 端點。
+
+    與 claude / gemini path 收斂方式一致：抽回的 message.content → _extract_json_blob
+    → json.loads(strict=False) → Pydantic model_validate。失敗時 data=None + raw_error。
+    """
+    api_key = os.getenv(provider.key_env)
+    if not api_key:
+        return LLMResult(
+            data=None, provider=provider.name,
+            raw_error=f"{provider.key_env} not set",
+        )
+    base_url = os.getenv(provider.base_url_env, provider.base_url_default).rstrip("/")
+    model = os.getenv(provider.model_env, provider.model_default)
+
+    # OpenAI 的 json_object response_format 要求 prompt 內出現 "json" 字樣，否則某些
+    # 端點(含 Groq)會 400。caller 的 prompt 多半已含，但保險補一句。
+    user_prompt = prompt.strip()
+    if "json" not in (system + prompt).lower():
+        user_prompt += "\n\nReturn only a single valid JSON object."
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system.strip()},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "stream": False,
+    }
+
+    try:
+        import httpx  # 延遲 import：與 google-genai 一樣不拖累無此需求的 caller
+
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            resp = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+    except Exception as e:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"{type(e).__name__}: {e}",
+        )
+
+    if resp.status_code != 200:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"http {resp.status_code}: {resp.text[:300]}",
+        )
+
+    try:
+        body = resp.json()
+    except Exception as e:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"non-JSON body: {type(e).__name__}: {resp.text[:200]}",
+        )
+
+    choices = body.get("choices") or []
+    if not choices:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"no choices: {str(body)[:200]}",
+        )
+    content = (choices[0].get("message") or {}).get("content", "") or ""
+
+    json_blob = _extract_json_blob(content)
+    if json_blob is None:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"no JSON blob in output; first 300 chars: {content[:300]!r}",
+        )
+
+    try:
+        obj = json.loads(json_blob, strict=False)
+        parsed = response_model.model_validate(obj)
+    except (json.JSONDecodeError, ValidationError) as e:
+        return LLMResult(
+            data=None, provider=provider.name, model=model,
+            raw_error=f"parse/validate failed: {type(e).__name__}: {str(e)[:300]}",
+        )
+
+    usage = body.get("usage") or {}
+    return LLMResult(
+        data=parsed,
+        provider=provider.name,
+        model=model,
+        input_tokens=int((usage or {}).get("prompt_tokens", 0) or 0),
+        output_tokens=int((usage or {}).get("completion_tokens", 0) or 0),
+    )
+
+
+# --------------------------------------------------------------------------
 # 對外 API
 # --------------------------------------------------------------------------
 
@@ -431,12 +654,20 @@ async def call_for_json(
     system: str,
     prompt: str,
     response_model: Type[T],
-    gemini_model: str = "gemini-2.0-flash-lite",
+    gemini_model: str = "gemini-2.5-flash",
     temperature: float = 0.2,
     timeout_s: int = 180,
     backends: Optional[tuple] = None,
+    disallowed_tools: Optional[tuple] = None,
 ) -> LLMResult[T]:
-    """核心 API：先試 Claude CLI (Max 方案)，失敗才退 Gemini。
+    """核心 API：依能力 / 可靠度排序逐一嘗試 backend，第一個成功即交付。
+
+    預設鏈（2026-05-30 擴充）：claude_cli (Max 主腦) → gemini (SDK structured)
+        → groq (OpenAI-compatible) → cerebras (OpenAI-compatible)。
+        前兩條維持原行為；新增的 groq / cerebras 是「Claude + Gemini 同時不可用」
+        時的免費雲端兜底，需設 GROQ_API_KEY / CEREBRAS_API_KEY 才會啟用，
+        沒設就自動略過（對既有部署零影響）。各家免費 tier 限制見 _OPENAI_COMPAT
+        區塊註解（Cerebras 8K context → 長文 composer 幾乎必 fall through）。
 
     Phase 8.19b 排序變更（2026-04-20）：
         原本 Gemini primary、Claude CLI fallback，因 Gemini free_tier quota=0
@@ -460,59 +691,82 @@ async def call_for_json(
         system: System instruction（全部前綴）
         prompt: User prompt / 新聞內容 / 評閱指令
         response_model: Pydantic BaseModel 類別（例如 NewsScore / MultiPlatformDraft）
-        gemini_model: Gemini 模型名稱（備援用），預設 `gemini-2.0-flash-lite`
+        gemini_model: Gemini 模型名稱（備援用），預設 `gemini-2.5-flash`
+            （2026-05 實測：2.0-flash-lite 免費額度已歸零 429 limit:0，故改用 2.5-flash）
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
-        backends: 可指定的 backend 順序與白名單。None = 預設行為。
+        backends: 可指定的 backend 順序與白名單（tuple，按序嘗試）。
+            None = 預設 ("claude_cli","gemini","groq","cerebras")。
+            例：("claude_cli",) 只試 Claude；("gemini","groq") 跳過 Claude、
+            先 Gemini 再 Groq。未知名稱會被略過。
+        disallowed_tools: 傳給 Claude CLI 的 `--disallowedTools`（例：
+            ("WebSearch","WebFetch") 關掉 agentic 上網）。僅 claude_cli path 有效。
 
     Returns:
         LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
-    allowed = backends or ("claude_cli", "gemini")
+    allowed = backends or ("claude_cli", "gemini", "groq", "cerebras")
+    primary = allowed[0] if allowed else None
+    last_error: Optional[str] = None
 
-    # Path 1: Claude CLI (primary — Claude Max brain)
-    if "claude_cli" in allowed:
-        if _claude_cli_available():
-            r1 = await _try_claude_cli(
+    # 依 `allowed` 內的順序逐一嘗試（= 能力 / 可靠度排序），第一個成功就回。
+    # 預設鏈：claude_cli(Max 主腦) → gemini(SDK structured) → groq → cerebras。
+    for name in allowed:
+        if name == "claude_cli":
+            if not _claude_cli_available():
+                print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，略過 claude_cli。")
+                continue
+            result = await _try_claude_cli(
                 system=system,
                 prompt=prompt,
                 response_model=response_model,
                 timeout_s=timeout_s,
+                disallowed_tools=disallowed_tools,
             )
-            if r1.data is not None:
-                return r1
-            tail = "; Gemini 不在 backends 白名單內" if "gemini" not in allowed else "，嘗試 Gemini fallback"
-            print(
-                f"[llm_brain] ⚠️ Claude CLI 失敗{tail}。"
-                f" reason={r1.raw_error}"
-            )
-        else:
-            print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH。")
 
-    # Path 2: Gemini (fallback or sole, depending on `backends`)
-    if "gemini" in allowed:
-        if _has_gemini_key():
-            r2 = await _try_gemini(
+        elif name == "gemini":
+            if not _has_gemini_key():
+                print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，略過 gemini。")
+                continue
+            result = await _try_gemini(
                 system=system,
                 prompt=prompt,
                 response_model=response_model,
                 model=gemini_model,
                 temperature=temperature,
             )
-            if r2.data is not None:
-                return r2
-            print(
-                f"[llm_brain] ⚠️ Gemini ({gemini_model}) 失敗。"
-                f" reason={r2.raw_error}"
-            )
-        else:
-            print("[llm_brain] ℹ️ 無 GEMINI_API_KEY，略過 Gemini。")
 
-    # Path 3: 所有指定 backend 都失敗
+        elif name in _OPENAI_COMPAT:
+            provider = _OPENAI_COMPAT[name]
+            if not os.getenv(provider.key_env):
+                print(f"[llm_brain] ℹ️ 無 {provider.key_env}，略過 {name}。")
+                continue
+            result = await _try_openai_compatible(
+                provider=provider,
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                temperature=temperature,
+                timeout_s=timeout_s,
+            )
+
+        else:
+            print(f"[llm_brain] ⚠️ 未知 backend `{name}`，略過。")
+            continue
+
+        if result.data is not None:
+            if name != primary:
+                print(f"[llm_brain] ℹ️ 交付來自 fallback：{name}/{result.model or ''}")
+            return result
+
+        last_error = result.raw_error
+        print(f"[llm_brain] ⚠️ {name} 失敗。reason={result.raw_error}")
+
+    # 所有指定 backend 都失敗
     return LLMResult(
         data=None,
         provider="none",
-        raw_error=f"all requested backends failed: {list(allowed)}",
+        raw_error=f"all requested backends failed: {list(allowed)}; last={last_error}",
     )
 
 

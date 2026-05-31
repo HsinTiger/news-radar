@@ -36,7 +36,7 @@ import re
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.llm_brain import call_for_json
 
@@ -112,13 +112,26 @@ class SubstackDraft(BaseModel):
         description="結尾的開放形式。對應 §7 四種允許句式。",
     )
 
+    # 2026-05-30: truncate overlong title/subtitle BEFORE the max_length check, so a
+    # full ~8-min generation isn't thrown away just because the model overshot the
+    # title/subtitle by a few chars (it's not retryable, so rejection = wasted draft).
+    @field_validator("title", "subtitle", mode="before")
+    @classmethod
+    def _truncate_headline(cls, v, info):
+        if isinstance(v, str):
+            cap = {"title": 60, "subtitle": 80}.get(info.field_name)
+            if cap and len(v) > cap:
+                return v[:cap].rstrip("，、。；：「」『』（）()【】 　")
+        return v
+
 
 # --------------------------------------------------------------------------
 # Soul loading
 # --------------------------------------------------------------------------
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+CONFIG_DIR = Path(__file__).resolve().parent / "config"  # substack/config (2026-05-30 moved)
 SOUL_PATH = CONFIG_DIR / "substack_soul.md"
+VOICE_ANCHOR_PATH = CONFIG_DIR / "substack_voice_anchor.md"
 
 
 def load_substack_soul() -> str:
@@ -129,6 +142,16 @@ def load_substack_soul() -> str:
             "Run from news_radar repo root, or check config/ exists."
         )
     return SOUL_PATH.read_text(encoding="utf-8")
+
+
+def load_voice_anchor() -> str:
+    """Voice exemplars distilled from Hsin's best articles. Teaches the model the
+    TARGET voice by example (not by rule) — the lever against stiff / AI-sounding
+    prose. Optional: returns '' if the file is absent."""
+    try:
+        return VOICE_ANCHOR_PATH.read_text(encoding="utf-8") if VOICE_ANCHOR_PATH.exists() else ""
+    except Exception:
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -206,6 +229,89 @@ _MAINLAND_TERMS = [
 ]
 
 
+def autofix_mainland_terms(draft: "SubstackDraft") -> List[str]:
+    """Deterministically replace unambiguous mainland terms in title/subtitle/body.
+
+    2026-05-30 (Optimization B): the full 大陸→台灣 lookup table used to live in
+    substack_soul.md §11 and was shipped to the LLM on every call (~hundreds of
+    tokens of pure reference). That table is now enforced here at zero token cost
+    so the soul prompt can drop it.
+
+    Split rule:
+      - replacement WITHOUT "／" → unambiguous → auto-replace here.
+      - replacement WITH "／" (e.g. 互聯網→網際網路／網路) → left untouched;
+        audit_substack_draft still WARNS so a human/LLM picks the right one.
+      - genuinely context-sensitive terms (數據/質量/智能/移動/用戶) are deliberately
+        absent from _MAINLAND_TERMS, so they are never touched.
+
+    Mutates `draft` in place and returns a list of human-readable fix messages.
+    """
+    import re as _re
+
+    fixes: List[str] = []
+    for found, repl, category in _MAINLAND_TERMS:
+        if "／" in repl:
+            continue  # ambiguous — leave for audit warning
+        # When the mainland term is a substring of its own fix (算法 ⊂ 演算法),
+        # a blind replace corrupts already-correct text (演算法 → 演演算法). Use a
+        # negative lookbehind on the repl prefix so only standalone uses are fixed.
+        pattern = None
+        if found in repl:
+            prefix = repl.split(found)[0]
+            if prefix:
+                pattern = _re.compile(f"(?<!{_re.escape(prefix)}){_re.escape(found)}")
+        for field in ("title", "subtitle", "body_markdown"):
+            val = getattr(draft, field)
+            if pattern is not None:
+                new_val, cnt = pattern.subn(repl, val)
+                if cnt:
+                    setattr(draft, field, new_val)
+                    fixes.append(f"[自動修正:{category}] {field}『{found}』×{cnt} → 『{repl}』")
+            elif found in val:
+                cnt = val.count(found)
+                setattr(draft, field, val.replace(found, repl))
+                fixes.append(f"[自動修正:{category}] {field}『{found}』×{cnt} → 『{repl}』")
+    return fixes
+
+
+def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
+    """Convert excess 破折號 (em-dashes —/―) in body PROSE to 逗號 — a deterministic
+    de-AI cleanup (the model over-uses em-dashes; soul 限 ≤1). 2026-05-30.
+
+    Discipline:
+      - Each maximal run of em-dashes (「—」「——」…) counts as ONE dash unit.
+      - Keep the first `keep` units (soul allows ≤1); convert the rest to 「，」.
+      - **Skip blockquote lines** (start with 「>」) so §13 inline-image markers and
+        the footer (which carry English gen-prompts / hyphens) are left untouched.
+      - Collapse any 「，，」 the swap produces.
+    Mutates draft.body_markdown; returns one fix message (or []).
+    """
+    budget = keep
+    converted = 0
+
+    def _repl(m):
+        nonlocal budget, converted
+        if budget > 0:
+            budget -= 1
+            return m.group(0)        # keep this dash unit as-is
+        converted += 1
+        return "，"
+
+    out_lines = []
+    for line in draft.body_markdown.split("\n"):
+        if line.lstrip().startswith(">"):   # §13 marker / footer blockquote → leave alone
+            out_lines.append(line)
+            continue
+        new_line = re.sub(r"[—―]+", _repl, line)
+        new_line = re.sub(r"，{2,}", "，", new_line)  # tidy doubled commas
+        out_lines.append(new_line)
+
+    if converted:
+        draft.body_markdown = "\n".join(out_lines)
+        return [f"[自動修正:破折號] 內文破折號 ×{converted} → 逗號（保留 {keep} 個）"]
+    return []
+
+
 # Word cap envelope (2026-05-12 升級):
 #   Hsin 把 1500 字 hard cap 撤掉，因為 deep-research 後的素材值得長文展開。
 #   新預設 3500 字上限，下限按 60% 比例縮為 ~2000 字（避免短打硬填到上限）。
@@ -265,10 +371,13 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
         if c >= 2:
             warnings.append(f"[填充詞濫用] 『{filler}』出現 {c} 次 (≥ 2)。重寫")
 
-    # 5. 破折號 — 最多 1 次
-    dash_count = body.count("——") + body.count("—")
-    if dash_count > 2:
-        warnings.append(f"[破折號濫用] '—' 出現 {dash_count} 次 (上限 1)。改成句號／逗號／重寫。")
+    # 5. 破折號 — 最多 1 次。只數「內文 (非 blockquote) 的破折號單位」，與
+    #    autofix_dashes 同範圍同計法：§13 視覺標記/footer 的英文 prompt 含「—」不算，
+    #    舊版 count("——")+count("—") 掃全文又重複計數，會誤報。
+    _prose = "\n".join(l for l in body.split("\n") if not l.lstrip().startswith(">"))
+    dash_count = len(re.findall(r"[—―]+", _prose))
+    if dash_count > 1:
+        warnings.append(f"[破折號濫用] 內文破折號 {dash_count} 處 (上限 1)。改成句號／逗號／重寫。")
 
     # 6. 「不是 X、是 Y」對仗
     if re.search(r"不是.{1,15}[、，,]\s*[而是是].{1,15}", body):
@@ -283,8 +392,11 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
     full_text = f"{draft.title}\n{draft.subtitle}\n{body}"
     hits = []
     for found, repl, category in _MAINLAND_TERMS:
-        if found in full_text:
-            count = full_text.count(found)
+        # Strip the legit Taiwanese replacement first so a mainland term that is
+        # a substring of its own fix (e.g. 算法 ⊂ 演算法) isn't false-flagged.
+        haystack = full_text.replace(repl, "")
+        if found in haystack:
+            count = haystack.count(found)
             hits.append((found, repl, category, count))
     if hits:
         for found, repl, category, count in hits:
@@ -300,12 +412,18 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
 # --------------------------------------------------------------------------
 
 def _build_system_instruction(soul: str) -> str:
+    anchor = load_voice_anchor()
+    anchor_block = (
+        f"\n=== 聲音錨點（用『範例』學聲音，比規則更重要）===\n{anchor}\n"
+        if anchor else ""
+    )
     return (
         "你是 News Radar 的 Substack 長文寫手——Visionary Analyst。\n"
         f"輸出 {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字長文，採用『硬商業邏輯 × 暖哲學靈魂』。\n"
         "\n"
         "=== 唯一靈魂源（必須完整內化）===\n"
         f"{soul}\n"
+        f"{anchor_block}"
         "\n"
         "=== 重申最高優先級規則 ===\n"
         "1. §0 品牌宣言：替讀者咀嚼。讀完累 → 重寫。\n"
@@ -354,18 +472,31 @@ def _build_user_prompt(
         f"=== 原始素材 ===\n標題：{raw_title}\n本文：{raw_content[:6000]}\n\n"
         f"=== 主題分類 ===\n{topic_category}\n\n"
         f"=== 多樣性提醒 ===\n{avoid}\n\n"
-        # === 2026-05-12 research permission（Claude CLI 限定）===
-        "=== 你可以用網路工具做事實查核（強烈建議）===\n"
-        "本任務在 Claude CLI 環境執行，你**有 `WebSearch` 跟 `WebFetch` 工具**。\n"
-        "下列三類資訊**務必查證後再寫**（隨手 1-3 個工具 call 即可，不要過度研究）：\n"
-        "  (a) 具體金額／百分比／市佔率／融資輪／市場規模——例：『OpenAI 估值 5000 億美元』、\n"
-        "      『台積電 2 奈米毛利率』。寫之前去 Reuters / Bloomberg / 公司 IR 站確認。\n"
-        "  (b) 具體日期／時間線——例：『2026 Q3 法說會』、『5 月初發布』。對不到具體日期 → 寫『近期』別瞎掰。\n"
-        "  (c) 人名 + 職稱——例：『CFO Sarah Friar』、『創辦人 Dario Amodei』。\n"
-        "**不需要查的**：自家論述、比喻、§3 metaphor domain 的類比、抽象推論。\n"
-        "**禁止幻覺背書**：「據業內傳出」「業界專家認為」一律不可寫——沒查到具體來源就不要寫。\n"
-        "查證完直接把該事實寫進 body_markdown（**不要**在 body 裡列出『資料來源』或附 URL，\n"
-        "這是 essay 不是 footnote heavy 學術文章）。\n\n"
+        # === 2026-05-30 舉一反三 reasoning step（對抗「就事論事、生硬」）===
+        "=== 動筆前先做這步（舉一反三）===\n"
+        "在心裡先回答（不要寫進文章）：這則素材的**核心張力**是什麼？這個張力能照到哪 "
+        "**2-3 個不相干的領域**？（例如投資題照到人生決策、科技題照到歷史或心理）。\n"
+        "挑其中最有共鳴的一個，當成全文的**跨域類比骨幹**——讓讀者讀完覺得「這不只在講這條新聞」。\n"
+        "這是『舉一反三』的引擎；只複述素材本身 = 失敗。\n\n"
+        # === 2026-05-30 token-free 改版：研究改為「離線預抓素材」、不再 agentic 上網 ===
+        "=== 事實紀律：只用上面的『原始素材』，不要上網查 ===\n"
+        "本任務**沒有** WebSearch / WebFetch 工具（已停用）。上面的『原始素材』已由離線\n"
+        "harvester（RSS / YouTube 逐字稿 / 文章正文）預先抓好清洗，是你**唯一**的事實來源。\n"
+        "  (a) 具體金額／百分比／日期／人名職稱：素材裡有 → 照用；素材裡沒有 → 寫定性描述\n"
+        "      （『近期』『數家公司』『幅度可觀』），**絕不可**自己掰一個數字或日期。\n"
+        "  (b) **禁止幻覺背書**：「據業內傳出」「業界專家認為」「市場普遍預期」一律不可寫。\n"
+        "  (c) 不需要外部佐證的：自家論述、比喻、§3 metaphor domain 的類比、抽象推論——放手寫。\n"
+        "把事實自然寫進 body_markdown（不要列『資料來源』或附 URL，這是 essay 不是學術論文）。\n\n"
+        # === 2026-05-30 重新接上 §13 inline image 視覺編輯（automated draft 漏掉的部分）===
+        "=== 內文視覺標記（你兼任視覺編輯，務必做）===\n"
+        "在 body_markdown 中**插入 3-6 個內文視覺標記**，給 Hsin 事後找圖／生圖用。規則：\n"
+        "  - 落點：挑「抽象概念 → 具體場景」的轉折處；每個 ▉ 小節 0-2 個；**不要**放在開場 hook 與結尾。\n"
+        "  - 不要自己畫圖或附真實 URL，只插下面這個 markdown blockquote 標記：\n"
+        "> 🖼 視覺位置 · {3-8 字標題}\n"
+        "> 場景描述：{1-3 句、第三人稱、含具體 time/place/物件}\n"
+        "> 🔍 Path B · Google 搜：「{真實英文搜尋字串}」｜推薦來源：{2-3 個，Wikipedia→大刊 archive→stock}\n"
+        "> 🎨 Path C · 生圖 prompt：{可直接貼 ChatGPT image 的英文 prompt，含 B&W documentary / side profile / 1960s LIFE 等風格約束}\n"
+        "  - 這些標記**算進 body_markdown 字串**（用真實換行），不要另開欄位。\n\n"
         "=== 輸出格式：直接回一個 JSON object，欄位如下（缺一不可）===\n"
         "{\n"
         '  "title": "...",                  // 8-60 字。用 §6 三種 hook 之一，禁新聞稿陳述式。\n'
@@ -462,9 +593,33 @@ async def compose_substack_article(
         prompt=prompt,
         response_model=SubstackDraft,
         temperature=temperature,
-        timeout_s=480,  # 長文寫作 + 可能的 web research timeout 拉到 8 分鐘
+        timeout_s=1000,  # ~17 分鐘：字數恢復 3500（≈30-35K output tokens），實測
+                         # 720s 仍會撞牆；無 web research 競爭時間，拉高給純生成餘裕（retry 仍在）。
         backends=backends,
+        # 2026-05-30: 關掉 agentic 上網，逼 composer 只用預抓素材（token-free 改版）。
+        disallowed_tools=("WebSearch", "WebFetch"),
     )
+
+    # Cost metering (Optimization D, 2026-05-30): record every call — success or
+    # fail — so token_usage_daily reflects real spend and before/after deltas are
+    # measurable. Non-fatal: never let metering break composition.
+    try:
+        from src.db import record_token_usage
+
+        record_token_usage(
+            provider=result.provider,
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            cost_usd=result.cost_usd,
+        )
+        print(
+            f"[SubstackComposer] 💰 usage logged: provider={result.provider} "
+            f"in={result.input_tokens} out={result.output_tokens} "
+            f"cost=${result.cost_usd:.4f}"
+        )
+    except Exception as exc:
+        print(f"[SubstackComposer] ⚠️ token metering skipped: {exc}")
 
     if result.data is None:
         print(

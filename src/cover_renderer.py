@@ -159,6 +159,8 @@ TITLE_VERTICAL_OFFSET = -50  # negative = above true vertical center
 # 2026-05-02 升級：從 48pt → 58pt。原本 48 跟 title 95pt 差 ~2x 太懸殊、
 # 副標看起來像可有可無。58pt 跟 title 1.6x 比例符合 typographic best practice。
 SUBTITLE_PT = 58
+SUBTITLE_MIN_PT = 34          # 2026-05-30: adaptive floor before ellipsizing
+SUBTITLE_MAX_LINES = 2        # subtitle wraps to at most 2 lines (no more clipping)
 SUBTITLE_GAP_FROM_TITLE = 30  # px below title block
 
 # Brand-bar layout
@@ -377,15 +379,39 @@ def _draw_subtitle(
     title_top: int,
     title_h: int,
 ) -> None:
-    """Render subtitle centered, below the title block."""
+    """Render subtitle below the title, WRAPPED + adaptively shrunk so it never
+    clips.
+
+    2026-05-30 fix: the old version drew the whole subtitle as ONE centered line
+    with no width check — a long subtitle made ``x = (W - tw)//2`` negative, so the
+    text started off the left edge and ran off the right (both sides clipped). Now
+    we shrink the font (58→34pt) until it fits ``SUBTITLE_MAX_LINES`` within the
+    safe horizontal margins, wrap by character, and only ellipsize as a last
+    resort. ``x`` is clamped so it can never go negative."""
     if not subtitle:
         return
-    font = _load_font(FONT_SUBTITLE_PATH, SUBTITLE_PT)
-    bbox = draw.textbbox((0, 0), subtitle, font=font)
-    tw = bbox[2] - bbox[0]
-    x = (canvas_size[0] - tw) // 2
+    max_width = canvas_size[0] - 2 * TITLE_HORIZONTAL_PAD
+
+    # Fallback = smallest size (ellipsized if even that overflows).
+    chosen_pt = SUBTITLE_MIN_PT
+    font = _load_font(FONT_SUBTITLE_PATH, chosen_pt)
+    lines = _wrap_chinese_title(draw, subtitle, font, max_width, max_lines=SUBTITLE_MAX_LINES)
+    # Prefer the largest size that fits WITHOUT needing an ellipsis.
+    for pt in range(SUBTITLE_PT, SUBTITLE_MIN_PT - 1, -6):
+        f = _load_font(FONT_SUBTITLE_PATH, pt)
+        wrapped = _wrap_chinese_title(draw, subtitle, f, max_width, max_lines=SUBTITLE_MAX_LINES)
+        if wrapped and not wrapped[-1].endswith("…"):
+            chosen_pt, font, lines = pt, f, wrapped
+            break
+
+    line_h = int(chosen_pt * 1.35)
     y = title_top + title_h + SUBTITLE_GAP_FROM_TITLE
-    draw.text((x, y), subtitle, fill=(255, 255, 255, 191), font=font)  # 0.75 alpha
+    for ln in lines:
+        bbox = draw.textbbox((0, 0), ln, font=font)
+        w = bbox[2] - bbox[0]
+        x = max((canvas_size[0] - w) // 2, TITLE_HORIZONTAL_PAD)  # never negative
+        draw.text((x, y), ln, fill=(255, 255, 255, 191), font=font)  # 0.75 alpha
+        y += line_h
 
 
 def _draw_brand_bar(

@@ -112,3 +112,6 @@ assets/fonts/_sample_cjk.ttf
 # Breadcrumb written by tools/emergency_oneshot.py so the bash wrapper can
 # pick up the draft_id for push_state.sh --expect-draft. Regenerated every run.
 tools/.last_emergency_draft_id
+
+# minimal-context sandbox for Claude CLI (auto-created)
+.claude_min/

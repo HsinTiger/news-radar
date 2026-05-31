@@ -350,6 +350,61 @@ feeds:
     # VERIFIED 2026-04-26 — 200 application/xml, 53 items
     # 註：原 spec URL /en/rss/whatsnew_e.xml 已 404；hunt 找到 whatsnew.xml 是現役 path
 
+  # === Substack inspiration feeds (2026-05-30, token-free) ===
+  # 給 Substack composer 當靈感／素材源：tech/business 深度 + 正向新聞。
+  # 全部免費 RSS，走既有 fetcher.py + trafilatura，零 LLM token。
+  - name: Hacker News Front Page
+    url: https://hnrss.org/frontpage
+    tier: secondary
+    language: en
+    tags: [tech, community, inspiration]
+  - name: Ars Technica
+    url: https://feeds.arstechnica.com/arstechnica/index
+    tier: secondary
+    language: en
+    tags: [tech, deepdive, inspiration]
+  - name: The Verge
+    url: https://www.theverge.com/rss/index.xml
+    tier: secondary
+    language: en
+    tags: [tech, product, inspiration]
+  - name: MIT Technology Review
+    url: https://www.technologyreview.com/feed/
+    tier: secondary
+    language: en
+    tags: [tech, research, inspiration]
+  - name: Good News Network
+    url: https://www.goodnewsnetwork.org/feed/
+    tier: secondary
+    language: en
+    tags: [goodnews, human, inspiration]
+  - name: Positive News
+    url: https://www.positive.news/feed/
+    tier: secondary
+    language: en
+    tags: [goodnews, constructive, inspiration]
+
+  # === First-hand / primary-source feeds (2026-05-30, verified 200 + parseable) ===
+  # 為了寫「IEObserve 巨人之聲」那種深度文：靠一手揭露（法規、央行、財報/法說會
+  # 分析）而非二手新聞轉述。完整法說會逐字稿走 --source-file（feeds 抓不到全文）。
+  - name: SEC Press Releases
+    url: https://www.sec.gov/news/pressreleases.rss
+    tier: primary
+    language: en
+    tags: [official, regulatory, firsthand, inspiration]
+  - name: Federal Reserve Press
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    tier: primary
+    language: en
+    tags: [official, macro, firsthand, inspiration]
+  - name: Motley Fool
+    url: https://www.fool.com/feeds/index.aspx
+    tier: secondary
+    language: en
+    tags: [earnings, analysis, firsthand, inspiration]
+  # 註：SEC EDGAR (browse-edgar Atom) 與 NHTSA 對瀏覽器 UA 回 403，需 per-feed
+  # 「Name email」contact UA；fetcher 目前單一全域 UA，故暫不納入（未來可加 per-feed headers）。
+
 # ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
 # 文章/影音必須命中至少一個關鍵字才進入處理流程
 keywords:

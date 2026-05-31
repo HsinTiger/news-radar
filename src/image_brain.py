@@ -71,6 +71,7 @@ def build_cover_prompt_block(
     scene_prompt: str | None = None,
     concept_prompt: str | None = None,
     abstract_prompt: str | None = None,
+    single: bool = False,
 ) -> str:
     """產出 markdown 區塊放在 Article_Substack.md 結尾（或注入 ad-hoc draft body）。
 
@@ -126,6 +127,19 @@ def build_cover_prompt_block(
         f"抽 ≤6 字最強短語，Noto Serif TC 900 / 300-360px、"
         f"關鍵 1-2 字 sienna #C84A32 single accent。"
     ).strip()
+
+    # 2026-05-30 (Hsin directive): Substack pipeline wants ONE cover prompt, not
+    # three — the 3-version fan-out bloats Article_Substack.md (it's deterministic
+    # Python templating, not LLM tokens, but it's noise to scroll past / delete).
+    # The manual tool (push_pasted_draft) keeps the 3-version menu (single=False).
+    if single:
+        return (
+            "\n\n---\n\n"
+            "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
+            "挑這個 prompt 丟 ChatGPT image / NanoBanana / Midjourney → 拿圖回來換掉 "
+            "cover.png 再 publish。發文前把整段刪掉。\n\n"
+            f"> {v_scene}{aesthetic_tail}\n"
+        )
 
     return (
         "\n\n---\n\n"

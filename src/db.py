@@ -30,6 +30,56 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def record_token_usage(
+    *,
+    provider: str,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cached_tokens: int = 0,
+    cost_usd: float = 0.0,
+    date: Optional[str] = None,
+) -> None:
+    """Accumulate one LLM call's usage into token_usage_daily (UPSERT by date).
+
+    2026-05-30 (Optimization D): the schema for this table existed but nothing
+    wrote to it, so before/after token savings were unmeasurable. The substack
+    composer now calls this after every Claude CLI / Gemini call. PK is `date`,
+    so we accumulate totals into a single daily row (latest provider/model wins
+    the label columns — fine for a single-writer daily pipeline).
+    """
+    from datetime import datetime, timezone
+
+    day = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        conn = get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO token_usage_daily
+                    (date, provider, model, total_input, total_output,
+                     total_cached, total_cost_usd, call_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(date) DO UPDATE SET
+                    provider       = excluded.provider,
+                    model          = excluded.model,
+                    total_input    = total_input    + excluded.total_input,
+                    total_output   = total_output   + excluded.total_output,
+                    total_cached   = total_cached   + excluded.total_cached,
+                    total_cost_usd = total_cost_usd + excluded.total_cost_usd,
+                    call_count     = call_count     + 1
+                """,
+                (day, provider, model, int(input_tokens or 0),
+                 int(output_tokens or 0), int(cached_tokens or 0),
+                 float(cost_usd or 0.0)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # metering must never break the pipeline
+        print(f"[DB] ⚠️ record_token_usage failed (non-fatal): {exc}")
+
+
 def _migrate_add_column_if_missing(conn: sqlite3.Connection, table: str,
                                    column: str, ddl_suffix: str) -> None:
     """Idempotent migration 輔助：若 column 不存在就 ALTER TABLE ADD COLUMN。"""

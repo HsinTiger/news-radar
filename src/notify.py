@@ -331,7 +331,7 @@ def _failure_body(
   tail -30 logs/launchd_{mode}.log
 
   # 手動重跑看實時錯誤
-  .venv/bin/python tools/substack_compose.py {mode}
+  .venv/bin/python substack_radar/compose.py {mode}
 
   # morning 失敗最常見：DB 沒資料
   .venv/bin/python -c "import sqlite3;c=sqlite3.connect('data/01_harvest/news_radar.db');print(c.execute('SELECT COUNT(*) FROM news_items').fetchone())"

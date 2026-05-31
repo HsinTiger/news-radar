@@ -2,7 +2,7 @@
 ================================================================
 
 **When to use this**: Hsin pastes a fully-written article body to PM (in chat)
-and asks to push it as a new Substack draft. The standard `tools/substack_compose.py`
+and asks to push it as a new Substack draft. The standard `substack_radar/compose.py`
 pipeline is overkill (and inappropriate) for this case because:
   - Body is already written by Hsin / PM, no LLM compose loop needed
   - No source-file → outline → draft → audit flow
@@ -12,7 +12,7 @@ pipeline is overkill (and inappropriate) for this case because:
 each ad-hoc push spawned a one-off `/tmp/push_*.py` script that handcrafted a
 minimal footer and skipped cover prompts. 4 drafts (197965158 / 197966296 /
 198003885 / 198011799) shipped with missing brand tagline + missing 3-version
-cover prompt block. Bug was bypass of `tools/substack_compose.py`, not a bug
+cover prompt block. Bug was bypass of `substack_radar/compose.py`, not a bug
 inside compose.py itself. This helper guarantees every ad-hoc push runs the
 SAME footer + cover-prompt path as the official compose pipeline.
 
@@ -60,7 +60,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(_REPO_ROOT / ".env")
 
 # Share the one source of truth for brand tagline / footer / cover prompts
-from tools.substack_compose import BRAND_TAGLINE  # noqa: E402
+from substack_radar.compose import BRAND_TAGLINE  # noqa: E402
 from src.image_brain import (  # noqa: E402
     BRAND_AESTHETIC_VERSION,
     HERO_TEXT_KEYPHRASES,

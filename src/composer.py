@@ -339,7 +339,9 @@ def _build_system_instruction(soul: str, appendices: dict) -> str:
     return "\n".join(parts)
 
 
-DEFAULT_COMPOSER_MODEL = os.getenv("NEWS_RADAR_COMPOSER_MODEL", "gemini-2.0-flash-lite")
+# 2026-05 實測：gemini-2.0-flash-lite 免費 tier 額度已歸零（429 limit:0），
+# 故預設改用仍有免費額度的 gemini-2.5-flash。可用 NEWS_RADAR_COMPOSER_MODEL 覆寫。
+DEFAULT_COMPOSER_MODEL = os.getenv("NEWS_RADAR_COMPOSER_MODEL", "gemini-2.5-flash")
 
 
 async def compose_multi_platform(

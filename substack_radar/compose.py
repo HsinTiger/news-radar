@@ -51,11 +51,11 @@ LLM backend 架構（2026-05-12 重構）：
 若哪天失效或你想退出，OneDrive autogen/ 的 Article_Substack.md 永遠是手動 paste 後備。
 
 用法：
-    python tools/substack_compose.py morning            # 自動依環境變數決定要不要 push draft
-    python tools/substack_compose.py morning --no-draft # 只寫檔，不 push draft
-    python tools/substack_compose.py evening
-    python tools/substack_compose.py morning --news-id <hash>  # 指定特定新聞
-    python tools/substack_compose.py evening --topic "為什麼 AI 訓練成本指數下降而商業價值卻指數上升"
+    python substack_radar/compose.py morning            # 自動依環境變數決定要不要 push draft
+    python substack_radar/compose.py morning --no-draft # 只寫檔，不 push draft
+    python substack_radar/compose.py evening
+    python substack_radar/compose.py morning --news-id <hash>  # 指定特定新聞
+    python substack_radar/compose.py evening --topic "為什麼 AI 訓練成本指數下降而商業價值卻指數上升"
 """
 
 from __future__ import annotations
@@ -90,9 +90,11 @@ try:
 except Exception:
     pass
 
-from src.substack_composer import (  # noqa: E402
+from substack_radar.composer import (  # noqa: E402
     SubstackDraft,
     audit_substack_draft,
+    autofix_dashes,
+    autofix_mainland_terms,
     compose_substack_article,
 )
 
@@ -110,8 +112,13 @@ ONEDRIVE_BASE = Path(
     "文件/antigravity_workspace/substack/autogen"
 )
 
-EVENING_TOPICS_PATH = _REPO_ROOT / "config" / "substack_evening_topics.yaml"
+EVENING_TOPICS_PATH = Path(__file__).resolve().parent / "config" / "substack_evening_topics.yaml"
 METAPHOR_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".metaphor_history.json"
+# Tracks news_items already used as a Substack source — SHARED by morning+evening
+# so the two daily slots never pick the same item. Legacy .evening_used.json is
+# still merged on load for backward-compat.
+SUBSTACK_USED_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".substack_used.json"
+EVENING_USED_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".evening_used.json"
 
 NEWS_DB_PATH = _REPO_ROOT / "data" / "01_harvest" / "news_radar.db"
 
@@ -132,43 +139,149 @@ def _slug_from_title(title: str, max_len: int = 40) -> str:
 # Source selection
 # ---------------------------------------------------------------------------
 
-def pick_morning_news(news_id: Optional[str] = None) -> Optional[Tuple[str, str, str]]:
-    """Return (id, title, content_summary, topic_category) for type-A morning slot.
+def _load_used() -> set:
+    """Shared 'already used as a Substack source' set (morning + evening), so the
+    two daily slots never pick the same item. Merges legacy .evening_used.json."""
+    used: set = set()
+    for path in (SUBSTACK_USED_PATH, EVENING_USED_PATH):
+        if path.exists():
+            try:
+                used |= set(json.loads(path.read_text(encoding="utf-8")).get("used", []))
+            except Exception:
+                pass
+    return used
 
-    Selection:
-      - if news_id passed: that specific row
-      - else: highest weighted_score in last 48h
-    """
+
+def _mark_used(news_id: str, limit: int = 300) -> None:
+    used = list(_load_used())
+    if news_id in used:
+        return
+    used.append(news_id)
+    used = used[-limit:]
+    SUBSTACK_USED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SUBSTACK_USED_PATH.write_text(
+        json.dumps({"used": used}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _signal_density(text: str) -> float:
+    """Zero-token signal: digits / % / $ per 100 chars (capped)."""
+    if not text:
+        return 0.0
+    hits = sum(1 for c in text if c.isdigit() or c in "%$€£¥")
+    return min(hits / max(len(text) / 100.0, 1.0), 10.0)
+
+
+# Feeds whose items are especially valued as Substack source material.
+_INSPIRATION_FEEDS = {
+    "Good News Network", "Positive News", "Hacker News Front Page",
+    "Ars Technica", "The Verge", "MIT Technology Review",
+    "SEC Press Releases", "Federal Reserve Press", "Motley Fool",
+}
+
+
+def _score_pool_item(row, now) -> float:
+    """Deterministic, zero-token score for ONE news_items row — the single scoring
+    rule shared by BOTH morning and evening (2026-05-30). row columns:
+    (id, title, clean_markdown, topic_category, source_type, feed_name,
+     word_count, published_at)."""
+    from datetime import datetime
+    _id, _title, body, _topic, stype, feed, wc, pub = row
+    score = 0.0
+    if stype == "video":            # YouTube transcript
+        score += 1.5
+    if feed in _INSPIRATION_FEEDS:  # curated inspiration / first-hand feeds
+        score += 1.0
+    try:                            # freshness decay (~3-day scale)
+        pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+        hours = max((now - pub_dt).total_seconds() / 3600.0, 0.0)
+        score += pow(2.718, -hours / 72.0)
+    except Exception:
+        pass
+    score += _signal_density(body or "") * 0.15   # concrete-number density
+    wc = wc or len(body or "")
+    if 500 <= wc <= 4000:                          # word-count sweet spot
+        score += 0.5
+    return score
+
+
+def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str, str, str]]:
+    """Score the recent harvested pool deterministically and return the top UNUSED
+    item as (id, title, clean_markdown, topic_category), marking it used.
+
+    2026-05-30: this is the SINGLE selection path for both Substack slots. Substack
+    selection is now fully decoupled from the news_radar LLM scorer — it no longer
+    reads `weighted_score`; every source is scored by `_score_pool_item` (script,
+    zero token). morning takes the top unused item; evening (run later, sharing the
+    used-set) takes the next."""
     if not NEWS_DB_PATH.exists():
-        print(f"[ERROR] News DB not found at {NEWS_DB_PATH}")
+        print(f"[{label}] ⚠️ News DB not found at {NEWS_DB_PATH}")
         return None
-
+    used = _load_used()
     conn = sqlite3.connect(str(NEWS_DB_PATH))
     try:
-        if news_id:
+        rows = conn.execute(
+            f"""
+            SELECT id, title, clean_markdown, topic_category, source_type,
+                   feed_name, word_count, published_at
+            FROM news_items
+            WHERE published_at >= datetime('now', '-{int(window_days)} days')
+              AND status NOT IN ('dropped', 'filtered')
+              AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 300
+            ORDER BY published_at DESC
+            LIMIT 300
+            """
+        ).fetchall()
+    except Exception as exc:
+        print(f"[{label}] ⚠️ query failed: {exc}")
+        return None
+    finally:
+        conn.close()
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    best, best_score = None, -1.0
+    for r in rows:
+        if r[0] in used:
+            continue
+        s = _score_pool_item(r, now)
+        if s > best_score:
+            best_score, best = s, r
+    if best is None:
+        return None
+    nid, title, body, topic, *_ = best
+    _mark_used(nid)
+    print(f"[{label}] ✅ id={nid[:10]} score={best_score:.2f} title={title[:48]!r}")
+    return (nid, title, body or "", topic or "other")
+
+
+def pick_morning_news(news_id: Optional[str] = None) -> Optional[Tuple[str, str, str, str]]:
+    """Type-A morning source. 2026-05-30: now uses the SAME deterministic scorer as
+    evening (`_pick_top_from_pool`) — no more dependency on the news_radar LLM
+    `weighted_score`. Window = **3 days** (早報偏時效新聞). `--news-id` still pins a
+    specific row (no used-marking)."""
+    if news_id:
+        if not NEWS_DB_PATH.exists():
+            print(f"[ERROR] News DB not found at {NEWS_DB_PATH}")
+            return None
+        conn = sqlite3.connect(str(NEWS_DB_PATH))
+        try:
             row = conn.execute(
                 "SELECT id, title, clean_markdown, topic_category "
                 "FROM news_items WHERE id = ?",
                 (news_id,),
             ).fetchone()
-        else:
-            row = conn.execute(
-                """
-                SELECT id, title, clean_markdown, topic_category
-                FROM news_items
-                WHERE published_at >= datetime('now', '-2 days')
-                  AND COALESCE(weighted_score, 0) > 0
-                  AND status NOT IN ('dropped', 'filtered')
-                ORDER BY COALESCE(weighted_score, 0) DESC, published_at DESC
-                LIMIT 1
-                """
-            ).fetchone()
-        if row is None:
-            return None
-        # Column order: id, title, clean_markdown (body), topic_category
-        return tuple(row)  # type: ignore[return-value]
-    finally:
-        conn.close()
+            return tuple(row) if row else None  # type: ignore[return-value]
+        finally:
+            conn.close()
+    return _pick_top_from_pool(window_days=3, label="MorningPick")
+
+
+def pick_evening_inspiration() -> Optional[Tuple[str, str, str, str]]:
+    """Type-B evening source. Same deterministic scorer as morning, but a wider
+    window = **7 days** (晚報不綁時效、可挖更深的選題). The shared used-set means it
+    won't repeat morning's pick (morning runs first)."""
+    return _pick_top_from_pool(window_days=7, label="EveningPick")
 
 
 def pick_evening_topic(override_topic: Optional[str] = None) -> Tuple[str, str, str]:
@@ -429,6 +542,7 @@ def append_cover_prompt_block(
         draft.cover_image_prompt,
         title=draft.title,
         subtitle=draft.subtitle,
+        single=True,  # 2026-05-30: one cover prompt, not three (Hsin directive)
     )
     # Append to the main markdown so Hsin sees it when he opens the file
     existing = article_md_path.read_text(encoding="utf-8")
@@ -815,17 +929,57 @@ async def _run_inner(args: argparse.Namespace) -> int:
         notify_substack_failure = lambda **kw: None  # type: ignore[assignment]
         notify_substack_success = lambda **kw: None  # type: ignore[assignment]
 
+    # 0) Optional token-free inspiration harvest (--harvest). launchd jobs pass it
+    # so each slot writes from freshly-harvested material instead of paid web
+    # research. Never fatal — a stale pool is better than no draft.
+    if getattr(args, "harvest", False):
+        try:
+            from substack_radar.harvest_inspiration import _run as _harvest_run
+            import argparse as _ap
+
+            await _harvest_run(_ap.Namespace(no_youtube=args.no_youtube, dry_run=False))
+        except Exception as exc:
+            print(f"[Harvest] ⚠️ pre-compose harvest failed (continuing): {exc}")
+
     # 1) Pick source
-    if mode == "morning":
+    # --source-file works for BOTH morning & evening (2026-05-30): write from a
+    # first-hand document (e.g. an earnings-call transcript) regardless of slot.
+    # This is the recommended path for "巨人之聲"-style first-hand深度文.
+    if args.source_file:
+        sf = Path(args.source_file).expanduser().resolve()
+        if not sf.exists():
+            print(f"[ERROR] --source-file not found: {sf}")
+            return 4
+        raw_content = sf.read_text(encoding="utf-8")
+        # Title resolution: --topic > first markdown H1 > filename stem.
+        if args.topic:
+            raw_title = args.topic
+        else:
+            first_h1 = next(
+                (ln[2:].strip() for ln in raw_content.splitlines() if ln.startswith("# ")),
+                None,
+            )
+            raw_title = first_h1 or sf.stem.replace("_", " ").replace("-", " ")
+        topic_category = args.topic_category or "other"
+        source = {
+            "title": raw_title,
+            "topic_category": topic_category,
+            "source_file": str(sf),
+            "source_bytes": sf.stat().st_size,
+        }
+        print(f"[Source] --source-file {sf.name} ({sf.stat().st_size} bytes) [mode={mode}]")
+    elif mode == "morning":
+        # morning: top item from the deterministic pool scorer (same as evening),
+        # or --news-id to pin a specific row.
         pick = pick_morning_news(news_id=args.news_id)
         if pick is None:
-            print("[ERROR] No suitable morning news found in last 48h.")
+            print("[ERROR] No suitable morning source in the harvested pool (last 3 days).")
             notify_substack_failure(
                 mode=mode,
-                error_msg="No suitable morning news found in last 48h",
+                error_msg="No suitable morning source in harvested pool (last 3 days)",
                 extra_context={
-                    "likely_cause": "news_radar.db has no news_items rows — main pipeline broken",
-                    "fix_hint": ".venv/bin/python run_pipeline.py --harvest-now --compose-only --buffer-target 2",
+                    "likely_cause": "inspiration pool empty — harvester hasn't run, or all recent items already used",
+                    "fix_hint": ".venv/bin/python tools/substack_harvest_inspiration.py  (or run compose with --harvest)",
                 },
             )
             return 2
@@ -836,40 +990,19 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "topic_category": topic_category,
         }
     else:
-        # Evening source selection priority:
-        #   1. --source-file present → read file as raw_content (Hsin-provided material).
-        #      title = --topic > first H1 in file > filename stem.
-        #   2. --topic only → pass to pick_evening_topic as free-text override
-        #      (existing behavior, no external material).
-        #   3. neither → round-robin from substack_evening_topics.yaml.
-        if args.source_file:
-            sf = Path(args.source_file).expanduser().resolve()
-            if not sf.exists():
-                print(f"[ERROR] --source-file not found: {sf}")
-                return 4
-            raw_content = sf.read_text(encoding="utf-8")
-            # Title resolution
-            if args.topic:
-                raw_title = args.topic
-            else:
-                # Try to extract first markdown H1
-                first_h1 = next(
-                    (
-                        ln[2:].strip()
-                        for ln in raw_content.splitlines()
-                        if ln.startswith("# ")
-                    ),
-                    None,
-                )
-                raw_title = first_h1 or sf.stem.replace("_", " ").replace("-", " ")
-            topic_category = args.topic_category or "other"
+        # Evening (no --source-file): harvested inspiration pool (token-free,
+        # ranked) → yaml round-robin fallback. --topic override always wins.
+        insp = pick_evening_inspiration() if not args.topic else None
+        if insp is not None:
+            news_id, raw_title, raw_content, topic_category = insp
+            if args.topic_category:
+                topic_category = args.topic_category
             source = {
+                "id": news_id,
                 "title": raw_title,
                 "topic_category": topic_category,
-                "source_file": str(sf),
-                "source_bytes": sf.stat().st_size,
+                "via": "inspiration_pool",
             }
-            print(f"[Source] --source-file {sf.name} ({sf.stat().st_size} bytes)")
         else:
             raw_title, raw_content, topic_category = pick_evening_topic(args.topic)
             if args.topic_category:
@@ -905,7 +1038,17 @@ async def _run_inner(args: argparse.Namespace) -> int:
         return 3
     print(f"[Compose] ✅ title={draft.title!r}")
 
-    # 3) Audit
+    # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
+    # The 大陸→台灣 lookup table no longer ships in the soul prompt; the
+    # unambiguous half is enforced here at zero token cost, before audit + writes.
+    fixes = autofix_mainland_terms(draft)
+    fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號 (skip §13 marker/footer blockquotes)
+    if fixes:
+        print(f"[AutoFix] 🔧 {len(fixes)} 處自動修正：")
+        for f in fixes:
+            print(f"  - {f}")
+
+    # 3) Audit (remaining ambiguous terms + blacklist still surface as warnings)
     warnings = audit_substack_draft(draft)
     if warnings:
         print(f"[Audit] ⚠️ {len(warnings)} warning(s):")
@@ -985,7 +1128,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         final_body_md = draft.body_markdown
     pub_url = os.getenv("SUBSTACK_PUBLICATION_URL", "https://hsin73.substack.com")
     draft_url = f"{pub_url}/publish/post/{draft_id}" if draft_id else None
-    from src.substack_composer import SUBSTACK_WORD_FLOOR, SUBSTACK_WORD_CAP, _count_chinese_chars
+    from substack_radar.composer import SUBSTACK_WORD_FLOOR, SUBSTACK_WORD_CAP, _count_chinese_chars
     notify_substack_success(
         mode=mode,
         draft_title=draft.title,
@@ -1038,6 +1181,16 @@ def parse_args() -> argparse.Namespace:
         "--no-draft",
         action="store_true",
         help="Skip python-substack draft push (still writes files to disk + OneDrive)",
+    )
+    p.add_argument(
+        "--harvest",
+        action="store_true",
+        help="Run token-free inspiration harvest (RSS + YouTube) before composing. launchd uses this.",
+    )
+    p.add_argument(
+        "--no-youtube",
+        action="store_true",
+        help="With --harvest: skip the YouTube transcript step (RSS only).",
     )
     return p.parse_args()
 

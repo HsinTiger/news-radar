@@ -1,0 +1,39 @@
+# News Radar · Substack YouTube inspiration sources (token-free transcripts)
+# ===========================================================================
+# Consumed by src/youtube_transcripts.py via the yt-dlp binary. Zero LLM tokens.
+#
+# Each source: a channel (@handle/videos), playlist, or single video URL.
+#   - url:            required. yt-dlp resolves channels/playlists to recent videos.
+#   - topic_category: optional. Tags the harvested items (default: other).
+#                     Use one of news_radar's 10 taxonomy ids when known
+#                     (ai_model / ai_agent / ai_application / supply_chain /
+#                      earnings / policy_geopolitics / us_stocks /
+#                      tech_product_launch / tw_stocks / other).
+#   - max_videos:     optional. Most-recent N videos to pull (default 3).
+#
+# EDIT FREELY: swap in the channels you actually want as inspiration. Sources
+# that fail to resolve or have no subtitles are skipped gracefully.
+
+sources:
+  # --- Tech / business / AI deep-dives ---
+  - url: https://www.youtube.com/@ycombinator/videos
+    topic_category: ai_application
+    max_videos: 2
+
+  - url: https://www.youtube.com/@lexfridman/videos
+    topic_category: ai_model
+    max_videos: 1
+
+  - url: https://www.youtube.com/@aiDotEngineer/videos
+    topic_category: ai_agent
+    max_videos: 2
+
+  # --- Markets / macro / business ---
+  - url: https://www.youtube.com/@Bloomberg/videos
+    topic_category: us_stocks
+    max_videos: 2
+
+  # --- Good news / constructive / human-interest ---
+  - url: https://www.youtube.com/@veritasium/videos
+    topic_category: other
+    max_videos: 1
