@@ -77,22 +77,21 @@ class SubstackDraft(BaseModel):
         "cinematic_pacing",
         "street_culture",
         "architecture_space",
+        "none",
     ] = Field(
         ...,
-        description="本篇選用的核心類比 domain。同篇不可重複；最近 7 篇盡量輪換。",
+        description="本篇核心比喻 domain（最多一個、點到為止）。**完全不靠比喻就填 'none'**（鼓勵——比喻過多會文謅謅）。",
     )
     hook_type: Literal["contrarian_question", "contrarian_reframe", "concrete_punch"] = Field(
         ...,
         description="標題採用的 hook 型態。(a) 反直覺問句 / (b) Contrarian reframe / (c) 具體衝擊收束。",
     )
-    cover_image_prompt: str = Field(
-        ...,
+    cover_image_prompt: Optional[str] = Field(
+        default=None,
         description=(
-            "封面圖的視覺架構師提示詞（visual_soul.md 風格）。"
-            "莫蘭迪／低飽和／手繪 Moleskine 筆記本。"
-            "把文章的『動態敘事透鏡』視覺化，不是裝飾。"
+            "（2026-05-31 停用）封面 prompt 區塊已移除。封面改由 Python 生圖 (cover.png) "
+            "自動產生，使用者再從 §13 段落圖片建議自選一張替換。此欄留空 (null) 即可。"
         ),
-        min_length=30,
     )
     chart_prompt: Optional[str] = Field(
         default=None,
@@ -110,6 +109,10 @@ class SubstackDraft(BaseModel):
     open_ending_form: Literal["question", "paradox", "deeper_observation", "silent_hint"] = Field(
         ...,
         description="結尾的開放形式。對應 §7 四種允許句式。",
+    )
+    generated_by: Optional[str] = Field(
+        default=None,
+        description="（非 LLM 欄位）pipeline 在生成後填入的『產文路線/模型』標記。LLM 不要填，留 null。",
     )
 
     # 2026-05-30: truncate overlong title/subtitle BEFORE the max_length check, so a
@@ -428,7 +431,7 @@ def _build_system_instruction(soul: str) -> str:
         "=== 重申最高優先級規則 ===\n"
         "1. §0 品牌宣言：替讀者咀嚼。讀完累 → 重寫。\n"
         "2. §2.6 Anti-Conclusion：結尾禁『總而言之』，必須提問／懸念。\n"
-        "3. §3 Metaphor Diversification：絕不再用熱力學／建築學／生物演化。\n"
+        "3. §3 比喻節制：比喻可選、一篇最多一個、點到為止（多用具體事實／場景）；絕不用熱力學／建築／演化。\n"
         "   從 6 個 domain 抽 1 個（不重複近 7 篇用過的）。\n"
         "4. §5 黑名單：「不是 X、是 Y」「○○感」「穩／撐／懂」一律不准。\n"
         f"5. §6 字數區間：{SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字（含全形標點）。"
@@ -474,10 +477,10 @@ def _build_user_prompt(
         f"=== 多樣性提醒 ===\n{avoid}\n\n"
         # === 2026-05-30 舉一反三 reasoning step（對抗「就事論事、生硬」）===
         "=== 動筆前先做這步（舉一反三）===\n"
-        "在心裡先回答（不要寫進文章）：這則素材的**核心張力**是什麼？這個張力能照到哪 "
-        "**2-3 個不相干的領域**？（例如投資題照到人生決策、科技題照到歷史或心理）。\n"
-        "挑其中最有共鳴的一個，當成全文的**跨域類比骨幹**——讓讀者讀完覺得「這不只在講這條新聞」。\n"
-        "這是『舉一反三』的引擎；只複述素材本身 = 失敗。\n\n"
+        "在心裡先回答（不要寫進文章）：這則素材的**核心張力／反直覺點**是什麼？它的**第二層含義**"
+        "是什麼（影響誰、改變哪個賽局、推到極端會怎樣）？能不能照到讀者的決策或一個更大的模式？\n"
+        "用這個『更深一層』當文章骨幹——**靠洞察與具體推論撐起，不是靠比喻**。比喻最多輔助一兩句。\n"
+        "只複述素材 = 失敗；硬塞一個跨域比喻來假裝深刻 = 文謅謅，也是失敗。\n\n"
         # === 2026-05-30 token-free 改版：研究改為「離線預抓素材」、不再 agentic 上網 ===
         "=== 事實紀律：只用上面的『原始素材』，不要上網查 ===\n"
         "本任務**沒有** WebSearch / WebFetch 工具（已停用）。上面的『原始素材』已由離線\n"
@@ -504,15 +507,15 @@ def _build_user_prompt(
         f'  "body_markdown": "...",          // {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 中文字。\n'
         "                                   //   Mode A：▉ 小節錨點；Mode B：敘事弧。\n"
         "                                   //   結尾禁『總而言之』；必為提問/懸念/更深觀察。\n"
-        '  "metaphor_domain_used": "...",   // ENUM，必為以下其一：\n'
+        '  "metaphor_domain_used": "...",   // ENUM：6 domain 之一，或 "none"（不靠比喻，鼓勵）：\n'
         '                                   //     "signal_processing" | "music_theory" |\n'
         '                                   //     "contrarian_markets" | "cinematic_pacing" |\n'
-        '                                   //     "street_culture" | "architecture_space"\n'
-        "                                   //   絕不可用熱力學/化學/生物演化。\n"
+        '                                   //     "street_culture" | "architecture_space" | "none"\n'
+        "                                   //   比喻最多一個、點到為止；絕不用熱力學/化學/生物演化。\n"
         '  "hook_type": "...",              // ENUM，必為以下其一：\n'
         '                                   //     "contrarian_question" | "contrarian_reframe" |\n'
         '                                   //     "concrete_punch"\n'
-        '  "cover_image_prompt": "...",     // ≥ 30 字。莫蘭迪/低飽和/手繪 Moleskine。\n'
+        '  "cover_image_prompt": null,      // 已停用，固定填 null（封面改用 §13 段落圖片建議自選）。\n'
         '  "chart_prompt": null,            // 可選；若無數據可視化，填 null。\n'
         '  "reading_time_minutes": 5,       // 整數 4-7。目標 5。\n'
         '  "open_ending_form": "..."        // ENUM，必為以下其一：\n'
@@ -551,6 +554,34 @@ def _resolve_backends() -> Optional[tuple]:
         f"defaulting to claude_cli."
     )
     return ("claude_cli",)
+
+
+def describe_route(provider: str, model: str) -> str:
+    """Human-readable 產文路線：which model/platform actually generated the draft.
+    Known from the run (envelope modelUsage + ANTHROPIC_BASE_URL) — no LLM query.
+
+    - claude_cli + ANTHROPIC_BASE_URL set → CCR/proxy 路由（host + 實際模型名）
+    - claude_cli + 原生（無 base_url）+ claude-* 模型 → 原生 Claude 方案 (Pro/Max)
+    - gemini / groq / cerebras → 該 API key 平台 + 模型
+    """
+    m = model or "?"
+    base_url = (os.getenv("ANTHROPIC_BASE_URL") or "").strip()
+    if provider == "claude_cli":
+        if base_url:
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(base_url).netloc or base_url
+            except Exception:
+                host = base_url
+            return f"CCR/代理路由 @ {host} · 模型 {m}"
+        if m.startswith("claude-"):
+            return f"原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 {m}"
+        return f"Claude CLI · 模型 {m}"
+    if provider in ("gemini", "groq", "cerebras"):
+        return f"{provider} API key 平台 · 模型 {m}"
+    if provider == "none":
+        return "（無）所有 LLM 路徑皆失敗"
+    return f"{provider} · 模型 {m}"
 
 
 async def compose_substack_article(
@@ -593,8 +624,8 @@ async def compose_substack_article(
         prompt=prompt,
         response_model=SubstackDraft,
         temperature=temperature,
-        timeout_s=1000,  # ~17 分鐘：字數恢復 3500（≈30-35K output tokens），實測
-                         # 720s 仍會撞牆；無 web research 競爭時間，拉高給純生成餘裕（retry 仍在）。
+        timeout_s=1300,  # ~22 分鐘：字數上限 3500（≈30-35K output tokens），實測 1000s
+                         # 仍會撞牆；無 web research 競爭時間，拉高給純長文生成餘裕（retry 仍在）。
         backends=backends,
         # 2026-05-30: 關掉 agentic 上網，逼 composer 只用預抓素材（token-free 改版）。
         disallowed_tools=("WebSearch", "WebFetch"),
@@ -628,7 +659,11 @@ async def compose_substack_article(
         )
         return None
 
-    print(f"[SubstackComposer] ℹ️ provider={result.provider}")
+    # Provenance: stamp WHICH model / route actually wrote this draft (known from
+    # the run itself — no need to ask the LLM). Goes to the top of the draft.
+    provenance = describe_route(result.provider, result.model)
+    result.data.generated_by = provenance
+    print(f"[SubstackComposer] ℹ️ 產文路線：{provenance}")
 
     return result.data
 
@@ -658,7 +693,7 @@ if __name__ == "__main__":
         print(f"HOOK: {d.hook_type}")
         print(f"OPEN-ENDING: {d.open_ending_form}")
         print(f"BODY LEN: {_count_chinese_chars(d.body_markdown)} 字")
-        print(f"COVER PROMPT: {d.cover_image_prompt[:120]}...")
+        print(f"COVER PROMPT: {(d.cover_image_prompt or '(disabled)')[:120]}")
         warnings = audit_substack_draft(d)
         if warnings:
             print("\n⚠️ AUDIT WARNINGS:")

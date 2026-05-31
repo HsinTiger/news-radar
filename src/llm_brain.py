@@ -1,7 +1,7 @@
 """
 News Radar · LLM Brain (Phase 8.19)
 ====================================
-統一的 LLM 呼叫層：claude_cli → gemini → groq → cerebras → None（依能力排序）。
+統一的 LLM 呼叫層：claude_cli → gemini → opencode → groq → cerebras → None（依能力排序）。
 
 為什麼獨立一個模組：
 - scorer.py / composer.py 都各自呼叫 Gemini；現在要加 Claude CLI fallback
@@ -68,8 +68,35 @@ class LLMResult(Generic[T]):
 # Gemini path
 # --------------------------------------------------------------------------
 
+def _gemini_keys() -> list[str]:
+    """收集所有可用 Gemini key，依序輪換（第一把撞 429 配額就換下一把）。
+
+    2026-05-31 加入多 key 輪換：Gemini 免費 tier 限額低（且 per-project 計算），
+    多一把獨立帳號的 key 等於多一份免費額度。來源 & 順序：
+      1. GEMINI_API_KEY（可逗號分隔塞多把）
+      2. GEMINI_API_KEY_2（單獨第二把，例如朋友的帳號）
+    去空白、去重、保序。
+    """
+    raw: list[str] = []
+    raw += [k.strip() for k in os.getenv("GEMINI_API_KEY", "").split(",")]
+    raw.append(os.getenv("GEMINI_API_KEY_2", "").strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in raw:
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
 def _has_gemini_key() -> bool:
-    return bool(os.getenv("GEMINI_API_KEY"))
+    return bool(_gemini_keys())
+
+
+def _is_quota_error(err: str) -> bool:
+    """判斷錯誤是否為配額 / 限流類（值得換下一把 key 重試）。"""
+    e = err.lower()
+    return ("429" in e) or ("resource_exhausted" in e) or ("quota" in e) or ("rate limit" in e)
 
 
 async def _try_gemini(
@@ -80,63 +107,81 @@ async def _try_gemini(
     model: str,
     temperature: float,
 ) -> LLMResult[T]:
-    """試呼叫 Gemini。失敗時 data=None + raw_error 記錯誤。"""
-    try:
-        # 延遲 import：sandbox 沒有 google-genai 時不拖累其他 caller
-        from google import genai  # type: ignore
+    """試呼叫 Gemini，依序輪換多把 key。失敗時 data=None + raw_error 記錯誤。
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return LLMResult(
-                data=None, provider="gemini", model=model,
-                raw_error="GEMINI_API_KEY not set",
-            )
-
-        client = genai.Client(api_key=api_key)
-
-        def _sync_call():
-            return client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config={
-                    "system_instruction": system,
-                    "response_mime_type": "application/json",
-                    "response_schema": response_model,
-                    "temperature": temperature,
-                },
-            )
-
-        response = await asyncio.to_thread(_sync_call)
-        parsed = response.parsed
-        if parsed is None:
-            # 極少見：SDK 回了但 parsed 空（通常是回的內容不符 schema）
-            return LLMResult(
-                data=None, provider="gemini", model=model,
-                raw_error="gemini returned empty parsed object",
-            )
-
-        # 嘗試抓 usage metadata（若 SDK 版本支援）
-        in_tok = out_tok = 0
-        try:
-            usage = getattr(response, "usage_metadata", None)
-            if usage is not None:
-                in_tok = getattr(usage, "prompt_token_count", 0) or 0
-                out_tok = getattr(usage, "candidates_token_count", 0) or 0
-        except Exception:
-            pass
-
-        return LLMResult(
-            data=parsed,
-            provider="gemini",
-            model=model,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-        )
-    except Exception as e:
+    輪換規則：第 i 把 key 若回配額 / 限流錯誤（429 / RESOURCE_EXHAUSTED）→ 換下一把；
+    其他錯誤（auth / schema / 空 parsed）換 key 也是同結果 → 直接回，不浪費呼叫。
+    """
+    keys = _gemini_keys()
+    if not keys:
         return LLMResult(
             data=None, provider="gemini", model=model,
-            raw_error=f"{type(e).__name__}: {e}",
+            raw_error="GEMINI_API_KEY not set",
         )
+
+    last_error = "unknown"
+    for idx, api_key in enumerate(keys):
+        try:
+            # 延遲 import：sandbox 沒有 google-genai 時不拖累其他 caller
+            from google import genai  # type: ignore
+
+            client = genai.Client(api_key=api_key)
+
+            def _sync_call():
+                return client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config={
+                        "system_instruction": system,
+                        "response_mime_type": "application/json",
+                        "response_schema": response_model,
+                        "temperature": temperature,
+                    },
+                )
+
+            response = await asyncio.to_thread(_sync_call)
+            parsed = response.parsed
+            if parsed is None:
+                # 極少見：SDK 回了但 parsed 空（通常是回的內容不符 schema）→ 換 key 無益
+                return LLMResult(
+                    data=None, provider="gemini", model=model,
+                    raw_error="gemini returned empty parsed object",
+                )
+
+            # 嘗試抓 usage metadata（若 SDK 版本支援）
+            in_tok = out_tok = 0
+            try:
+                usage = getattr(response, "usage_metadata", None)
+                if usage is not None:
+                    in_tok = getattr(usage, "prompt_token_count", 0) or 0
+                    out_tok = getattr(usage, "candidates_token_count", 0) or 0
+            except Exception:
+                pass
+
+            if idx > 0:
+                print(f"[llm_brain] ℹ️ Gemini 換用第 {idx + 1} 把 key 成功。")
+
+            return LLMResult(
+                data=parsed,
+                provider="gemini",
+                model=model,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+            )
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+            if _is_quota_error(last_error) and idx < len(keys) - 1:
+                print(
+                    f"[llm_brain] ⟳ Gemini 第 {idx + 1} 把 key 配額用盡，換第 {idx + 2} 把。"
+                )
+                continue
+            # 非配額錯誤，或已是最後一把 → 不再換
+            break
+
+    return LLMResult(
+        data=None, provider="gemini", model=model,
+        raw_error=last_error,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -471,20 +516,35 @@ async def _try_claude_cli_once(
             raw_error=f"parse/validate failed: {type(e).__name__}: {str(e)[:300]}",
         )
 
-    # 從 envelope 抓 token / cost 供 caller log
+    # 從 envelope 抓 token / cost / 實際模型供 caller log + provenance。
     in_tok = out_tok = 0
     cost = 0.0
+    real_model = CLAUDE_CLI_BIN
     if isinstance(envelope, dict):
         usage = envelope.get("usage") or {}
         if isinstance(usage, dict):
             in_tok = int(usage.get("input_tokens", 0) or 0)
             out_tok = int(usage.get("output_tokens", 0) or 0)
         cost = float(envelope.get("total_cost_usd", 0.0) or 0.0)
+        # 實際模型藏在 modelUsage（dict keyed by 真實模型名）。挑 output 最多的當主寫手；
+        # 沒有就退回 envelope.model / bin 名。這讓上層知道是 claude-opus / sonnet（原生方案）
+        # 還是被 CCR 路由到別家模型（名稱非 claude-*）。
+        mu = envelope.get("modelUsage")
+        if isinstance(mu, dict) and mu:
+            try:
+                real_model = max(
+                    mu.items(),
+                    key=lambda kv: int((kv[1] or {}).get("output_tokens", 0) or 0),
+                )[0]
+            except Exception:
+                real_model = next(iter(mu.keys()), CLAUDE_CLI_BIN)
+        elif envelope.get("model"):
+            real_model = str(envelope["model"])
 
     return LLMResult(
         data=parsed,
         provider="claude_cli",
-        model=CLAUDE_CLI_BIN,
+        model=real_model,
         input_tokens=in_tok,
         output_tokens=out_tok,
         cost_usd=cost,
@@ -535,6 +595,17 @@ _OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
         base_url_default="https://api.cerebras.ai/v1",
         model_env="CEREBRAS_MODEL",
         model_default="zai-glm-4.7",
+    ),
+    # OpenCode Zen 的 "big-pickle"（社群證實 = 智譜 GLM-4.6，200k context /
+    # 160k 輸入 / 32k 輸出，2026-05 限免）。大 context → 排在 groq/cerebras 之前，
+    # 當長文 composer 在 Claude+Gemini 都掛時的兜底。key 取得：https://opencode.ai/auth
+    "opencode": _OpenAICompatProvider(
+        name="opencode",
+        key_env="OPENCODE_API_KEY",
+        base_url_env="OPENCODE_BASE_URL",
+        base_url_default="https://opencode.ai/zen/v1",
+        model_env="OPENCODE_MODEL",
+        model_default="big-pickle",
     ),
 }
 
@@ -662,12 +733,13 @@ async def call_for_json(
 ) -> LLMResult[T]:
     """核心 API：依能力 / 可靠度排序逐一嘗試 backend，第一個成功即交付。
 
-    預設鏈（2026-05-30 擴充）：claude_cli (Max 主腦) → gemini (SDK structured)
-        → groq (OpenAI-compatible) → cerebras (OpenAI-compatible)。
-        前兩條維持原行為；新增的 groq / cerebras 是「Claude + Gemini 同時不可用」
-        時的免費雲端兜底，需設 GROQ_API_KEY / CEREBRAS_API_KEY 才會啟用，
-        沒設就自動略過（對既有部署零影響）。各家免費 tier 限制見 _OPENAI_COMPAT
-        區塊註解（Cerebras 8K context → 長文 composer 幾乎必 fall through）。
+    預設鏈（2026-05-31 擴充）：claude_cli (Max 主腦) → gemini (SDK structured, 1M
+        context) → opencode (big-pickle = GLM-4.6, 200k) → groq → cerebras。
+        前兩條維持原行為；後三條是「Claude + Gemini 同時不可用」時的免費雲端兜底，
+        需設對應 key（OPENCODE_API_KEY / GROQ_API_KEY / CEREBRAS_API_KEY）才會啟用，
+        沒設就自動略過（對既有部署零影響）。排序即「能力 / 可靠度 + 可用 context」：
+        長文兜底優先走 context 大的（gemini 1M → opencode 200k），groq(6K TPM)、
+        cerebras(8K context) 殿後。各家限制見 _OPENAI_COMPAT 區塊註解。
 
     Phase 8.19b 排序變更（2026-04-20）：
         原本 Gemini primary、Claude CLI fallback，因 Gemini free_tier quota=0
@@ -696,7 +768,7 @@ async def call_for_json(
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
         backends: 可指定的 backend 順序與白名單（tuple，按序嘗試）。
-            None = 預設 ("claude_cli","gemini","groq","cerebras")。
+            None = 預設 ("claude_cli","gemini","opencode","groq","cerebras")。
             例：("claude_cli",) 只試 Claude；("gemini","groq") 跳過 Claude、
             先 Gemini 再 Groq。未知名稱會被略過。
         disallowed_tools: 傳給 Claude CLI 的 `--disallowedTools`（例：
@@ -705,7 +777,7 @@ async def call_for_json(
     Returns:
         LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
-    allowed = backends or ("claude_cli", "gemini", "groq", "cerebras")
+    allowed = backends or ("claude_cli", "gemini", "opencode", "groq", "cerebras")
     primary = allowed[0] if allowed else None
     last_error: Optional[str] = None
 

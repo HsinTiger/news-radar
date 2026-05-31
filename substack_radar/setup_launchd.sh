@@ -141,8 +141,6 @@ cat > "$MORNING_PLIST" <<EOF
     <string>$HOME</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
-    <key>SUBSTACK_WORD_CAP</key>
-    <string>2500</string>
   </dict>
 </dict>
 </plist>
@@ -180,8 +178,6 @@ cat > "$EVENING_PLIST" <<EOF
     <string>$HOME</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
-    <key>SUBSTACK_WORD_CAP</key>
-    <string>2500</string>
   </dict>
 </dict>
 </plist>
