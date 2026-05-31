@@ -194,16 +194,14 @@ def _gemini_cli_available() -> bool:
     return shutil.which(GEMINI_CLI_BIN) is not None
 
 def _gemini_cli_dirs() -> list[str]:
-    """收集所有可用的 Gemini CLI config directories (用逗號分隔)，用於多帳號輪替。
-
-    ⚠️ 2026-06-01 實測注意：gemini CLI **不吃 GEMINI_CONFIG_DIR**（設了照樣讀預設
-    ~/.gemini、不會換帳號）。真正能隔離/切換帳號的是 **HOME**（gemini 讀 $HOME/.gemini）。
-    所以「多帳號輪替」要真的生效，需把每個帳號做成獨立 HOME（HOME/.gemini 各自登入），
-    呼叫端改設 env['HOME']。目前清單沿用舊 GEMINI_CONFIG_DIR 寫法＝實質單一帳號
-    （現役 ~/.gemini）；2 帳號尚未真正啟用，見 setup 說明。"""
+    """多帳號輪替用的 **HOME 目錄**清單（GEMINI_CLI_CONFIG_DIRS，逗號分隔，按優先序）。
+    每個 entry 是一個 HOME，其底下的 `~/.gemini` 各自登入一個 Google AI Pro 帳號。
+    呼叫端用 env['HOME']=<entry> 切換帳號（gemini CLI 讀 $HOME/.gemini；**不吃
+    GEMINI_CONFIG_DIR**，2026-06-01 實測）。任一帳號失敗（配額/未登入）→ 輪到下一個。
+    空清單 = 用預設 HOME（現役 ~/.gemini）。"""
     raw = os.getenv("GEMINI_CLI_CONFIG_DIRS", "").split(",")
     dirs = [d.strip() for d in raw if d.strip()]
-    return dirs if dirs else [""] # fallback to default
+    return dirs if dirs else [""] # fallback to default HOME
 
 async def _try_gemini_cli(
     *,
@@ -240,7 +238,9 @@ async def _try_gemini_cli(
         env = os.environ.copy()
         env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
         if config_dir:
-            env["GEMINI_CONFIG_DIR"] = os.path.expanduser(config_dir)
+            # HOME is the real account switch (GEMINI_CONFIG_DIR is a no-op). Each
+            # entry is a HOME dir whose ~/.gemini is logged into one AI Pro account.
+            env["HOME"] = os.path.expanduser(config_dir)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -264,8 +264,11 @@ async def _try_gemini_cli(
             if proc.returncode != 0:
                 err_text = stderr.decode('utf-8', errors='replace')
                 last_error = f"CLI failed (exit {proc.returncode}): {err_text}"
-                if _is_quota_error(last_error) and idx < len(dirs) - 1:
-                    print(f"[llm_brain] ⟳ Gemini CLI 第 {idx + 1} 組帳號配額用盡，換第 {idx + 2} 組。")
+                if idx < len(dirs) - 1:
+                    # Rotate to the next account on ANY error (quota OR auth/not-set-up),
+                    # so a not-yet-logged-in account falls through to the next one.
+                    reason = "配額用盡" if _is_quota_error(last_error) else "失敗(可能未登入/auth)"
+                    print(f"[llm_brain] ⟳ Gemini CLI 第 {idx + 1} 組帳號{reason}，換第 {idx + 2} 組。")
                     continue
                 # 這裡若不是 Quota error 或是最後一組帳號，就跳出輪替
                 break
@@ -298,11 +301,11 @@ async def _try_gemini_cli(
                 if idx > 0:
                     print(f"[llm_brain] ℹ️ Gemini CLI 換用第 {idx + 1} 組帳號成功。")
                 
-                # 取得實際帳號 Email (2026-06-01 新增)
+                # 取得實際帳號 Email。config_dir 現在是 HOME，帳號檔在 HOME/.gemini/。
                 acct_email = "unknown"
                 try:
-                    target_dir = os.path.expanduser(config_dir) if config_dir else os.path.expanduser("~/.gemini")
-                    acct_path = os.path.join(target_dir, "google_accounts.json")
+                    gemini_home = os.path.expanduser(config_dir) if config_dir else os.path.expanduser("~")
+                    acct_path = os.path.join(gemini_home, ".gemini", "google_accounts.json")
                     if os.path.exists(acct_path):
                         with open(acct_path, "r") as f:
                             acct_info = json.load(f)

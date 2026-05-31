@@ -542,24 +542,34 @@ def _build_user_prompt(
 SUBSTACK_BACKEND = os.getenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli").lower()
 
 
+_KNOWN_BACKENDS = {"claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
+
+
 def _resolve_backends() -> Optional[tuple]:
-    """Map env-var string → call_for_json `backends` tuple."""
-    if SUBSTACK_BACKEND == "claude_cli":
-        # 2026-06-01: 將 gemini_cli (Pro 訂閱) 與 gemini (API key) 加入預設備援鏈。
-        # 原本只准 claude_cli，現在有了高品質 gemini_cli 備援，理應自動接手。
-        return ("claude_cli", "gemini_cli", "gemini")
+    """Map env-var string → call_for_json `backends` tuple (按序嘗試).
+
+    2026-06-01 (Hsin directive): Substack 寫文**拿掉 claude_cli**，改 gemini CLI
+    (AI Pro 帳號，由 GEMINI_CLI_CONFIG_DIRS 多帳號輪替) → 免費 Gemini API key。
+    支援逗號清單，例：SUBSTACK_COMPOSER_BACKEND="gemini_cli,gemini"。
+    """
+    # 逗號清單 → tuple（最彈性、最直白）
+    if "," in SUBSTACK_BACKEND:
+        chain = tuple(b for b in (x.strip() for x in SUBSTACK_BACKEND.split(",")) if b in _KNOWN_BACKENDS)
+        if chain:
+            return chain
     if SUBSTACK_BACKEND in ("default", "auto", "fallback"):
-        return None  # let call_for_json use its default chain
-    # Force a single non-Claude backend (2026-05-31): run token-free w.r.t. the
-    # Claude Max quota — e.g. SUBSTACK_COMPOSER_BACKEND=gemini uses the Gemini key(s).
-    if SUBSTACK_BACKEND in ("gemini", "gemini_cli", "groq", "cerebras"):
+        # 預設寫文鏈：gemini CLI(Pro，多帳號) → 免費 API key。**不含 claude_cli。**
+        return ("gemini_cli", "gemini")
+    if SUBSTACK_BACKEND == "claude_cli":
+        # 顯式要 claude 才用（手動 override）；仍掛 gemini 備援。
+        return ("claude_cli", "gemini_cli", "gemini")
+    if SUBSTACK_BACKEND in _KNOWN_BACKENDS:  # 強制單一後端
         return (SUBSTACK_BACKEND,)
-    # Unknown value → loud warning, fall back to claude_cli
     print(
         f"[SubstackComposer] ⚠️ Unknown SUBSTACK_COMPOSER_BACKEND={SUBSTACK_BACKEND!r}; "
-        f"defaulting to claude_cli."
+        f"defaulting to gemini_cli→gemini (no claude)."
     )
-    return ("claude_cli",)
+    return ("gemini_cli", "gemini")
 
 
 def describe_route(provider: str, model: str) -> str:
