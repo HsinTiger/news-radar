@@ -50,7 +50,7 @@ class SubstackDraft(BaseModel):
 
     title: str = Field(
         ...,
-        description="最終文章標題（不是原始素材標題）。需採用 §6 三種 hook 之一。",
+        description="最終文章標題（不是原始素材標題）。從 §6 標題公式庫 9 種原型挑一個；盡量含具體錨點(公司/數字/事件)+隱喻或反直覺翻轉。",
         min_length=8,
         max_length=60,
     )
@@ -499,7 +499,7 @@ def _build_user_prompt(
         "  - 這些標記**算進 body_markdown 字串**（用真實換行），不要另開欄位。\n\n"
         "=== 輸出格式：直接回一個 JSON object，欄位如下（缺一不可）===\n"
         "{\n"
-        '  "title": "...",                  // 8-60 字。用 §6 三種 hook 之一，禁新聞稿陳述式。\n'
+        '  "title": "...",                  // 8-60 字。用 §6 標題公式庫 9 種原型之一(多為 鉤子+：+payoff 或 開放問句)，含具體錨點，禁新聞稿陳述式/震驚體/listicle。\n'
         '  "subtitle": "...",               // 10-80 字。不可重複 title。Substack 列表頁勾子。\n'
         f'  "body_markdown": "...",          // {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 中文字。\n'
         "                                   //   Mode A：▉ 小節錨點；Mode B：敘事弧。\n"
