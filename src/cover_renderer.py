@@ -237,7 +237,7 @@ def _crop_to_aspect(img: Image.Image, target_size: Tuple[int, int]) -> Image.Ima
         new_h = int(sw / target_ratio)
         y = (sh - new_h) // 2
         img = img.crop((0, y, sw, y + new_h))
-    return img.resize(target_size, Image.Resampling.LANCZOS)
+    return img.resize(target_size, getattr(Image, "Resampling", Image).LANCZOS)
 
 
 def _pick_title_font_pt(title: str) -> int:

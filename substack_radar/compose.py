@@ -924,6 +924,86 @@ async def run(args: argparse.Namespace) -> int:
         raise
 
 
+# ---------------------------------------------------------------------------
+# Inline Image Generation (2026-06-01 Hsin directive)
+# ---------------------------------------------------------------------------
+
+async def generate_inline_images(
+    *,
+    article_md_path: Path,
+    output_dir: Path,
+) -> None:
+    """Scan markdown for 🖼 markers, generate images via Gemini/Pollinations, and embed them.
+
+    Format expected:
+    > 🖼 視覺位置 · {label}
+    ...
+    > 🎨 Path C · 生圖 prompt：
+    > {prompt}
+    """
+    if not article_md_path.exists():
+        return
+
+    from src.image_brain import generate_image
+
+    content = article_md_path.read_text(encoding="utf-8")
+    # Split by blocks (double newline)
+    blocks = content.split("\n\n")
+    new_blocks = []
+    img_idx = 1
+
+    # To be compatible with Substack push, we need paths relative to repo root
+    # because that's where the script usually runs.
+    try:
+        rel_output_dir = output_dir.relative_to(_REPO_ROOT)
+    except Exception:
+        rel_output_dir = output_dir
+
+    for block in blocks:
+        if "🖼 視覺位置" in block:
+            lines = block.strip().split("\n")
+            # Extract label from the first line
+            label = ""
+            for line in lines:
+                if "🖼 視覺位置" in line:
+                    label = line.split("·")[-1].strip()
+                    break
+
+            # Extract prompt from Path C
+            prompt = ""
+            for i, line in enumerate(lines):
+                if "Path C" in line and i + 1 < len(lines):
+                    prompt = lines[i + 1].replace("> ", "").strip()
+                    break
+
+            if not prompt:
+                # Fallback to the label if prompt extraction fails
+                prompt = label
+
+            img_filename = f"inline_{img_idx}_{label}.png".replace(" ", "_")
+            img_path = output_dir / img_filename
+
+            print(f"[Images] Generating inline_{img_idx} (Gemini): {label}...")
+            # Use Gemini by default (falls back to Pollinations in image_brain)
+            success_path = await generate_image(
+                prompt=prompt,
+                out_path=img_path,
+                size=(1024, 576),
+            )
+
+            if success_path:
+                # Replace the block with an image tag + caption
+                # We use the relative path so python-substack's from_markdown can find it
+                img_rel_path = rel_output_dir / img_filename
+                new_blocks.append(f"![{label}]({img_rel_path})\n\n*{label}*")
+                img_idx += 1
+                continue
+
+        new_blocks.append(block)
+
+    article_md_path.write_text("\n\n".join(new_blocks), encoding="utf-8")
+
+
 async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
@@ -1084,15 +1164,25 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # to delete every time). Cover now = Python-rendered cover.png below; you pick
     # your real cover from the §13 inline-image suggestions when publishing.
 
-    # 5c) Python 生圖 (KEEP): synthetic-base text-overlay cover.png hero so the
-    # Substack draft looks complete in the dashboard.
+    # 5c) Python 生圖 (KEEP) + AI Background (2026-06-01):
+    # Generate an AI background for the cover so it looks professional.
+    from src.image_brain import generate_image_via_pollinations
+    ai_bg = local_dir / "_ai_bg_cover.png"
+    print(f"[Cover] Generating AI background: {draft.title[:50]}...")
+    await generate_image_via_pollinations(prompt=draft.title, out_path=ai_bg, seed=42)
+
     cover_path = render_substack_cover(
         title=draft.title,
         subtitle=draft.subtitle,
         topic_category=topic_category or "other",
         output_dir=local_dir,
-        source_image_path=None,
+        source_image_path=ai_bg if ai_bg.exists() else None,
     )
+    
+    # 5d) AI Inline images (2026-06-01 Hsin directive)
+    # Scan for 🖼 markers and replace them with actual generated images.
+    await generate_inline_images(article_md_path=article_md, output_dir=local_dir)
+
     print(f"[Files] wrote {local_dir}")
 
     # 6) Mirror to OneDrive

@@ -156,16 +156,130 @@ def build_cover_prompt_block(
     )
 
 
+import requests
+import urllib.parse
+
+def _download_file(url: str, out_path: Path) -> bool:
+    """Download a file from URL to out_path using curl (more robust)."""
+    try:
+        # Use curl to bypass library-specific blocks (402 Payment Required etc)
+        cmd = [
+            "curl", "-s", "-L",
+            "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "-o", str(out_path),
+            url
+        ]
+        res = subprocess.run(cmd, capture_output=True, timeout=60)
+        return res.returncode == 0 and out_path.exists() and out_path.stat().st_size > 1000
+    except Exception as exc:
+        print(f"[image_brain] ⚠️ Download failed via curl: {exc}")
+        return False
+
+import subprocess
+
+async def generate_image_via_pollinations(
+    *,
+    prompt: str,
+    out_path: Path,
+    width: int = 1024,
+    height: int = 576, # 16:9
+    seed: int | None = None,
+) -> Optional[Path]:
+    """Generate and download an image via Pollinations.ai (FREE)."""
+    clean_prompt = prompt.strip().replace("🖼", "").replace("> ", "").replace("視覺位置 ·", "").strip()
+    
+    # Simpler aesthetic string to avoid URL length issues
+    aesthetic = " Style: editorial illustration, financial broadsheet, high contrast, warm paper."
+    full_prompt = f"{clean_prompt}. {aesthetic}"
+    encoded = urllib.parse.quote(full_prompt)
+    
+    # Use a clean URL with parameters
+    params = {"nologo": "true"}
+    if seed:
+        params["seed"] = str(seed)
+    if width:
+        params["width"] = str(width)
+    if height:
+        params["height"] = str(height)
+        
+    query_str = urllib.parse.urlencode(params)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?{query_str}"
+        
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    success = await asyncio.to_thread(_download_file, url, out_path)
+    return out_path if success else None
+
 # Gemini image-capable models. As of 2026-05, "gemini-2.5-flash-image-preview"
 # is the current text-to-image model that works with API-key auth (free tier
 # subject to availability). Imagen 3 needs Vertex AI auth, not API key.
 DEFAULT_IMAGE_MODEL = os.getenv(
     "SUBSTACK_IMAGE_MODEL",
-    "gemini-2.5-flash-image-preview",
+    "gemini-2.0-flash",
 )
 
 
+async def generate_image(
+    *,
+    prompt: str,
+    out_path: Path,
+    size: Tuple[int, int] = (1024, 576), # 16:9 default
+    use_gemini: bool = True,
+) -> Optional[Path]:
+    """Generate an image via Gemini or Pollinations.ai.
+
+    Args:
+        prompt: The visual prompt.
+        out_path: Where to save.
+        size: Target (width, height).
+        use_gemini: Try Gemini first if API key available.
+
+    Returns:
+        Path to saved PNG, or None on failure.
+    """
+    if use_gemini and os.getenv("GEMINI_API_KEY"):
+        # Try a few known image-capable model names if the default fails
+        models_to_try = [DEFAULT_IMAGE_MODEL, "gemini-2.0-flash-exp", "gemini-2.0-pro-exp"]
+        
+        for model_name in models_to_try:
+            try:
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+                
+                print(f"[image_brain] Attempting Gemini gen with {model_name}...")
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"], # Only request IMAGE
+                    ),
+                )
+                img_bytes = _extract_inline_image(resp)
+                if img_bytes:
+                    from PIL import Image
+                    from io import BytesIO
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    img = Image.open(BytesIO(img_bytes)).convert("RGB")
+                    img = _center_crop_to_aspect(img, size)
+                    img = img.resize(size, getattr(Image, "Resampling", Image).LANCZOS)
+                    img.save(out_path, "PNG", optimize=True)
+                    return out_path
+            except Exception as exc:
+                print(f"[image_brain] Gemini gen with {model_name} failed: {exc}")
+
+    # Fallback to Pollinations
+    print(f"[image_brain] Falling back to Pollinations for prompt: {prompt[:50]}...")
+    return await generate_image_via_pollinations(
+        prompt=prompt,
+        out_path=out_path,
+        width=size[0],
+        height=size[1]
+    )
+
+
 async def generate_cover_image(
+
     *,
     prompt: str,
     out_path: Path,

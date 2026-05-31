@@ -185,7 +185,142 @@ async def _try_gemini(
 
 
 # --------------------------------------------------------------------------
-# Claude CLI path
+# Gemini CLI path
+# --------------------------------------------------------------------------
+
+GEMINI_CLI_BIN = os.getenv("GEMINI_CLI_BIN", "gemini")
+
+def _gemini_cli_available() -> bool:
+    return shutil.which(GEMINI_CLI_BIN) is not None
+
+def _gemini_cli_dirs() -> list[str]:
+    """收集所有可用的 Gemini CLI config directories (用逗號分隔)，用於多帳號輪替。"""
+    raw = os.getenv("GEMINI_CLI_CONFIG_DIRS", "").split(",")
+    dirs = [d.strip() for d in raw if d.strip()]
+    return dirs if dirs else [""] # fallback to default
+
+async def _try_gemini_cli(
+    *,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    timeout_s: float,
+    model_name: str = "gemini-3.1-pro-preview",
+) -> LLMResult[T]:
+    """試呼叫 Gemini CLI (Google AI Pro)，依序輪換多組 Config Dirs。失敗時 data=None + raw_error 記錯誤。"""
+    schema_json = json.dumps(response_model.model_json_schema())
+    # 2026-06-01: 極其嚴格的 JSON 提示，防止 Gemini 3.1 Pro 輸出雜訊或中斷
+    full_prompt = (
+        f"{system}\n\n"
+        f"IMPORTANT: You MUST output a valid JSON object matching the schema below. "
+        f"Do NOT include any explanations, markdown code blocks, or thoughts. "
+        f"Output ONLY the raw JSON string.\n\n"
+        f"SCHEMA:\n{schema_json}\n\n"
+        f"--- USER PROMPT ---\n{prompt}"
+    )
+
+    cmd = [
+        GEMINI_CLI_BIN,
+        "-p", full_prompt,
+        "-o", "json",
+        "-m", model_name,
+        "--approval-mode", "plan"
+    ]
+    
+    dirs = _gemini_cli_dirs()
+    last_error = "unknown"
+    
+    for idx, config_dir in enumerate(dirs):
+        env = os.environ.copy()
+        env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
+        if config_dir:
+            env["GEMINI_CONFIG_DIR"] = os.path.expanduser(config_dir)
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd="/tmp", # isolate to avoid agentic side-effects
+                env=env
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                proc.kill()
+                # Timeout is not a quota issue, so we don't automatically rotate
+                return LLMResult(
+                    data=None, provider="gemini_cli", model=model_name,
+                    raw_error=f"Timeout ({timeout_s}s)"
+                )
+
+            if proc.returncode != 0:
+                err_text = stderr.decode('utf-8', errors='replace')
+                last_error = f"CLI failed (exit {proc.returncode}): {err_text}"
+                if _is_quota_error(last_error) and idx < len(dirs) - 1:
+                    print(f"[llm_brain] ⟳ Gemini CLI 第 {idx + 1} 組帳號配額用盡，換第 {idx + 2} 組。")
+                    continue
+                # 這裡若不是 Quota error 或是最後一組帳號，就跳出輪替
+                break
+                
+            try:
+                envelope = json.loads(stdout.decode('utf-8'))
+                parsed_text = envelope.get("response", "")
+                
+                # Remove any potential markdown json block markers
+                parsed_text = parsed_text.strip()
+                if parsed_text.startswith("```json"):
+                    parsed_text = parsed_text[7:]
+                if parsed_text.startswith("```"):
+                    parsed_text = parsed_text[3:]
+                if parsed_text.endswith("```"):
+                    parsed_text = parsed_text[:-3]
+                parsed_text = parsed_text.strip()
+                
+                parsed = response_model.model_validate_json(parsed_text)
+                
+                # Extract usage metadata from gemini cli envelope
+                in_tok = out_tok = 0
+                stats = envelope.get("stats", {})
+                models = stats.get("models", {})
+                model_stats = models.get(model_name, {})
+                tokens = model_stats.get("tokens", {})
+                in_tok = tokens.get("input", 0)
+                out_tok = tokens.get("candidates", 0)
+                
+                if idx > 0:
+                    print(f"[llm_brain] ℹ️ Gemini CLI 換用第 {idx + 1} 組帳號成功。")
+                
+                # 取得實際帳號 Email (2026-06-01 新增)
+                acct_email = "unknown"
+                try:
+                    target_dir = os.environ.get("GEMINI_CONFIG_DIR") or os.path.expanduser("~/.gemini")
+                    acct_path = os.path.join(target_dir, "google_accounts.json")
+                    if os.path.exists(acct_path):
+                        with open(acct_path, "r") as f:
+                            acct_info = json.load(f)
+                            acct_email = acct_info.get("active", "unknown").split(" @")[0] # hsin290525 @...
+                except Exception:
+                    pass
+
+                return LLMResult(
+                    data=parsed, provider="gemini_cli", model=f"{model_name} ({acct_email})",
+                    input_tokens=in_tok, output_tokens=out_tok
+                )
+            except Exception as e:
+                last_error = f"Failed to parse or validate JSON: {type(e).__name__}: {e}"
+                break
+                
+        except Exception as e:
+            last_error = f"Execution error: {type(e).__name__}: {e}"
+            break
+            
+    return LLMResult(
+        data=None, provider="gemini_cli", model=model_name,
+        raw_error=last_error
+    )
+
 # --------------------------------------------------------------------------
 
 CLAUDE_CLI_BIN = os.getenv("CLAUDE_CLI_BIN", "claude")
@@ -768,7 +903,7 @@ async def call_for_json(
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
         backends: 可指定的 backend 順序與白名單（tuple，按序嘗試）。
-            None = 預設 ("claude_cli","gemini","opencode","groq","cerebras")。
+            None = 預設 ("claude_cli","gemini_cli","gemini","opencode","groq","cerebras")。
             例：("claude_cli",) 只試 Claude；("gemini","groq") 跳過 Claude、
             先 Gemini 再 Groq。未知名稱會被略過。
         disallowed_tools: 傳給 Claude CLI 的 `--disallowedTools`（例：
@@ -777,7 +912,7 @@ async def call_for_json(
     Returns:
         LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
-    allowed = backends or ("claude_cli", "gemini", "opencode", "groq", "cerebras")
+    allowed = backends or ("claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras")
     primary = allowed[0] if allowed else None
     last_error: Optional[str] = None
 
@@ -806,6 +941,17 @@ async def call_for_json(
                 response_model=response_model,
                 model=gemini_model,
                 temperature=temperature,
+            )
+
+        elif name == "gemini_cli":
+            if not _gemini_cli_available():
+                print(f"[llm_brain] ℹ️ `{GEMINI_CLI_BIN}` 不在 PATH，略過 gemini_cli。")
+                continue
+            result = await _try_gemini_cli(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                timeout_s=timeout_s,
             )
 
         elif name in _OPENAI_COMPAT:

@@ -545,12 +545,14 @@ SUBSTACK_BACKEND = os.getenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli").lower()
 def _resolve_backends() -> Optional[tuple]:
     """Map env-var string → call_for_json `backends` tuple."""
     if SUBSTACK_BACKEND == "claude_cli":
-        return ("claude_cli",)
+        # 2026-06-01: 將 gemini_cli (Pro 訂閱) 與 gemini (API key) 加入預設備援鏈。
+        # 原本只准 claude_cli，現在有了高品質 gemini_cli 備援，理應自動接手。
+        return ("claude_cli", "gemini_cli", "gemini")
     if SUBSTACK_BACKEND in ("default", "auto", "fallback"):
         return None  # let call_for_json use its default chain
     # Force a single non-Claude backend (2026-05-31): run token-free w.r.t. the
     # Claude Max quota — e.g. SUBSTACK_COMPOSER_BACKEND=gemini uses the Gemini key(s).
-    if SUBSTACK_BACKEND in ("gemini", "groq", "cerebras"):
+    if SUBSTACK_BACKEND in ("gemini", "gemini_cli", "groq", "cerebras"):
         return (SUBSTACK_BACKEND,)
     # Unknown value → loud warning, fall back to claude_cli
     print(
@@ -581,6 +583,8 @@ def describe_route(provider: str, model: str) -> str:
         if m.startswith("claude-"):
             return f"原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 {m}"
         return f"Claude CLI · 模型 {m}"
+    if provider == "gemini_cli":
+        return f"Gemini CLI (Google AI Pro) · 模型 {m}"
     if provider in ("gemini", "groq", "cerebras"):
         return f"{provider} API key 平台 · 模型 {m}"
     if provider == "none":
