@@ -29,7 +29,10 @@ sources:
     max_videos: 2
 
   # --- Markets / macro / business ---
-  - url: https://www.youtube.com/@Bloomberg/videos
+  # NB: @Bloomberg/videos 404s (that handle's /videos tab is broken on YouTube's
+  # side — not a yt-dlp issue; sibling Bloomberg handles resolve fine). Use the
+  # markets-focused Bloomberg channel instead — same publisher, better on-topic.
+  - url: https://www.youtube.com/@markets/videos
     topic_category: us_stocks
     max_videos: 2
 

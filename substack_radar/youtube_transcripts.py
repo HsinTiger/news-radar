@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -43,11 +44,29 @@ from src.schema import NewsItem  # noqa: E402
 YT_SOURCES_PATH = Path(__file__).resolve().parent / "config" / "substack_youtube_sources.yaml"
 
 # Defaults; overridable per-source in the yaml.
-DEFAULT_MAX_VIDEOS = 3
+DEFAULT_MAX_VIDEOS = 2  # depth limit (was 3) — keep the morning run snappy
 DEFAULT_MAX_AGE_DAYS = 21
-# Glob patterns so we catch auto-caption variants (en-orig / en-US / zh-Hant-…).
-DEFAULT_SUB_LANGS = ["zh-Hant", "zh-Hant.*", "zh-TW", "zh.*", "en", "en.*", "en-orig"]
+# Keep this list LEAN and in PREFERENCE ORDER. yt-dlp fires one HTTP request per
+# matching language, so a wide list trips YouTube's 429 rate limiter fast and
+# leaves us with 0 transcripts. The transcript is raw material for the writing
+# agent (not for a human), and every current source is an English-language
+# channel — so the original English caption (manual + auto) is the best and most
+# reliable fuel. `_download_subs` returns the highest-priority language present.
+# To support a Spanish (or other) source later, just append e.g. "es", "es-orig".
+DEFAULT_SUB_LANGS = ["en", "en-orig"]
 MIN_TRANSCRIPT_CHARS = 200  # below this it's not worth composing from
+
+# --- Wall-clock budgets (2026-06-01) -------------------------------------
+# The morning run once dragged 08:00→09:56 because yt-dlp had no time ceiling:
+# every video tried manual+auto subs sequentially at 120s each, plus a 90s
+# meta call, with no overall cap. These bound each stage so a slow/rate-limited
+# or no-subtitle source can't hold the whole pipeline hostage. On timeout we
+# treat the video as "no subs" and move on — the harvest is best-effort.
+GLOBAL_BUDGET_S = 360        # whole YouTube harvest: 6-min hard ceiling
+PER_SOURCE_BUDGET_S = 75     # one channel can't hog more than this
+LIST_TIMEOUT_S = 25          # resolve channel→video ids (was 120)
+SUBS_TIMEOUT_S = 45          # single combined sub-download pass (was 2×120)
+META_TIMEOUT_S = 20          # title/date lookup (was 90)
 
 
 def _yt_dlp_bin() -> Optional[str]:
@@ -119,14 +138,16 @@ def _list_recent_video_ids(bin_path: str, url: str, max_videos: int) -> List[str
                 "-I", f"1:{max_videos}",      # playlist items 1..max_videos
                 "--print", "%(id)s", url,
             ],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=LIST_TIMEOUT_S,
         )
     except (subprocess.TimeoutExpired, Exception) as exc:  # noqa: BLE001
         print(f"[YT] ⚠️ list failed for {url}: {exc}")
         return []
     ids = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
     if not ids and proc.stderr:
-        print(f"[YT] ⚠️ no ids for {url}: {proc.stderr.strip()[:200]}")
+        err = proc.stderr.strip()
+        tag = "dead/404 channel" if "404" in err else "no ids"
+        print(f"[YT] ⚠️ {tag} for {url}: {err[:200]}")
     return ids[:max_videos]
 
 
@@ -137,7 +158,7 @@ def _fetch_video_meta(bin_path: str, video_id: str) -> Dict[str, str]:
         proc = subprocess.run(
             [bin_path, "--no-warnings", "--skip-download",
              "--print", "%(title)s\n%(upload_date)s", url],
-            capture_output=True, text=True, timeout=90,
+            capture_output=True, text=True, timeout=META_TIMEOUT_S,
         )
         lines = (proc.stdout or "").splitlines()
         return {
@@ -149,25 +170,40 @@ def _fetch_video_meta(bin_path: str, video_id: str) -> Dict[str, str]:
 
 
 def _download_subs(bin_path: str, video_id: str, langs: List[str], out_dir: Path) -> Optional[Path]:
-    """Download (manual first, else auto) subtitles as VTT. Returns the .vtt path."""
+    """Download subtitles (manual or auto) as VTT in a SINGLE yt-dlp pass.
+
+    Passing --write-sub and --write-auto-sub together lets yt-dlp grab whichever
+    exists in one network round-trip. This replaces the old two sequential calls
+    (manual, then auto) that each cost up to 120s — halving the per-video cost and
+    making no-subtitle videos bail in one short timeout instead of two long ones.
+    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     tmpl = str(out_dir / "%(id)s.%(ext)s")
-    base_args = [
+    args = [
         bin_path, "--no-warnings", "--skip-download",
+        "--write-sub", "--write-auto-sub",
         "--sub-format", "vtt", "--sub-langs", ",".join(langs),
+        # Be polite to avoid HTTP 429: pause briefly before each subtitle request
+        # and let yt-dlp retry a throttled extractor rather than bailing instantly.
+        "--sleep-subtitles", "1", "--extractor-retries", "2",
         "-o", tmpl, url,
     ]
-    # Try manual subs, then auto-generated.
-    for extra in (["--write-sub"], ["--write-auto-sub"]):
-        try:
-            subprocess.run(base_args[:1] + extra + base_args[1:], capture_output=True,
-                           text=True, timeout=120)
-        except Exception:  # noqa: BLE001
-            continue
-        vtts = sorted(out_dir.glob(f"{video_id}*.vtt"))
-        if vtts:
-            return vtts[0]
-    return None
+    try:
+        subprocess.run(args, capture_output=True, text=True, timeout=SUBS_TIMEOUT_S)
+    except Exception:  # noqa: BLE001  (timeout/other → treat as no subs, move on)
+        pass
+    # Even if a later-language request 429s, earlier languages may already be on
+    # disk — so glob regardless of exit status and use whatever we got. Return the
+    # highest-priority language present (langs is in preference order), falling
+    # back to any vtt so we never discard a usable transcript.
+    vtts = sorted(out_dir.glob(f"{video_id}*.vtt"))
+    if not vtts:
+        return None
+    for lang in langs:
+        for v in vtts:
+            if f".{lang}" in v.name:
+                return v
+    return vtts[0]
 
 
 # ---------------------------------------------------------------------------
@@ -223,17 +259,27 @@ def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
 
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     items: List[NewsItem] = []
+    start = time.monotonic()
+    deadline = start + GLOBAL_BUDGET_S
 
     for src in sources:
+        if time.monotonic() > deadline:
+            print(f"[YT] ⏱️ global budget {GLOBAL_BUDGET_S}s reached; stopping harvest early "
+                  f"(remaining sources skipped this run).")
+            break
         url = src.get("url", "").strip()
         if not url:
             continue
         topic = src.get("topic_category", "other")
         max_videos = int(src.get("max_videos", DEFAULT_MAX_VIDEOS) or DEFAULT_MAX_VIDEOS)
         print(f"[YT] source: {url} (topic={topic}, max={max_videos})")
+        src_deadline = min(deadline, time.monotonic() + PER_SOURCE_BUDGET_S)
 
         video_ids = _list_recent_video_ids(bin_path, url, max_videos)
         for vid in video_ids:
+            if time.monotonic() > src_deadline:
+                print(f"[YT]   ⏱️ source budget {PER_SOURCE_BUDGET_S}s reached; moving to next source.")
+                break
             video_url = f"https://www.youtube.com/watch?v={vid}"
             news_id = make_news_id(video_url)
 
