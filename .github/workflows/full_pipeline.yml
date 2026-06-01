@@ -1,0 +1,239 @@
+name: News Radar · Full Cloud Pipeline
+
+# ============================================================
+# 2026-06-01: 完整雲端流程，每階段有獨立驗證腳本
+#              verifier_*.py 與生產腳本完全分離 — 避免球員兼裁判
+#
+# 流程: setup → harvest→verify → compose→verify → publish→verify → engagement → persist
+# ============================================================
+
+on:
+  schedule:
+    - cron: "17 1,3,5,7,9,11,13,15,17,19,21,23 * * *"
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: "Force publish (ignore cadence)"
+        required: false
+        default: "false"
+        type: boolean
+
+concurrency:
+  group: news-radar-full-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ========== SETUP ==========
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -q
+          python -c "import litellm; print(f'litellm OK: {litellm.__version__}')"
+
+      - name: Download cover fonts
+        run: |
+          mkdir -p assets/fonts
+          BASE_SANS="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
+          BASE_SERIF="https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/TraditionalChinese"
+          for f in SourceHanSansTC-Bold SourceHanSansTC-Regular SourceHanSerifTC-Light; do
+            curl -sSL --fail-with-body -o "assets/fonts/${f}.otf" \
+              "${BASE_SANS}/${f}.otf" 2>/dev/null || \
+            curl -sSL --fail-with-body -o "assets/fonts/${f}.otf" \
+              "${BASE_SERIF}/${f}.otf" 2>/dev/null || true
+          done
+
+      - name: Restore DB from state branch
+        run: |
+          for dir in data/01_harvest logs state archive data/05_reflect/proposals data/03_compose/pending_drafts; do
+            mkdir -p "$dir"
+          done
+          if [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB: $(du -h data/01_harvest/news_radar.db | cut -f1)"
+          else
+            echo "[restore] no existing DB"
+          fi
+          for src in logs archive state/last_harvest.txt data/05_reflect/proposals; do
+            [ -f "_state/$src" ] && cp "_state/$src" "$src" 2>/dev/null || true
+            [ -d "_state/$src" ] && cp -r "_state/$src/." "${src}/" 2>/dev/null || true
+          done
+
+      - name: Prime harvest throttle (skip if existing)
+        run: |
+          if [ ! -f state/last_harvest.txt ]; then
+            # Write a timestamp 2h ago to prevent harvest throttle on first run
+            date -u -v-2H +%Y-%m-%dT%H:%M:%S+00:00 > state/last_harvest.txt 2>/dev/null || \
+            python3 -c "from pathlib import Path; Path('state/last_harvest.txt').write_text('2026-06-01T00:00:00+00:00')"
+          fi
+
+      # ========== STAGE 1: HARVEST ==========
+      - name: "🌾 [STAGE] Harvest RSS → clean → DB"
+        id: harvest
+        run: |
+          python run_harvest.py 2>&1 | tee logs/harvest_last.log
+
+      - name: "🔍 [VERIFY] Harvest — independent verifier script"
+        if: always()
+        run: |
+          echo "=== Harvest Verification (scripts/verify_harvest.py) ==="
+          python scripts/verify_harvest.py 2>&1
+          echo "=== Verdict ==="
+
+      # ========== STAGE 2: SCORE + COMPOSE ==========
+      - name: "🤖 [STAGE] Score + Compose (LiteLLM cloud)"
+        id: compose
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          LITELLM_MODEL: ${{ vars.LITELLM_MODEL }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python run_pipeline.py --publish-now 2>&1 | tee logs/pipeline_last.log
+
+      - name: "🔍 [VERIFY] Compose — independent verifier script"
+        if: always()
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== Compose Verification (scripts/verify_compose.py) ==="
+          python scripts/verify_compose.py 2>&1
+          echo "=== Verdict ==="
+
+      # ========== STAGE 3: PUBLISH ==========
+      - name: "📤 [STAGE] Publish to FB/IG/Threads"
+        id: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_APP_ID: ${{ secrets.THREADS_APP_ID }}
+          THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
+          TZ: Asia/Taipei
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python run_publish_queue.py --force 2>&1 | tee logs/publish_last.log
+
+      - name: "🔍 [VERIFY] Publish — independent verifier script"
+        if: always()
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== Publish Verification (scripts/verify_publish.py) ==="
+          python scripts/verify_publish.py 2>&1
+          echo "=== Verdict ==="
+
+      # ========== STAGE 4: ENGAGEMENT POLLING ==========
+      - name: "📊 [STAGE] Poll engagement data"
+        id: engagement
+        continue-on-error: true
+        env:
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python -m src.engagement 2>&1 | tee logs/engagement_last.log
+
+      # ========== STAGE 5: PERSIST TO STATE BRANCH ==========
+      - name: "💾 Persist state to state branch"
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+
+          for dir in data/01_harvest logs state archive data/05_reflect/proposals; do
+            mkdir -p "$dir"
+          done
+
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          fi
+          if [ -d "$GITHUB_WORKSPACE/logs" ]; then
+            cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE/archive" ]; then
+            cp -r "$GITHUB_WORKSPACE/archive/." archive/ 2>/dev/null || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
+          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
+            cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
+          fi
+
+          cat > LAST_RUN.txt <<EOF
+          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          run_id: ${RUN_ID}
+          run_url: ${RUN_URL}
+          commit: ${COMMIT}
+          kind: full_pipeline
+          EOF
+
+          if [ -f data/01_harvest/news_radar.db ]; then
+            echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] 無變化，跳過推送"
+            exit 0
+          fi
+          git commit -q -m "state: full_pipeline run ${RUN_ID}"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            state
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pipeline-logs-${{ github.run_id }}
+          path: |
+            logs/
+            data/01_harvest/news_radar.db
+            reports/
+            data/03_compose/pending_drafts/
+          retention-days: 14
+          if-no-files-found: warn

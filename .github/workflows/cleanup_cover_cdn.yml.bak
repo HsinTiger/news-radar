@@ -6,12 +6,12 @@ name: Cleanup cover-cdn
 #
 # Spec: scripts/cleanup_cover_cdn.sh + docs/brand_visual.md "Future revisions".
 
-on:
-  schedule:
-    # Sunday 03:00 UTC = Sunday 11:00 Asia/Taipei. Pre-dawn so it
-    # doesn't compete with publish workflow for cover-cdn lock.
-    # PAUSED 2026-05-22 · - cron: "0 3 * * 0"
-  workflow_dispatch:
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # Sunday 03:00 UTC = Sunday 11:00 Asia/Taipei. Pre-dawn so it
+#     # doesn't compete with publish workflow for cover-cdn lock.
+#     # PAUSED 2026-05-22 · - cron: "0 3 * * 0"
+#   workflow_dispatch:
     inputs:
       dry_run:
         description: "Dry run (list files, don't delete)"

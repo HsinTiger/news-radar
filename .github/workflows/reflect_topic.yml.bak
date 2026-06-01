@@ -1,46 +1,45 @@
-name: News Radar · Gate Analyzer (Daily)
+name: News Radar · Topic Weight Back-Prop (Weekly)
 
 # ------------------------------------------------------------
-# Phase 9 Item 7 (2026-04-28) — daily publish cadence analysis
-# and gate constraint tuning.
+# Phase 8.20 Step 4 —— 每週一 06:00 TW（Sun 22:00 UTC）把互動回饋
+# 回注到 topic_weights，幫 pipeline 學會「哪類主題 engagement 好」。
 #
-# Reads `publish_log` (recent 14 days) and writes per-platform
-# relax_gate proposals to `data/05_reflect/proposals/YYYY-WW.jsonl`
-# via the Item 2 write-path API.
+# 這條 workflow 跟 reflect.yml（daily soul reflector）分開：
+#   - reflect.yml 改 soul.md（文風、選題原則）
+#   - reflect_topic.yml 改 topic_weights（分類權重，影響排序）
 #
-# Tracks three metrics (14d window):
-#   - emergency_publish rate (% publishes within 30min of previous)
-#   - max_silence_breach (4-hour windows without publishes)
-#   - cooldown_lock saturation (% publishes within min-interval)
+# 安全性設計：
+#   * 有 guard rails（η=0.1、單週 Δ clip ±0.3、樣本 < 5 的類別 skip、
+#     全域權重 clip [0.3, 2.0]）—— 即使資料稀疏也不會爆走
+#   * 寫進 topic_weight_history 做審計用，每週都留痕（含 skipped）
+#   * Markdown 報告 commit 回 main branch（docs/topic_weight_log/YYYY-MM-DD.md），
+#     Hsin 可以 diff 看這週每個類別為什麼升/降
 #
-# Calibration-phase (Phase 9 §8.4): every proposal is PROPOSAL-ONLY
-# (boss_attention_required=True) — this analyzer never auto-deploys.
-#
-# Skip lineage rows (no jsonl entry) for:
-#   - insufficient_samples (< 20 successful publishes in 14d per platform)
-#
-# Runs daily at 04:30 UTC (≈ 12:30 Asia/Taipei) — chosen so it lands
-# AFTER Item 6's `reflect_scorer.yml` (04:00 UTC), avoiding same-time
-# CI contention on the `news-radar-pipeline` concurrency group.
-# Doesn't collide with `reflect_topic.yml` (Sun 22:00 UTC weekly).
+# 執行頻率：每週一 06:00 TW 自動觸發（workflow_dispatch 也可隨時手動跑）
+# 設計選擇：就算目前沒有互動資料，reflector 也會安全地 skip 所有類別
+# （apply_weight_update 自帶 low_samples guard）。所以 cron 可直接啟用。
 # ------------------------------------------------------------
 
-on:
-  schedule:
-    # Daily 04:30 UTC = 12:30 Asia/Taipei
-    # PAUSED 2026-05-22 · - cron: "30 4 * * *"
-  workflow_dispatch:
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # Sunday 22:00 UTC = Monday 06:00 Asia/Taipei
+#     # PAUSED 2026-05-22 · - cron: "0 22 * * 0"
+#   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry-run (no proposals written, no report file)"
+        description: "Dry-run（計算全部、印 report、不寫 DB）"
         required: false
         default: "false"
         type: choice
         options: ["false", "true"]
+      lookback_days:
+        description: "回溯幾天的 engagement（預設 30）"
+        required: false
+        default: "30"
+        type: string
 
 concurrency:
-  # Shares DB writes (proposals lineage table) with pipeline.yml +
-  # other reflector workflows — serialize via the same group key.
+  # 和 pipeline.yml 共用同一張 DB：serialize
   group: news-radar-pipeline
   cancel-in-progress: false
 
@@ -48,7 +47,7 @@ permissions:
   contents: write
 
 jobs:
-  reflect_gate:
+  reflect_topic:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -81,10 +80,13 @@ jobs:
           if [ -d _state ] && [ -f _state/data/01_harvest/news_radar.db ]; then
             cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
             echo "has_db=true" >> "$GITHUB_OUTPUT"
-            echo "[restore] DB restored: $(du -h data/01_harvest/news_radar.db | cut -f1)"
+            echo "[restore] DB 復原：$(du -h data/01_harvest/news_radar.db | cut -f1)"
           else
             echo "has_db=false" >> "$GITHUB_OUTPUT"
-            echo "[restore] state branch has no DB → analyzer will report 0 samples and exit 0"
+            echo "[restore] state branch 沒有 DB → 初次執行，reflector 會用 init_db seed 預設權重再 skip"
+          fi
+          if [ -d _state/logs ]; then
+            cp -r _state/logs/. logs/ 2>/dev/null || true
           fi
           # Carry over any existing proposals dir so this run appends to
           # the right ISO-week jsonl file rather than starting from empty.
@@ -92,35 +94,41 @@ jobs:
             cp -r _state/data/05_reflect/proposals/. data/05_reflect/proposals/ 2>/dev/null || true
           fi
 
-      - name: Run gate analyzer
+      - name: Run topic back-prop
         env:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
+          # 不需要任何 LLM key — 這個 reflector 是純統計運算
         run: |
-          FLAGS=""
+          LOOKBACK="${{ inputs.lookback_days || '30' }}"
+          FLAGS="--lookback-days ${LOOKBACK}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            FLAGS="--dry-run"
+            FLAGS="$FLAGS --dry-run"
           fi
-          echo "[reflect_gate] flags=$FLAGS"
-          python -m src.reflector.gate $FLAGS | tee logs/reflect_gate_last.log
+          echo "[reflect_topic] flags=$FLAGS"
+          # Phase 9 Item 3 (2026-04-27): module relocated from
+          # src.reflector_topic to src.reflector.topic as part of the
+          # unified-reflector package refactor. Math + CLI flags unchanged.
+          python -m src.reflector.topic $FLAGS | tee logs/reflect_topic_last.log
 
-      - name: Commit gate report to main
+      # 只有非 dry-run 才 commit report + DB state
+      - name: Commit weekly report to main
         if: inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ ! -d reports ] || [ -z "$(ls -A reports 2>/dev/null)" ]; then
-            echo "[report] no gate report produced; skipping commit"
+          if [ ! -d docs/topic_weight_log ] || [ -z "$(ls -A docs/topic_weight_log 2>/dev/null)" ]; then
+            echo "[report] 沒產出 report（可能 DB 空），跳過 commit"
             exit 0
           fi
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
-          git add reports/ 2>/dev/null || true
+          git add docs/topic_weight_log/ 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "reflect: daily gate analyzer (run ${{ github.run_id }})"
+            git commit -m "reflect: weekly topic-weight back-prop (run ${{ github.run_id }})"
             git push
           else
-            echo "[report] no new report files; skipping commit"
+            echo "[report] 無新報告檔，略過 commit"
           fi
 
       - name: Persist state (DB + proposals dir)
@@ -146,11 +154,14 @@ jobs:
           if [ -d "$GITHUB_WORKSPACE/logs" ]; then
             cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
           fi
+          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
+            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
+          fi
 
           cat > LAST_RUN.txt <<EOF
           last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           run_id: ${RUN_ID}
-          kind: reflect_gate
+          kind: reflect_topic
           EOF
 
           if [ -f data/01_harvest/news_radar.db ]; then
@@ -159,10 +170,10 @@ jobs:
 
           git add -A
           if git diff --cached --quiet; then
-            echo "[persist] no changes; skipping push"
+            echo "[persist] 無變化，跳過推送"
             exit 0
           fi
-          git commit -q -m "state: reflect_gate run ${RUN_ID}"
+          git commit -q -m "state: reflect_topic run ${RUN_ID}"
           git push --force \
             "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
             state
@@ -171,10 +182,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: reflect-gate-${{ github.run_id }}
+          name: reflect-topic-${{ github.run_id }}
           path: |
-            reports/
-            logs/reflect_gate_last.log
-            data/05_reflect/proposals/
+            docs/topic_weight_log/
+            logs/reflect_topic_last.log
           retention-days: 30
           if-no-files-found: warn

@@ -9,10 +9,10 @@ name: News Radar · Reflect (Daily)
 # 結束後 commit soul.md 變動回 main branch，DB / logs 回 state branch
 # ------------------------------------------------------------
 
-on:
-  schedule:
-    # PAUSED 2026-05-22 · - cron: "0 16 * * *"   # UTC 16:00 = Asia/Taipei 00:00
-  workflow_dispatch:
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # PAUSED 2026-05-22 · - cron: "0 16 * * *"   # UTC 16:00 = Asia/Taipei 00:00
+#   workflow_dispatch:
     inputs:
       dry_run:
         description: "Dry-run（只印 prompt，不呼叫 LLM、不改 soul）"

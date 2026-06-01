@@ -144,11 +144,11 @@ asyncio.run(test())
 ### `~/.claude-code-router/config.json`
 ```json
 {
-  "gemini.api_key": "AIzaSyA5Oa6YIh3xhZkjxegyqQ7h8uZMDi8BETE",
-  "gemini2.api_key": "AQ.Ab8RN6JTfkOekMBXp__OAgXiUuJ5zU3H_GDChc3tGWCDDsB2Ag",
-  "groq.api_key": "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",
-  "cerebras.api_key": "csk-n8vddfp4fhrkw5939tm8ttmhe9e2k9mcmmvjnhc9txjmetpt",
-  "opencode.api_key": "sk-26WQ5Ir3cfYDG5i1cRON2lQUpRUkhB379GppCVTrHL8xg2O1rnUJ6gcXm4p9mNoG"
+  "gemini.api_key": "<your-gemini-api-key>",
+  "gemini2.api_key": "<your-gemini2-api-key>",
+  "groq.api_key": "<your-groq-api-key>",
+  "cerebras.api_key": "<your-cerebras-api-key>",
+  "opencode.api_key": "<your-opencode-api-key>"
 }
 ```
 

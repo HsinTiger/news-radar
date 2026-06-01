@@ -44,6 +44,7 @@ feeds:
     url: https://deepmind.google/blog/rss.xml
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, research]
 
   # === 雲端 / 半導體 / 基礎建設 ===
@@ -51,12 +52,14 @@ feeds:
     url: https://aws.amazon.com/blogs/aws/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [cloud, infra]
 
   - name: NVIDIA Blog
     url: https://blogs.nvidia.com/feed/
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [gpu, ai-chip]
 
   # === 策略 / 分析 / KOL ===
@@ -64,12 +67,14 @@ feeds:
     url: https://stratechery.com/feed/
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [analysis, strategy]
 
   - name: Simon Willison's Blog
     url: https://simonwillison.net/atom/everything/
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, agent, llm, tooling]
 
   # === AI 社群熱點 ===
@@ -77,12 +82,14 @@ feeds:
     url: https://huggingface.co/blog/feed.xml
     tier: secondary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, model, open-source]
 
   - name: TechCrunch AI
     url: https://techcrunch.com/category/artificial-intelligence/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, industry, funding]
 
   - name: Hacker News Front Page
@@ -90,6 +97,7 @@ feeds:
     tier: secondary
     language: en
     source_type: forum
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [tech, community, signal]
 
   # === 深度與前沿社群 ===
@@ -98,6 +106,7 @@ feeds:
     tier: primary
     language: en
     source_type: social
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, agi, discussion]
 
   - name: r/LocalLLaMA
@@ -105,6 +114,7 @@ feeds:
     tier: secondary
     language: en
     source_type: social
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, open-source, models]
 
   - name: r/MachineLearning
@@ -112,6 +122,7 @@ feeds:
     tier: secondary
     language: en
     source_type: social
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [ai, research, papers]
 
   # === 華爾街長文派（Phase 8.10：X 路線被否決後補上的替代訊號）===
@@ -133,12 +144,14 @@ feeds:
     url: https://rss.art19.com/the-memo-by-howard-marks
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [finance, credit, oaktree, memo]
 
   - name: Peter Zeihan
     url: https://zeihan.com/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [geopolitics, macro]
 
   # === 加密貨幣產業 (Phase 8.15) ===
@@ -149,6 +162,7 @@ feeds:
     url: https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml
     tier: primary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [crypto, news, industry]
 
   - name: The Block
@@ -156,6 +170,7 @@ feeds:
     tier: primary
     language: en
     source_type: rss_summary
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [crypto, news, institutional]
     # Phase 8.15 首次 harvest 確認：RSS 本身 200，但所有文章頁 Cloudflare 403。
     # 改用 rss_summary 模式：fetcher 從 RSS <description> 預填 clean_markdown，
@@ -166,6 +181,7 @@ feeds:
     url: https://decrypt.co/feed
     tier: secondary
     language: en
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [crypto, news]
 
   - name: Cointelegraph
@@ -173,6 +189,7 @@ feeds:
     tier: secondary
     language: en
     source_type: rss_summary
+    feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [crypto, news]
     # Phase 9 Item 1 (2026-04-28): rss_summary mode per silent feeds audit.
     # Cointelegraph RSS bodies are 80-120 char summaries, tripping 200-word floor
@@ -203,6 +220,7 @@ feeds:
     url: https://semianalysis.com/feed/
     tier: primary
     language: en
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [semiconductor, supply-chain, ai-chip, research]
     # VERIFIED 2026-04-21 — 200 OK, 969 KB（比其他 feed 大十倍，含長篇研究）
 
@@ -210,6 +228,7 @@ feeds:
     url: https://technews.tw/feed/
     tier: primary
     language: zh
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [taiwan, semiconductor, supply-chain, ai]
     # VERIFIED 2026-04-21 — 200 OK, 37 KB. 供應鏈、台積電、科技政策中文第一線
 
@@ -218,6 +237,7 @@ feeds:
     url: https://www.calculatedriskblog.com/feeds/posts/default
     tier: secondary
     language: en
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [macro, us-housing, labor-market, economy]
     # VERIFIED 2026-04-21 — 200 OK, 118 KB. Bill McBride 宏觀數據長期追蹤
 
@@ -225,6 +245,7 @@ feeds:
     url: https://www.thediff.co/feed
     tier: primary
     language: en
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [strategy, finance, tech-business, deep-analysis]
     # VERIFIED 2026-04-21 — 200 OK, 85 KB（diff.substack.com 已遷，走 thediff.co）
 
@@ -233,6 +254,7 @@ feeds:
     url: https://marginalrevolution.com/feed
     tier: secondary
     language: en
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [economics, policy, macro, global]
     # VERIFIED 2026-04-21 — 200 OK, 62 KB. Tyler Cowen 每日觀察
 
@@ -240,6 +262,7 @@ feeds:
     url: https://www.notboring.co/feed
     tier: secondary
     language: en
+    feed_added_at: 2026-04-21T00:00:00+00:00
     tags: [strategy, venture, tech-business]
     # VERIFIED 2026-04-21 — 200 OK, 1.4 MB（feed 很肥，含全文；可能要在 harvester
     # 做 content trunc 避免 DB 撐太大）。VC / 戰略觀察。
@@ -357,31 +380,37 @@ feeds:
     url: https://hnrss.org/frontpage
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [tech, community, inspiration]
   - name: Ars Technica
     url: https://feeds.arstechnica.com/arstechnica/index
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [tech, deepdive, inspiration]
   - name: The Verge
     url: https://www.theverge.com/rss/index.xml
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [tech, product, inspiration]
   - name: MIT Technology Review
     url: https://www.technologyreview.com/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [tech, research, inspiration]
   - name: Good News Network
     url: https://www.goodnewsnetwork.org/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [goodnews, human, inspiration]
   - name: Positive News
     url: https://www.positive.news/feed/
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [goodnews, constructive, inspiration]
 
   # === First-hand / primary-source feeds (2026-05-30, verified 200 + parseable) ===
@@ -391,16 +420,19 @@ feeds:
     url: https://www.sec.gov/news/pressreleases.rss
     tier: primary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [official, regulatory, firsthand, inspiration]
   - name: Federal Reserve Press
     url: https://www.federalreserve.gov/feeds/press_all.xml
     tier: primary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [official, macro, firsthand, inspiration]
   - name: Motley Fool
     url: https://www.fool.com/feeds/index.aspx
     tier: secondary
     language: en
+    feed_added_at: 2026-05-30T00:00:00+00:00
     tags: [earnings, analysis, firsthand, inspiration]
   # 註：SEC EDGAR (browse-edgar Atom) 與 NHTSA 對瀏覽器 UA 回 403，需 per-feed
   # 「Name email」contact UA；fetcher 目前單一全域 UA，故暫不納入（未來可加 per-feed headers）。

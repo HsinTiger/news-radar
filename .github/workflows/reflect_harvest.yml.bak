@@ -1,31 +1,30 @@
-name: News Radar · Scorer Analyzer (Daily)
+name: [DEPRECATED] News Radar · Harvest Analyzer (replaced by full_pipeline.yml)
 
 # ------------------------------------------------------------
-# Phase 9 Item 6 (2026-04-28) — daily per-platform AUTO_PUBLISH
-# threshold optimization.
+# Phase 9 Item 4 (2026-04-28) — daily feed-yield evaluation.
 #
-# Reads `v_post_engagement_aggregated` (Item 1 / Item 1.6 view substrate)
-# and writes per-platform tune_threshold proposals to
-# `data/05_reflect/proposals/YYYY-WW.jsonl` via the Item 2 write-path
-# API. Calibration-phase (Phase 9 §8.4): every proposal is
-# PROPOSAL-ONLY (boss_attention_required=True) — this analyzer never
-# auto-deploys regardless of |delta|.
+# Reads `v_feed_yield_7d` (Item 1 view substrate) and writes per-feed
+# proposals to `data/05_reflect/proposals/YYYY-WW.jsonl` via the
+# Item 2 write-path API. Two lanes:
+#   - sunset_feed (low yield + 4w/8w grace + samples ≥ 3 + not pinned)
+#   - investigation (zero publishes 7d + has historical publish)
 #
-# Skip lineage rows (no jsonl entry) for:
-#   - insufficient_samples (< 30 polled-published per platform)
-#   - below_noise_floor (|delta| < 0.02)
+# All proposals are PROPOSAL-ONLY (boss_attention_required=True) —
+# this analyzer never auto-deploys. Hsin reviews + signs off via the
+# (eventual) settings-page UI, then deploy happens out-of-band.
 #
-# Runs daily at 04:00 UTC (≈ 12:00 Asia/Taipei) — chosen so it lands
-# AFTER both the daily engagement-worker passes and AFTER Item 4's
-# `reflect_harvest.yml` (03:00 UTC), avoiding same-time CI contention
-# on the `news-radar-pipeline` concurrency group. Doesn't collide with
+# Runs daily at 03:00 UTC (≈ 11:00 Asia/Taipei) — chosen so it lands
+# AFTER the daily engagement-worker pass (which runs every 4h on Mac
+# launchd) and BEFORE the human review hour. Doesn't collide with
 # `reflect_topic.yml` (Sun 22:00 UTC weekly).
+#
+# Safety: treats NULL `avg_score_7d` as insufficient-data (Cowork ruling
+# 2026-04-27); respects 4-week grace + cadence-aware 8-week grace for
+# low-cadence official sources. Even on a fresh DB the analyzer just
+# emits "0 evaluated" and exits 0.
 # ------------------------------------------------------------
 
 on:
-  schedule:
-    # Daily 04:00 UTC = 12:00 Asia/Taipei (one hour after harvest analyzer)
-    # PAUSED 2026-05-22 · - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -34,11 +33,11 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+  # DEPRECATED: harvest analyzer is now run inside full_pipeline.yml
 
 concurrency:
   # Shares DB writes (proposals lineage table) with pipeline.yml +
-  # reflect_topic.yml + reflect_harvest.yml — serialize via the same
-  # group key.
+  # reflect_topic.yml — serialize via the same group key.
   group: news-radar-pipeline
   cancel-in-progress: false
 
@@ -46,7 +45,7 @@ permissions:
   contents: write
 
 jobs:
-  reflect_scorer:
+  reflect_harvest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -82,7 +81,7 @@ jobs:
             echo "[restore] DB restored: $(du -h data/01_harvest/news_radar.db | cut -f1)"
           else
             echo "has_db=false" >> "$GITHUB_OUTPUT"
-            echo "[restore] state branch has no DB → analyzer will report 0 polled samples and exit 0"
+            echo "[restore] state branch has no DB → analyzer will emit 0-feed report"
           fi
           # Carry over any existing proposals dir so this run appends to
           # the right ISO-week jsonl file rather than starting from empty.
@@ -90,7 +89,7 @@ jobs:
             cp -r _state/data/05_reflect/proposals/. data/05_reflect/proposals/ 2>/dev/null || true
           fi
 
-      - name: Run scorer analyzer
+      - name: Run harvest analyzer
         env:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
@@ -99,23 +98,23 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             FLAGS="--dry-run"
           fi
-          echo "[reflect_scorer] flags=$FLAGS"
-          python -m src.reflector.scorer $FLAGS | tee logs/reflect_scorer_last.log
+          echo "[reflect_harvest] flags=$FLAGS"
+          python -m src.reflector.harvest $FLAGS | tee logs/reflect_harvest_last.log
 
-      - name: Commit scorer report to main
+      - name: Commit harvest report to main
         if: inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ ! -d reports ] || [ -z "$(ls -A reports 2>/dev/null)" ]; then
-            echo "[report] no scorer report produced; skipping commit"
+            echo "[report] no harvest report produced; skipping commit"
             exit 0
           fi
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
           git add reports/ 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "reflect: daily scorer analyzer (run ${{ github.run_id }})"
+            git commit -m "reflect: daily harvest analyzer (run ${{ github.run_id }})"
             git push
           else
             echo "[report] no new report files; skipping commit"
@@ -151,7 +150,7 @@ jobs:
           cat > LAST_RUN.txt <<EOF
           last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           run_id: ${RUN_ID}
-          kind: reflect_scorer
+          kind: reflect_harvest
           EOF
 
           if [ -f data/01_harvest/news_radar.db ]; then
@@ -163,7 +162,7 @@ jobs:
             echo "[persist] no changes; skipping push"
             exit 0
           fi
-          git commit -q -m "state: reflect_scorer run ${RUN_ID}"
+          git commit -q -m "state: reflect_harvest run ${RUN_ID}"
           git push --force \
             "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
             state
@@ -172,10 +171,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: reflect-scorer-${{ github.run_id }}
+          name: reflect-harvest-${{ github.run_id }}
           path: |
             reports/
-            logs/reflect_scorer_last.log
+            logs/reflect_harvest_last.log
             data/05_reflect/proposals/
           retention-days: 30
           if-no-files-found: warn

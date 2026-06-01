@@ -304,6 +304,18 @@ def _migrate_log_scale_engagement(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass
 
+    # 6. Phase 9 Item 1 (2026-04-28): engagement_per_post view for dashboard
+    try:
+        conn.execute("""
+            CREATE VIEW IF NOT EXISTS engagement_per_post AS
+            SELECT e.*, d.title AS draft_title
+            FROM engagement_stats_latest e
+            JOIN drafts d ON d.id = e.draft_id
+            ORDER BY e.fetched_at DESC
+        """)
+    except sqlite3.OperationalError:
+        pass
+
 
 def _seed_topic_weights(conn: sqlite3.Connection) -> None:
     """把 src.topic_taxonomy.TOPIC_CATEGORIES 的初始權重寫進 topic_weights 表。

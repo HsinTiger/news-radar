@@ -26,6 +26,10 @@ Pillow==11.0.0
 rich==13.9.4              # 終端漂亮輸出（log / table）
 python-dateutil==2.9.0    # 時區處理
 pytest>=7.0
+# ===== Cloud LLM routing (GitHub Actions, 2026-06-01) =====
+litellm>=1.60.0            # Unified API for 100+ LLM providers
+# ===== GitHub Actions deployment =====
+pygithub>=2.5.0           # GitHub API wrapper for repo management
 # ===== Substack draft API — moved to requirements-mac.txt (2026-05-13) =====
 # python-substack 只有 Mac 端 tools/substack_compose.py 會用到。Cloud GH Actions
 # 的 publish_queue.yml / reflect_*.yml 等 workflows 完全用不到、且 v0.1.18 在

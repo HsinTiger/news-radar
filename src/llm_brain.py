@@ -861,6 +861,148 @@ async def _try_openai_compatible(
 
 
 # --------------------------------------------------------------------------
+# LiteLLM path (GitHub Actions 主要的 LLM 路徑，2026-06-01)
+# --------------------------------------------------------------------------
+#
+# LiteLLM 統一了 100+ LLM provider（OpenAI / Anthropic / Google / Groq 等）
+# 的 OpenAI-compatible /chat/completions 介面。好處：
+#   - 一支函式覆蓋所有 provider，不用每加一家 provider 就加一段程式碼
+#   - 支援 model 字串路由（"gemini/gemini-2.5-flash"、"groq/llama-3.3-70b"）
+#   - 自動 fallback（若設 LITELLM_API_KEY 但沒設想用的 provider key，會主動跳過）
+#
+# 本路徑在 Cloud (GitHub Actions) 環境是預設首要路徑；Mac 環境保留 claude_cli 優先。
+# 啟用條件：LITELLM_API_KEY 有設（可以是任何支援 OpenAI-compatible 的 provider key；
+#   也可設 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY 等，LiteLLM 會自動取用）
+LITELLM_MODEL = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
+
+
+def _litellm_available() -> bool:
+    """LiteLLM 可用條件：litellm 已 install 且至少有一把 provider key。
+
+    LiteLLM 不需要專屬 key；取用標準 OpenAI-compatible env vars：
+      - OPENAI_API_KEY       → "openai/..."
+      - ANTHROPIC_API_KEY    → "claude-..."
+      - GEMINI_API_KEY       → "gemini/..."
+      - GROQ_API_KEY         → "groq/..."
+    只要任一有設、litellm importable 就算可用。
+    """
+    try:
+        import litellm  # noqa: F401
+    except ImportError:
+        return False
+    provider_keys = [
+        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+        "GROQ_API_KEY", "LITELLM_API_KEY",
+    ]
+    return any(os.getenv(k) for k in provider_keys)
+
+
+async def _try_litellm(
+    *,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    temperature: float,
+    timeout_s: int,
+) -> LLMResult[T]:
+    """試呼叫 LiteLLM 統一接口，支援 100+ provider。
+
+    Model 由 LITELLM_MODEL env var 控制（預設 gemini/gemini-2.5-flash）。
+    Provider 變更 model 字首即可：
+      - "groq/llama-3.3-70b-versatile"
+      - "openai/gpt-4o-mini"
+      - "gemini/gemini-2.5-flash"
+      - "claude/claude-sonnet-4-20250514"
+
+    Steps:
+      1. 組裝 OpenAI-compatible payload
+      2. litellm.acompletion() 呼叫
+      3. 抽 content → _extract_json_blob → Pydantic validate
+    """
+    if not _litellm_available():
+        return LLMResult(
+            data=None, provider="litellm",
+            raw_error="litellm not installed or no provider key set",
+        )
+
+    try:
+        from litellm import acompletion
+    except ImportError:
+        return LLMResult(
+            data=None, provider="litellm",
+            raw_error="litellm import failed",
+        )
+
+    model = LITELLM_MODEL
+    user_prompt = prompt.strip()
+    if "json" not in (system + prompt).lower():
+        user_prompt += "\n\nReturn only a single valid JSON object."
+
+    messages = [
+        {"role": "system", "content": system.strip()},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        response = await acompletion(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+            request_timeout=timeout_s,
+            num_retries=2,
+        )
+    except Exception as e:
+        return LLMResult(
+            data=None, provider="litellm", model=model,
+            raw_error=f"{type(e).__name__}: {e}",
+        )
+
+    choices = getattr(response, "choices", None) or []
+    if not choices or not choices[0].message:
+        return LLMResult(
+            data=None, provider="litellm", model=model,
+            raw_error="no choices in LiteLLM response",
+        )
+
+    content = (choices[0].message.content or "").strip()
+    if not content:
+        return LLMResult(
+            data=None, provider="litellm", model=model,
+            raw_error="empty LiteLLM response content",
+        )
+
+    json_blob = _extract_json_blob(content)
+    if json_blob is None:
+        return LLMResult(
+            data=None, provider="litellm", model=model,
+            raw_error=f"no JSON blob in LiteLLM output; first 300 chars: {content[:300]!r}",
+        )
+
+    try:
+        obj = json.loads(json_blob, strict=False)
+        parsed = response_model.model_validate(obj)
+    except (json.JSONDecodeError, ValidationError) as e:
+        return LLMResult(
+            data=None, provider="litellm", model=model,
+            raw_error=f"parse/validate failed: {type(e).__name__}: {str(e)[:300]}",
+        )
+
+    # 從 LiteLLM response 抽 usage
+    usage = getattr(response, "usage", None)
+    in_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
+    out_tok = getattr(usage, "completion_tokens", 0) if usage else 0
+
+    return LLMResult(
+        data=parsed,
+        provider="litellm",
+        model=model,
+        input_tokens=int(in_tok or 0),
+        output_tokens=int(out_tok or 0),
+    )
+
+
+# --------------------------------------------------------------------------
 # 對外 API
 # --------------------------------------------------------------------------
 
@@ -921,7 +1063,15 @@ async def call_for_json(
     Returns:
         LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
-    allowed = backends or ("claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras")
+    if backends is None:
+        # 動態預設：Cloud (GitHub Actions) → litellm → gemini → groq；
+        # Mac (有 Claude CLI) → claude_cli → gemini → litellm。
+        # 由 CLAUDE_CLI_BIN 是否在 PATH 決定——GitHub Actions runner 上沒有 claude CLI。
+        if _claude_cli_available():
+            backends = ("claude_cli", "litellm", "gemini", "gemini_cli", "opencode", "groq", "cerebras")
+        else:
+            backends = ("litellm", "gemini", "opencode", "groq", "cerebras")
+    allowed = backends
     primary = allowed[0] if allowed else None
     last_error: Optional[str] = None
 
@@ -950,6 +1100,18 @@ async def call_for_json(
                 response_model=response_model,
                 model=gemini_model,
                 temperature=temperature,
+            )
+
+        elif name == "litellm":
+            if not _litellm_available():
+                print("[llm_brain] ℹ️ litellm 不可用（無 provider key 或未 install），略過。")
+                continue
+            result = await _try_litellm(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                temperature=temperature,
+                timeout_s=timeout_s,
             )
 
         elif name == "gemini_cli":

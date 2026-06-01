@@ -16,11 +16,11 @@ name: News Radar · Feed Healthcheck (Daily)
 #   * 沒有 → 建立新 issue 並 label `feed-healthcheck`
 # ------------------------------------------------------------
 
-on:
-  schedule:
-    # 每天 UTC 23:00 = Asia/Taipei 07:00（Hsin 起床前先知道哪個 feed 掛了）
-    # PAUSED 2026-05-22 · - cron: "0 23 * * *"
-  workflow_dispatch: {}
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # 每天 UTC 23:00 = Asia/Taipei 07:00（Hsin 起床前先知道哪個 feed 掛了）
+#     # PAUSED 2026-05-22 · - cron: "0 23 * * *"
+#   workflow_dispatch: {}
 
 concurrency:
   # 跟 pipeline / reflect 不衝突，但自己要 serialize 以免 cron + 手動撞一起

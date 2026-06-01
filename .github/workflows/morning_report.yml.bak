@@ -16,12 +16,12 @@ name: News Radar · Morning Report (Daily)
 #   2. feed-healthcheck issue list（如果有黃/紅燈）
 # ------------------------------------------------------------
 
-on:
-  schedule:
-    # UTC 23:30 = Asia/Taipei 07:30（比 feed_healthcheck 慢半小時，
-    # 這樣 morning_report 能把今早 healthcheck 的結果也納進來）
-    # PAUSED 2026-05-22 · - cron: "30 23 * * *"
-  workflow_dispatch: {}
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # UTC 23:30 = Asia/Taipei 07:30（比 feed_healthcheck 慢半小時，
+#     # 這樣 morning_report 能把今早 healthcheck 的結果也納進來）
+#     # PAUSED 2026-05-22 · - cron: "30 23 * * *"
+#   workflow_dispatch: {}
 
 concurrency:
   # read-only DB、跟別的 workflow 不衝突

@@ -1,4 +1,4 @@
-name: News Radar · Publish Queue
+name: News Radar · Publish Queue (REPLACED BY full_pipeline.yml)
 
 # ------------------------------------------------------------
 # Phase 8.18 雲本混合架構 —— Cloud 端「發稿」工作流
@@ -10,12 +10,12 @@ name: News Radar · Publish Queue
 # 這條工作流需要的 secrets 只有 Meta tokens（7 個），不需要 Gemini / Anthropic key。
 # ------------------------------------------------------------
 
-on:
-  schedule:
-    # UTC 整點每小時。Cadence 1h upper bound 保證實際不會每小時都發，
-    # run_publish_queue.py 自己會 honour min_interval。
-    # PAUSED 2026-05-22 · - cron: "0 * * * *"
-  workflow_dispatch:
+on:  # DEPRECATED: replaced by full_pipeline.yml
+#   schedule:
+#     # UTC 整點每小時。Cadence 1h upper bound 保證實際不會每小時都發，
+#     # run_publish_queue.py 自己會 honour min_interval。
+#     # PAUSED 2026-05-22 · - cron: "0 * * * *"
+#   workflow_dispatch:
     inputs:
       mode:
         description: "Run mode"

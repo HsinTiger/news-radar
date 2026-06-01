@@ -17,7 +17,7 @@ name: News Radar · Flush Legacy Drafts
 #      gh workflow run flush_legacy_drafts.yml -f mode=apply
 # ------------------------------------------------------------
 
-on:
+on:  # DEPRECATED: replaced by full_pipeline.yml
   workflow_dispatch:
     inputs:
       mode:
