@@ -445,18 +445,23 @@ def _material_for_prompt(raw_content: str, mode: str) -> str:
     """How much source material to feed the writer, by mode.
 
     morning/evening are short articles/news → first 6000 chars is plenty.
-    podcast transcripts are 1–3 hr interviews (often 100k–300k chars); the first
-    6000 chars would be just the intro chit-chat and miss every Q&A. So for podcast
-    we pass a generous HEAD + TAIL slice (the opening usually frames the thesis;
-    the closing often holds the sharpest reflections), joined with an explicit
-    middle-elided marker so the model knows it isn't the whole episode.
+
+    podcast transcripts are 1–3 hr interviews (often 100k–300k chars). We feed the
+    **whole** transcript: Gemini 3.1 Pro has a ~1M-token context window (a 3-hr
+    episode ≈ 75k tokens, <10% of it), and the sharpest Q&A insight can sit anywhere
+    in the conversation — head/tail slicing would drop the meaty middle. The only
+    real ceiling is the OS argv limit: gemini CLI passes the prompt via `-p <arg>`,
+    and macOS ARG_MAX is ~1MB, so cap at 500k chars (~500KB, ~125k tokens) which
+    covers essentially every real podcast while staying well clear of E2BIG. The
+    rare outlier above that keeps the whole front + tail, eliding the least possible.
     """
     text = raw_content or ""
-    if mode != "podcast" or len(text) <= 45000:
-        return text[:6000] if mode != "podcast" else text
-    head = text[:32000]
-    tail = text[-12000:]
-    return f"{head}\n\n（……訪談中段省略，以下跳到後半／結尾……）\n\n{tail}"
+    if mode != "podcast":
+        return text[:6000]
+    PODCAST_CAP = 500_000
+    if len(text) <= PODCAST_CAP:
+        return text
+    return f"{text[:440000]}\n\n（……逐字稿過長，僅中段省略一小部分……）\n\n{text[-60000:]}"
 
 
 def _build_user_prompt(
@@ -487,8 +492,8 @@ def _build_user_prompt(
         ),
         "podcast": (
             "【Mode: podcast / Type C 長訪談萃取】"
-            "下面的素材是一集 YouTube 長訪談 podcast 的**逐字稿**（自動字幕，無講者標記、"
-            "可能只擷取了訪談的頭段與尾段精華）。這類內容的價值在主持人與來賓**一來一回的問答**："
+            "下面的素材是一集 YouTube 長訪談 podcast 的**完整逐字稿**（自動字幕、無講者標記，全長皆在，"
+            "需自行從上下文判斷誰在說話）。這類內容的價值在主持人與來賓**一來一回的問答**："
             "一個好問題逼出一個反直覺的回答，追問再把它推深。\n"
             "你的任務**不是**摘要整集訪談，而是：①從這場對話裡挑出**一個**最反直覺、最有洞察的觀點或"
             "交鋒（某個被追問出來的真話、某個與主流相反的判斷）；②以它為文章骨幹，把來賓的論證"
