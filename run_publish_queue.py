@@ -209,17 +209,18 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
         if platform == "facebook":
             if used_cover_cdn:
                 print(f"   ↳ [📘 FB] 用 rendered cover URL: {publish_image_url}")
-            else:
+            elif publish_image_url:
                 print(f"   ↳ [📘 FB] cover 不可用，用原圖網址")
+            else:
+                print(f"   ↳ [📘 FB] 無可用圖片 → 純文字發布")
             result = await publish_to_fb(full_text, image_url=publish_image_url)
+            # Fallback: if FB can't fetch the image (external CDN), retry text-only
             error_msg = str(result.get("error", ""))
-            is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
-            if not result.get("success") and is_fetch_fail and publish_image_url:
-                print(f"   ⚠️ [📘 FB] URL 抓取失敗 → 下載後 bytes 上傳備援...")
-                local_path = await image_manager.download_image(publish_image_url)
-                if local_path:
-                    result = await publish_to_fb(full_text, local_file_path=local_path)
-                    image_manager.cleanup_cache()
+            needs_text = any(phrase in error_msg.lower() for phrase in
+                ["object with id 'none'", "failed to download", "1353045", "unsupported post"])
+            if not result.get("success") and needs_text and publish_image_url:
+                print(f"   ⚠️ [📘 FB] 圖片上傳失敗 → 降級為純文字發布...")
+                result = await publish_to_fb(full_text)
         elif platform == "instagram":
             if not publish_image_url:
                 result = {"success": False, "error": {"local_reject": "IG 需要 image_url"}}

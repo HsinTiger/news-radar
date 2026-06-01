@@ -378,20 +378,19 @@ async def _publish_platform(
     if platform_key == "fb":
         if used_cover_cdn:
             print(f"   ↳ [📘 FB] 用 rendered cover URL: {publish_image_url}")
-        else:
+        elif publish_image_url:
             print(f"   ↳ [📘 FB] cover 不可用，用原圖網址")
+        else:
+            print(f"   ↳ [📘 FB] 無可用圖片 → 純文字發布")
         result = await publish_to_fb(full_text, image_url=publish_image_url)
-        # Legacy fallback: if the IMAGE itself can't be fetched by FB
-        # (rare — cover-cdn rarely fails this way), fall through to
-        # downloading + bytes upload as last-resort.
+        # Fallback: if FB can't fetch the image (common for external CDN URLs
+        # like Reddit, Motley Fool, etc.), retry as text-only.
         error_msg = str(result.get("error", ""))
-        is_fetch_fail = "failed to download" in error_msg.lower() or "1353045" in error_msg
-        if not result.get("success") and is_fetch_fail and publish_image_url:
-            print(f"   ⚠️ [📘 FB] URL 抓取失敗 → 下載後 bytes 上傳備援...")
-            local_path = await image_manager.download_image(publish_image_url)
-            if local_path:
-                result = await publish_to_fb(full_text, local_file_path=local_path)
-                image_manager.cleanup_cache()
+        needs_text_fallback = any(phrase in error_msg.lower() for phrase in
+            ["object with id 'none'", "failed to download", "1353045", "unsupported post"])
+        if not result.get("success") and needs_text_fallback and publish_image_url:
+            print(f"   ⚠️ [📘 FB] 圖片上傳失敗 → 降級為純文字發布...")
+            result = await publish_to_fb(full_text)
             else:
                 print(f"   ❌ [📘 FB] 下載 fallback 也失敗")
 
