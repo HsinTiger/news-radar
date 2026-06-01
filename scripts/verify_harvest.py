@@ -4,8 +4,13 @@ Verify harvest results — run AFTER run_harvest.py.
 Checks: feeds were checked, items were found, no critical errors.
 Exits non-zero on failure so GitHub Actions marks the step red.
 """
-import sys, json
+import sys
 from pathlib import Path
+# Ensure src/ is importable when running from repo root on GHA
+_HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_HERE))
+
+import json
 from src import db as dbmod
 
 def main():

@@ -4,8 +4,12 @@ Verify composed drafts — run AFTER run_pipeline.py.
 Checks: drafts exist, all 3 platforms have content, quality passes, no placeholder text.
 Exits non-zero on failure.
 """
-import sys, json
+import sys
 from pathlib import Path
+_HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_HERE))
+
+import json
 from src import db as dbmod
 from src.content_quality_guard import check_quality, has_blocking_issues
 

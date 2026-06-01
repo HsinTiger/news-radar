@@ -5,6 +5,10 @@ Checks: publish_log success rate, platform post IDs, no duplicate posts.
 Exits non-zero on critical failures.
 """
 import sys
+from pathlib import Path
+_HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_HERE))
+
 from src import db as dbmod
 
 def main():
