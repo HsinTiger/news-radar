@@ -172,6 +172,10 @@ async def prepare_publish_image(
     ``draft_id`` is required for FB/IG covers — it determines the
     upload filename. If absent, falls back to the original URL.
     """
+    # Guard: the string "None" from env/config is not the same as Python None
+    if isinstance(original_image_url, str) and original_image_url.strip().lower() in ("none", "null", ""):
+        original_image_url = None
+
     if platform_key not in ASPECT_FOR_PLATFORM:
         logger.warning("[cover_pipeline] unknown platform %r — passthrough", platform_key)
         return _passthrough(original_image_url)

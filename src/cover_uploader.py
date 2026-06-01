@@ -150,12 +150,23 @@ class _GitContext:
 
 
 def _make_authed_url(repo_url: str, token: Optional[str]) -> str:
-    """Inject GITHUB_TOKEN into the HTTPS URL for git push auth."""
+    """Inject GITHUB_TOKEN into the HTTPS URL for git push auth.
+
+    Priority: explicit auth_token arg > GITHUB_TOKEN env var.
+    On GitHub Actions, GITHUB_TOKEN is provided by the runner via
+    ``${{ secrets.GITHUB_TOKEN }}`` in the workflow ``env:`` block.
+    """
     if not token:
+        # Not in os.environ either — return raw URL (will prompt for
+        # password, which fails on headless runners — caller handles it)
         return repo_url
     if not repo_url.startswith("https://"):
         return repo_url
-    return repo_url.replace("https://", f"https://x-access-token:{token}@")
+    # Clean token: strip any whitespace or accidental quoting
+    cleaned = token.strip().strip("'").strip('"')
+    if not cleaned:
+        return repo_url
+    return repo_url.replace("https://", f"https://x-access-token:{cleaned}@")
 
 
 def _git(args: list, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
