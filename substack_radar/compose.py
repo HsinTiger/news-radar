@@ -34,11 +34,11 @@ Daily 2-draft pipeline 的 driver。每天兩班：
                         預設 everyone。
 
 LLM backend 架構（2026-05-12 重構）：
-    SUBSTACK_COMPOSER_BACKEND=claude_cli  # 預設、推薦
-        - 文章寫作 + research 都走 Claude CLI（Max 訂閱、含 web tools）
-        - Gemini 不再 fallback（除非顯式設成 "default"）
+    SUBSTACK_COMPOSER_BACKEND=gemini_cli  # 2026-06-01: Pro accounts priority
+        - 文章寫作優先走 Gemini CLI (tingsyuan -> hsin)
+        - Claude CLI 不再負責 Substack draft
     SUBSTACK_COMPOSER_BACKEND=default
-        - 維持舊行為：Claude 主、Gemini 備援。**只在 Claude CLI 出問題時用**
+        - 備援路徑
 
     SUBSTACK_AI_COVER=1  # 預設 0（關）
         - 啟用 Gemini 生成 Moleskine 風格封面底圖（visual_soul.md aesthetic）
@@ -282,6 +282,64 @@ def pick_evening_inspiration() -> Optional[Tuple[str, str, str, str]]:
     window = **7 days** (晚報不綁時效、可挖更深的選題). The shared used-set means it
     won't repeat morning's pick (morning runs first)."""
     return _pick_top_from_pool(window_days=7, label="EveningPick")
+
+
+def pick_podcast_interview(window_days: int = 21) -> Optional[Tuple[str, str, str, str]]:
+    """Type-C podcast source (13:00 slot). Draws ONLY from the dedicated podcast
+    pool (feed_name='YouTube Podcast'), preferring the longest fresh, unused
+    interview — length is the best proxy for a substantive Q&A episode (vs. a clip).
+    Wider 21-day window since podcasts aren't time-sensitive. Shares the used-set
+    so it won't collide with morning/evening picks."""
+    if not NEWS_DB_PATH.exists():
+        print(f"[PodcastPick] ⚠️ News DB not found at {NEWS_DB_PATH}")
+        return None
+    used = _load_used()
+    conn = sqlite3.connect(str(NEWS_DB_PATH))
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id, title, clean_markdown, topic_category, word_count, published_at
+            FROM news_items
+            WHERE feed_name = 'YouTube Podcast'
+              AND source_type = 'video'
+              AND published_at >= datetime('now', '-{int(window_days)} days')
+              AND status NOT IN ('dropped', 'filtered')
+              AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 3000
+            ORDER BY published_at DESC
+            LIMIT 200
+            """
+        ).fetchall()
+    except Exception as exc:
+        print(f"[PodcastPick] ⚠️ query failed: {exc}")
+        return None
+    finally:
+        conn.close()
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    best, best_score = None, -1.0
+    for r in rows:
+        nid, title, body, topic, wc, pub = r
+        if nid in used:
+            continue
+        score = min((wc or len(body or "")) / 40000.0, 2.5)  # longer interview = better, capped
+        try:                                                  # mild freshness nudge (~7-day scale)
+            pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+            hours = max((now - pub_dt).total_seconds() / 3600.0, 0.0)
+            score += pow(2.718, -hours / 168.0)
+        except Exception:
+            pass
+        if score > best_score:
+            best_score, best = score, r
+    if best is None:
+        print("[PodcastPick] ⚠️ no unused podcast interview in pool "
+              f"(last {window_days}d). Has the 13:00 harvest run?")
+        return None
+    nid, title, body, topic, *_ = best
+    _mark_used(nid)
+    print(f"[PodcastPick] ✅ id={nid[:10]} score={best_score:.2f} "
+          f"len={len(body or '')} title={title[:48]!r}")
+    return (nid, title, body or "", topic or "other")
 
 
 def pick_evening_topic(override_topic: Optional[str] = None) -> Tuple[str, str, str]:
@@ -933,13 +991,10 @@ async def generate_inline_images(
     article_md_path: Path,
     output_dir: Path,
 ) -> None:
-    """Scan markdown for 🖼 markers, generate images via Gemini/Pollinations, and embed them.
+    """Scan markdown for 🖼 markers, generate images via Pro account tokens, and embed them.
 
-    Format expected:
-    > 🖼 視覺位置 · {label}
-    ...
-    > 🎨 Path C · 生圖 prompt：
-    > {prompt}
+    2026-06-01 Update: Uses the new image_brain.generate_image which extracts 
+    OAuth tokens from the CLI login to perform Pro-account image generation.
     """
     if not article_md_path.exists():
         return
@@ -947,13 +1002,10 @@ async def generate_inline_images(
     from src.image_brain import generate_image
 
     content = article_md_path.read_text(encoding="utf-8")
-    # Split by blocks (double newline)
     blocks = content.split("\n\n")
     new_blocks = []
     img_idx = 1
 
-    # To be compatible with Substack push, we need paths relative to repo root
-    # because that's where the script usually runs.
     try:
         rel_output_dir = output_dir.relative_to(_REPO_ROOT)
     except Exception:
@@ -962,14 +1014,12 @@ async def generate_inline_images(
     for block in blocks:
         if "🖼 視覺位置" in block:
             lines = block.strip().split("\n")
-            # Extract label from the first line
             label = ""
             for line in lines:
                 if "🖼 視覺位置" in line:
                     label = line.split("·")[-1].strip()
                     break
 
-            # Extract prompt from Path C
             prompt = ""
             for i, line in enumerate(lines):
                 if "Path C" in line and i + 1 < len(lines):
@@ -977,14 +1027,13 @@ async def generate_inline_images(
                     break
 
             if not prompt:
-                # Fallback to the label if prompt extraction fails
                 prompt = label
 
             img_filename = f"inline_{img_idx}_{label}.png".replace(" ", "_")
             img_path = output_dir / img_filename
 
-            print(f"[Images] Generating inline_{img_idx} (Gemini): {label}...")
-            # Use Gemini by default (falls back to Pollinations in image_brain)
+            print(f"[Images] Generating inline_{img_idx} (Pro Account): {label}...")
+            # This calls the new token-based generator
             success_path = await generate_image(
                 prompt=prompt,
                 out_path=img_path,
@@ -992,12 +1041,12 @@ async def generate_inline_images(
             )
 
             if success_path:
-                # Replace the block with an image tag + caption
-                # We use the relative path so python-substack's from_markdown can find it
                 img_rel_path = rel_output_dir / img_filename
                 new_blocks.append(f"![{label}]({img_rel_path})\n\n*{label}*")
                 img_idx += 1
                 continue
+            else:
+                print(f"[Images] Skipped inline_{img_idx} (Pro quota exhausted/not auth).")
 
         new_blocks.append(block)
 
@@ -1021,10 +1070,27 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # research. Never fatal — a stale pool is better than no draft.
     if getattr(args, "harvest", False):
         try:
-            from substack_radar.harvest_inspiration import _run as _harvest_run
-            import argparse as _ap
+            if mode == "podcast":
+                # podcast slot harvests its OWN pool (long-form interview channels)
+                # into feed_name='YouTube Podcast'; no RSS / general-YT needed here.
+                from substack_radar.youtube_transcripts import (
+                    harvest_youtube_transcripts,
+                    PODCAST_SOURCES_PATH,
+                )
 
-            await _harvest_run(_ap.Namespace(no_youtube=args.no_youtube, dry_run=False))
+                await asyncio.to_thread(
+                    harvest_youtube_transcripts,
+                    sources_path=PODCAST_SOURCES_PATH,
+                    feed_name="YouTube Podcast",
+                    tags=["youtube", "video", "podcast"],
+                    min_chars=3000,        # an interview, not a clip
+                    global_budget_s=420,   # a touch more room for 9 long episodes
+                )
+            else:
+                from substack_radar.harvest_inspiration import _run as _harvest_run
+                import argparse as _ap
+
+                await _harvest_run(_ap.Namespace(no_youtube=args.no_youtube, dry_run=False))
         except Exception as exc:
             print(f"[Harvest] ⚠️ pre-compose harvest failed (continuing): {exc}")
 
@@ -1075,6 +1141,27 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "id": news_id,
             "title": raw_title,
             "topic_category": topic_category,
+        }
+    elif mode == "podcast":
+        # podcast (13:00): longest fresh, unused interview from the YouTube Podcast pool.
+        pick = pick_podcast_interview()
+        if pick is None:
+            print("[ERROR] No suitable podcast interview in the harvested pool (last 21 days).")
+            notify_substack_failure(
+                mode=mode,
+                error_msg="No suitable podcast interview in pool (last 21 days)",
+                extra_context={
+                    "likely_cause": "podcast pool empty — 13:00 harvest hasn't run, all episodes used, or none had subtitles",
+                    "fix_hint": ".venv/bin/python -m substack_radar.youtube_transcripts (podcast sources)",
+                },
+            )
+            return 2
+        news_id, raw_title, raw_content, topic_category = pick
+        source = {
+            "id": news_id,
+            "title": raw_title,
+            "topic_category": topic_category,
+            "via": "podcast_pool",
         }
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
@@ -1164,19 +1251,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # to delete every time). Cover now = Python-rendered cover.png below; you pick
     # your real cover from the §13 inline-image suggestions when publishing.
 
-    # 5c) Python 生圖 (KEEP) + AI Background (2026-06-01):
-    # Generate an AI background for the cover so it looks professional.
-    from src.image_brain import generate_image_via_pollinations
-    ai_bg = local_dir / "_ai_bg_cover.png"
-    print(f"[Cover] Generating AI background: {draft.title[:50]}...")
-    await generate_image_via_pollinations(prompt=draft.title, out_path=ai_bg, seed=42)
-
+    # 5c) Substack Cover (Synthetic Base)
     cover_path = render_substack_cover(
         title=draft.title,
         subtitle=draft.subtitle,
         topic_category=topic_category or "other",
         output_dir=local_dir,
-        source_image_path=ai_bg if ai_bg.exists() else None,
+        source_image_path=None, # Fallback to synth noise
     )
     
     # 5d) AI Inline images (2026-06-01 Hsin directive)
@@ -1240,7 +1321,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Generate a daily Substack draft (morning type-A / evening type-B)."
     )
-    p.add_argument("mode", choices=["morning", "evening"], help="Which slot to compose")
+    p.add_argument("mode", choices=["morning", "evening", "podcast"], help="Which slot to compose")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
     p.add_argument("--topic", default=None, help="(evening) override: free-text topic / 文章主題")
     p.add_argument(

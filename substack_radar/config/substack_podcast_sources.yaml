@@ -1,0 +1,55 @@
+# News Radar · Substack PODCAST inspiration sources (13:00 slot, token-free)
+# ===========================================================================
+# Long-form interview podcasts on YouTube. The 13:00 "podcast" slot harvests
+# these into news_items tagged feed_name='YouTube Podcast', and the podcast
+# composer picks the longest fresh interview to write a Q&A-driven essay from.
+#
+# Same schema as substack_youtube_sources.yaml:
+#   - url:            required. @handle/videos resolves to recent uploads.
+#   - topic_category: optional. one of news_radar's taxonomy ids.
+#   - max_videos:     optional. Keep LOW (1) — these are 1–3 hr interviews with
+#                     huge transcripts; one fresh episode per channel is plenty.
+#
+# EDIT FREELY. All handles below were verified to resolve (2026-06-01). If a
+# channel ever 404s, swap the handle rather than dropping the show.
+
+sources:
+  # --- AI / 科技深訪 (Lex Fridman, Dwarkesh Patel) ---
+  - url: https://www.youtube.com/@lexfridman/videos
+    topic_category: ai_model
+    max_videos: 1
+
+  - url: https://www.youtube.com/@DwarkeshPatel/videos
+    topic_category: ai_model
+    max_videos: 1
+
+  # --- 投資 / 市場 (Invest Like the Best, BG2 Pod) ---
+  - url: https://www.youtube.com/@JoinColossus/videos
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@bg2pod/videos
+    topic_category: us_stocks
+    max_videos: 1
+
+  # --- 新創 / 創投 (a16z, 20VC, My First Million) ---
+  - url: https://www.youtube.com/@a16z/videos
+    topic_category: ai_application
+    max_videos: 1
+
+  - url: https://www.youtube.com/@20VC/videos
+    topic_category: other
+    max_videos: 1
+
+  - url: https://www.youtube.com/@MyFirstMillionPod/videos
+    topic_category: other
+    max_videos: 1
+
+  # --- 公司深拆 / 綜合 (Acquired, All-In) ---
+  - url: https://www.youtube.com/@AcquiredFM/videos
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@allin/videos
+    topic_category: us_stocks
+    max_videos: 1

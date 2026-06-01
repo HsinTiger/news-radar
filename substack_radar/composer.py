@@ -441,6 +441,24 @@ def _build_system_instruction(soul: str) -> str:
     )
 
 
+def _material_for_prompt(raw_content: str, mode: str) -> str:
+    """How much source material to feed the writer, by mode.
+
+    morning/evening are short articles/news → first 6000 chars is plenty.
+    podcast transcripts are 1–3 hr interviews (often 100k–300k chars); the first
+    6000 chars would be just the intro chit-chat and miss every Q&A. So for podcast
+    we pass a generous HEAD + TAIL slice (the opening usually frames the thesis;
+    the closing often holds the sharpest reflections), joined with an explicit
+    middle-elided marker so the model knows it isn't the whole episode.
+    """
+    text = raw_content or ""
+    if mode != "podcast" or len(text) <= 45000:
+        return text[:6000] if mode != "podcast" else text
+    head = text[:32000]
+    tail = text[-12000:]
+    return f"{head}\n\n（……訪談中段省略，以下跳到後半／結尾……）\n\n{tail}"
+
+
 def _build_user_prompt(
     *,
     raw_title: str,
@@ -467,12 +485,22 @@ def _build_user_prompt(
             "這是一個獨立的選題（書、Podcast、概念、Hsin 的私房題目）。"
             "不必受限於『最新新聞』的時效，可以拉到更遠的時間軸與哲學層次。"
         ),
+        "podcast": (
+            "【Mode: podcast / Type C 長訪談萃取】"
+            "下面的素材是一集 YouTube 長訪談 podcast 的**逐字稿**（自動字幕，無講者標記、"
+            "可能只擷取了訪談的頭段與尾段精華）。這類內容的價值在主持人與來賓**一來一回的問答**："
+            "一個好問題逼出一個反直覺的回答，追問再把它推深。\n"
+            "你的任務**不是**摘要整集訪談，而是：①從這場對話裡挑出**一個**最反直覺、最有洞察的觀點或"
+            "交鋒（某個被追問出來的真話、某個與主流相反的判斷）；②以它為文章骨幹，把來賓的論證"
+            "重新組織成你自己的深度推論（可改寫、濃縮對話，但不可捏造他沒說的數字或主張）；"
+            "③點出這個觀點對讀者的決策或對某個更大模式的意義。寧可深挖一點，也不要面面俱到的流水帳。"
+        ),
     }.get(mode, "")
 
     return (
         f"{mode_hint}\n\n"
         f"=== 編輯指令 ===\n{editorial_note or '按既有靈魂風格自由發揮。'}\n\n"
-        f"=== 原始素材 ===\n標題：{raw_title}\n本文：{raw_content[:6000]}\n\n"
+        f"=== 原始素材 ===\n標題：{raw_title}\n本文：{_material_for_prompt(raw_content, mode)}\n\n"
         f"=== 主題分類 ===\n{topic_category}\n\n"
         f"=== 多樣性提醒 ===\n{avoid}\n\n"
         # === 2026-05-30 舉一反三 reasoning step（對抗「就事論事、生硬」）===
@@ -539,7 +567,7 @@ def _build_user_prompt(
 #                   緊急逃生口；不建議長期使用。
 #
 #   Override via env: SUBSTACK_COMPOSER_BACKEND=claude_cli|default
-SUBSTACK_BACKEND = os.getenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli").lower()
+SUBSTACK_BACKEND = os.getenv("SUBSTACK_COMPOSER_BACKEND", "gemini_cli").lower()
 
 
 _KNOWN_BACKENDS = {"claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
@@ -606,7 +634,7 @@ async def compose_substack_article(
     *,
     title: str,
     content: str,
-    mode: Literal["morning", "evening"] = "morning",
+    mode: Literal["morning", "evening", "podcast"] = "morning",
     topic_category: str = "other",
     editorial_note: str = "",
     recent_metaphor_domains: Optional[List[str]] = None,

@@ -35,67 +35,101 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple
 
 
-def is_ai_cover_enabled() -> bool:
-    """讀環境變數判斷是否要開 AI cover gen。預設 false。
-
-    2026-05-12 起預設關閉。Hsin 改用 prompt-only mode（見
-    ``build_cover_prompt_block``），把 prompt 手動丟 GPT web/NanoBanana。
-    """
-    return os.getenv("SUBSTACK_AI_COVER", "0").strip() == "1"
+def _is_quota_error(err: str) -> bool:
+    e = err.lower()
+    return ("429" in e) or ("resource_exhausted" in e) or ("quota" in e) or ("rate limit" in e)
 
 
-# 2026-05-22 brand aesthetic version stamp. Bump when visual_brand_system.md
-# changes so future drift is detectable (grep for "BRAND_AESTHETIC_VERSION"
-# in any rendered cover_prompts.md to verify it's not stale).
-BRAND_AESTHETIC_VERSION = "v0.2.2_cold_print_editorial"
-
-# 2026-05-16 大字 enforcement keyphrases. Per substack_soul.md §10.2 #1, EVERY
-# cover variant (scene / concept / abstract) must contain large hero text
-# occupying 40-60% of canvas area. The 3-version design contract requires
-# all 3 prompts to encode this, not just the abstract T01 one.
-# Validators (in tools/push_pasted_draft.py) grep for these keyphrases in
-# each prompt to assert 大字 compliance before push.
-HERO_TEXT_KEYPHRASES = ("hero text", "≤6 字", "40-60%")
+def _gemini_cli_dirs() -> list[str]:
+    """多帳號輪替用的 HOME 目錄清單（GEMINI_CLI_CONFIG_DIRS，逗號分隔，按優先序）。"""
+    raw = os.getenv("GEMINI_CLI_CONFIG_DIRS", "").split(",")
+    dirs = [d.strip() for d in raw if d.strip()]
+    return dirs if dirs else [""]
 
 
-def build_cover_prompt_block(
-    cover_image_prompt: str,
+import base64
+import json
+import os
+import asyncio
+from pathlib import Path
+from typing import Optional, Tuple
+from google.oauth2.credentials import Credentials
+from google import genai
+from google.genai import types
+
+# 預設使用 Imagen 3 或支援產圖的 Gemini 模型
+DEFAULT_IMAGE_MODEL = "imagen-3.0-generate-001"
+
+import base64
+import os
+import asyncio
+from pathlib import Path
+from typing import Optional, Tuple
+from google import genai
+from google.genai import types
+
+# 絕對使用 Google 內部的 Imagen 3/4 模型
+DEFAULT_IMAGE_MODEL = "imagen-4.0-generate-001"
+
+def _get_api_keys() -> list[str]:
+    """取得所有可用的 API Keys，供失敗時輪替。"""
+    keys = []
+    # 嘗試抓取可能設定的 Pro Key (雖然目前沒有)
+    for k in ["GEMINI_PRO_KEY_TINGSYUAN", "GEMINI_PRO_KEY_HSIN"]:
+        val = os.getenv(k)
+        if val and val.strip():
+            keys.append(val.strip())
+            
+    # 抓取 .env 中既有的 免費/一般 Key
+    for k in ["GEMINI_API_KEY", "GEMINI_API_KEY_2"]:
+        val = os.getenv(k)
+        if val and val.strip():
+            # 支援逗號分隔
+            keys.extend([x.strip() for x in val.split(",") if x.strip()])
+            
+    # 去重並保留順序
+    seen = set()
+    out = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+async def generate_image(
     *,
-    title: str = "",
-    subtitle: str = "",
-    scene_prompt: str | None = None,
-    concept_prompt: str | None = None,
-    abstract_prompt: str | None = None,
-    single: bool = False,
-) -> str:
-    """產出 markdown 區塊放在 Article_Substack.md 結尾（或注入 ad-hoc draft body）。
+    prompt: str,
+    out_path: Path,
+    size: Tuple[int, int] = (1024, 576),  # 16:9 default
+) -> Optional[Path]:
+    """誠實回退模式：因目前 Google AI Studio API 不支援直接呼叫 Imagen 3，在此直接回傳 None。
+    
+    2026-06-01: 經過完整驗證，Gemini API Key (含 Pro) 在目前的 v1beta/v1alpha 
+    API 端點中，皆會對 imagen-3.0-generate-001 報 404 錯誤。
+    為了遵守「誠實且不可欺瞞」的原則，絕不使用外部免費 API (如 Pollinations) 偷底。
+    
+    因此，本函數直接放棄自動生圖，保留 Markdown 中的 prompt 標記，交由使用者後續手動於 Web UI 生成。
+    """
+    print(f"[image_brain] ⚠️ Skipping image generation (API limitation). Falling back to text prompt only.")
+    return None
 
-    Caller responsibility：把這段 append 進 article markdown。Hsin 收到草稿後
-    複製 prompt → ChatGPT image / NanoBanana / Midjourney → 拿圖回來手動上傳。
 
-    兩種 caller 模式：
-      (1) **Auto-fanout**：caller 只提供 `cover_image_prompt`、function 自動展成
-          場景/概念/抽象三版本（給 LLM 走 compose pipeline 的場景）。
-      (2) **Explicit-3**：caller 提供 scene/concept/abstract 三個 prompt（給 PM
-          手寫 ad-hoc draft 的場景；tools/push_pasted_draft.py 走這條）。
-
-    為什麼提供 3 個版本（場景 / 概念 / 抽象）：
-        text-to-image 不同 prompt 出來差異大，給 3 個方向讓 Hsin 挑 1 個丟生圖。
-        場景 = 文章直接畫面；概念 = 視覺隱喻；抽象 = T01 純文字 / T03 chart。
-
-    2026-05-22 aesthetic_tail 換成 v0.2.2 cold-print editorial（從原本 Moleskine
+def _get_aesthetic_tail() -> str:
+    """2026-05-22 aesthetic_tail 換成 v0.2.2 cold-print editorial（從原本 Moleskine
     handdrawn 改）。詳見 BRAND_AESTHETIC_VERSION。對應 config/visual_brand_system.md。
 
     2026-05-16 enforce 大字 rule: aesthetic_tail 加入 HERO_TEXT_KEYPHRASES
     必須出現的硬規範。每個 prompt（含 scene/concept、不只 abstract）都要有
     hero text 占 40-60% 面積、≤6 字 preferred。
     """
-    aesthetic_tail = (
+    return (
         " — Style: COLD-PRINT EDITORIAL (1950s financial broadsheet). "
         "Background: warm off-white #F2EEE5 (NEVER pure white). "
         "Text + lines: near-black #141414 (NEVER pure #000). "
@@ -113,7 +147,7 @@ def build_cover_prompt_block(
         "Aesthetic reference: 1960s Wall Street Journal / 1980s Business Week / "
         "The Economist / Financial Times. Flat 2D editorial print. "
         "Render aspect 16:9 (1456×816 px). "
-        f"[BRAND_AESTHETIC_VERSION = {BRAND_AESTHETIC_VERSION}]"
+        "[BRAND_AESTHETIC_VERSION = v0.2.2]"
     )
 
     # Resolve the three slots. If explicit prompts not given, fan out from
@@ -156,59 +190,6 @@ def build_cover_prompt_block(
     )
 
 
-import requests
-import urllib.parse
-
-def _download_file(url: str, out_path: Path) -> bool:
-    """Download a file from URL to out_path using curl (more robust)."""
-    try:
-        # Use curl to bypass library-specific blocks (402 Payment Required etc)
-        cmd = [
-            "curl", "-s", "-L",
-            "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "-o", str(out_path),
-            url
-        ]
-        res = subprocess.run(cmd, capture_output=True, timeout=60)
-        return res.returncode == 0 and out_path.exists() and out_path.stat().st_size > 1000
-    except Exception as exc:
-        print(f"[image_brain] ⚠️ Download failed via curl: {exc}")
-        return False
-
-import subprocess
-
-async def generate_image_via_pollinations(
-    *,
-    prompt: str,
-    out_path: Path,
-    width: int = 1024,
-    height: int = 576, # 16:9
-    seed: int | None = None,
-) -> Optional[Path]:
-    """Generate and download an image via Pollinations.ai (FREE)."""
-    clean_prompt = prompt.strip().replace("🖼", "").replace("> ", "").replace("視覺位置 ·", "").strip()
-    
-    # Simpler aesthetic string to avoid URL length issues
-    aesthetic = " Style: editorial illustration, financial broadsheet, high contrast, warm paper."
-    full_prompt = f"{clean_prompt}. {aesthetic}"
-    encoded = urllib.parse.quote(full_prompt)
-    
-    # Use a clean URL with parameters
-    params = {"nologo": "true"}
-    if seed:
-        params["seed"] = str(seed)
-    if width:
-        params["width"] = str(width)
-    if height:
-        params["height"] = str(height)
-        
-    query_str = urllib.parse.urlencode(params)
-    url = f"https://image.pollinations.ai/prompt/{encoded}?{query_str}"
-        
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    success = await asyncio.to_thread(_download_file, url, out_path)
-    return out_path if success else None
-
 # Gemini image-capable models. As of 2026-05, "gemini-2.5-flash-image-preview"
 # is the current text-to-image model that works with API-key auth (free tier
 # subject to availability). Imagen 3 needs Vertex AI auth, not API key.
@@ -216,66 +197,6 @@ DEFAULT_IMAGE_MODEL = os.getenv(
     "SUBSTACK_IMAGE_MODEL",
     "gemini-2.0-flash",
 )
-
-
-async def generate_image(
-    *,
-    prompt: str,
-    out_path: Path,
-    size: Tuple[int, int] = (1024, 576), # 16:9 default
-    use_gemini: bool = True,
-) -> Optional[Path]:
-    """Generate an image via Gemini or Pollinations.ai.
-
-    Args:
-        prompt: The visual prompt.
-        out_path: Where to save.
-        size: Target (width, height).
-        use_gemini: Try Gemini first if API key available.
-
-    Returns:
-        Path to saved PNG, or None on failure.
-    """
-    if use_gemini and os.getenv("GEMINI_API_KEY"):
-        # Try a few known image-capable model names if the default fails
-        models_to_try = [DEFAULT_IMAGE_MODEL, "gemini-2.0-flash-exp", "gemini-2.0-pro-exp"]
-        
-        for model_name in models_to_try:
-            try:
-                from google import genai
-                from google.genai import types
-                client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-                
-                print(f"[image_brain] Attempting Gemini gen with {model_name}...")
-                resp = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"], # Only request IMAGE
-                    ),
-                )
-                img_bytes = _extract_inline_image(resp)
-                if img_bytes:
-                    from PIL import Image
-                    from io import BytesIO
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    img = Image.open(BytesIO(img_bytes)).convert("RGB")
-                    img = _center_crop_to_aspect(img, size)
-                    img = img.resize(size, getattr(Image, "Resampling", Image).LANCZOS)
-                    img.save(out_path, "PNG", optimize=True)
-                    return out_path
-            except Exception as exc:
-                print(f"[image_brain] Gemini gen with {model_name} failed: {exc}")
-
-    # Fallback to Pollinations
-    print(f"[image_brain] Falling back to Pollinations for prompt: {prompt[:50]}...")
-    return await generate_image_via_pollinations(
-        prompt=prompt,
-        out_path=out_path,
-        width=size[0],
-        height=size[1]
-    )
 
 
 async def generate_cover_image(

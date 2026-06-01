@@ -104,10 +104,12 @@ mkdir -p "$AGENT_DIR"
 
 MORNING_PLIST="$AGENT_DIR/com.newsradar.substack_morning.plist"
 EVENING_PLIST="$AGENT_DIR/com.newsradar.substack_evening.plist"
+PODCAST_PLIST="$AGENT_DIR/com.newsradar.substack_podcast.plist"
 
 # Unload existing first (idempotent re-run)
 launchctl unload "$MORNING_PLIST" 2>/dev/null || true
 launchctl unload "$EVENING_PLIST" 2>/dev/null || true
+launchctl unload "$PODCAST_PLIST" 2>/dev/null || true
 
 cat > "$MORNING_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -183,12 +185,51 @@ cat > "$EVENING_PLIST" <<EOF
 </plist>
 EOF
 
+cat > "$PODCAST_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.newsradar.substack_podcast</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u substack_radar/compose.py podcast --harvest</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>13</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$REPO/logs/launchd_podcast.log</string>
+  <key>StandardErrorPath</key>
+  <string>$REPO/logs/launchd_podcast.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
 launchctl load -w "$MORNING_PLIST"
 launchctl load -w "$EVENING_PLIST"
+launchctl load -w "$PODCAST_PLIST"
 
 echo "  → installed: $MORNING_PLIST"
 echo "  → installed: $EVENING_PLIST"
-echo "  → cron active. Next fire: tomorrow 09:00 (morning) + today 18:00 (evening if not yet passed)."
+echo "  → installed: $PODCAST_PLIST"
+echo "  → cron active. Daily fire: 08:00 morning · 13:00 podcast · 17:00 evening."
 echo ""
 
 # ----------------------------------------------------------------------

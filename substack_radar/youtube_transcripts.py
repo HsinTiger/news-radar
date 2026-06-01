@@ -42,6 +42,9 @@ from src.fetcher import make_news_id  # noqa: E402
 from src.schema import NewsItem  # noqa: E402
 
 YT_SOURCES_PATH = Path(__file__).resolve().parent / "config" / "substack_youtube_sources.yaml"
+# Long-form interview podcasts for the 13:00 "podcast" slot (separate pool so the
+# podcast composer only ever picks real interviews, tagged feed_name='YouTube Podcast').
+PODCAST_SOURCES_PATH = Path(__file__).resolve().parent / "config" / "substack_podcast_sources.yaml"
 
 # Defaults; overridable per-source in the yaml.
 DEFAULT_MAX_VIDEOS = 2  # depth limit (was 3) — keep the morning run snappy
@@ -114,11 +117,11 @@ def _parse_sources_yaml(text: str) -> List[Dict[str, str]]:
     return sources
 
 
-def load_sources() -> List[Dict[str, str]]:
-    if not YT_SOURCES_PATH.exists():
-        print(f"[YT] ℹ️ no {YT_SOURCES_PATH.name}; skipping YouTube harvest.")
+def load_sources(path: Path = YT_SOURCES_PATH) -> List[Dict[str, str]]:
+    if not path.exists():
+        print(f"[YT] ℹ️ no {path.name}; skipping YouTube harvest.")
         return []
-    return _parse_sources_yaml(YT_SOURCES_PATH.read_text(encoding="utf-8"))
+    return _parse_sources_yaml(path.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -246,25 +249,39 @@ def vtt_to_text(vtt: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
-    """Harvest transcripts per yaml → NewsItem list (also upserts to DB unless dry_run)."""
+def harvest_youtube_transcripts(
+    *,
+    dry_run: bool = False,
+    sources_path: Path = YT_SOURCES_PATH,
+    feed_name: str = "YouTube",
+    tags: Optional[List[str]] = None,
+    min_chars: int = MIN_TRANSCRIPT_CHARS,
+    global_budget_s: int = GLOBAL_BUDGET_S,
+) -> List[NewsItem]:
+    """Harvest transcripts per yaml → NewsItem list (also upserts to DB unless dry_run).
+
+    Parametrized (2026-06-01) so the 13:00 podcast slot can reuse this with its own
+    `sources_path` (long-form interview channels) and a distinct `feed_name`
+    ('YouTube Podcast') + higher `min_chars`, keeping podcast items in their own
+    pool that only `pick_podcast_interview()` draws from.
+    """
     bin_path = _yt_dlp_bin()
     if not bin_path:
         print("[YT] ⚠️ yt-dlp not found on PATH; skipping YouTube harvest.")
         return []
 
-    sources = load_sources()
+    sources = load_sources(sources_path)
     if not sources:
         return []
 
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     items: List[NewsItem] = []
     start = time.monotonic()
-    deadline = start + GLOBAL_BUDGET_S
+    deadline = start + global_budget_s
 
     for src in sources:
         if time.monotonic() > deadline:
-            print(f"[YT] ⏱️ global budget {GLOBAL_BUDGET_S}s reached; stopping harvest early "
+            print(f"[YT] ⏱️ global budget {global_budget_s}s reached; stopping harvest early "
                   f"(remaining sources skipped this run).")
             break
         url = src.get("url", "").strip()
@@ -272,7 +289,7 @@ def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
             continue
         topic = src.get("topic_category", "other")
         max_videos = int(src.get("max_videos", DEFAULT_MAX_VIDEOS) or DEFAULT_MAX_VIDEOS)
-        print(f"[YT] source: {url} (topic={topic}, max={max_videos})")
+        print(f"[YT] source: {url} (topic={topic}, max={max_videos}, feed={feed_name})")
         src_deadline = min(deadline, time.monotonic() + PER_SOURCE_BUDGET_S)
 
         video_ids = _list_recent_video_ids(bin_path, url, max_videos)
@@ -290,7 +307,7 @@ def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
                     continue
                 transcript = vtt_to_text(vtt_path.read_text(encoding="utf-8", errors="replace"))
 
-            if len(transcript) < MIN_TRANSCRIPT_CHARS:
+            if len(transcript) < min_chars:
                 print(f"[YT]   - {vid}: transcript too short ({len(transcript)} chars), skip")
                 continue
 
@@ -302,7 +319,7 @@ def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
             )
             item = NewsItem(
                 id=news_id,
-                feed_name="YouTube",
+                feed_name=feed_name,
                 feed_tier="secondary",
                 source_type="video",
                 url=video_url,
@@ -312,7 +329,7 @@ def harvest_youtube_transcripts(*, dry_run: bool = False) -> List[NewsItem]:
                 language="zh" if any("一" <= c <= "鿿" for c in transcript[:200]) else "en",
                 clean_markdown=transcript,
                 word_count=len(transcript),
-                tags=["youtube", "video"],
+                tags=tags or ["youtube", "video"],
                 status="fetched",
             )
             item.__dict__["topic_category"] = topic  # tolerated extra attr for downstream
