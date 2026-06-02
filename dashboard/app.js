@@ -14,6 +14,7 @@ const CONFIG = {
   lastRunUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/state/LAST_RUN.txt`,
   soulUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/config/news_radar_soul.md`,
   platformUrl: (p) => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/config/platforms/${p}_v2.md`,
+  changelogUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/CHANGELOG.md`,
   REFRESH_INTERVAL: 300000, // 5 min
 };
 
@@ -125,6 +126,9 @@ function renderPage(pageId) {
     case 'dropped': renderDropped(); break;
     case 'persona': renderPersona(); break;
     case 'settings': renderSettings(); break;
+    case 'analytics': renderAnalytics(); break;
+    case 'source': renderSource(); break;
+    case 'changelog': renderChangelog(); break;
   }
 }
 
@@ -847,4 +851,869 @@ async function fetchLastRun() {
         '最近 pipeline: ' + (text.match(/last_run_utc:\s*(.+)/)?.[1] || '').slice(0, 19) || '—';
     }
   } catch (e) {}
+}
+
+// === Toast Notification System ===
+function showToast(message, type = 'info') {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none';
+    document.body.appendChild(container);
+  }
+
+  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  const bgColors = { success: '#065f46', error: '#5c1a1a', info: '#1a3a5c' };
+  const borderColors = { success: '#34d399', error: '#f87171', info: '#60a5fa' };
+
+  const toast = document.createElement('div');
+  toast.style.cssText = [
+    'display:flex;align-items:center;gap:8px;padding:12px 16px',
+    'border-radius:8px;background:' + (bgColors[type] || bgColors.info),
+    'border:1px solid ' + (borderColors[type] || borderColors.info),
+    'color:#e8eaed;font-size:.9rem;box-shadow:0 4px 12px rgba(0,0,0,.3)',
+    'pointer-events:auto;transition:all .3s ease;transform:translateX(100%);opacity:0',
+    'max-width:400px;word-break:break-word'
+  ].join(';');
+  toast.innerHTML = '<span>' + (icons[type] || 'ℹ️') + '</span><span>' + esc(message) + '</span>';
+  container.appendChild(toast);
+
+  // Trigger slide-in on next frame
+  requestAnimationFrame(function () {
+    toast.style.transform = 'translateX(0)';
+    toast.style.opacity = '1';
+  });
+
+  setTimeout(function () {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    setTimeout(function () { toast.remove(); }, 300);
+  }, 3000);
+}
+
+// === Analytics Page ===
+function renderAnalytics() {
+  var page = document.getElementById('page-analytics');
+
+  // Destroy existing charts before re-render
+  ['engagementTrend', 'topicRadar', 'lifecycle'].forEach(function (k) {
+    if (charts[k]) { charts[k].destroy(); delete charts[k]; }
+  });
+
+  if (!db) {
+    page.innerHTML = '<div class="page-header"><h2>分析</h2><p>請等待資料庫載入</p></div>';
+    return;
+  }
+
+  page.innerHTML = [
+    '<div class="page-header">',
+    '  <h2>分析</h2>',
+    '  <p>互動趨勢、主題表現、貼文生命週期</p>',
+    '</div>',
+    '<div class="card">',
+    '  <h3 style="margin-bottom:12px;color:var(--text-secondary)">📈 互動率趨勢 (各平台)</h3>',
+    '  <div class="chart-container"><canvas id="chart-engagement-trend"></canvas></div>',
+    '</div>',
+    '<div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:16px">',
+    '  <div class="card">',
+    '    <h3 style="margin-bottom:12px;color:var(--text-secondary)">🎯 主題表現</h3>',
+    '    <div class="chart-container"><canvas id="chart-topic-radar"></canvas></div>',
+    '  </div>',
+    '  <div class="card">',
+    '    <h3 style="margin-bottom:12px;color:var(--text-secondary)">🔄 貼文生命週期</h3>',
+    '    <div class="chart-container"><canvas id="chart-lifecycle"></canvas></div>',
+    '  </div>',
+    '</div>'
+  ].join('\n');
+
+  // Init charts after DOM paint
+  setTimeout(function () {
+    renderEngagementTrend();
+    renderTopicRadar();
+    renderLifecycleChart();
+  }, 50);
+}
+
+function renderEngagementTrend() {
+  var canvas = document.getElementById('chart-engagement-trend');
+  if (!canvas) return;
+
+  var data = q([
+    'SELECT DATE(p.posted_at) as date, p.platform,',
+    '       AVG(COALESCE(e.likes,0) + COALESCE(e.comments,0) + COALESCE(e.shares,0)) as avg_engagement,',
+    '       COUNT(DISTINCT p.draft_id) as post_count',
+    'FROM publish_log p',
+    'LEFT JOIN engagement_stats_latest e ON e.draft_id = p.draft_id AND e.platform = p.platform',
+    'WHERE p.success = 1 AND p.posted_at >= DATE("now", "-30 days")',
+    'GROUP BY DATE(p.posted_at), p.platform',
+    'ORDER BY date'
+  ].join(' '));
+
+  if (data.length === 0) {
+    var ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  // Build date list sorted
+  var dateSet = {};
+  data.forEach(function (d) { dateSet[d.date] = true; });
+  var dates = Object.keys(dateSet).sort();
+
+  var platformMap = { facebook: 'FB', instagram: 'IG', threads: 'Threads' };
+  var platformColors = { facebook: '#1877F2', instagram: '#E4405F', threads: '#000000' };
+  var datasets = [];
+
+  Object.keys(platformMap).forEach(function (dbPlat) {
+    var label = platformMap[dbPlat];
+    var platData = dates.map(function (date) {
+      var row = null;
+      for (var i = 0; i < data.length; i++) {
+        if (data[i].date === date && data[i].platform === dbPlat) { row = data[i]; break; }
+      }
+      return (row && row.post_count > 0) ? +((row.avg_engagement || 0) / row.post_count).toFixed(2) : null;
+    });
+    datasets.push({
+      label: label,
+      data: platData,
+      borderColor: platformColors[dbPlat] || '#60a5fa',
+      backgroundColor: platformColors[dbPlat] || '#60a5fa',
+      tension: 0.3,
+      spanGaps: false,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      fill: false
+    });
+  });
+
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  try {
+    charts.engagementTrend = new Chart(ctx, {
+      type: 'line',
+      data: { labels: dates, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#9aa0a6', font: { size: 12 } } },
+          tooltip: {
+            backgroundColor: '#232734', titleColor: '#e8eaed',
+            bodyColor: '#9aa0a6', borderColor: '#303446', borderWidth: 1
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#5f6368', maxTicksLimit: 10 },
+            grid: { color: '#303446' }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#5f6368' },
+            grid: { color: '#303446' },
+            title: { display: true, text: '平均互動 (讚+留言+分享)', color: '#9aa0a6' }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Engagement trend chart error:', e);
+  }
+}
+
+function renderTopicRadar() {
+  var canvas = document.getElementById('chart-topic-radar');
+  if (!canvas) return;
+
+  var topics = q([
+    'SELECT topic_category, AVG(weighted_score) as avg_score, COUNT(*) as count',
+    'FROM news_items',
+    'WHERE topic_category IS NOT NULL AND topic_category != ""',
+    'GROUP BY topic_category',
+    'ORDER BY avg_score DESC',
+    'LIMIT 8'
+  ].join(' '));
+
+  if (topics.length === 0) {
+    var ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  try {
+    charts.topicRadar = new Chart(ctx, {
+      type: 'radar',
+      data: {
+        labels: topics.map(function (t) { return t.topic_category; }),
+        datasets: [{
+          label: '平均加權分數',
+          data: topics.map(function (t) { return +((t.avg_score || 0)).toFixed(2); }),
+          backgroundColor: 'rgba(96, 165, 250, 0.2)',
+          borderColor: '#60a5fa',
+          pointBackgroundColor: '#60a5fa',
+          pointBorderColor: '#fff',
+          pointRadius: 4,
+          borderWidth: 2
+        }, {
+          label: '樣本數',
+          data: topics.map(function (t) { return t.count || 0; }),
+          backgroundColor: 'rgba(52, 211, 153, 0.2)',
+          borderColor: '#34d399',
+          pointBackgroundColor: '#34d399',
+          pointBorderColor: '#fff',
+          pointRadius: 4,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#9aa0a6', font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: '#232734', titleColor: '#e8eaed',
+            bodyColor: '#9aa0a6', borderColor: '#303446', borderWidth: 1
+          }
+        },
+        scales: {
+          r: {
+            angleLines: { color: '#303446' },
+            grid: { color: '#303446' },
+            pointLabels: { color: '#9aa0a6', font: { size: 11 } },
+            ticks: { color: '#5f6368', backdropColor: 'transparent', font: { size: 10 } }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Topic radar chart error:', e);
+  }
+}
+
+function renderLifecycleChart() {
+  var canvas = document.getElementById('chart-lifecycle');
+  if (!canvas) return;
+
+  var data = q([
+    'SELECT ',
+    '  CASE ',
+    '    WHEN (julianday(e.fetched_at) - julianday(p.posted_at)) * 24 < 1 THEN "1h以内"',
+    '    WHEN (julianday(e.fetched_at) - julianday(p.posted_at)) * 24 < 24 THEN "1-24h"',
+    '    ELSE "24-168h"',
+    '  END as bucket,',
+    '  COUNT(*) as count',
+    'FROM engagement_stats e',
+    'JOIN publish_log p ON p.draft_id = e.draft_id AND p.platform = e.platform',
+    'WHERE p.success = 1 AND e.fetched_at IS NOT NULL AND p.posted_at IS NOT NULL',
+    'GROUP BY bucket',
+    'ORDER BY bucket'
+  ].join(' '));
+
+  var bucketOrder = ['1h以内', '1-24h', '24-168h'];
+  var bucketLabels = { '1h以内': '發布後 1h 內', '1-24h': '1h ~ 24h', '24-168h': '24h ~ 168h' };
+  var bucketColors = { '1h以内': '#34d399', '1-24h': '#fbbf24', '24-168h': '#f87171' };
+
+  var labels = bucketOrder.map(function (b) { return bucketLabels[b] || b; });
+  var values = bucketOrder.map(function (b) {
+    for (var i = 0; i < data.length; i++) {
+      if (data[i].bucket === b) return data[i].count;
+    }
+    return 0;
+  });
+  var colors = bucketOrder.map(function (b) { return bucketColors[b] || '#60a5fa'; });
+
+  if (values.every(function (v) { return v === 0; })) {
+    var ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  try {
+    charts.lifecycle = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: '互動數',
+          data: values,
+          backgroundColor: colors.map(function (c) { return c + '33'; }),
+          borderColor: colors,
+          borderWidth: 2,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#232734', titleColor: '#e8eaed',
+            bodyColor: '#9aa0a6', borderColor: '#303446', borderWidth: 1
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#5f6368' },
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#5f6368', precision: 0 },
+            grid: { color: '#303446' }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Lifecycle chart error:', e);
+  }
+}
+
+// === Source Submission Page ===
+var SOURCE_STORAGE_KEY = 'news_radar_pending_sources';
+
+function renderSource() {
+  var page = document.getElementById('page-source');
+
+  page.innerHTML = [
+    '<div class="page-header">',
+    '  <h2>提交來源</h2>',
+    '  <p>提交新的新聞來源 URL 供系統收錄與分析</p>',
+    '</div>',
+    '<div class="card" style="margin-bottom:20px">',
+    '  <div style="margin-bottom:16px">',
+    '    <label style="display:block;margin-bottom:6px;font-weight:600;color:var(--text-secondary)">URL / 貼文連結</label>',
+    '    <textarea id="source-urls" rows="4" placeholder="每行一個 URL，支援：文章連結、RSS feed、社群貼文..."',
+    '      style="width:100%;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.9rem;resize:vertical;font-family:inherit"></textarea>',
+    '  </div>',
+    '  <div style="margin-bottom:16px">',
+    '    <label style="display:block;margin-bottom:6px;font-weight:600;color:var(--text-secondary)">目標平台</label>',
+    '    <div style="display:flex;gap:16px;flex-wrap:wrap">',
+    '      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-secondary)">',
+    '        <input type="checkbox" value="facebook" onchange="toggleAllPlatforms()" style="accent-color:var(--accent)"> FB',
+    '      </label>',
+    '      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-secondary)">',
+    '        <input type="checkbox" value="instagram" onchange="toggleAllPlatforms()" style="accent-color:var(--accent)"> IG',
+    '      </label>',
+    '      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-secondary)">',
+    '        <input type="checkbox" value="threads" onchange="toggleAllPlatforms()" style="accent-color:var(--accent)"> Threads',
+    '      </label>',
+    '      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-muted);border-left:1px solid var(--border);padding-left:16px">',
+    '        <input type="checkbox" value="all" onchange="toggleAllPlatforms()" style="accent-color:var(--accent)"> 全部',
+    '      </label>',
+    '    </div>',
+    '  </div>',
+    '  <div style="margin-bottom:16px">',
+    '    <label style="display:block;margin-bottom:6px;font-weight:600;color:var(--text-secondary)">備註 <span style="font-weight:400;color:var(--text-muted)">(選填)</span></label>',
+    '    <input id="source-notes" type="text" placeholder="補充說明、分類建議..."',
+    '      style="width:100%;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.9rem;font-family:inherit">',
+    '  </div>',
+    '  <button onclick="submitSource()" style="padding:8px 20px;border-radius:var(--radius-sm);border:none;background:var(--accent);color:#fff;font-weight:600;font-size:.9rem;cursor:pointer">📤 提交</button>',
+    '</div>',
+    '<h3 style="margin-bottom:12px;color:var(--text-secondary);font-size:1rem" id="pending-sources-count">📋 待處理來源 (' + loadPendingSources().length + ')</h3>',
+    '<div id="pending-sources-list"></div>'
+  ].join('\n');
+
+  renderPendingSources();
+}
+
+function loadPendingSources() {
+  try {
+    var raw = localStorage.getItem(SOURCE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function savePendingSources(sources) {
+  try {
+    localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(sources));
+  } catch (e) {
+    showToast('儲存失敗，localStorage 可能已滿', 'error');
+  }
+}
+
+function renderPendingSources() {
+  var container = document.getElementById('pending-sources-list');
+  if (!container) return;
+
+  var sources = loadPendingSources();
+
+  if (sources.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📤</div><p>尚無待處理的來源</p></div>';
+    return;
+  }
+
+  var platformLabels = { facebook: '📘FB', instagram: '📸IG', threads: '🧵Threads' };
+
+  container.innerHTML = '<div class="table-container"><table>' +
+    '<tr><th>時間</th><th>URL</th><th>目標平台</th><th>備註</th><th></th></tr>' +
+    sources.map(function (s) {
+      var platHtml = (s.platforms || []).map(function (p) {
+        return platformLabels[p] || p;
+      }).join(' ') || '<span style="color:var(--text-muted)">未指定</span>';
+      return '<tr>' +
+        '<td style="white-space:nowrap;font-size:.85rem">' + relTime(s.submittedAt) + '</td>' +
+        '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(s.url) + '">' +
+          '<a href="' + esc(s.url) + '" target="_blank" style="color:var(--accent);text-decoration:none">' + esc(s.url.slice(0, 60)) + '</a>' +
+        '</td>' +
+        '<td>' + platHtml + '</td>' +
+        '<td style="color:var(--text-muted);font-size:.85rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+          (s.notes ? esc(s.notes) : '<span style="color:var(--text-muted)">—</span>') +
+        '</td>' +
+        '<td><button onclick="deleteSource(\'' + esc(s.id) + '\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:var(--radius-sm);padding:4px 10px;cursor:pointer;font-size:.8rem">刪除</button></td>' +
+      '</tr>';
+    }).join('') +
+    '</table></div>';
+}
+
+function submitSource() {
+  var textarea = document.getElementById('source-urls');
+  var notesInput = document.getElementById('source-notes');
+
+  if (!textarea) return;
+
+  var raw = textarea.value.trim();
+  if (!raw) {
+    showToast('請輸入至少一個 URL', 'error');
+    textarea.focus();
+    return;
+  }
+
+  var urls = raw.split('\n').map(function (u) { return u.trim(); }).filter(function (u) { return u.length > 0; });
+
+  // Validate URLs
+  for (var i = 0; i < urls.length; i++) {
+    try { new URL(urls[i]); } catch (e) {
+      showToast('無效的 URL: ' + urls[i].slice(0, 40), 'error');
+      return;
+    }
+  }
+
+  // Get selected platforms
+  var platCheckboxes = document.querySelectorAll('#page-source input[type="checkbox"]:not([value="all"])');
+  var selectedPlatforms = [];
+  platCheckboxes.forEach(function (cb) {
+    if (cb.checked) selectedPlatforms.push(cb.value);
+  });
+
+  var notes = notesInput ? notesInput.value.trim() : '';
+
+  // Save to localStorage
+  var sources = loadPendingSources();
+  var now = new Date().toISOString();
+
+  urls.forEach(function (url) {
+    sources.push({
+      id: 'src_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      url: url,
+      platforms: selectedPlatforms.slice(),
+      notes: notes,
+      submittedAt: now
+    });
+  });
+
+  savePendingSources(sources);
+
+  // Clear form
+  textarea.value = '';
+  if (notesInput) notesInput.value = '';
+  document.querySelectorAll('#page-source input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+
+  showToast('已提交 ' + urls.length + ' 個來源', 'success');
+
+  renderPendingSources();
+  var h3 = document.getElementById('pending-sources-count');
+  if (h3) h3.textContent = '📋 待處理來源 (' + loadPendingSources().length + ')';
+}
+
+function deleteSource(id) {
+  if (!id) return;
+  var sources = loadPendingSources();
+  var filtered = [];
+  for (var i = 0; i < sources.length; i++) {
+    if (sources[i].id !== id) filtered.push(sources[i]);
+  }
+  if (filtered.length === sources.length) return;
+
+  savePendingSources(filtered);
+  showToast('已刪除來源', 'info');
+  renderPendingSources();
+
+  var h3 = document.getElementById('pending-sources-count');
+  if (h3) h3.textContent = '📋 待處理來源 (' + loadPendingSources().length + ')';
+}
+
+function toggleAllPlatforms() {
+  var page = document.getElementById('page-source');
+  if (!page) return;
+  var allCb = page.querySelector('input[type="checkbox"][value="all"]');
+  var platCbs = page.querySelectorAll('input[type="checkbox"]:not([value="all"])');
+
+  if (!allCb) return;
+
+  if (allCb.checked) {
+    platCbs.forEach(function (cb) { cb.checked = true; });
+  }
+
+  // Sync "全部" checkbox: if every individual is checked, check "全部"
+  var allChecked = true;
+  platCbs.forEach(function (cb) { if (!cb.checked) allChecked = false; });
+  allCb.checked = allChecked;
+}
+
+// === Changelog Page ===
+async function renderChangelog() {
+  var page = document.getElementById('page-changelog');
+  page.innerHTML = [
+    '<div class="page-header">',
+    '  <h2>更新日誌</h2>',
+    '  <p>正在載入變更紀錄…</p>',
+    '</div>',
+    '<div class="loader" style="margin:48px auto"></div>'
+  ].join('\n');
+
+  try {
+    var resp = await fetch(CONFIG.changelogUrl(), { cache: 'no-cache' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var md = await resp.text();
+
+    page.innerHTML = [
+      '<div class="page-header">',
+      '  <h2>更新日誌</h2>',
+      '  <p>專案變更紀錄 <a href="' + esc(CONFIG.changelogUrl()) + '" target="_blank" style="color:var(--accent);font-size:.85rem">查看原始檔 ↗</a></p>',
+      '</div>',
+      '<div class="persona-section changelog-content">',
+      simpleMarkdownToHtml(md),
+      '</div>'
+    ].join('\n');
+  } catch (err) {
+    page.innerHTML = [
+      '<div class="page-header">',
+      '  <h2>更新日誌</h2>',
+      '  <p>載入失敗</p>',
+      '</div>',
+      '<div class="error-banner">⚠️ 無法載入 CHANGELOG.md: ' + esc(err.message) + '</div>'
+    ].join('\n');
+  }
+}
+
+function simpleMarkdownToHtml(md) {
+  if (!md) return '<p style="color:var(--text-muted)">無內容</p>';
+
+  var html = esc(md);
+
+  // Code blocks (```...```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+    return '<pre style="background:var(--bg-primary);padding:12px;border-radius:var(--radius-sm);overflow-x:auto;font-size:.85rem;line-height:1.5;margin:8px 0"><code>' + code.trim() + '</code></pre>';
+  });
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px;font-size:.85rem;color:var(--accent)">$1</code>');
+
+  // Headers
+  html = html.replace(/^#### (.+)$/gm, '<h4 style="margin:16px 0 8px;color:var(--text-primary);font-size:1rem">$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3 style="margin:20px 0 10px;color:var(--text-primary);font-size:1.05rem">$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2 style="margin:24px 0 12px;color:var(--text-primary);font-size:1.2rem">$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1 style="margin:24px 0 12px;color:var(--text-primary);font-size:1.4rem">$1</h1>');
+
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent);text-decoration:none">$1</a>');
+
+  // Bold and italic
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+  // Horizontal rules
+  html = html.replace(/^---$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">');
+
+  // Blockquotes
+  html = html.replace(/^> (.+)$/gm, '<blockquote style="border-left:3px solid var(--accent);padding:4px 12px;margin:8px 0;color:var(--text-secondary)">$1</blockquote>');
+
+  // Unordered list items
+  html = html.replace(/^[\s]*[-*+] (.+)$/gm, '<li style="margin:4px 0;color:var(--text-secondary)">$1</li>');
+
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li[^>]*>.*?<\/li>\s*)+)/g, '<ul style="padding-left:20px;margin:8px 0">$1</ul>');
+
+  // Wrap remaining non-tag lines in paragraphs
+  var lines = html.split('\n');
+  var wrapped = [];
+  var blockTags = { h1: true, h2: true, h3: true, h4: true, pre: true, ul: true, li: true, blockquote: true, hr: true };
+  var inBlock = false;
+  var closeMap = { pre: '</pre>', ul: '</ul>', blockquote: '</blockquote>' };
+
+  for (var i = 0; i < lines.length; i++) {
+    var trimmed = lines[i].trim();
+    // Detect entering block
+    var openMatch = trimmed.match(/^<(h[1-4]|pre|ul|blockquote|hr)/);
+    if (openMatch) {
+      wrapped.push(lines[i]);
+      var tag = openMatch[1];
+      if (closeMap[tag]) inBlock = tag;
+      continue;
+    }
+    // Detect leaving block
+    if (inBlock) {
+      wrapped.push(lines[i]);
+      if (trimmed.indexOf(closeMap[inBlock]) >= 0) inBlock = false;
+      continue;
+    }
+    // Skip empty lines and block-level fragments
+    if (!trimmed || trimmed.indexOf('<li') === 0) {
+      wrapped.push('');
+      continue;
+    }
+    wrapped.push('<p style="margin:8px 0;line-height:1.7;color:var(--text-secondary)">' + trimmed + '</p>');
+  }
+
+  return wrapped.join('\n');
+}
+
+// ====================================================================
+// Toast 通知系統
+// ====================================================================
+function showToast(message, type) {
+  type = type || 'info';
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  const bgColor = type === 'success' ? '#065f46' : type === 'error' ? '#5c1a1a' : '#1a3a5c';
+  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+  toast.style.cssText = 'background:' + bgColor + ';color:#e8eaed;padding:10px 16px;border-radius:var(--radius-sm);font-size:.9rem;pointer-events:auto;animation:slideIn .3s ease;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+  toast.innerHTML = icon + ' ' + message;
+  container.appendChild(toast);
+  setTimeout(function() {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity .3s';
+    setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
+  }, 3000);
+}
+
+// Add keyframes for toast animation
+var style = document.createElement('style');
+style.textContent = '@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }';
+document.head.appendChild(style);
+
+// ====================================================================
+// Analytics Page — Chart.js 圖表分析
+// ====================================================================
+function renderAnalytics() {
+  var page = document.getElementById('page-analytics');
+  // Destroy existing charts
+  Object.keys(charts).forEach(function(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } });
+  page.innerHTML = '<div class="page-header"><h2>📊 互動分析</h2><p>基於 Meta API 數據的視覺化分析</p></div>' +
+    '<div class="stats-grid" id="analytics-stats">' +
+    '<div class="stat-card"><div class="stat-label">分析資料庫</div><div class="stat-value" style="font-size:1rem">等待資料載入…</div></div></div>' +
+    '<div id="analytics-charts"><div class="empty-state"><div class="empty-icon">📊</div><p>需要更多數據才能產生圖表</p><p style="font-size:.85rem">至少須有 5 篇以上貼文且有互動數據</p></div></div>';
+
+  if (!db) return;
+
+  // Fetch data: daily trends & topic performance
+  var dailyTrends = q('SELECT DATE(e.fetched_at) as day, e.platform, COUNT(DISTINCT e.draft_id) as post_count, SUM(e.likes) as total_likes, SUM(e.comments) as total_comments, MAX(e.reach) as total_reach, MAX(e.views) as total_views FROM engagement_stats e WHERE e.fetched_at >= datetime("now", "-30 days", "localtime") GROUP BY DATE(e.fetched_at), e.platform ORDER BY day ASC');
+  var topicPerf = q('SELECT n.topic_category, e.platform, AVG(e.likes) as avg_likes, AVG(e.comments) as avg_comments, COUNT(*) as post_count FROM engagement_stats e JOIN drafts d ON d.id = e.draft_id JOIN news_items n ON n.id = d.news_id WHERE n.topic_category IS NOT NULL AND e.fetched_at >= datetime("now", "-30 days", "localtime") GROUP BY n.topic_category, e.platform HAVING COUNT(*) >= 2');
+
+  // Update stats
+  var totalEngagements = 0;
+  dailyTrends.forEach(function(r) { totalEngagements += (r.total_likes||0) + (r.total_comments||0); });
+  document.getElementById('analytics-stats').innerHTML =
+    '<div class="stat-card"><div class="stat-label">分析期</div><div class="stat-value" style="font-size:1rem">過去 30 天</div><div class="stat-sub">' + dailyTrends.length + ' 筆日均數據</div></div>' +
+    '<div class="stat-card"><div class="stat-label">總互動</div><div class="stat-value">' + totalEngagements + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">主題</div><div class="stat-value">' + topicPerf.length + '</div><div class="stat-sub">主題-平台組合</div></div>';
+
+  if (dailyTrends.length === 0) return;
+
+  var chartsDiv = document.getElementById('analytics-charts');
+  chartsDiv.innerHTML = '';
+
+  // Chart 1: Engagement Rate Trend
+  var chart1Div = document.createElement('div');
+  chart1Div.style.cssText = 'background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px';
+  chart1Div.innerHTML = '<h4 style="margin-bottom:12px;color:var(--text-secondary)">日均互動趨勢</h4><div class="chart-container" style="height:250px"><canvas id="chart-trend"></canvas></div>';
+  chartsDiv.appendChild(chart1Div);
+
+  var days = [];
+  var fbData = [], igData = [], thData = [];
+  var platformMap = {};
+  dailyTrends.forEach(function(r) {
+    if (!platformMap[r.day]) platformMap[r.day] = {};
+    platformMap[r.day][r.platform] = (r.total_likes||0) + (r.total_comments||0);
+  });
+  Object.keys(platformMap).sort().forEach(function(d) {
+    days.push(d.slice(5)); // MM-DD
+    fbData.push(platformMap[d].facebook || 0);
+    igData.push(platformMap[d].instagram || 0);
+    thData.push(platformMap[d].threads || 0);
+  });
+
+  var ctx1 = document.getElementById('chart-trend').getContext('2d');
+  charts['trend'] = new Chart(ctx1, {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        { label: 'FB', data: fbData, borderColor: '#1877f2', backgroundColor: '#1877f233', fill: true, tension: 0.3 },
+        { label: 'IG', data: igData, borderColor: '#e4405f', backgroundColor: '#e4405f33', fill: true, tension: 0.3 },
+        { label: 'Threads', data: thData, borderColor: '#000000', backgroundColor: '#00000033', fill: true, tension: 0.3 }
+      ]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#9aa0a6' } } }, scales: { x: { ticks: { color: '#5f6368' } }, y: { ticks: { color: '#5f6368' }, beginAtZero: true } } }
+  });
+
+  // Chart 2: Topic Radar
+  if (topicPerf.length > 3) {
+    var chart2Div = document.createElement('div');
+    chart2Div.style.cssText = 'background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px';
+    chart2Div.innerHTML = '<h4 style="margin-bottom:12px;color:var(--text-secondary)">主題表現雷達 (by avg_likes)</h4><div class="chart-container" style="height:280px"><canvas id="chart-radar"></canvas></div>';
+    chartsDiv.appendChild(chart2Div);
+
+    var topics = [], topicValues = [];
+    var topicSeen = {};
+    topicPerf.forEach(function(r) {
+      if (!topicSeen[r.topic_category]) {
+        topicSeen[r.topic_category] = true;
+        topics.push(r.topic_category);
+        topicValues.push(r.avg_likes || 0);
+      }
+    });
+
+    var ctx2 = document.getElementById('chart-radar').getContext('2d');
+    charts['radar'] = new Chart(ctx2, {
+      type: 'radar',
+      data: { labels: topics, datasets: [{ label: 'avg_likes', data: topicValues, borderColor: '#60a5fa', backgroundColor: '#60a5fa33' }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { r: { ticks: { color: '#5f6368', backdropColor: 'transparent' }, grid: { color: '#303446' } } } }
+    });
+  }
+
+  showToast('圖表已更新', 'info');
+}
+
+// ====================================================================
+// Source 提交頁 — 用戶貼上來源 URL，選擇平台
+// ====================================================================
+function renderSource() {
+  var page = document.getElementById('page-source');
+
+  // Load from localStorage
+  var pendingSources = JSON.parse(localStorage.getItem('newsRadar_sources') || '[]');
+
+  var platformOptions = [
+    { id: 'fb', label: '📘 Facebook' },
+    { id: 'ig', label: '📸 Instagram' },
+    { id: 'threads', label: '🧵 Threads' },
+  ];
+
+  var html = '<div class="page-header"><h2>📤 提交來源</h2><p>貼上你想發布的文章 URL，選擇平台</p></div>';
+
+  // Submission form
+  html += '<div class="persona-section" style="margin-bottom:20px">';
+  html += '<h3>新增來源</h3>';
+  html += '<label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:.9rem">文章 URL</label>';
+  html += '<textarea id="source-url" style="width:100%;min-height:60px;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:.9rem;font-family:inherit;resize:vertical" placeholder="https://example.com/article 或 https://... 每行一個連結"></textarea>';
+  html += '<div style="margin:12px 0"><span style="color:var(--text-secondary);font-size:.9rem">發布到：</span>';
+  platformOptions.forEach(function(p) {
+    html += '<label style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 0 0;cursor:pointer;color:var(--text-secondary);font-size:.9rem">';
+    html += '<input type="checkbox" class="source-platform" value="' + p.id + '" checked>';
+    html += p.label + '</label>';
+  });
+  html += '</div>';
+  html += '<label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:.9rem">備註 (選填)</label>';
+  html += '<input id="source-note" type="text" style="width:100%;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:.9rem" placeholder="例如：這篇的觀點很特別，適合 Threads 辛辣風格">';
+  html += '<button onclick="submitSource()" style="margin-top:12px;padding:10px 24px;border-radius:var(--radius-sm);border:none;background:var(--accent);color:#fff;font-size:.9rem;font-weight:600;cursor:pointer">📤 提交</button>';
+  html += '</div>';
+
+  // Pending sources list
+  html += '<div class="persona-section">';
+  html += '<h3>待處理來源 (' + pendingSources.length + ')</h3>';
+  if (pendingSources.length === 0) {
+    html += '<div class="empty-state"><div class="empty-icon">📭</div><p>尚無待處理來源</p><p style="font-size:.85rem">貼上 URL 後提交，下次 pipeline 會自動處理</p></div>';
+  } else {
+    html += '<div class="table-container"><table><tr><th>時間</th><th>URL</th><th>平台</th><th>備註</th><th></th></tr>';
+    pendingSources.forEach(function(s, i) {
+      var platforms = (s.platforms || []).map(function(p) { return {fb:'📘',ig:'📸',threads:'🧵'}[p] || p; }).join(' ');
+      html += '<tr><td style="white-space:nowrap">' + s.time + '</td><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><a href="' + s.url + '" target="_blank" style="color:var(--accent)">' + (s.url.length > 50 ? s.url.slice(0,50)+'…' : s.url) + '</a></td>';
+      html += '<td>' + platforms + '</td><td style="color:var(--text-muted);font-size:.85rem">' + (s.note || '—').slice(0,30) + '</td>';
+      html += '<td><button onclick="removeSource(' + i + ')" style="background:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--red);cursor:pointer;font-size:.8rem">刪除</button></td></tr>';
+    });
+    html += '</table></div>';
+  }
+  html += '</div>';
+
+  page.innerHTML = html;
+}
+
+function submitSource() {
+  var url = document.getElementById('source-url').value.trim();
+  if (!url) { showToast('請輸入文章 URL', 'error'); return; }
+
+  var checkboxes = document.querySelectorAll('.source-platform:checked');
+  if (checkboxes.length === 0) { showToast('請選擇至少一個平台', 'error'); return; }
+
+  var platforms = [];
+  checkboxes.forEach(function(cb) { platforms.push(cb.value); });
+
+  var note = document.getElementById('source-note').value.trim();
+
+  var entry = {
+    url: url,
+    platforms: platforms,
+    note: note,
+    time: new Date().toLocaleString('zh-TW'),
+    id: 'src_' + Date.now()
+  };
+
+  var pending = JSON.parse(localStorage.getItem('newsRadar_sources') || '[]');
+  pending.unshift(entry);
+  localStorage.setItem('newsRadar_sources', JSON.stringify(pending));
+
+  showToast('✅ 已接收，下一輪 pipeline 會處理', 'success');
+  document.getElementById('source-url').value = '';
+  document.getElementById('source-note').value = '';
+  renderSource();
+}
+
+function removeSource(index) {
+  var pending = JSON.parse(localStorage.getItem('newsRadar_sources') || '[]');
+  pending.splice(index, 1);
+  localStorage.setItem('newsRadar_sources', JSON.stringify(pending));
+  renderSource();
+  showToast('已移除', 'info');
+}
+
+// ====================================================================
+// Changelog 頁 — 從 GitHub raw 讀取 CHANGELOG.md
+// ====================================================================
+function renderChangelog() {
+  var page = document.getElementById('page-changelog');
+  page.innerHTML = '<div class="page-header"><h2>📝 更新日誌</h2><p>系統重大更動記錄</p></div><div class="loader" style="margin:48px auto"></div>';
+
+  fetch(CONFIG.changelogUrl())
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function(md) {
+      var lines = md.split('\n');
+      var html = '';
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('# ') === 0) html += '<h2 style="margin:20px 0 8px;font-size:1.2rem">' + line.slice(2) + '</h2>';
+        else if (line.indexOf('## ') === 0) html += '<h3 style="margin:16px 0 6px;font-size:1rem;color:var(--accent)">' + line.slice(3) + '</h3>';
+        else if (line.indexOf('### ') === 0) html += '<h4 style="margin:12px 0 4px;font-size:.95rem;color:var(--text-secondary)">' + line.slice(4) + '</h4>';
+        else if (line.indexOf('- ') === 0) html += '<li style="margin:4px 0;color:var(--text-secondary);font-size:.9rem">' + line.slice(2) + '</li>';
+        else if (line.indexOf('  ') === 0) html += '<span style="color:var(--text-muted);font-size:.85rem;margin-left:16px">' + line.trim() + '</span><br>';
+        else if (line.trim()) html += '<p style="margin:8px 0;color:var(--text-secondary);line-height:1.7">' + line + '</p>';
+      }
+      page.innerHTML = '<div class="page-header"><h2>📝 更新日誌</h2><p>系統重大更動記錄</p></div><div class="persona-section">' + html + '</div>';
+    })
+    .catch(function(err) {
+      page.innerHTML = '<div class="page-header"><h2>📝 更新日誌</h2></div><div class="empty-state"><div class="empty-icon">📝</div><p>尚無更新紀錄</p><p style="font-size:.85rem">' + err.message + '</p></div>';
+    });
 }

@@ -41,6 +41,18 @@
           <span class="nav-icon">🎭</span>
           <span class="nav-label">寫作風格</span>
         </a>
+        <a class="nav-item" data-page="analytics" href="#analytics">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">分析</span>
+        </a>
+        <a class="nav-item" data-page="source" href="#source">
+          <span class="nav-icon">📤</span>
+          <span class="nav-label">提交來源</span>
+        </a>
+        <a class="nav-item" data-page="changelog" href="#changelog">
+          <span class="nav-icon">📝</span>
+          <span class="nav-label">更新日誌</span>
+        </a>
         <a class="nav-item" data-page="settings" href="#settings">
           <span class="nav-icon">⚙️</span>
           <span class="nav-label">設定</span>
@@ -77,9 +89,14 @@
       <div id="page-archive" class="page"></div>
       <div id="page-dropped" class="page"></div>
       <div id="page-persona" class="page"></div>
+      <div id="page-analytics" class="page"></div>
+      <div id="page-source" class="page"></div>
+      <div id="page-changelog" class="page"></div>
       <div id="page-settings" class="page"></div>
     </main>
   </div>
+
+  <div id="toast-container" style="position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
 
   <script src="app.js"></script>
 </body>

@@ -284,6 +284,12 @@ tr.clickable { cursor: pointer; }
   font-size: .9rem; line-height: 1.7; color: var(--text-secondary);
 }
 
+/* === Changelog === */
+.changelog-content a:hover { text-decoration: underline !important; }
+
+/* === Source Form === */
+#source-urls:focus, #source-notes:focus { outline: none; border-color: var(--accent) !important; }
+
 /* === Empty State === */
 .empty-state {
   text-align: center; padding: 48px 24px; color: var(--text-muted);

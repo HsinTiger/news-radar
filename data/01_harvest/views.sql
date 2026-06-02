@@ -249,3 +249,135 @@ SELECT
     agg.confidence_score     AS confidence_score
 FROM platform_drafts pd
 LEFT JOIN v_post_engagement_aggregated agg ON pd.draft_id = agg.draft_id;
+
+-- ============================================================
+-- 分析引擎 Views (2026-06-02)
+-- ============================================================
+
+-- 1. v_engagement_growth: 同一篇貼文三時間點 1h/24h/168h 的互動變化
+CREATE VIEW IF NOT EXISTS v_engagement_growth AS
+SELECT
+    draft_id,
+    platform,
+    MAX(CASE WHEN post_age_bucket=1   THEN likes END)    AS likes_1h,
+    MAX(CASE WHEN post_age_bucket=24  THEN likes END)    AS likes_24h,
+    MAX(CASE WHEN post_age_bucket=168 THEN likes END)    AS likes_168h,
+    MAX(CASE WHEN post_age_bucket=1   THEN reach END)    AS reach_1h,
+    MAX(CASE WHEN post_age_bucket=24  THEN reach END)    AS reach_24h,
+    MAX(CASE WHEN post_age_bucket=168 THEN reach END)    AS reach_168h,
+    MAX(CASE WHEN post_age_bucket=1   THEN views END)    AS views_1h,
+    MAX(CASE WHEN post_age_bucket=24  THEN views END)    AS views_24h,
+    MAX(CASE WHEN post_age_bucket=168 THEN views END)    AS views_168h,
+    MAX(CASE WHEN post_age_bucket=1   THEN comments END) AS comments_1h,
+    MAX(CASE WHEN post_age_bucket=24  THEN comments END) AS comments_24h,
+    COALESCE(MAX(CASE WHEN post_age_bucket=24  THEN likes END), 0) -
+        COALESCE(MAX(CASE WHEN post_age_bucket=1   THEN likes END), 0) AS growth_likes_24h,
+    COALESCE(MAX(CASE WHEN post_age_bucket=168 THEN likes END), 0) -
+        COALESCE(MAX(CASE WHEN post_age_bucket=24  THEN likes END), 0) AS growth_likes_168h
+FROM engagement_stats
+WHERE post_age_bucket IS NOT NULL
+GROUP BY draft_id, platform;
+
+-- 2. v_engagement_summary: 每篇貼文最終互動總覽 (取最新 bucket)
+CREATE VIEW IF NOT EXISTS v_engagement_summary AS
+SELECT DISTINCT
+    e.draft_id,
+    e.platform,
+    e.likes            AS finalized_likes,
+    e.comments         AS finalized_comments,
+    e.shares           AS finalized_shares,
+    e.saves            AS finalized_saves,
+    e.reposts          AS finalized_reposts,
+    e.quotes           AS finalized_quotes,
+    e.replies          AS finalized_replies,
+    e.views            AS finalized_views,
+    e.reach            AS finalized_reach,
+    e.post_age_bucket  AS post_age_hours,
+    -- 加權互動率（多型公式）
+    CASE e.platform
+        WHEN 'facebook'   THEN 1.0 * (e.likes + 2*e.comments + 3*e.shares) / MAX(e.reach, 1)
+        WHEN 'instagram'  THEN 1.0 * (e.likes + 2*e.comments + 3*e.shares + 3*e.saves) / MAX(e.reach, 1)
+        WHEN 'threads'    THEN 1.0 * (e.likes + 2*e.replies + 3*e.reposts + 3*e.quotes/2) / MAX(e.views, 1)
+        ELSE 0.0
+    END AS engagement_rate,
+    d.title            AS draft_title,
+    d.confidence_score AS confidence_score,
+    d.generated_at
+FROM engagement_stats e
+JOIN drafts d ON d.id = e.draft_id
+WHERE e.id IN (
+    SELECT MAX(id) FROM engagement_stats GROUP BY draft_id, platform
+);
+
+-- 3. v_topic_performance_30d: 近30天主題 + 平台表現
+CREATE VIEW IF NOT EXISTS v_topic_performance_30d AS
+SELECT
+    n.topic_category,
+    e.platform,
+    AVG(e.likes)     AS avg_likes,
+    AVG(e.comments)  AS avg_comments,
+    AVG(e.views)     AS avg_views,
+    AVG(e.reach)     AS avg_reach,
+    COUNT(*)         AS post_count,
+    CASE e.platform
+        WHEN 'facebook'   THEN AVG(1.0 * (e.likes + 2*e.comments + 3*e.shares) / MAX(e.reach, 1))
+        WHEN 'instagram'  THEN AVG(1.0 * (e.likes + 2*e.comments + 3*e.shares + 3*e.saves) / MAX(e.reach, 1))
+        WHEN 'threads'    THEN AVG(1.0 * (e.likes + 2*e.replies + 3*e.reposts + 3*e.quotes/2) / MAX(e.views, 1))
+        ELSE 0.0
+    END AS avg_engagement_rate
+FROM engagement_stats e
+JOIN drafts d ON d.id = e.draft_id
+JOIN news_items n ON n.id = d.news_id
+WHERE n.topic_category IS NOT NULL
+  AND e.fetched_at >= datetime('now', '-30 days', 'localtime')
+GROUP BY n.topic_category, e.platform
+HAVING COUNT(*) >= 3;
+
+-- 4. v_account_daily: 每日帳號總覽
+CREATE VIEW IF NOT EXISTS v_account_daily AS
+SELECT
+    DATE(e.fetched_at) AS day,
+    e.platform,
+    COUNT(DISTINCT e.draft_id) AS post_count,
+    SUM(e.likes)    AS total_likes,
+    SUM(e.comments) AS total_comments,
+    SUM(e.shares)   AS total_shares,
+    MAX(e.reach)    AS total_reach,
+    MAX(e.views)    AS total_views,
+    CASE e.platform
+        WHEN 'facebook'   THEN 1.0 * SUM(e.likes + 2*e.comments + 3*e.shares) / MAX(SUM(e.reach), 1)
+        WHEN 'instagram'  THEN 1.0 * SUM(e.likes + 2*e.comments + 3*e.shares + 3*e.saves) / MAX(SUM(e.reach), 1)
+        WHEN 'threads'    THEN 1.0 * SUM(e.likes + 2*e.replies + 3*e.reposts + 3*e.quotes/2) / MAX(SUM(e.views), 1)
+        ELSE 0.0
+    END AS avg_engagement_rate
+FROM engagement_stats e
+GROUP BY DATE(e.fetched_at), e.platform;
+
+-- 5. v_publish_cadence: 發布節奏分析
+CREATE VIEW IF NOT EXISTS v_publish_cadence AS
+SELECT
+    DATE(p.posted_at) AS day,
+    p.platform,
+    COUNT(*) AS post_count,
+    -- 與上次發布的間隔秒數
+    CAST(
+        JULIANDAY(p.posted_at) - JULIANDAY(
+            LAG(p.posted_at) OVER (PARTITION BY p.platform ORDER BY p.posted_at)
+        )
+    * 86400 AS INTEGER) AS seconds_since_last,
+    CASE
+        WHEN CAST(
+            JULIANDAY(p.posted_at) - JULIANDAY(
+                LAG(p.posted_at) OVER (PARTITION BY p.platform ORDER BY p.posted_at)
+            )
+        * 86400 AS INTEGER) BETWEEN 3300 AND 7500 THEN 'within_window'
+        WHEN CAST(
+            JULIANDAY(p.posted_at) - JULIANDAY(
+                LAG(p.posted_at) OVER (PARTITION BY p.platform ORDER BY p.posted_at)
+            )
+        * 86400 AS INTEGER) IS NULL THEN 'first_post'
+        ELSE 'outside_window'
+    END AS cadence_status
+FROM publish_log p
+WHERE p.success = 1
+GROUP BY DATE(p.posted_at), p.platform;
