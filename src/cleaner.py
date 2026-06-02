@@ -194,17 +194,22 @@ def keyword_filter(
     return True, None
 
 
-def resolve_min_word_count(cfg_value: Any, source_type: str) -> int:
-    """把 `filters.min_word_count` 解析成單一整數門檻。
+def resolve_min_word_count(cfg_value: Any, source_type: str,
+                            feed_name: str = "",
+                            per_feed_map: Optional[Dict[str, int]] = None) -> int:
+    """把 filters.min_word_count 解析成單一整數門檻。
 
-    支援兩種 config 寫法：
-      1) 整數（舊版相容）    → 所有 source_type 共用同一門檻
-      2) dict（Phase 8.9）  → 依 source_type 取值；查不到再 fallback 到 `default`
-
-    回傳值保證 ≥ 0 的 int。非預期型別一律退化成 100。
+    支援三層優先級：
+      1) per_feed_map（依 feed_name）
+      2) source_type dict
+      3) int / default fallback
     """
+    if feed_name and per_feed_map and feed_name in per_feed_map:
+        val = per_feed_map[feed_name]
+        if isinstance(val, int) and not isinstance(val, bool):
+            return max(0, val)
+
     if isinstance(cfg_value, bool):
-        # bool 是 int 的子型別，要先排除掉避免誤判
         return 100
     if isinstance(cfg_value, int):
         return max(0, cfg_value)
@@ -217,13 +222,12 @@ def resolve_min_word_count(cfg_value: Any, source_type: str) -> int:
 
 
 def min_length_filter(
-    item: NewsItem, cfg_value: Any
+    item: NewsItem, cfg_value: Any,
+    feed_name: str = "",
+    per_feed_map: Optional[Dict[str, int]] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """字數門檻過濾。`cfg_value` 接受 int 或 dict（見 `resolve_min_word_count`）。
-
-    drop_reason 會把 source_type 與門檻都寫進去，方便 diagnose_harvest 分層看。
-    """
-    min_wc = resolve_min_word_count(cfg_value, item.source_type)
+    """字數門檻過濾。支援 per-feed override。"""
+    min_wc = resolve_min_word_count(cfg_value, item.source_type, feed_name, per_feed_map)
     if item.word_count < min_wc:
         return False, f"too_short[{item.source_type}]:{item.word_count}<{min_wc}"
     return True, None
@@ -265,8 +269,15 @@ async def clean_and_filter(
     if not item.clean_markdown:
         return item, False, "extract_failed"
 
-    # 3. 字數過濾（cfg 端可以是 int 舊式或 dict 新式，resolve_min_word_count 處理）
-    passed, reason = min_length_filter(item, cfg["filters"]["min_word_count"])
+    # 3. 字數過濾（支援 per-feed min_word_count override）
+    per_feed_wc = {}
+    for feed in cfg.get("feeds", []):
+        wc = feed.get("min_word_count")
+        if isinstance(wc, int):
+            per_feed_wc[feed.get("name", "")] = wc
+    passed, reason = min_length_filter(item, cfg["filters"]["min_word_count"],
+                                       feed_name=item.feed_name,
+                                       per_feed_map=per_feed_wc)
     if not passed:
         return item, False, reason
 

@@ -229,6 +229,7 @@ feeds:
     tier: primary
     language: zh
     feed_added_at: 2026-04-21T00:00:00+00:00
+    min_word_count: 80  # 營收公告短但數據對台股投資人很有價值
     tags: [taiwan, semiconductor, supply-chain, ai]
     # VERIFIED 2026-04-21 — 200 OK, 37 KB. 供應鏈、台積電、科技政策中文第一線
 
@@ -568,9 +569,37 @@ keywords:
     - "layer 2"
     - "Ethereum upgrade"
 
-  # 若命中以下關鍵字，自動 Drop（雜訊過濾）
-  # Phase 8.15：移除 `crypto` 與 `web3`（不然新增的幣圈源整批進不來）
-  # 同步加上一組 alpha-filter 排除詞，把價格預測 / 年化收益攻略 / 投機氣味濾掉
+    # === 2026-06-02 新增：繁體中文財經關鍵字 ===
+    - 營收
+    - 月增
+    - 月減
+    - 營收月增
+    - 營收月減
+    - 季報
+    - 財報
+    - EPS
+    - 每股
+    - 台股
+    - 殖利率
+    - 股利
+
+    # === 2026-06-02 新增：官方/政策關鍵字 ===
+    - "European Commission"
+    - ECB
+    - "central bank"
+    - "monetary policy"
+    - regulation
+    - regulatory
+    - legislation
+    - "supply chain"
+    - inflation
+    - GDP
+    - 半導體
+    - 晶片
+
+    # 若命中以下關鍵字，自動 Drop（雜訊過濾）
+    # Phase 8.15：移除 `crypto` 與 `web3`（不然新增的幣圈源整批進不來）
+    # 同步加上一組 alpha-filter 排除詞，把價格預測 / 年化收益攻略 / 投機氣味濾掉
   must_exclude_any:
     # 保留的舊排除詞（NFT / meme / celebrity / fan art / giveaway 仍視為雜訊）
     - NFT
@@ -598,11 +627,11 @@ keywords:
     - "1000x"
 
 
-# ---------- 3. 過濾閾值 (Filter Thresholds) ----------
-# min_word_count 分級（Phase 8.9）：
-#   不同 source_type 的「有效訊號」密度本質不同，用單一門檻會誤殺 YouTube / Reddit。
-#   cleaner 會依 item.source_type 取對應門檻；找不到 key 時 fallback 到 `default`。
-#   (向後相容：若這個欄位仍為 int，cleaner 會當作所有 source_type 的 default)
+    # ---------- 3. 過濾閾值 (Filter Thresholds) ----------
+    # min_word_count 分級（Phase 8.9）：
+    #   不同 source_type 的「有效訊號」密度本質不同，用單一門檻會誤殺 YouTube / Reddit。
+    #   cleaner 會依 item.source_type 取對應門檻；找不到 key 時 fallback 到 `default`。
+    #   (向後相容：若這個欄位仍為 int，cleaner 會當作所有 source_type 的 default)
 filters:
   min_word_count:
     default: 100              # 兜底值
@@ -615,13 +644,13 @@ filters:
   duplicate_similarity: 0.85
 
 
-# ---------- 4. 審核與信心分 (Review & Confidence) ----------
+    # ---------- 4. 審核與信心分 (Review & Confidence) ----------
 review:
   auto_publish_threshold: 0.85   # ≥ 此分數自動發布（初期建議暫時設 1.01 即全部手動）
   manual_review_threshold: 0.65  # < 此分數直接 Drop，不浪費你的眼睛
   initial_mode: manual_only      # manual_only / hybrid / auto_high_confidence
 
-  # 信心分權重（加總必須 = 1.0）
+    # 信心分權重（加總必須 = 1.0）
   score_weights:
     has_specific_numbers: 0.25
     official_source: 0.30
@@ -629,12 +658,12 @@ review:
     novelty_vs_recent: 0.20
 
 
-# ---------- 5. 發文排程 (Publishing Schedule) ----------
-# Phase 8.18 雲本混合架構（2026-04-20）：
-#   Mac compose 端每小時入 queue 1-2 筆；Cloud publisher 端每小時整點 freshness-first 挑最新。
-#   舊的 publishing_slots / max_posts_per_day / jitter / min_interval_minutes:90 已棄用，
-#   保留在下方作為歷史紀錄，**不再被任何程式讀取**。
-#   現行參數改由 run_publish_queue.py (Cloud) 與 run_pipeline.py --compose-only (Mac) 直接硬編。
+    # ---------- 5. 發文排程 (Publishing Schedule) ----------
+    # Phase 8.18 雲本混合架構（2026-04-20）：
+    #   Mac compose 端每小時入 queue 1-2 筆；Cloud publisher 端每小時整點 freshness-first 挑最新。
+    #   舊的 publishing_slots / max_posts_per_day / jitter / min_interval_minutes:90 已棄用，
+    #   保留在下方作為歷史紀錄，**不再被任何程式讀取**。
+    #   現行參數改由 run_publish_queue.py (Cloud) 與 run_pipeline.py --compose-only (Mac) 直接硬編。
 schedule:
   timezone: Asia/Taipei
   # === Phase 8.18 有效參數 ===
