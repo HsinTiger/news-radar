@@ -185,6 +185,27 @@ def _draw_takeaway(W, H, pal, card, idx, total):
 _RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat, "takeaway": _draw_takeaway}
 
 
+def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:
+    """Assemble 2–4 card dicts from a CarouselCards (schema) + the cover title.
+
+    cover (always) → insight (if statement) → stat (if number) → takeaway (if any).
+    ``carousel`` may be a pydantic CarouselCards or None; missing parts are skipped.
+    """
+    cards: List[Dict] = [{"type": "cover", "title": title, "subtitle": subtitle or ""}]
+    g = lambda k: getattr(carousel, k, None) if carousel is not None else None
+    if g("insight_statement"):
+        cards.append({"type": "insight", "label": "核心洞察",
+                      "statement": g("insight_statement"), "support": g("insight_support") or ""})
+    if g("stat_number"):
+        cards.append({"type": "stat", "label": "一個數字看懂",
+                      "number": g("stat_number"), "caption": g("stat_caption") or ""})
+    takeaways = list(g("takeaways") or [])
+    if takeaways:
+        cards.append({"type": "takeaway", "label": "帶走的判斷",
+                      "points": takeaways[:3], "cta": "追蹤 主力爸爸我錯了"})
+    return cards[:4]
+
+
 def render_cards(
     *,
     cards: List[Dict],

@@ -76,6 +76,21 @@ class PlatformVariant(BaseModel):
     )
 
 
+class CarouselCards(BaseModel):
+    """2–4 張可滑動社群圖卡的內容（從文章蒸餾），給 IG/FB/Threads carousel 用。
+    封面卡用 ig/fb 變體的 title；其餘卡用下面這些欄位。能填就填，缺的卡會自動略過。"""
+    insight_statement: Optional[str] = Field(
+        default=None, description="一句最反直覺的核心洞察（自己長一句，禁套範例句型）。")
+    insight_support: Optional[str] = Field(
+        default=None, description="支撐那句洞察的 1–2 句具體說明。")
+    stat_number: Optional[str] = Field(
+        default=None, description="全篇最有力的單一數字/型號，如 $329、9 億、18%、AM5（沒有就留 null）。")
+    stat_caption: Optional[str] = Field(
+        default=None, description="那個數字代表什麼，1–2 句。")
+    takeaways: List[str] = Field(
+        default_factory=list, description="2–3 條讀者可帶走的具體判斷（每條一句）。")
+
+
 class MultiPlatformDraft(BaseModel):
     """composer.py 的新強制輸出：根據媒介門檻動態生成版本。"""
     fb: Optional[PlatformVariant] = None
@@ -84,6 +99,10 @@ class MultiPlatformDraft(BaseModel):
     image_url: Optional[str] = Field(
         default=None,
         description="共用圖片 URL。三平台目前共用同一張圖，可為原始 og:image 或建議的官方圖。",
+    )
+    carousel: Optional[CarouselCards] = Field(
+        default=None,
+        description="2–4 張社群圖卡的蒸餾內容（洞察句、關鍵數字、帶走判斷）。",
     )
 
 

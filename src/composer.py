@@ -423,9 +423,17 @@ async def compose_multi_platform(
   "fb": {{...PlatformVariant}} or null,
   "ig": {{...PlatformVariant}} or null,
   "threads": {{...PlatformVariant}} or null,
-  "image_url": "..."
+  "image_url": "...",
+  "carousel": {{
+     "insight_statement": "一句最反直覺的核心洞察（自己長，禁套範例）",
+     "insight_support": "支撐那句的 1-2 句",
+     "stat_number": "全篇最有力的單一數字/型號，如 $329 / 9 億 / 18%（沒有就 null）",
+     "stat_caption": "那個數字代表什麼，1-2 句",
+     "takeaways": ["可帶走的判斷1", "判斷2", "判斷3 (2-3 條)"]
+  }}
 }}
-每個 PlatformVariant 必要欄位：title, body, hashtags (list of str with #), primary_topic_tag, char_count)
+每個 PlatformVariant 必要欄位：title, body, hashtags (list of str with #), primary_topic_tag, char_count
+**carousel 欄位（必填）**：這是要做成 2-4 張可滑動圖卡的內容——從這篇新聞蒸餾出「一句最反直覺的洞察(insight)＋全篇最有力的一個數字(stat，可選)＋2-3 條可帶走的判斷(takeaways)」。每張卡只放一個重點，要能讓人不點文章、滑卡片就懂。洞察句與判斷都要針對這則新聞自己長，禁止套固定句型。)
 """
 
     chosen_model = model or DEFAULT_COMPOSER_MODEL
