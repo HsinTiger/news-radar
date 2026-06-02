@@ -15,6 +15,9 @@ const CONFIG = {
   soulUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/config/news_radar_soul.md`,
   platformUrl: (p) => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/config/platforms/${p}_v2.md`,
   changelogUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/main/CHANGELOG.md`,
+  feedbackUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/state/data/05_reflect/feedback/latest.json`,
+  engagementReportUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/state/data/05_reflect/feedback/engagement_report.json`,
+  topicAdjustUrl: () => `https://raw.githubusercontent.com/HsinTiger/news-radar/state/data/05_reflect/feedback/topic_adjustments.json`,
   REFRESH_INTERVAL: 300000, // 5 min
 };
 

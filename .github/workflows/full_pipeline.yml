@@ -170,6 +170,17 @@ jobs:
         run: |
           python -m src.engagement 2>&1 | tee logs/engagement_last.log
 
+      # ========== STAGE 4.5: FEEDBACK LOOP ==========
+      - name: "\U0001f504 [STAGE] Feedback loop — analytics + recommendations"
+        continue-on-error: true
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== Feedback Loop ==="
+          python -m src.feedback_loop --mode write 2>&1 | tee logs/feedback_last.log
+          python -m src.iteration_engine --mode report 2>&1 | tee logs/iteration_last.log
+          echo "=== Feedback Complete ==="
+
       # ========== STAGE 5: PERSIST TO STATE BRANCH ==========
       - name: "💾 Persist state to state branch"
         if: always()
@@ -186,7 +197,7 @@ jobs:
           git config user.name "news-radar-bot"
           git config user.email "noreply@github.com"
 
-          for dir in data/01_harvest logs state archive data/05_reflect/proposals; do
+          for dir in data/01_harvest logs state archive data/05_reflect/proposals data/05_reflect/feedback; do
             mkdir -p "$dir"
           done
 
@@ -204,6 +215,10 @@ jobs:
           fi
           if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
             cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/feedback" ]; then
+            mkdir -p data/05_reflect/feedback
+            cp -r "$GITHUB_WORKSPACE/data/05_reflect/feedback/." data/05_reflect/feedback/ 2>/dev/null || true
           fi
 
           cat > LAST_RUN.txt <<EOF
