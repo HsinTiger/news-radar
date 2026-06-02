@@ -33,7 +33,10 @@ from src.content_quality_guard import (
     has_blocking_issues,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
-from src.publisher import publish_to_fb, publish_to_threads, publish_to_ig
+from src.publisher import (
+    publish_to_fb, publish_to_threads, publish_to_ig,
+    publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
+)
 from src.cover_pipeline import prepare_publish_image
 from src.token_utils import refresh_threads_token
 from src.analyst import run_analysis_cycle
@@ -324,6 +327,7 @@ async def _publish_platform(
     ok: bool,
     image_url: Optional[str],
     topic_category: Optional[str] = None,
+    carousel=None,
 ) -> bool:
     """單平台發布 + publish_log。ok=False 或缺圖 → 不呼叫 API，直接記失敗。
     回傳：True 表示 API 回報成功；False 表示任何原因失敗。
@@ -355,6 +359,46 @@ async def _publish_platform(
             "已成功發過此 (draft, platform)，跳過防重複"
         )
         return True
+
+    # --- Phase 10 (2026-06-02): 2–4 圖卡 carousel（有蒸餾卡片內容時優先）。
+    # 任何一步失敗都 fall through 到下面的單圖流程，發文絕不因圖卡失敗而中斷。 ---
+    if carousel is not None:
+        try:
+            import re as _re
+            import tempfile as _tmp
+            from substack_radar.cards import build_cards, render_cards
+            from src.cover_uploader import upload_cards
+
+            cards = build_cards(title=variant.title or "", subtitle="", carousel=carousel)
+            if len(cards) >= 2:
+                cdir = Path(_tmp.mkdtemp(prefix="cards_"))
+                card_paths = render_cards(
+                    cards=cards, topic_category=topic_category or "other",
+                    aspect=platform_key, output_dir=cdir,  # ig/fb/threads ∈ ASPECTS
+                )
+                slug = _re.sub(r"[^A-Za-z0-9_]", "", f"{draft_id}_{platform_key}")[:40]
+                card_urls = upload_cards(card_paths, slug)
+                if len(card_urls) >= 2:
+                    label = dbmod.PLATFORM_LABEL[platform_key]
+                    print(f"   ↳ [{label}] 發布 {len(card_urls)} 張圖卡 carousel")
+                    if platform_key == "ig":
+                        result = await publish_ig_carousel(card_urls, full_text)
+                    elif platform_key == "threads":
+                        result = await publish_threads_carousel(card_urls, full_text)
+                    else:  # fb
+                        result = await publish_fb_carousel(card_urls, full_text)
+                    if result.get("success"):
+                        dbmod.log_publish(conn, PublishResult(
+                            draft_id=draft_id, platform=db_name,
+                            platform_post_id=result.get("id"),
+                            posted_at=datetime.now(timezone.utc).isoformat(),
+                            success=True, error_message=None,
+                        ))
+                        print(f"   ✅ [{label}] carousel 成功 id={result.get('id')}")
+                        return True
+                    print(f"   ⚠️ [{label}] carousel 失敗 → 降級單圖：{str(result.get('error'))[:160]}")
+        except Exception as exc:
+            print(f"   ⚠️ carousel 流程例外 → 降級單圖：{exc}")
 
     # Phase 2: FB and IG both go through render → upload → URL.
     # prep["image_url"] is the cover-cdn raw URL (when render+upload
@@ -391,7 +435,7 @@ async def _publish_platform(
         if not result.get("success") and needs_text_fallback and publish_image_url:
             print(f"   ⚠️ [📘 FB] 圖片上傳失敗 → 降級為純文字發布...")
             result = await publish_to_fb(full_text)
-            else:
+            if not result.get("success"):
                 print(f"   ❌ [📘 FB] 下載 fallback 也失敗")
 
     elif platform_key == "threads":
@@ -650,6 +694,7 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
             success = await _publish_platform(
                 conn, draft_id, platform_key, variant, full_text, ok, bundle.image_url,
                 topic_category=row["topic_category"] if "topic_category" in row.keys() else None,
+                carousel=bundle.carousel,
             )
             publish_results[platform_key] = success
             if success:

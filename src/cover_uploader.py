@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -134,6 +135,19 @@ def construct_raw_url(
     return RAW_URL_TEMPLATE.format(
         owner=owner, repo=repo, branch=branch, filename=fname
     )
+
+
+def card_filename(slug: str, index: int) -> str:
+    """Construct a unique carousel-card filename in cover-cdn.
+
+    Pure function. ``slug`` identifies the article/draft, ``index`` is the
+    card's 0-based position so multiple cards from the same article never
+    collide. Sanitises the slug to stay URL/filesystem-safe.
+    """
+    if not slug:
+        raise ValueError("slug must be non-empty")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-_") or "card"
+    return f"{safe}_card{index}.png"
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +319,90 @@ def upload_cover(
         MAX_PUSH_ATTEMPTS, last_err,
     )
     return None
+
+
+def upload_cards(
+    paths: list[Path],
+    slug: str,
+    *,
+    owner: str = DEFAULT_OWNER,
+    repo: str = DEFAULT_REPO,
+    branch: str = COVER_BRANCH,
+    auth_token: Optional[str] = None,
+) -> list[str]:
+    """Push a LIST of 2–4 carousel-card PNGs to ``cover-cdn`` in one commit.
+
+    Returns the raw.githubusercontent URLs IN THE SAME ORDER as ``paths``.
+    Reuses the exact branch/token/URL machinery as :func:`upload_cover`,
+    but stages all cards in a single workspace so the whole carousel lands
+    atomically with one clone + commit + push.
+
+    Returns ``[]`` on ANY failure — callers must treat this as a soft
+    failure (publishing must never break because card upload failed).
+    Filenames are ``{slug}_card{index}.png`` so cards from the same article
+    never collide and the single-cover path (``{draft_id}_{platform}.png``)
+    is untouched.
+    """
+    paths = list(paths)
+    if not paths:
+        logger.warning("[cover_uploader] upload_cards called with no paths")
+        return []
+    for p in paths:
+        if not Path(p).exists():
+            logger.warning("[cover_uploader] card png not found: %s", p)
+            return []
+
+    try:
+        fnames = [card_filename(slug, i) for i in range(len(paths))]
+    except ValueError as exc:
+        logger.warning("[cover_uploader] bad slug: %s", exc)
+        return []
+
+    repo_url = REPO_URL_TEMPLATE.format(owner=owner, repo=repo)
+    token = auth_token or os.environ.get(ENV_GITHUB_TOKEN)
+
+    last_err: Optional[Exception] = None
+    for attempt in range(1, MAX_PUSH_ATTEMPTS + 1):
+        tmp_root = Path(tempfile.mkdtemp(prefix="cover_cdn_cards_"))
+        ws = tmp_root / "ws"
+        ctx = _GitContext(
+            workspace=ws, repo_url=repo_url, branch=branch, auth_token=token
+        )
+        try:
+            _setup_workspace(ctx)
+            for src, fname in zip(paths, fnames):
+                shutil.copy(src, ws / fname)
+            _commit_and_push(
+                ctx,
+                message=f"cards: {slug[:24]} ×{len(paths)} (attempt {attempt})",
+            )
+            urls = [
+                RAW_URL_TEMPLATE.format(
+                    owner=owner, repo=repo, branch=branch, filename=fn
+                )
+                for fn in fnames
+            ]
+            logger.info(
+                "[cover_uploader] uploaded %d cards for %s → %s",
+                len(urls), slug, urls,
+            )
+            return urls
+        except subprocess.CalledProcessError as exc:
+            last_err = exc
+            logger.warning(
+                "[cover_uploader] cards attempt %d/%d failed: %s\nstderr: %s",
+                attempt, MAX_PUSH_ATTEMPTS, exc, exc.stderr,
+            )
+            if attempt < MAX_PUSH_ATTEMPTS:
+                time.sleep(PUSH_BACKOFF_SECONDS)
+        except Exception as exc:  # pragma: no cover — defensive
+            last_err = exc
+            logger.warning("[cover_uploader] cards unexpected error: %s", exc)
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    logger.error(
+        "[cover_uploader] all %d card attempts failed; last error: %s",
+        MAX_PUSH_ATTEMPTS, last_err,
+    )
+    return []

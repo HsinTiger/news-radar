@@ -21,6 +21,7 @@ Phase 8.14 · 短影片支援（2026-04-19）：
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Dict, Optional
@@ -364,6 +365,295 @@ async def publish_to_ig(
             return {"success": True, "id": publish_data.get("id"), "media_kind": media_kind}
         print(f"[Error: IG] {publish_data}")
         return {"success": False, "error": publish_data}
+
+
+# ====================================================================
+# Carousel（多圖輪播）發布 — Stage 4 of social-carousel
+# --------------------------------------------------------------------
+# 三平台的 CAROUSEL 共通流程：
+#   1. 先逐張建立「子容器」(item container)，每張帶 is_carousel_item=true
+#   2. 收集所有子容器 id
+#   3. 建立「相簿容器」(album container)：media_type=CAROUSEL +
+#      children=逗號串接的子容器 id + caption/text
+#   4. 輪詢相簿容器直到 FINISHED
+#   5. publish 相簿容器（IG: /media_publish, Threads: /threads_publish）
+# FB 的多圖機制不同：用 attached_media 把多張 unpublished photo 接到 /feed。
+# ====================================================================
+
+
+async def publish_ig_carousel(
+    image_urls: list[str],
+    caption: str,
+) -> Dict:
+    """發 IG CAROUSEL（多圖輪播貼文）。
+
+    Graph API carousel 流程（v20.0）：
+      1. 逐張 POST `{base}/media`，params {image_url, is_carousel_item: true}
+         → 拿到每張的 item container creation_id
+      2. 每個 item container 輪詢到 FINISHED（複用 _poll_ig_container_finished）
+      3. POST `{base}/media` 建立相簿容器，params:
+         {media_type: "CAROUSEL", children: "id1,id2,...", caption}
+      4. 輪詢相簿容器到 FINISHED
+      5. POST `{base}/media_publish` with creation_id=相簿容器 id
+
+    IG 規定 carousel 需 2~10 張圖；少於 2 張直接 local_reject。
+    回傳 shape 與 publish_to_ig 一致：{success, id, media_kind: "carousel"}。
+
+    注意：每張子圖 IG 仍會做 aspect ratio / filesize 把關，這裡複用
+    prepare_image_for_ig 逐張預檢，任一張不合規就整篇拒發（carousel 要求
+    所有子圖都成功才能組相簿）。
+    """
+    if _over_limit(caption, IG_MAX):
+        msg = f"IG 文字超限:{len(caption)} > {IG_MAX},拒發"
+        print(f"[Publisher: IG] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    if not image_urls or len(image_urls) < 2:
+        msg = f"IG carousel 需至少 2 張圖,實得 {len(image_urls or [])} 張,拒發"
+        print(f"[Publisher: IG] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    if len(image_urls) > 10:
+        msg = f"IG carousel 上限 10 張,實得 {len(image_urls)} 張,拒發"
+        print(f"[Publisher: IG] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    base = f"https://graph.facebook.com/v20.0/{IG_BUSINESS_ACCOUNT_ID}"
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        # --- 步驟 1+2：逐張建立子容器並輪詢 FINISHED ---
+        child_ids: list[str] = []
+        for idx, raw_url in enumerate(image_urls):
+            # 逐張 pre-flight（aspect ratio / filesize），任一張不合規整篇拒發
+            prep = await prepare_image_for_ig(raw_url)
+            print(prep.log_line())
+            if not prep.is_usable:
+                return {"success": False, "error": {"local_reject": f"image_prep[{idx}]: {prep.reason}"}}
+            image_url = prep.url
+
+            print(f"[Publisher: IG] 建立 carousel 子容器 {idx + 1}/{len(image_urls)}...")
+            item_params = {
+                "image_url": image_url,
+                "is_carousel_item": "true",
+                "access_token": IG_ACCESS_TOKEN,
+            }
+            resp = await client.post(f"{base}/media", params=item_params)
+            item_data = resp.json()
+            if resp.status_code != 200:
+                print(f"[Error: IG] 子容器建立失敗 (#{idx}): {item_data}")
+                return {"success": False, "error": item_data}
+
+            item_id = item_data.get("id")
+            print(f" ↳ 子容器已建立: {item_id},開始輪詢處理狀態...")
+            poll = await _poll_ig_container_finished(client, item_id, IG_ACCESS_TOKEN)
+            if not poll["success"]:
+                print(f"[Error: IG] 子容器處理未完成 (#{idx}): {poll}")
+                return {"success": False, "error": poll}
+            child_ids.append(item_id)
+
+        # --- 步驟 3：建立相簿容器 ---
+        print(f"[Publisher: IG] 建立 CAROUSEL 相簿容器（{len(child_ids)} 張）... ({len(caption)} 字)")
+        album_params = {
+            "media_type": "CAROUSEL",
+            "children": ",".join(child_ids),
+            "caption": caption,
+            "access_token": IG_ACCESS_TOKEN,
+        }
+        resp = await client.post(f"{base}/media", params=album_params)
+        album_data = resp.json()
+        if resp.status_code != 200:
+            print(f"[Error: IG] 相簿容器建立失敗: {album_data}")
+            return {"success": False, "error": album_data}
+
+        album_id = album_data.get("id")
+
+        # --- 步驟 4：輪詢相簿容器 ---
+        print(f" ↳ 相簿容器已建立: {album_id},開始輪詢處理狀態...")
+        poll = await _poll_ig_container_finished(client, album_id, IG_ACCESS_TOKEN)
+        if not poll["success"]:
+            print(f"[Error: IG] 相簿容器處理未完成: {poll}")
+            return {"success": False, "error": poll}
+
+        # --- 步驟 5：publish 相簿容器 ---
+        publish_params = {"creation_id": album_id, "access_token": IG_ACCESS_TOKEN}
+        resp = await client.post(f"{base}/media_publish", params=publish_params)
+        publish_data = resp.json()
+        if resp.status_code == 200:
+            print(f"[Success: IG] Carousel ID: {publish_data.get('id')}")
+            return {"success": True, "id": publish_data.get("id"), "media_kind": "carousel"}
+        print(f"[Error: IG] {publish_data}")
+        return {"success": False, "error": publish_data}
+
+
+async def publish_threads_carousel(
+    image_urls: list[str],
+    text: str,
+) -> Dict:
+    """發 Threads CAROUSEL（多圖輪播）。
+
+    Graph API（graph.threads.net/v1.0）carousel 流程：
+      1. 逐張 POST `{base}/threads`，params:
+         {media_type: "IMAGE", image_url, is_carousel_item: true}
+         → 拿到每張的 item container id
+      2. 每個 item container 輪詢到 FINISHED（複用 _poll_threads_container_finished）
+      3. POST `{base}/threads` 建立相簿容器，params:
+         {media_type: "CAROUSEL", children: "id1,id2,...", text}
+      4. 輪詢相簿容器到 FINISHED
+      5. POST `{base}/threads_publish` with creation_id=相簿容器 id
+
+    Threads carousel 需 2~20 張。回傳 shape 與 publish_to_threads 一致：
+    {success, id, media_kind: "carousel"}。
+    """
+    if _over_limit(text, THREADS_MAX):
+        msg = f"Threads 文字超限:{len(text)} > {THREADS_MAX},拒發（composer 端應先壓短）"
+        print(f"[Publisher: Threads] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    if not image_urls or len(image_urls) < 2:
+        msg = f"Threads carousel 需至少 2 張圖,實得 {len(image_urls or [])} 張,拒發"
+        print(f"[Publisher: Threads] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    if len(image_urls) > 20:
+        msg = f"Threads carousel 上限 20 張,實得 {len(image_urls)} 張,拒發"
+        print(f"[Publisher: Threads] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    base = f"https://graph.threads.net/v1.0/{THREADS_USER_ID}"
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        # --- 步驟 1+2：逐張建立 item 容器並輪詢 FINISHED ---
+        child_ids: list[str] = []
+        for idx, image_url in enumerate(image_urls):
+            print(f"[Publisher: Threads] 建立 carousel 子容器 {idx + 1}/{len(image_urls)}...")
+            item_params = {
+                "media_type": "IMAGE",
+                "image_url": image_url,
+                "is_carousel_item": "true",
+                "access_token": THREADS_ACCESS_TOKEN,
+            }
+            resp = await client.post(f"{base}/threads", params=item_params)
+            item_data = resp.json()
+            if resp.status_code != 200:
+                print(f"[Error: Threads] 子容器建立失敗 (#{idx}): {item_data}")
+                return {"success": False, "error": item_data}
+
+            item_id = item_data.get("id")
+            print(f" ↳ 子容器已建立: {item_id},開始輪詢處理狀態...")
+            poll = await _poll_threads_container_finished(client, item_id, THREADS_ACCESS_TOKEN)
+            if not poll["success"]:
+                print(f"[Error: Threads] 子容器處理未完成 (#{idx}): {poll}")
+                return {"success": False, "error": poll}
+            child_ids.append(item_id)
+
+        # --- 步驟 3：建立相簿容器 ---
+        print(f"[Publisher: Threads] 建立 CAROUSEL 相簿容器（{len(child_ids)} 張）... ({len(text)} 字)")
+        album_params = {
+            "media_type": "CAROUSEL",
+            "children": ",".join(child_ids),
+            "text": text,
+            "access_token": THREADS_ACCESS_TOKEN,
+        }
+        resp = await client.post(f"{base}/threads", params=album_params)
+        album_data = resp.json()
+        if resp.status_code != 200:
+            print(f"[Error: Threads] 相簿容器建立失敗: {album_data}")
+            return {"success": False, "error": album_data}
+
+        album_id = album_data.get("id")
+
+        # --- 步驟 4：輪詢相簿容器 ---
+        print(f" ↳ 相簿容器已建立: {album_id},開始輪詢處理狀態...")
+        poll = await _poll_threads_container_finished(client, album_id, THREADS_ACCESS_TOKEN)
+        if not poll["success"]:
+            print(f"[Error: Threads] 相簿容器處理未完成: {poll}")
+            return {"success": False, "error": poll}
+
+        # --- 步驟 5：publish 相簿容器 ---
+        publish_params = {"creation_id": album_id, "access_token": THREADS_ACCESS_TOKEN}
+        resp = await client.post(f"{base}/threads_publish", params=publish_params)
+        publish_data = resp.json()
+        if resp.status_code == 200:
+            print(f"[Success: Threads] Carousel ID: {publish_data.get('id')}")
+            return {"success": True, "id": publish_data.get("id"), "media_kind": "carousel"}
+        print(f"[Error: Threads] {publish_data}")
+        return {"success": False, "error": publish_data}
+
+
+async def publish_fb_carousel(
+    images: list[str],
+    message: str,
+) -> Dict:
+    """發 FB 多圖貼文（multi-photo feed post）。
+
+    FB 機制與 IG/Threads 的 CAROUSEL 不同——沒有 children/CAROUSEL 容器，
+    而是「attached_media」兩步流程：
+      1. 逐張 POST `{FB_PAGE_ID}/photos`，params {url, published: false}
+         （或本地檔案：files={"source": fh}, params {published: false}）
+         → 拿到每張未發布的 photo id
+      2. POST `{FB_PAGE_ID}/feed`，params:
+         {message, attached_media: JSON list [{"media_fbid": id}, ...]}
+
+    支援 url（http(s)）與本地檔案路徑兩種來源，逐張判斷（mirror publish_to_fb
+    的 url / file 上傳策略）。回傳 shape 與 publish_to_fb 一致：
+    {success, id, media_kind: "carousel"}。
+    """
+    if _over_limit(message, FB_MAX):
+        msg = f"FB 文字超限:{len(message)} > {FB_MAX},拒發"
+        print(f"[Publisher: FB] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
+
+    if not images:
+        return {"success": False, "error": {"local_reject": "FB carousel 必須至少 1 張圖"}}
+
+    base = "https://graph.facebook.com/v20.0"
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # --- 步驟 1：逐張上傳 unpublished photo，收集 photo id ---
+        photo_ids: list[str] = []
+        for idx, image in enumerate(images):
+            endpoint = f"/{FB_PAGE_ID}/photos"
+            params = {"published": "false", "access_token": FB_PAGE_ACCESS_TOKEN}
+
+            if image and os.path.exists(image):
+                print(f"[Publisher: FB] 上傳 carousel 子圖 {idx + 1}/{len(images)}（本地檔案）...")
+                with open(image, "rb") as fh:
+                    files = {"source": fh}
+                    resp = await client.post(f"{base}{endpoint}", params=params, files=files)
+            elif _is_valid_http_url(image):
+                print(f"[Publisher: FB] 上傳 carousel 子圖 {idx + 1}/{len(images)}（URL）...")
+                params["url"] = image
+                resp = await client.post(f"{base}{endpoint}", params=params)
+            else:
+                msg = f"FB carousel 子圖 #{idx} 既非有效 http(s) URL 也非存在的本地檔案: {image!r}"
+                print(f"[Publisher: FB] {msg}")
+                return {"success": False, "error": {"local_reject": msg}}
+
+            photo_data = resp.json()
+            if resp.status_code != 200:
+                print(f"[Error: FB] 子圖上傳失敗 (#{idx}): {photo_data}")
+                return {"success": False, "error": photo_data}
+
+            photo_id = photo_data.get("id")
+            print(f" ↳ 子圖已上傳（未發布）: {photo_id}")
+            photo_ids.append(photo_id)
+
+        # --- 步驟 2：用 attached_media 把多張圖接到 /feed ---
+        print(f"[Publisher: FB] 建立多圖 /feed 貼文（{len(photo_ids)} 張）... ({len(message)} 字)")
+        attached_media = json.dumps([{"media_fbid": pid} for pid in photo_ids])
+        endpoint = f"/{FB_PAGE_ID}/feed"
+        params = {
+            "message": message,
+            "attached_media": attached_media,
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+        }
+        resp = await client.post(f"{base}{endpoint}", params=params)
+        data = resp.json()
+        if resp.status_code == 200:
+            print(f"[Success: FB] Carousel post ID: {data.get('id')}")
+            return {"success": True, "id": data.get("id"), "media_kind": "carousel"}
+        print(f"[Error: FB] {data.get('error', {}).get('message')}")
+        return {"success": False, "error": data}
 
 
 if __name__ == "__main__":
