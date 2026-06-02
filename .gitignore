@@ -9,8 +9,13 @@
 
 # --- 秘鑰 / 本機設定 ---
 .env
+.env.*
 .env.local
 .env.*.local
+*.key
+*.pem
+credentials*
+secrets*
 # macOS / OneDrive duplicate（常見型態："xxx 2"）
 .env 2
 .env.local 2

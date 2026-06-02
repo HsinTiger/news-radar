@@ -1111,8 +1111,8 @@ class ContentStrategy:
             recommendations.append(Recommendation(
                 dimension="hook_type",
                 suggestion=(
-                    "{} 建議優先採用 {} 做開場結構，"
-                    "迴避 {} 模式。".format(platform, best_type, worst_type)
+                    "優先採用 {} 做開場結構，"
+                    "迴避 {} 模式。".format(best_type, worst_type)
                 ),
                 expected_impact="提高 Hook 點擊率與初始互動",
                 confidence=confidence,
