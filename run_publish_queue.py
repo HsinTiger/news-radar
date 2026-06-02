@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
+import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -39,10 +42,16 @@ from src.content_quality_guard import (
     has_blocking_issues,
 )
 from src.local_notify import notify_quality_block
-from src.publisher import publish_to_fb, publish_to_ig, publish_to_threads
+from src.publisher import (
+    publish_to_fb, publish_to_ig, publish_to_threads,
+    publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
+)
 from src.cover_pipeline import prepare_publish_image
-from src.schema import PublishResult
-from src.token_utils import refresh_threads_token
+from src.cover_uploader import upload_cards
+from src.schema import PublishResult, CarouselCards
+# NOTE: substack_radar.cards is a PIL RENDERER (no LLM/brain), so importing it
+# here does NOT breach the "no composer/scorer/reflector" cloud firewall.
+from substack_radar.cards import build_cards, render_cards
 
 # ---------- Cadence 參數（與 config.yaml 的 min/max_interval_minutes 對齊）----------
 MIN_INTERVAL_SECONDS = 60 * 60           # 1h upper bound（頻率上限 = 至少間隔 60 min）
@@ -166,6 +175,16 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
     # cover_pipeline defaults to "macro" (gray chip).
     topic_category = row["topic_category"] if "topic_category" in row.keys() else None
 
+    # Phase 10 (2026-06-03)：2–4 圖卡 carousel（compose 階段持久化在 draft 層）。
+    # 有內容時每平台優先發 carousel，任何一步失敗就 fall through 到單圖。
+    carousel = None
+    cjson = row["carousel_json"] if "carousel_json" in row.keys() else None
+    if cjson:
+        try:
+            carousel = CarouselCards.model_validate_json(cjson)
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠️ carousel_json 解析失敗 → 純單圖：{exc}")
+
     # Map DB-side platform names ("facebook"/"instagram"/"threads") to the
     # cover_pipeline platform_key codes ("fb"/"ig"/"threads").
     _COVER_KEY = {"facebook": "fb", "instagram": "ig", "threads": "threads"}
@@ -194,6 +213,41 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
         if cover_key is None:
             print(f"   ⚠️ 未知平台 {platform}，跳過")
             continue
+
+        # Phase 10 carousel-first (2026-06-03)：render 2–4 卡 → upload → 發 carousel；
+        # 任何一步失敗都 fall through 到下面的單圖路徑（發文絕不因圖卡失敗中斷）。
+        if carousel is not None:
+            try:
+                cards = build_cards(title=pd_row["title"] or "", subtitle="", carousel=carousel)
+                if len(cards) >= 2:
+                    cdir = Path(tempfile.mkdtemp(prefix="cards_"))
+                    card_paths = render_cards(
+                        cards=cards, topic_category=topic_category or "other",
+                        aspect=cover_key, output_dir=cdir,  # ig/fb/threads ∈ ASPECTS
+                    )
+                    slug = re.sub(r"[^A-Za-z0-9_]", "", f"{draft_id}_{cover_key}")[:40]
+                    card_urls = upload_cards(card_paths, slug)
+                    if len(card_urls) >= 2:
+                        if platform == "instagram":
+                            cresult = await publish_ig_carousel(card_urls, full_text)
+                        elif platform == "threads":
+                            cresult = await publish_threads_carousel(card_urls, full_text)
+                        else:  # facebook
+                            cresult = await publish_fb_carousel(card_urls, full_text)
+                        if cresult.get("success"):
+                            dbmod.log_publish(conn, PublishResult(
+                                draft_id=draft_id, platform=platform,
+                                platform_post_id=cresult.get("id"),
+                                posted_at=datetime.now(timezone.utc).isoformat(),
+                                success=True, error_message=None,
+                            ))
+                            any_success = True
+                            print(f"   ✅ [{platform}] carousel 成功 id={cresult.get('id')}（{len(card_urls)} 卡）")
+                            continue
+                        print(f"   ⚠️ [{platform}] carousel 失敗 → 降級單圖：{str(cresult.get('error'))[:160]}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ⚠️ [{platform}] carousel 流程例外 → 降級單圖：{exc}")
+
         prep = await prepare_publish_image(
             platform_key=cover_key,
             original_image_url=image_url,

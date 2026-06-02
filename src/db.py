@@ -116,6 +116,11 @@ def init_db() -> None:
         _migrate_add_column_if_missing(
             conn, "drafts", "queue_status", "TEXT"
         )
+        # Phase 10 (2026-06-03)：把 carousel 圖卡內容（CarouselCards JSON）存在 draft 層，
+        # 讓雲端發文的 run_publish_queue 能 render+發 carousel（render 非 LLM，不破壞防火牆）。
+        _migrate_add_column_if_missing(
+            conn, "drafts", "carousel_json", "TEXT"
+        )
         # index 可能首次建立時已存在、若是 migration 情境要補
         try:
             conn.execute(
@@ -505,6 +510,20 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> None:
             draft.generated_at,
             draft.status,
         ),
+    )
+    conn.commit()
+
+
+def set_carousel_json(conn: sqlite3.Connection, draft_id: str, carousel_json: Optional[str]) -> None:
+    """Persist the 2–4 card carousel content (CarouselCards JSON) on the draft row.
+
+    Stored at draft level (shared by all platforms). Called by run_pipeline right
+    after insert_draft so the cloud publisher (run_publish_queue) can render+post
+    carousels. NULL/empty → cloud falls back to single-image, same as before.
+    """
+    conn.execute(
+        "UPDATE drafts SET carousel_json = ? WHERE id = ?",
+        (carousel_json, draft_id),
     )
     conn.commit()
 

@@ -654,6 +654,10 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
 
     # 5. 寫入 drafts 表
     dbmod.insert_draft(conn, draft)
+    # Phase 10 (2026-06-03)：把 carousel 圖卡內容持久化到 draft 層，讓雲端
+    # run_publish_queue 能 render+發 carousel（沒有則維持單圖）。
+    if bundle.carousel is not None:
+        dbmod.set_carousel_json(conn, draft_id, bundle.carousel.model_dump_json())
 
     # 6. 寫入三個 platform_drafts row
     created_at = datetime.now(timezone.utc).isoformat()
