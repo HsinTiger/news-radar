@@ -59,6 +59,7 @@ from dotenv import load_dotenv
 from src.llm_brain import call_for_json
 from src.schema import MultiPlatformDraft, PlatformVariant
 from src.cta_pool import decide_cta, get_cta_prompt_fragment
+from src.locale_tw import fix_mainland_text
 
 # 定位 .env 與設定
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -244,8 +245,16 @@ def _validate_and_fix_hashtags(variant: PlatformVariant) -> PlatformVariant:
 
 
 def finalize_variant(variant: PlatformVariant, platform: str) -> Tuple[PlatformVariant, str, bool]:
-    """統一出口：修 hashtag、壓字數、組 full_text、回傳 (variant, full_text, ok)。"""
+    """統一出口：修 hashtag、修大陸用語、壓字數、組 full_text、回傳 (variant, full_text, ok)。"""
     fixed = _validate_and_fix_hashtags(variant)
+    # 大陸→台灣用語決定性修正（與 substack 共用 src/locale_tw 同一張表）。
+    # 在壓字數之前修，char_count 才會算到修正後的字串。
+    nt, t_fixes = fix_mainland_text(fixed.title or "")
+    nb, b_fixes = fix_mainland_text(fixed.body or "")
+    if t_fixes or b_fixes:
+        fixed = fixed.model_copy(update={"title": nt, "body": nb})
+        for m in t_fixes + b_fixes:
+            print(f"   ↳ [{platform} 用語] {m}")
     limit = PLATFORM_LIMITS.get(platform, 500)
     squeezed, ok = _squeeze_to_limit(fixed, limit, platform)
     full_text = assemble_full_text(squeezed, platform)
@@ -452,6 +461,27 @@ async def compose_multi_platform(
     # 兜底：若 LLM 沒填 image_url 但我們有網址，沿用
     if not draft.image_url:
         draft.image_url = og_image
+
+    # 大陸→台灣用語：修圖卡 carousel 文字（圖卡不經 finalize_variant，需在此修一次）。
+    if draft.carousel is not None:
+        c = draft.carousel
+        c_fixes: List[str] = []
+        for attr in ("insight_statement", "insight_support", "stat_caption"):
+            val = getattr(c, attr, None)
+            if val:
+                new_val, fx = fix_mainland_text(val)
+                if fx:
+                    setattr(c, attr, new_val)
+                    c_fixes += fx
+        if c.takeaways:
+            new_tks: List[str] = []
+            for t in c.takeaways:
+                ntk, fx = fix_mainland_text(t or "")
+                new_tks.append(ntk)
+                c_fixes += fx
+            c.takeaways = new_tks
+        for m in c_fixes:
+            print(f"   ↳ [carousel 用語] {m}")
 
     return draft
 
