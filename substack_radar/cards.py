@@ -70,10 +70,8 @@ def _draw_cover(W, H, pal, card, idx, total):
     ink, acc, sub = (_hx(pal[k]) for k in ("ink", "acc", "sub"))
     mw = W - 2 * pad
     title = card.get("title", "")
-    # auto-fit hero
-    f = _font(FONT_TITLE_PATH, W * 0.10)
-    ls = _wrap(d, title, f, mw)
-    lh = int(W * 0.10 * 1.18)
+    # auto-fit hero (largest that fits ≤5 lines within ~half the canvas).
+    f, ls, lh = _font(FONT_TITLE_PATH, W * 0.072), _wrap(d, title, _font(FONT_TITLE_PATH, W * 0.072), mw), int(W * 0.072 * 1.18)
     for ptr in range(118, 56, -4):
         pt = W * ptr / 1000
         ff = _font(FONT_TITLE_PATH, pt)
@@ -82,20 +80,51 @@ def _draw_cover(W, H, pal, card, idx, total):
         if len(lls) <= 5 and len(lls) * llh <= int(H * 0.52):
             f, ls, lh = ff, lls, llh
             break
-    y = round(H * 0.17)
+    sf = _font(FONT_SUBTITLE_PATH, W * 0.032)
+    sub_lines = _wrap(d, card.get("subtitle", ""), sf, mw)[:3] if card.get("subtitle") else []
+    sub_lh = round(W * 0.046)
+    sub_gap = round(H * 0.045) if sub_lines else 0
+    # Vertically center the (hero + subtitle) block between the kicker and slogan
+    # so portrait covers don't leave a dead gap in the middle.
+    block_h = len(ls) * lh + sub_gap + len(sub_lines) * sub_lh
+    region_top, region_bot = round(H * 0.165), H - round(H * 0.11)
+    y = region_top + max(0, (region_bot - region_top - block_h) // 2)
     for ln in ls:
         d.text((pad, y), ln, font=f, fill=ink)
         y += lh
-    sub_txt = card.get("subtitle", "")
-    if sub_txt:
-        sf = _font(FONT_SUBTITLE_PATH, W * 0.032)
-        sy = H - round(H * 0.20)
-        for ln in _wrap(d, sub_txt, sf, mw)[:3]:
-            d.text((pad, sy), ln, font=sf, fill=sub)
-            sy += round(W * 0.046)
+    if sub_lines:
+        y += sub_gap
+        for ln in sub_lines:
+            d.text((pad, y), ln, font=sf, fill=sub)
+            y += sub_lh
     by = H - round(H * 0.085)
     d.line((pad, by, W - pad, by), fill=ink, width=1)
     d.text((pad, by + round(H * 0.016)), SLOGAN, font=_font(FONT_BRAND_PATH, W * 0.024), fill=sub)
+    return img
+
+
+def _draw_stat(W, H, pal, card, idx, total):
+    """A single dominant number/figure card — the article's biggest data point."""
+    img, d, pad = _frame(W, H, pal, idx, total)
+    ink, acc, sub = (_hx(pal[k]) for k in ("ink", "acc", "sub"))
+    mw = W - 2 * pad
+    d.text((pad, round(H * 0.16)), card.get("label", "關鍵數字"), font=_font(FONT_TITLE_PATH, W * 0.038), fill=acc)
+    number = card.get("number", "")
+    nf = _font(FONT_TITLE_PATH, W * 0.10)
+    for ptr in range(300, 100, -8):
+        ff = _font(FONT_TITLE_PATH, W * ptr / 1000)
+        if d.textlength(number, font=ff) <= mw:
+            nf = ff
+            break
+    ny = round(H * 0.30)
+    d.text((pad, ny), number, font=nf, fill=acc)
+    cap = card.get("caption", "")
+    if cap:
+        cf = _font(FONT_SUBTITLE_PATH, W * 0.038)
+        cy = ny + int(nf.size * 1.05) + round(H * 0.03)
+        for ln in _wrap(d, cap, cf, mw):
+            d.text((pad, cy), ln, font=cf, fill=ink)
+            cy += round(W * 0.054)
     return img
 
 
@@ -153,7 +182,7 @@ def _draw_takeaway(W, H, pal, card, idx, total):
     return img
 
 
-_RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "takeaway": _draw_takeaway}
+_RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat, "takeaway": _draw_takeaway}
 
 
 def render_cards(
