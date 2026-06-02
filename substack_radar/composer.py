@@ -266,6 +266,66 @@ def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
     return []
 
 
+# 盤古之白：中文與半形英數之間補一個空格（借 baoyu-format-markdown 的排版慣例，
+# 不裝 skill）。保護 code span / markdown 連結 / URL / blockquote 不被插空格。
+_CJK = r"一-鿿㐀-䶿"
+_PROTECT_SPAN = re.compile(
+    r"`[^`]*`"                       # inline code
+    r"|!?\[[^\]]*\]\([^)]*\)"        # markdown link / image
+    r"|https?://\S+|www\.\S+"        # bare URL
+)
+_PANGU_A = re.compile(rf"([{_CJK}])([A-Za-z0-9])")
+_PANGU_B = re.compile(rf"([A-Za-z0-9])([{_CJK}])")
+
+
+def autofix_cjk_spacing(draft: "SubstackDraft") -> List[str]:
+    """在中文字與半形英數之間補空格（盤古之白）。決定性、可逆性低風險的排版 polish。
+
+    紀律（與 autofix_dashes 同精神）：
+      - 逐行處理；**跳過 fenced code block（``` 圍起）與 blockquote 行（>）**，
+        §13 視覺標記/footer 的英文 prompt 與 URL 不動。
+      - 行內先把 code span / markdown 連結 / 裸 URL 抽成 placeholder 再補空格，
+        還原後不會在網址或連結裡塞空格。
+      - 全形標點不在 CJK 表意文字範圍內，故「中，A」「）GPT」不會被加空格。
+    只動 body_markdown；回傳一則 fix 訊息（或 []）。
+    """
+    body = draft.body_markdown or ""
+    if not body:
+        return []
+
+    added = 0
+    in_fence = False
+    out_lines: List[str] = []
+    for line in body.split("\n"):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(line)
+            continue
+        if in_fence or stripped.startswith(">"):
+            out_lines.append(line)
+            continue
+
+        held: List[str] = []
+
+        def _stash(m: "re.Match") -> str:
+            held.append(m.group(0))
+            return f"\x00{len(held) - 1}\x00"
+
+        protected = _PROTECT_SPAN.sub(_stash, line)
+        new_line, n1 = _PANGU_A.subn(r"\1 \2", protected)
+        new_line, n2 = _PANGU_B.subn(r"\1 \2", new_line)
+        if held:
+            new_line = re.sub(r"\x00(\d+)\x00", lambda m: held[int(m.group(1))], new_line)
+        added += n1 + n2
+        out_lines.append(new_line)
+
+    if added:
+        draft.body_markdown = "\n".join(out_lines)
+        return [f"[自動修正:盤古之白] 中英數間補空格 ×{added}"]
+    return []
+
+
 # Word cap envelope (2026-05-12 升級):
 #   Hsin 把 1500 字 hard cap 撤掉，因為 deep-research 後的素材值得長文展開。
 #   新預設 3500 字上限，下限按 60% 比例縮為 ~2000 字（避免短打硬填到上限）。

@@ -33,14 +33,18 @@ _PALETTES: Dict[str, Dict[str, str]] = {
     "product": {"bg": "#E8EEF0", "ink": "#141414", "acc": "#1C6378", "sub": "#566069"},
     "policy":  {"bg": "#EBE3CF", "ink": "#141414", "acc": "#7A4A12", "sub": "#6B5E45"},
     "opinion": {"bg": "#EAE7E0", "ink": "#141414", "acc": "#3F4A7A", "sub": "#5A5A52"},
+    # 2026-06-02 新增（借 ui-ux-pro-max 編輯式配色，純加桶不動現有 5 組）：
+    # earnings = 財報/錢 → 森林綠；supply = 供應鏈/工業 → 鋼藍。語意明確又與現有桶可區分。
+    "earnings": {"bg": "#ECEFE6", "ink": "#141414", "acc": "#2F6B3D", "sub": "#55604E"},
+    "supply":   {"bg": "#E6E9EC", "ink": "#141414", "acc": "#34516B", "sub": "#586573"},
 }
 
 # Pipeline topic_category → palette bucket. Unknown → "opinion" (the neutral default).
 _TOPIC_TO_BUCKET: Dict[str, str] = {
-    "us_stocks": "market", "tw_stocks": "market", "earnings": "market",
+    "us_stocks": "market", "tw_stocks": "market", "earnings": "earnings",
     "ai_model": "ai", "ai_agent": "ai", "ai_application": "ai",
     "tech_product_launch": "product",
-    "policy_geopolitics": "policy", "supply_chain": "policy",
+    "policy_geopolitics": "policy", "supply_chain": "supply",
     "other": "opinion",
 }
 
