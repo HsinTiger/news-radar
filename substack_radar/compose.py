@@ -1278,7 +1278,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
     
     # 5d) AI Inline images (2026-06-01 Hsin directive)
     # Scan for 🖼 markers and replace them with actual generated images.
-    await generate_inline_images(article_md_path=article_md, output_dir=local_dir)
+    # Non-essential: image-gen failure (Pro quota exhausted, no temp dir, …) must
+    # NOT flip an otherwise-successful draft run to exit 1 (2026-06-03 evening fix).
+    try:
+        await generate_inline_images(article_md_path=article_md, output_dir=local_dir)
+    except Exception as exc:
+        print(f"[Images] ⚠️ inline image gen failed (continuing): {exc}")
 
     print(f"[Files] wrote {local_dir}")
 
@@ -1295,8 +1300,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
             cover_path=cover_path,
         )
 
-    # 8) Update metaphor history
-    append_metaphor_domain(draft.metaphor_domain_used)
+    # 8) Update metaphor history — best-effort; draft is already pushed, so a
+    # housekeeping failure must not flip the run to exit 1.
+    try:
+        append_metaphor_domain(draft.metaphor_domain_used)
+    except Exception as exc:
+        print(f"[PostDraft] ⚠️ append_metaphor_domain failed (continuing): {exc}")
 
     # 9) Notify Hsin via configured channel (Gmail / macOS / both).
     # Read final article markdown back (footer + cover prompts already appended).
