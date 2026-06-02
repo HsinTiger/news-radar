@@ -45,6 +45,14 @@ def _wrap(draw, text: str, font, max_w: int):
             cur = tok
     if cur:
         lines.append(cur)
+    # Avoid a lone trailing CJK character (orphan): pull the last char of the
+    # previous line down so the final line has ≥2 chars. Skip if that char is
+    # latin/alphanumeric so words like "API" aren't split.
+    if len(lines) >= 2 and len(lines[-1]) == 1 and len(lines[-2]) >= 2:
+        tail = lines[-2][-1]
+        if not (tail.isascii() and tail.isalnum()):
+            lines[-2] = lines[-2][:-1]
+            lines[-1] = tail + lines[-1]
     return lines
 
 
