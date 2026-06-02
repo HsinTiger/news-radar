@@ -620,11 +620,25 @@ def render_substack_cover(
 ) -> Optional[Path]:
     """Render the 1456×816 Substack hero cover. Returns saved PNG path or None.
 
-    If ``source_image_path`` is None, fall back to the synthetic noise base
-    (existing behavior). To use AI-generated covers, the caller should run
-    ``maybe_generate_ai_cover`` first and pass the returned path here as
-    ``source_image_path``.
+    2026-06-02: default is now the flat typographic "promise thumbnail" poster
+    with a per-category color palette (substack_radar/promise_cover.py) — big
+    curiosity-hook title that's readable as a feed/email thumbnail. The old
+    blurred-photo + navy-overlay path is kept below as a fallback. Pass
+    ``source_image_path`` only when you explicitly want the legacy photo cover.
     """
+    if source_image_path is None:
+        try:
+            from substack_radar.promise_cover import render_promise_cover
+
+            return render_promise_cover(
+                title=title,
+                subtitle=subtitle,
+                topic_category=topic_category or "other",
+                output_dir=output_dir,
+            )
+        except Exception as exc:
+            print(f"[Cover] ⚠️ promise_cover failed ({exc}); falling back to legacy cover.")
+
     try:
         from PIL import Image
         from src.cover_renderer import CoverInput, render_cover
