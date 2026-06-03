@@ -900,7 +900,7 @@ function renderAnalytics() {
   var page = document.getElementById('page-analytics');
 
   // Destroy existing charts before re-render
-  ['engagementTrend', 'topicRadar', 'lifecycle'].forEach(function (k) {
+  ['engagementTrend', 'topicRadar', 'lifecycle', 'dailyPosts'].forEach(function (k) {
     if (charts[k]) { charts[k].destroy(); delete charts[k]; }
   });
 
@@ -914,6 +914,11 @@ function renderAnalytics() {
     '  <h2>分析</h2>',
     '  <p>互動趨勢、主題表現、貼文生命週期</p>',
     '</div>',
+    '<div class="stats-grid" id="analytics-stats">',
+    '  <div class="stat-card" id="stat-total-published"><div class="sl">📦 累計發布</div><div class="sv">-</div></div>',
+    '  <div class="stat-card" id="stat-total-likes"><div class="sl">❤️ 累計互動</div><div class="sv">-</div></div>',
+    '  <div class="stat-card"><div class="sl">📅 分析期</div><div class="sv" style="font-size:.9rem">30 天</div></div>',
+'</div>',
     '<div class="card">',
     '  <h3 style="margin-bottom:12px;color:var(--text-secondary)">📈 互動率趨勢 (各平台)</h3>',
     '  <div class="chart-container"><canvas id="chart-engagement-trend"></canvas></div>',
@@ -927,7 +932,11 @@ function renderAnalytics() {
     '    <h3 style="margin-bottom:12px;color:var(--text-secondary)">🔄 貼文生命週期</h3>',
     '    <div class="chart-container"><canvas id="chart-lifecycle"></canvas></div>',
     '  </div>',
-    '</div>'
+    '</div>',
+'<div class="card">',
+  '<h3 style="margin-bottom:12px;color:var(--text-secondary)">📊 每日發布數</h3>',
+  '<div class="chart-container"><canvas id="chart-daily-posts"></canvas></div>',
+'</div>'
   ].join('\n');
 
   // Init charts after DOM paint
@@ -935,6 +944,8 @@ function renderAnalytics() {
     renderEngagementTrend();
     renderTopicRadar();
     renderLifecycleChart();
+    renderDailyPosts();
+    updateAnalyticsStats();
   }, 50);
 }
 
@@ -1024,6 +1035,29 @@ function renderEngagementTrend() {
   } catch (e) {
     console.error('Engagement trend chart error:', e);
   }
+}
+
+
+
+function updateAnalyticsStats() {
+  var totalPub = qOne("SELECT COUNT(*) as c FROM publish_log WHERE success=1");
+  var totalEng = qOne("SELECT SUM(COALESCE(likes,0)+COALESCE(comments,0)) as c FROM engagement_stats");
+  var el1 = document.getElementById('stat-total-published'); if(el1) el1.querySelector('.sv').textContent = totalPub ? totalPub.c : 0;
+  var el2 = document.getElementById('stat-total-likes'); if(el2) el2.querySelector('.sv').textContent = totalEng ? totalEng.c : 0;
+}
+
+function renderDailyPosts() {
+  var canvas = document.getElementById('chart-daily-posts');
+  if (!canvas) return;
+  var data = q("SELECT DATE(p.posted_at) as day, p.platform, COUNT(*) as cnt FROM publish_log p WHERE p.success = 1 AND p.posted_at >= DATE('now', '-14 days') GROUP BY DATE(p.posted_at), p.platform ORDER BY day");
+  if (data.length === 0) { var c2 = canvas.getContext('2d'); if (c2) c2.clearRect(0,0,canvas.width,canvas.height); return; }
+  var days = {}; data.forEach(function(d){days[d.day]=true}); var dayList = Object.keys(days).sort();
+  var pm={facebook:'FB',instagram:'IG',threads:'Threads'}; var pc={facebook:'#1877F2',instagram:'#E4405F',threads:'#000000'};
+  var ds=[]; Object.keys(pm).forEach(function(p){
+    ds.push({label:pm[p],data:dayList.map(function(d){for(var i=0;i<data.length;i++){if(data[i].day===d&&data[i].platform===p)return data[i].cnt}return 0}),backgroundColor:pc[p],borderRadius:3});
+  });
+  var ctx=canvas.getContext('2d');if(!ctx)return;
+  try{charts.dailyPosts=new Chart(ctx,{type:'bar',data:{labels:dayList,datasets:ds},options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:true,ticks:{color:'#5f6368'},grid:{color:'#303446'}},y:{stacked:true,beginAtZero:true,ticks:{color:'#5f6368'},grid:{color:'#303446'}}},plugins:{legend:{labels:{color:'#9aa0a6',font:{size:11}}}}}})}catch(e){console.error('Daily posts chart error:',e)}
 }
 
 function renderTopicRadar() {

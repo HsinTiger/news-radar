@@ -502,6 +502,7 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     content = row["clean_markdown"] or ""
     og_image = row["og_image_url"]
     news_url = row["url"]
+    tags_raw = row.get("tags") if "tags" in row.keys() else None
 
     print(f"\n[Pipeline] 處理新聞: {title[:40]}...")
 
@@ -574,7 +575,18 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     # missing-image case, so all three platforms are always publishable.
     # The earlier `is_accessible` gate caused ~30% of drafts to ship
     # FB-only.
+    # === 2026-06-03: Parse platform tags from user submissions ===
+    # tags_json stores ["platform:fb", "platform:ig", ...] for user submissions
     active_platforms = ["fb", "ig", "threads"]
+    if tags_raw:
+        try:
+            tags_list = json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+            plat_tags = [t.replace("platform:", "") for t in tags_list if str(t).startswith("platform:")]
+            if plat_tags:
+                active_platforms = plat_tags
+                print(f"   \u21b7 [UserSubmission] \u4f7f\u7528\u8005\u6307\u5b9a\u5e73\u53f0: {active_platforms}")
+        except (json.JSONDecodeError, TypeError):
+            pass
     if not is_accessible:
         print(
             "   ↳ [Note] 原圖不可存取，IG/Threads 將使用 cover_pipeline 的 "
