@@ -12,6 +12,7 @@ News Radar · Pipeline 主程式（Milestone 3.1 · Multi-Platform Native）
 """
 import asyncio
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple, Optional

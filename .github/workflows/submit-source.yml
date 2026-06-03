@@ -1,0 +1,64 @@
+name: 📤 Submit Source (手動提交)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_type:
+        description: "來源類型"
+        required: true
+        default: "url"
+        type: choice
+        options:
+          - url
+          - text
+          - youtube
+      content:
+        description: "內容（URL / 全文 / YouTube 網址）"
+        required: true
+        type: string
+      platforms:
+        description: "目標平台（逗號分隔: fb,ig,threads）"
+        required: false
+        default: "fb,ig,threads"
+        type: string
+      note:
+        description: "備註 / 標題（選填）"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -q
+
+      - name: Process submission
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python scripts/submit_source.py \
+            --${{ inputs.source_type }} "${{ inputs.content }}" \
+            --platforms "${{ inputs.platforms }}" \
+            --note "${{ inputs.note }}" 2>&1
+
+      - name: Upload DB as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-db
+          path: data/01_harvest/news_radar.db
+          retention-days: 7
+          if-no-files-found: warn
