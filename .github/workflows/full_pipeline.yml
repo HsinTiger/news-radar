@@ -111,7 +111,7 @@ jobs:
           LITELLM_MODEL: gemini/gemini-2.5-flash
           PYTHONUNBUFFERED: "1"
         run: |
-          python run_pipeline.py --publish-now 2>&1 | tee logs/pipeline_last.log
+          python run_pipeline.py --compose-only 2>&1 | tee logs/pipeline_last.log
 
       - name: "🔍 [VERIFY] Compose — independent verifier script"
         if: always()
