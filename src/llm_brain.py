@@ -30,6 +30,11 @@ News Radar · LLM Brain (Phase 8.19)
     # 用 result.data；需要的話看 result.provider 決定後續動作
     return result.data
 """
+
+import os
+os.environ.setdefault("LITELLM_LOG", "WARNING")
+os.environ.setdefault("LITELLM_SUPPRESS_FEEDBACK", "1")
+
 from __future__ import annotations
 
 import asyncio

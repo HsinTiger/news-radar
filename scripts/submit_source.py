@@ -275,6 +275,68 @@ def process_image(image_url: str, note: str = "", platforms: list = None) -> dic
     return {"status": "created", "id": news_id}
 
 
+_IMAGE_DIR = SUBMISSIONS_DIR / "uploaded_images"
+
+def process_image_base64(base64_data: str, filename: str = "upload.jpg", caption: str = "", platforms: list = None) -> dict:
+    """Save base64 image data as file + news_item."""
+    import base64
+    platforms = platforms or ["fb", "ig", "threads"]
+    
+    # Parse base64 data URL (e.g. data:image/jpeg;base64,/9j...)
+    if "," in base64_data:
+        header, b64 = base64_data.split(",", 1)
+    else:
+        b64 = base64_data
+        header = ""
+    
+    # Determine extension
+    ext = "jpg"
+    if "png" in header:
+        ext = "png"
+    elif "heic" in header or "heif" in header:
+        ext = "heic"
+    
+    _ensure_dirs()
+    _IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    safe_name = hashlib.md5(b64.encode()).hexdigest()[:12]
+    img_filename = f"{safe_name}.{ext}"
+    img_path = _IMAGE_DIR / img_filename
+    
+    try:
+        img_bytes = base64.b64decode(b64)
+        img_path.write_bytes(img_bytes)
+    except Exception as e:
+        return {"status": "error", "message": f"Base64 decode failed: {e}"}
+    
+    news_id = hashlib.sha1(f"user_image_{safe_name}".encode()).hexdigest()
+    title = caption or filename
+    
+    item = NewsItem(
+        id=news_id,
+        feed_name="user_submission",
+        feed_tier="primary",
+        source_type="article",
+        url=f"file://{img_path}",
+        title=title,
+        published_at=datetime.now(timezone.utc).isoformat(),
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        clean_markdown=f"User submitted image: {filename}\n\nCaption: {caption}" if caption else f"User submitted image: {filename}",
+        word_count=len(caption or "") + 5,
+        og_image_url=str(img_path),
+        tags=["user_submission", "user_image", "base64_upload"] + [f"platform:{p}" for p in platforms],
+        status="fetched",
+    )
+    conn = dbmod.get_conn()
+    if dbmod.news_exists(conn, news_id):
+        conn.close()
+        return {"status": "already_exists", "id": news_id, "path": str(img_path)}
+    dbmod.upsert_news(conn, item)
+    conn.close()
+    _append_processed({"type": "image_base64", "filename": filename, "platforms": platforms}, "created")
+    return {"status": "created", "id": news_id, "path": str(img_path), "size_bytes": len(img_bytes)}
+
+
 # ====================================================================
 # CLI
 # ====================================================================
@@ -285,6 +347,10 @@ def main():
     parser.add_argument("--text", type=str, help="Article text body")
     parser.add_argument("--yt", type=str, help="YouTube video URL")
     parser.add_argument("--image", type=str, help="Image URL")
+    parser.add_argument("--image-base64", type=str, help="Base64 image data (from mobile upload)")
+    parser.add_argument("--image-filename", type=str, default="upload.jpg", help="Original filename")
+    parser.add_argument("--image-caption", type=str, default="", help="Image caption")
+    parser.add_argument("--from-pending", action="store_true", help="Process all pending submission files")
     parser.add_argument("--note", type=str, default="", help="Editorial note")
     parser.add_argument("--platforms", type=str, default="fb,ig,threads",
                        help="Comma-separated platforms")
@@ -303,10 +369,11 @@ def main():
         result = process_youtube(args.yt, args.note, platforms)
     elif args.image:
         result = process_image(args.image, args.note, platforms)
+    elif args.image_base64:
+        result = process_image_base64(args.image_base64, args.image_filename, args.image_caption, platforms)
     else:
-        # No CLI args: process all pending files
-        return process_pending()
-
+        result = process_pending()
+    
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

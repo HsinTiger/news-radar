@@ -28,6 +28,8 @@ permissions:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     timeout-minutes: 45
 
     steps:
@@ -86,6 +88,14 @@ jobs:
             date -u -v-2H +%Y-%m-%dT%H:%M:%S+00:00 > state/last_harvest.txt 2>/dev/null || \
             python3 -c "from pathlib import Path; Path('state/last_harvest.txt').write_text('2026-06-01T00:00:00+00:00')"
           fi
+
+      # ========== STAGE 0: USER SUBMISSIONS ==========
+      - name: "📤 [STAGE] Process user-submitted sources"
+        continue-on-error: true
+        run: |
+          echo "=== Pending Sources ==="
+          python scripts/submit_source.py --from-pending 2>&1 | tee logs/submissions_last.log
+          echo "=== Sources Complete ==="
 
       # ========== STAGE 1: HARVEST ==========
       - name: "🌾 [STAGE] Harvest RSS → clean → DB"
