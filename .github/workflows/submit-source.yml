@@ -29,14 +29,21 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   submit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
 
       - uses: actions/setup-python@v6
         with:
@@ -45,6 +52,14 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt -q
+
+      - name: Restore DB
+        run: |
+          mkdir -p data/01_harvest
+          if [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB: $(du -h data/01_harvest/news_radar.db | cut -f1)"
+          fi
 
       - name: Process submission
         env:
@@ -55,10 +70,26 @@ jobs:
             --platforms "${{ inputs.platforms }}" \
             --note "${{ inputs.note }}" 2>&1
 
-      - name: Upload DB as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: updated-db
-          path: data/01_harvest/news_radar.db
-          retention-days: 7
-          if-no-files-found: warn
+      - name: Persist DB to state branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ ! -f data/01_harvest/news_radar.db ]; then
+            echo "[skip] no DB to persist"
+            exit 0
+          fi
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+          mkdir -p data/01_harvest
+          cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] no change"
+            exit 0
+          fi
+          git commit -q -m "state: manual source submission"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" state
