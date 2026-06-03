@@ -118,33 +118,33 @@ tr:hover td{background:var(--bg4)}
 /* Toast */
 #toast-container{position:fixed;top:12px;right:12px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
 /* Visibility */
-.mob,.mtop,.mdrawer,.bnav{display:none!important}
-.desk{display:flex}
+.mob-only,.mobile-top,.mobile-drawer,.bottom-nav{display:none!important}
+.desk-only{display:flex}
 
 /* ==============================
    MOBILE (<768px)
    ============================== */
 @media(max-width:768px){
-  .desk{display:none!important}
-  .mob,.mtop,.bnav{display:flex!important}
-  body{padding-top:48px;padding-bottom:60px}
-  /* Top bar */
-  .mtop{position:fixed;top:0;left:0;right:0;height:48px;background:var(--bg2);border-bottom:1px solid var(--bd);align-items:center;padding:0 10px;gap:6px;z-index:200}
-  .mob-menu{background:none;border:none;color:var(--tx);font-size:1.4rem;padding:4px}
+  .desk-only{display:none!important}
+  .mob-only,.mobile-top,.bottom-nav{display:flex!important}
+  body{padding-top:calc(48px + env(safe-area-inset-top,0));padding-bottom:calc(60px + env(safe-area-inset-bottom,0))}
+  /* Top bar — height extends below the Dynamic Island / notch */
+  .mobile-top{position:fixed;top:0;left:0;right:0;box-sizing:border-box;min-height:calc(48px + env(safe-area-inset-top,0));padding-top:env(safe-area-inset-top,0);padding-left:max(10px,env(safe-area-inset-left,0));padding-right:max(10px,env(safe-area-inset-right,0));background:var(--bg2);border-bottom:1px solid var(--bd);align-items:center;gap:6px;z-index:200}
+  .mob-menu-btn{background:none;border:none;color:var(--tx);font-size:1.4rem;padding:4px}
   .mob-title{flex:1;font-weight:600;font-size:.9rem}
-  .mob-dot{font-size:.9rem}
+  .mob-status{font-size:.9rem}
   /* Drawer */
-  .mdrawer{position:fixed;top:0;left:-270px;bottom:0;width:270px;background:var(--bg2);border-right:1px solid var(--bd);flex-direction:column;z-index:300;transition:left.2s}
-  .mdrawer.open{left:0}
-  .mdrawer-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid var(--bd);font-weight:600}
-  .mdrawer-hdr button{background:none;border:none;color:var(--tx3);font-size:1.3rem}
-  .mdrawer-nav{flex:1;padding:6px}
-  .mdrawer-nav .nav-item{font-size:.9rem;padding:12px 14px}
-  .mdrawer-ftr{padding:12px 14px;border-top:1px solid var(--bd)}
+  .mobile-drawer{position:fixed;top:0;left:-290px;bottom:0;width:270px;box-sizing:border-box;padding-top:env(safe-area-inset-top,0);padding-left:env(safe-area-inset-left,0);background:var(--bg2);border-right:1px solid var(--bd);flex-direction:column;z-index:300;transition:left.2s}
+  .mobile-drawer.open{left:0}
+  .drawer-header{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid var(--bd);font-weight:600}
+  .drawer-header button{background:none;border:none;color:var(--tx3);font-size:1.3rem}
+  .drawer-nav{flex:1;padding:6px;overflow-y:auto}
+  .drawer-nav .nav-item{font-size:.9rem;padding:12px 14px}
+  .drawer-footer{padding:12px 14px;border-top:1px solid var(--bd);padding-bottom:calc(12px + env(safe-area-inset-bottom,0))}
   .dr-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:299;display:none}
   .dr-overlay.open{display:block}
-  /* Bottom nav */
-  .bnav{position:fixed;bottom:0;left:0;right:0;height:56px;background:var(--bg2);border-top:1px solid var(--bd);align-items:center;justify-content:space-around;z-index:200;padding-bottom:env(safe-area-inset-bottom,0)}
+  /* Bottom nav — sits above the home indicator */
+  .bottom-nav{position:fixed;bottom:0;left:0;right:0;box-sizing:border-box;min-height:56px;background:var(--bg2);border-top:1px solid var(--bd);align-items:center;justify-content:space-around;z-index:200;padding-bottom:env(safe-area-inset-bottom,0)}
   .bni{display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 8px;color:var(--tx3);text-decoration:none;font-size:.62rem;min-width:48px}
   .bni span:first-child{font-size:1.15rem}
   .bni.active{color:var(--ac)}
