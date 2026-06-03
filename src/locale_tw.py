@@ -107,16 +107,48 @@ MAINLAND_TERMS: List[Tuple[str, str, str]] = [
 ]
 
 
-def fix_mainland_text(text: str) -> Tuple[str, List[str]]:
-    """對單一字串做決定性的大陸→台灣用語修正。回傳 (修正後字串, 修正訊息列表)。
+_OPENCC = None
 
-    與 substack 的 `autofix_mainland_terms` 同規則：跳過「／」歧義詞；當 found 是
-    自身 repl 的子字串時 (算法 ⊂ 演算法)，用負向後查避免把已正確的字重複替換
-    (演算法 → 演演算法)。語境敏感詞不在表內，永不誤傷。
+
+def _cc():
+    """Lazy OpenCC s2tw converter (Simplified → Traditional, Taiwan variants).
+    Returns False if opencc isn't installed so callers degrade to identity."""
+    global _OPENCC
+    if _OPENCC is None:
+        try:
+            import opencc  # type: ignore
+            _OPENCC = opencc.OpenCC("s2tw")
+        except Exception:  # noqa: BLE001
+            _OPENCC = False
+    return _OPENCC
+
+
+def to_traditional(text: str) -> str:
+    """Deterministic Simplified→Traditional (Taiwan) — the hard backstop so no
+    Simplified Chinese ever ships, regardless of which LLM/provider wrote it
+    (fallback models sometimes ignore the '繁體' instruction). OpenCC s2tw is a
+    character-level conversion (实→實, 远→遠); curated VOCAB stays with
+    MAINLAND_TERMS below. Identity if opencc is unavailable."""
+    if not text:
+        return text
+    cc = _cc()
+    return cc.convert(text) if cc else text
+
+
+def fix_mainland_text(text: str) -> Tuple[str, List[str]]:
+    """繁化（簡→繁台灣）+ 大陸→台灣用語修正。回傳 (修正後字串, 修正訊息列表)。
+
+    先用 OpenCC s2tw 把簡體字體強制轉成台灣繁體（最後防線），再跑詞表：跳過
+    「／」歧義詞；當 found 是自身 repl 的子字串時 (算法 ⊂ 演算法)，用負向後查避免
+    重複替換 (演算法 → 演演算法)。語境敏感詞不在表內，永不誤傷。
     """
     if not text:
         return text, []
     fixes: List[str] = []
+    trad = to_traditional(text)
+    if trad != text:
+        fixes.append("[繁化] 簡體→台灣繁體")
+        text = trad
     for found, repl, category in MAINLAND_TERMS:
         if "／" in repl:
             continue  # 歧義 — 留給 audit 警告

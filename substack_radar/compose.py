@@ -96,6 +96,7 @@ from substack_radar.composer import (  # noqa: E402
     autofix_cjk_spacing,
     autofix_dashes,
     autofix_mainland_terms,
+    autofix_traditional,
     compose_substack_article,
 )
 
@@ -1230,7 +1231,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
     # The 大陸→台灣 lookup table no longer ships in the soul prompt; the
     # unambiguous half is enforced here at zero token cost, before audit + writes.
-    fixes = autofix_mainland_terms(draft)
+    fixes = autofix_traditional(draft)  # 簡→繁台灣 (OpenCC s2tw) — 最後防線，先跑
+    fixes += autofix_mainland_terms(draft)
     fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號 (skip §13 marker/footer blockquotes)
     fixes += autofix_cjk_spacing(draft)  # 盤古之白：中英數間補空格 (skip code/quote/URL)
     if fixes:

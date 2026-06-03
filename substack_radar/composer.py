@@ -180,7 +180,22 @@ _AI_FILLER_WORDS = ["其實", "很清楚", "很簡單"]
 # 大陸用法 banned list — 2026-05-12 加入；2026-06-02 抽到 src/locale_tw.py 共用
 # （substack 與 meta 三平台同表）。命中時為 warning（非 hard reject）。
 # 完整對應表見 config/substack_soul.md §11。排序：(found, replacement, category)
-from src.locale_tw import MAINLAND_TERMS as _MAINLAND_TERMS
+from src.locale_tw import MAINLAND_TERMS as _MAINLAND_TERMS, to_traditional
+
+
+def autofix_traditional(draft: "SubstackDraft") -> List[str]:
+    """簡體→台灣繁體 (OpenCC s2tw) backstop — runs first, so fallback LLMs that
+    emit Simplified Chinese never ship. Mutates title/subtitle/body_markdown."""
+    fixes: List[str] = []
+    for field in ("title", "subtitle", "body_markdown"):
+        val = getattr(draft, field, None)
+        if not val:
+            continue
+        new = to_traditional(val)
+        if new != val:
+            setattr(draft, field, new)
+            fixes.append(f"[自動修正:繁化] {field} 簡體→台灣繁體")
+    return fixes
 
 
 def autofix_mainland_terms(draft: "SubstackDraft") -> List[str]:

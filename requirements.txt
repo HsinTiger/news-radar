@@ -39,3 +39,4 @@ youtube-transcript-api==0.6.3  # YouTube transcript extraction for source submis
 # 安裝指令：
 #   Mac:    pip install -r requirements.txt -r requirements-mac.txt
 #   Cloud:  pip install -r requirements.txt           ← 不裝 requirements-mac.txt
+opencc>=1.3.1
