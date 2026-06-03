@@ -49,6 +49,7 @@ from src.publisher import (
 from src.cover_pipeline import prepare_publish_image
 from src.cover_uploader import upload_cards
 from src.schema import PublishResult, CarouselCards
+from src.token_utils import refresh_threads_token
 # NOTE: substack_radar.cards is a PIL RENDERER (no LLM/brain), so importing it
 # here does NOT breach the "no composer/scorer/reflector" cloud firewall.
 from substack_radar.cards import build_cards, render_cards
