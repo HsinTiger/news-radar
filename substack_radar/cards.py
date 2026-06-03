@@ -193,24 +193,54 @@ def _draw_takeaway(W, H, pal, card, idx, total):
 _RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat, "takeaway": _draw_takeaway}
 
 
+# Per-card hard caps (safety net; the composer prompt is the primary lever).
+# Mirror src/composer.py's carousel spec so over-long LLM output still renders clean.
+_CAP_COVER_TITLE = 20
+_CAP_INSIGHT_STMT = 30
+_CAP_INSIGHT_SUPPORT = 40
+_CAP_STAT_NUMBER = 10       # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
+_CAP_STAT_CAPTION = 24
+_CAP_TAKEAWAY = 18
+
+
+def _clip(text: str, n: int) -> str:
+    """Hard char cap. Trims on a clean boundary and appends … only if it actually cut."""
+    s = (text or "").strip()
+    if len(s) <= n:
+        return s
+    return s[:n].rstrip("，、。．,.　 ") + "…"
+
+
 def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:
     """Assemble 2–4 card dicts from a CarouselCards (schema) + the cover title.
 
-    cover (always) → insight (if statement) → stat (if number) → takeaway (if any).
+    Per-card editorial spec (each card = one job; hard char caps keep type large):
+      1 cover    — hook title only (≤20).               always.
+      2 insight  — one statement (≤30) + support (≤40). if statement present.
+      3 stat     — ONE number (≤10) + caption (≤24).    only if a clean short number.
+      4 takeaway — 2–3 bullets (each ≤18) + CTA.         if any takeaway.
     ``carousel`` may be a pydantic CarouselCards or None; missing parts are skipped.
     """
-    cards: List[Dict] = [{"type": "cover", "title": title, "subtitle": subtitle or ""}]
+    cards: List[Dict] = [{"type": "cover", "title": _clip(title, _CAP_COVER_TITLE),
+                          "subtitle": subtitle or ""}]
     g = lambda k: getattr(carousel, k, None) if carousel is not None else None
-    if g("insight_statement"):
+
+    stmt = (g("insight_statement") or "").strip()
+    if stmt:
         cards.append({"type": "insight", "label": "核心洞察",
-                      "statement": g("insight_statement"), "support": g("insight_support") or ""})
-    if g("stat_number"):
+                      "statement": _clip(stmt, _CAP_INSIGHT_STMT),
+                      "support": _clip(g("insight_support") or "", _CAP_INSIGHT_SUPPORT)})
+
+    num = (g("stat_number") or "").strip()
+    if num and len(num) <= _CAP_STAT_NUMBER:   # no clean short number ⇒ skip the stat card entirely
         cards.append({"type": "stat", "label": "一個數字看懂",
-                      "number": g("stat_number"), "caption": g("stat_caption") or ""})
-    takeaways = list(g("takeaways") or [])
-    if takeaways:
+                      "number": num,
+                      "caption": _clip(g("stat_caption") or "", _CAP_STAT_CAPTION)})
+
+    points = [_clip(t, _CAP_TAKEAWAY) for t in (g("takeaways") or []) if (t or "").strip()][:3]
+    if points:
         cards.append({"type": "takeaway", "label": "帶走的判斷",
-                      "points": takeaways[:3], "cta": "追蹤 主力爸爸我錯了"})
+                      "points": points, "cta": "追蹤 主力爸爸我錯了"})
     return cards[:4]
 
 

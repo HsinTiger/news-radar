@@ -428,15 +428,21 @@ async def compose_multi_platform(
   "threads": {{...PlatformVariant}} or null,
   "image_url": "...",
   "carousel": {{
-     "insight_statement": "一句最反直覺的核心洞察（自己長，禁套範例）",
-     "insight_support": "支撐那句的 1-2 句",
-     "stat_number": "全篇最有力的單一數字/型號，如 $329 / 9 億 / 18%（沒有就 null）",
-     "stat_caption": "那個數字代表什麼，1-2 句",
-     "takeaways": ["可帶走的判斷1", "判斷2", "判斷3 (2-3 條)"]
+     "insight_statement": "卡2 核心洞察：一句最反直覺的判斷(so-what)。單一陳述句、非條列。**≤30 字**。自己長、禁套範例。",
+     "insight_support": "支撐那句的一句話。**≤40 字**。",
+     "stat_number": "卡3 的主角數字/型號，如 $329 / 9 億 / 18%。**≤8 字元**。沒有夠力的數字就填 null（這張卡會自動省略）。",
+     "stat_caption": "那個數字代表什麼，一句。**≤24 字**。",
+     "takeaways": ["卡4：2-3 條、**每條 ≤18 字**、條列式、可帶走的行動或判斷"]
   }}
 }}
 每個 PlatformVariant 必要欄位：title, body, hashtags (list of str with #), primary_topic_tag, char_count
-**carousel 欄位（必填）**：這是要做成 2-4 張可滑動圖卡的內容——從這篇新聞蒸餾出「一句最反直覺的洞察(insight)＋全篇最有力的一個數字(stat，可選)＋2-3 條可帶走的判斷(takeaways)」。每張卡只放一個重點，要能讓人不點文章、滑卡片就懂。洞察句與判斷都要針對這則新聞自己長，禁止套固定句型。)
+**carousel 欄位（必填）= 2-4 張可滑動圖卡的蒸餾內容。每張卡有固定任務，務必遵守字數上限**
+（圖卡字一多就擠成小字、沒人看完）：
+  · 卡1 封面 = 直接用該平台 variant 的 title 當鉤子（≤20 字，別照抄新聞標題）。
+  · 卡2 核心洞察 = insight_statement(≤30 字、單句、不條列、不放數字) + insight_support(≤40 字)。
+  · 卡3 一個數字 = stat_number(≤8 字元) + stat_caption(≤24 字)。**數字集中在這張**；沒有夠力數字就 stat_number=null。
+  · 卡4 帶走的判斷 = takeaways 2-3 條、每條 ≤18 字、條列式。
+  讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。)
 """
 
     chosen_model = model or DEFAULT_COMPOSER_MODEL
