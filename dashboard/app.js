@@ -1303,9 +1303,7 @@ function submitSourceByTab() {
     var imgData = window.imgUploadData || null;
     var caption = document.getElementById('sf-img-caption') ? document.getElementById('sf-img-caption').value.trim() : '';
     if (!imgData) { showToast('請先選擇一張圖片', 'error'); return; }
-    content = caption || '上傳圖片(' + (window.imgUploadName || 'image') + ')';
-    entry.imgData = imgData;
-    entry.caption = caption;
+    content = caption || ('上傳圖片(' + (window.imgUploadName || 'image') + ')');
   }
 
   var cbs = document.querySelectorAll('.sf-platform:checked');
@@ -1320,6 +1318,8 @@ function submitSourceByTab() {
     type: type,
     content: content,
     platforms: platforms,
+    imgData: (type === 'image' ? imgData : null),
+    caption: (type === 'image' ? caption : null),
     note: note,
     submittedAt: new Date().toISOString(),
     status: 'pending'
