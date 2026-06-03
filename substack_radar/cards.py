@@ -193,22 +193,35 @@ def _draw_takeaway(W, H, pal, card, idx, total):
 _RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat, "takeaway": _draw_takeaway}
 
 
-# Per-card hard caps (safety net; the composer prompt is the primary lever).
-# Mirror src/composer.py's carousel spec so over-long LLM output still renders clean.
-_CAP_COVER_TITLE = 20
-_CAP_INSIGHT_STMT = 30
-_CAP_INSIGHT_SUPPORT = 40
+# Per-card caps (safety net; the composer prompt is the primary lever). A bit
+# roomy so complete sentences fit and the graceful trim rarely fires.
+_CAP_COVER_TITLE = 28
+_CAP_INSIGHT_STMT = 38
+_CAP_INSIGHT_SUPPORT = 46
 _CAP_STAT_NUMBER = 10       # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
-_CAP_STAT_CAPTION = 24
-_CAP_TAKEAWAY = 18
+_CAP_STAT_CAPTION = 28
+_CAP_TAKEAWAY = 22
+
+_SENT_END = "。！？!?"
+_CLAUSE = "，,、；;：:"
 
 
 def _clip(text: str, n: int) -> str:
-    """Hard char cap. Trims on a clean boundary and appends … only if it actually cut."""
+    """Graceful cap: if over n, back off to the last sentence/clause boundary so the
+    card ends on a clean phrase — NEVER a mid-word cut with a dangling '…'."""
     s = (text or "").strip()
     if len(s) <= n:
         return s
-    return s[:n].rstrip("，、。．,.　 ") + "…"
+    head = s[:n]
+    best, keep = -1, False
+    for i, ch in enumerate(head):
+        if ch in _SENT_END:
+            best, keep = i, True
+        elif ch in _CLAUSE:
+            best, keep = i, False
+    if best >= 8:                       # a boundary that keeps enough meaning
+        return head[: best + 1] if keep else head[:best]
+    return head.rstrip("，,、；;：:　 ")  # last resort: clean char cut, no ellipsis
 
 
 def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:

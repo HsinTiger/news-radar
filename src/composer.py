@@ -442,7 +442,8 @@ async def compose_multi_platform(
   · 卡2 核心洞察 = insight_statement(≤30 字、單句、不條列、不放數字) + insight_support(≤40 字)。
   · 卡3 一個數字 = stat_number(≤8 字元) + stat_caption(≤24 字)。**數字集中在這張**；沒有夠力數字就 stat_number=null。
   · 卡4 帶走的判斷 = takeaways 2-3 條、每條 ≤18 字、條列式。
-  讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。)
+  讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。
+  **每一格都必須是「完整句子」、在字數上限內把話講完**——絕不可以寫超過上限、也不可以用破折號或逗號殘缺收尾（圖卡會被截斷成殘句）。寧可短而完整，不要長而被切。)
 """
 
     chosen_model = model or DEFAULT_COMPOSER_MODEL

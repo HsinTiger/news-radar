@@ -31,11 +31,11 @@ News Radar · LLM Brain (Phase 8.19)
     return result.data
 """
 
+from __future__ import annotations
+
 import os
 os.environ.setdefault("LITELLM_LOG", "WARNING")
 os.environ.setdefault("LITELLM_SUPPRESS_FEEDBACK", "1")
-
-from __future__ import annotations
 
 import asyncio
 import json
