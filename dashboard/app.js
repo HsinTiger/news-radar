@@ -1244,10 +1244,20 @@ function renderTabForm(tabId) {
       '</div>',
 
     image: '<div class="card" style="margin-bottom:20px">' +
-      '<h4 style="margin-bottom:12px">🖼️ 圖片網址（附文字說明）</h4>' +
-      '<label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:.9rem">圖片網址</label>' +
-      '<input id="sf-img" type="url" style="width:100%;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.9rem;font-family:inherit" placeholder="https://example.com/image.jpg">' +
-      '</div>',
+      '<h4 style="margin-bottom:12px">🖼️ 上傳圖片（從相簿選擇，支援 JPG/PNG/HEIC）</h4>' +
+      '<div class="upload-zone" id="img-zone" onclick="document.getElementById(\'sf-img-input\').click()">' +
+      '  <div class="ui" id="img-icon">📸</div>' +
+      '  <div class="ut" id="img-text">點擊選擇圖片</div>' +
+      '  <div class="uh" id="img-hint">或直接拍照 · JPG / PNG / HEIC</div>' +
+      '  <img id="img-preview" style="display:none">' +
+      '  <button class="ri" id="img-remove" style="display:none" onclick="event.stopPropagation();clearImageUpload()">✕ 移除</button>' +
+      '</div>' +
+      '<input id="sf-img-input" type="file" accept="image/jpeg,image/png,image/heic,image/heif" capture="environment">' +
+      '<div style="margin-top:8px;font-size:.82rem;color:var(--tx3)" id="img-filename"></div>' +
+      '<div style="margin-top:4px">' +
+      '<label style="color:var(--tx2);font-size:.85rem">圖片說明（選填）</label>' +
+      '<input id="sf-img-caption" type="text" style="width:100%;padding:8px 12px;border-radius:var(--rs);border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:.85rem;margin-top:4px" placeholder="這張圖在講什麼？方便我幫你寫貼文...">' +
+      '</div></div>',
   };
 
   // Shared footer: platform selection + note + submit
@@ -1290,8 +1300,12 @@ function submitSourceByTab() {
     if (!content) { showToast('請輸入 YouTube 網址', 'error'); return; }
     if (!content.match(/(youtube\.com|youtu\.be)/)) { showToast('請輸入有效的 YouTube 網址', 'error'); return; }
   } else if (tab === 'image') {
-    content = document.getElementById('sf-img') ? document.getElementById('sf-img').value.trim() : '';
-    if (!content) { showToast('請輸入圖片網址', 'error'); return; }
+    var imgData = window.imgUploadData || null;
+    var caption = document.getElementById('sf-img-caption') ? document.getElementById('sf-img-caption').value.trim() : '';
+    if (!imgData) { showToast('請先選擇一張圖片', 'error'); return; }
+    content = caption || '上傳圖片(' + (window.imgUploadName || 'image') + ')';
+    entry.imgData = imgData;
+    entry.caption = caption;
   }
 
   var cbs = document.querySelectorAll('.sf-platform:checked');
@@ -1321,7 +1335,7 @@ function submitSourceByTab() {
   if (tab === 'url') { var el = document.getElementById('sf-url'); if (el) el.value = ''; }
   if (tab === 'text') { var el2 = document.getElementById('sf-text'); if (el2) el2.value = ''; }
   if (tab === 'youtube') { var el3 = document.getElementById('sf-yt'); if (el3) el3.value = ''; }
-  if (tab === 'image') { var el4 = document.getElementById('sf-img'); if (el4) el4.value = ''; }
+  if (tab === 'image') { clearImageUpload(); }
   var el5 = document.getElementById('sf-note'); if (el5) el5.value = '';
 
   renderSource();
@@ -1373,8 +1387,73 @@ function deleteSource(id) {
   sources = sources.filter(function(s) { return s.id !== id; });
   savePendingSources(sources);
   renderSource();
-  showToast('已移除', 'info');
+  showToast('\u5df2\u79fb\u9664', 'info');
 }
+
+// ====================================================================
+// Image Upload Handlers
+// ====================================================================
+document.addEventListener('change',function(e){if(e.target&&e.target.id==='sf-img-input'){handleImageFile(e.target);}});
+
+function handleImageFile(input) {
+  var file=input.files&&input.files[0];if(!file)return;
+  if(!file.type.match(/image\/(jpeg|png|heic|heif)/)){showToast('\u53ea\u652f\u63f4 JPG\u3001PNG\u3001HEIC \u683c\u5f0f','error');return;}
+  if(file.size>10*1024*1024){showToast('\u5716\u7247\u592a\u5927\uff08\u8acb\u5c0f\u65bc 10MB\uff09','error');return;}
+  var reader=new FileReader();
+  reader.onload=function(ev){
+    window.imgUploadData=ev.target.result;window.imgUploadName=file.name;
+    var p=document.getElementById('img-preview');var ic=document.getElementById('img-icon');
+    var t=document.getElementById('img-text');var h=document.getElementById('img-hint');
+    var r=document.getElementById('img-remove');var z=document.getElementById('img-zone');
+    var fn=document.getElementById('img-filename');
+    if(p){p.src=ev.target.result;p.style.display='block';}
+    if(ic)ic.style.display='none';
+    if(t)t.textContent='\u2705 '+file.name;
+    if(h)h.textContent=(file.size/1024).toFixed(0)+' KB \u00b7 \u9ede\u64ca\u66f4\u63db';
+    if(r)r.style.display='inline-block';
+    if(z)z.classList.add('done');
+    if(fn)fn.textContent='\ud83d\udcf7 '+file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImageUpload(){
+  window.imgUploadData=null;window.imgUploadName=null;
+  var p=document.getElementById('img-preview');var ic=document.getElementById('img-icon');
+  var t=document.getElementById('img-text');var h=document.getElementById('img-hint');
+  var r=document.getElementById('img-remove');var z=document.getElementById('img-zone');
+  var fn=document.getElementById('img-filename');var inp=document.getElementById('sf-img-input');
+  if(p){p.src='';p.style.display='none';}
+  if(ic)ic.style.display='block';
+  if(t)t.textContent='\u9ede\u64ca\u9078\u64c7\u5716\u7247';
+  if(h)h.textContent='\u6216\u76f4\u63a5\u62cd\u7167 \u00b7 JPG / PNG / HEIC';
+  if(r)r.style.display='none';
+  if(z)z.classList.remove('done');
+  if(fn)fn.textContent='';
+  if(inp)inp.value='';
+}
+
+// ====================================================================
+// Mobile Menu
+// ====================================================================
+function toggleMobileMenu(){
+  var d=document.getElementById('mobile-drawer');var o=document.getElementById('drawer-overlay');
+  if(!d)return;
+  if(d.classList.contains('open')){closeMobileMenu();}
+  else{d.classList.add('open');if(o)o.classList.add('open');}
+}
+function closeMobileMenu(){
+  var d=document.getElementById('mobile-drawer');var o=document.getElementById('drawer-overlay');
+  if(d)d.classList.remove('open');if(o)o.classList.remove('open');
+}
+// Bottom nav sync on page change
+(function(){
+  var _orig=window.showPage;
+  window.showPage=function(id){
+    _orig(id);
+    document.querySelectorAll('.bni').forEach(function(n){n.classList.toggle('active',n.dataset.page===id);});
+  };
+})();
 
 // ====================================================================
 

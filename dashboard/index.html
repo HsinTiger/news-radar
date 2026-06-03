@@ -2,8 +2,10 @@
 <html lang="zh-TW" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>News Radar · Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>News Radar</title>
   <script src="https://cdn.jsdelivr.net/npm/sql.js@1.11/dist/sql-wasm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="styles.css">
@@ -13,77 +15,82 @@
 </head>
 <body>
   <div id="app">
-    <!-- Sidebar -->
-    <nav class="sidebar" id="sidebar">
+    <!-- Desktop Sidebar -->
+    <nav class="sidebar desk-only" id="sidebar">
       <div class="sidebar-header">
         <span class="logo">📡</span>
         <h1>News Radar</h1>
       </div>
-      <div class="sidebar-nav">
-        <a class="nav-item active" data-page="home" href="#home">
-          <span class="nav-icon">🏠</span>
-          <span class="nav-label">首頁</span>
-        </a>
-        <a class="nav-item" data-page="queue" href="#queue">
-          <span class="nav-icon">📋</span>
-          <span class="nav-label">發布佇列</span>
-          <span class="nav-badge" id="queue-badge">0</span>
-        </a>
-        <a class="nav-item" data-page="archive" href="#archive">
-          <span class="nav-icon">📚</span>
-          <span class="nav-label">歷史存檔</span>
-        </a>
-        <a class="nav-item" data-page="dropped" href="#dropped">
-          <span class="nav-icon">🗑️</span>
-          <span class="nav-label">被擋掉的</span>
-        </a>
-        <a class="nav-item" data-page="persona" href="#persona">
-          <span class="nav-icon">🎭</span>
-          <span class="nav-label">寫作風格</span>
-        </a>
-        <a class="nav-item" data-page="analytics" href="#analytics">
-          <span class="nav-icon">📊</span>
-          <span class="nav-label">分析</span>
-        </a>
-        <a class="nav-item" data-page="source" href="#source">
-          <span class="nav-icon">📤</span>
-          <span class="nav-label">提交來源</span>
-        </a>
-        <a class="nav-item" data-page="changelog" href="#changelog">
-          <span class="nav-icon">📝</span>
-          <span class="nav-label">更新日誌</span>
-        </a>
-        <a class="nav-item" data-page="settings" href="#settings">
-          <span class="nav-icon">⚙️</span>
-          <span class="nav-label">設定</span>
-        </a>
+      <div class="sidebar-nav" id="desk-nav">
+        <a class="nav-item active" data-page="home" href="#home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
+        <a class="nav-item" data-page="queue" href="#queue"><span class="nav-icon">📋</span><span class="nav-label">發布佇列</span><span class="nav-badge" id="queue-badge">0</span></a>
+        <a class="nav-item" data-page="archive" href="#archive"><span class="nav-icon">📚</span><span class="nav-label">歷史存檔</span></a>
+        <a class="nav-item" data-page="dropped" href="#dropped"><span class="nav-icon">🗑️</span><span class="nav-label">被擋掉的</span></a>
+        <a class="nav-item" data-page="persona" href="#persona"><span class="nav-icon">🎭</span><span class="nav-label">寫作風格</span></a>
+        <a class="nav-item" data-page="analytics" href="#analytics"><span class="nav-icon">📊</span><span class="nav-label">分析</span></a>
+        <a class="nav-item" data-page="source" href="#source"><span class="nav-icon">📤</span><span class="nav-label">提交來源</span></a>
+        <a class="nav-item" data-page="changelog" href="#changelog"><span class="nav-icon">📝</span><span class="nav-label">更新日誌</span></a>
+        <a class="nav-item" data-page="settings" href="#settings"><span class="nav-icon">⚙️</span><span class="nav-label">設定</span></a>
       </div>
       <div class="sidebar-footer">
-        <div class="db-status" id="db-status">
-          <span class="status-dot offline"></span>
-          <span>資料庫離線</span>
-        </div>
+        <div class="db-status" id="db-status"><span class="status-dot offline"></span><span>資料庫離線</span></div>
         <div class="last-update" id="last-update">—</div>
-        <button class="btn-refresh" id="btn-refresh" onclick="refreshDB()">🔄 重新整理</button>
+        <button class="btn-refresh" onclick="refreshDB()">🔄 重新整理</button>
       </div>
+    </nav>
+
+    <!-- Mobile Top Bar -->
+    <div class="mobile-top mob-only" id="mobile-top">
+      <button class="mob-menu-btn" id="mob-menu-btn" onclick="toggleMobileMenu()">☰</button>
+      <span class="mob-title">📡 News Radar</span>
+      <span class="mob-status" id="mob-status">⚪</span>
+    </div>
+
+    <!-- Mobile Drawer Menu -->
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="drawer-header">
+        <span>📡 News Radar</span>
+        <button onclick="toggleMobileMenu()">✕</button>
+      </div>
+      <div class="drawer-nav" id="mob-nav">
+        <a class="nav-item active" data-page="home" href="#home" onclick="closeMobileMenu()"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
+        <a class="nav-item" data-page="queue" href="#queue" onclick="closeMobileMenu()"><span class="nav-icon">📋</span><span class="nav-label">發布佇列</span><span class="nav-badge" id="mob-queue-badge">0</span></a>
+        <a class="nav-item" data-page="archive" href="#archive" onclick="closeMobileMenu()"><span class="nav-icon">📚</span><span class="nav-label">歷史存檔</span></a>
+        <a class="nav-item" data-page="dropped" href="#dropped" onclick="closeMobileMenu()"><span class="nav-icon">🗑️</span><span class="nav-label">被擋掉的</span></a>
+        <a class="nav-item" data-page="persona" href="#persona" onclick="closeMobileMenu()"><span class="nav-icon">🎭</span><span class="nav-label">寫作風格</span></a>
+        <a class="nav-item" data-page="analytics" href="#analytics" onclick="closeMobileMenu()"><span class="nav-icon">📊</span><span class="nav-label">分析</span></a>
+        <a class="nav-item" data-page="source" href="#source" onclick="closeMobileMenu()"><span class="nav-icon">📤</span><span class="nav-label">提交來源</span></a>
+        <a class="nav-item" data-page="changelog" href="#changelog" onclick="closeMobileMenu()"><span class="nav-icon">📝</span><span class="nav-label">更新日誌</span></a>
+        <a class="nav-item" data-page="settings" href="#settings" onclick="closeMobileMenu()"><span class="nav-icon">⚙️</span><span class="nav-label">設定</span></a>
+      </div>
+      <div class="drawer-footer">
+        <div class="db-status"><span class="status-dot offline" id="mob-db-dot"></span><span id="mob-db-text">資料庫離線</span></div>
+        <button class="btn-refresh" onclick="refreshDB()">🔄 重新整理</button>
+      </div>
+    </div>
+
+    <!-- Drawer overlay -->
+    <div class="dr-overlay" id="drawer-overlay" onclick="closeMobileMenu()"></div>
+
+    <!-- Mobile Bottom Nav -->
+    <nav class="bottom-nav mob-only" id="bottom-nav">
+      <a class="bni active" data-page="home" href="#home"><span>🏠</span><span class="bnav-label">首頁</span></a>
+      <a class="bni" data-page="source" href="#source"><span>📤</span><span class="bnav-label">提交</span></a>
+      <a class="bni" data-page="queue" href="#queue"><span>📋</span><span class="bnav-label">佇列</span></a>
+      <a class="bni" data-page="archive" href="#archive"><span>📚</span><span class="bnav-label">存檔</span></a>
+      <a class="bni" data-page="more" href="#" onclick="event.preventDefault();toggleMobileMenu()"><span>⋯</span><span class="bnav-label">更多</span></a>
     </nav>
 
     <!-- Main Content -->
     <main class="main-content" id="main-content">
-      <!-- Loading Overlay -->
       <div class="loading-overlay" id="loading-overlay">
         <div class="loader"></div>
         <p>正在載入資料庫…</p>
       </div>
-
-      <!-- Error -->
       <div class="error-banner" id="error-banner" style="display:none">
-        <span>⚠️</span>
-        <span id="error-text">無法連接到資料庫</span>
+        <span>⚠️</span><span id="error-text">無法連接到資料庫</span>
         <button onclick="this.parentElement.style.display='none'">✕</button>
       </div>
-
-      <!-- Pages -->
       <div id="page-home" class="page active"></div>
       <div id="page-queue" class="page"></div>
       <div id="page-archive" class="page"></div>
@@ -97,7 +104,6 @@
   </div>
 
   <div id="toast-container" style="position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
-
   <script src="app.js"></script>
 </body>
 </html>
