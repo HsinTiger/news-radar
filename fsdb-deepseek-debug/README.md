@@ -21,13 +21,32 @@ VCS 跑掛 → VCD（native `$dumpvars`，或 FSDB 經 `fsdb2vcd`）+ vcs.log �
 - **「要 VCD 給工程師看」其實不必碰 FSDB**：Verilog 內建 `$dumpvars` 直接從模擬產 VCD，零 Verdi。
 - **DeepSeek 主線純文字無 vision**：時序圖是「生成 WaveJSON 文字 → 渲染」，不是「看圖」。
 
-## 文件
+## 交接整包（丟進工網用）
+
+| 檔案 | 內容 |
+|------|------|
+| [`HANDOFF_PLAN.md`](./HANDOFF_PLAN.md) | **交接計畫**：四種輸入對應、目錄結構、staging、bring-up 步驟、實測表、上線檢查表 |
+| [`skill/SKILL.md`](./skill/SKILL.md) | **給 agent 的 skill**（Claude Code frontmatter）：兩條迴圈流程 + 工具用法 + 抗幻覺硬規則 |
+| `tools/` | 確定性工具（純 Python stdlib，離線、**已實測**）：`vcd.py` / `cmodel_hex.py` / `compare.py` / `fsdb2vcd.sh` / `render_wavedrom.sh` / `_selftest.sh` |
+| [`examples/round_trip_example.md`](./examples/round_trip_example.md) | 具體走一遍 round-trip（含 RTL、WaveJSON、白話文修改、diff 驗證） |
+
+## 背景文件
 
 | 檔案 | 內容 |
 |------|------|
 | [`EVALUATION.md`](./EVALUATION.md) | 主研究報告（格式、工具鏈、DeepSeek 能力、業界先例、部署、驗證），逐條附引用與信心等級 |
-| [`SKILL_DRAFT.md`](./SKILL_DRAFT.md) | **核心 skill**：白話文↔WaveJSON↔RTL 協同迴圈 + 工具規格 + 抗幻覺規則 |
-| [`examples/round_trip_example.md`](./examples/round_trip_example.md) | 具體走一遍 round-trip（含 RTL、WaveJSON、白話文修改、diff 驗證） |
+| [`SKILL_DRAFT.md`](./SKILL_DRAFT.md) | skill 的早期草稿（保留；正式版見 `skill/SKILL.md`） |
+| [`VALUE_FOR_DESIGNERS.md`](./VALUE_FOR_DESIGNERS.md) | 對 RTL designer 的價值與「放大非取代」導入策略 |
+
+## 確定性工具（已驗證）
+
+```sh
+sh tools/_selftest.sh                                    # 全套 smoke test（6 項，ALL PASS）
+python3 tools/vcd.py list dump.vcd                       # 列訊號
+python3 tools/vcd.py value dump.vcd <sig> <time>         # 查某時刻值
+python3 tools/compare.py dump.vcd --clk clk --sig <node> golden.hex --skip-x   # RTL vs golden 第一個分歧
+```
+工具負責「值是什麼、哪裡分歧」（確定性），LLM 只負責「為什麼、怎麼改」——這是抗幻覺的核心分工。
 
 ## 工具問題速答
 
