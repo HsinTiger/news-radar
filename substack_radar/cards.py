@@ -195,33 +195,31 @@ _RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat
 
 # Per-card caps (safety net; the composer prompt is the primary lever). A bit
 # roomy so complete sentences fit and the graceful trim rarely fires.
-_CAP_COVER_TITLE = 28
-_CAP_INSIGHT_STMT = 38
-_CAP_INSIGHT_SUPPORT = 46
-_CAP_STAT_NUMBER = 10       # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
-_CAP_STAT_CAPTION = 28
-_CAP_TAKEAWAY = 22
-
+_CAP_COVER_TITLE = 24         # prompt ≤20; extra 4 for punctuation etc._CAP_INSIGHT_STMT = 32       # prompt ≤30; tiny slack for full-sentence wrapping_CAP_INSIGHT_SUPPORT = 42 # prompt ≤40_CAP_STAT_NUMBER = 10       # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
+_CAP_STAT_CAPTION = 26       # prompt ≤24_CAP_TAKEAWAY = 20               # prompt ≤18
 _SENT_END = "。！？!?"
 _CLAUSE = "，,、；;：:"
 
 
 def _clip(text: str, n: int) -> str:
-    """Graceful cap: if over n, back off to the last sentence/clause boundary so the
-    card ends on a clean phrase — NEVER a mid-word cut with a dangling '…'."""
+    """Keep a COMPLETE clause/sentence — the renderers wrap, so a 2-line phrase is
+    fine. NEVER a mid-word fragment. Over n: prefer ending on a real boundary; a
+    single boundary-less clause is kept WHOLE (let it wrap) unless a true runaway."""
     s = (text or "").strip()
     if len(s) <= n:
         return s
-    head = s[:n]
+    window = s[: int(n * 1.6)]          # generous window so we can land on a boundary
     best, keep = -1, False
-    for i, ch in enumerate(head):
+    for i, ch in enumerate(window):
         if ch in _SENT_END:
             best, keep = i, True
         elif ch in _CLAUSE:
             best, keep = i, False
-    if best >= 8:                       # a boundary that keeps enough meaning
-        return head[: best + 1] if keep else head[:best]
-    return head.rstrip("，,、；;：:　 ")  # last resort: clean char cut, no ellipsis
+    if best >= max(8, n // 2):          # end on a complete clause/sentence
+        return window[: best + 1] if keep else window[:best]
+    # No usable boundary → one long clause. Keep it whole (renderer wraps it
+    # complete); only hard-trim a genuine runaway, and even then on no ellipsis.
+    return s if len(s) <= int(n * 1.6) else window.rstrip("，,、；;：:　 ")
 
 
 def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:
