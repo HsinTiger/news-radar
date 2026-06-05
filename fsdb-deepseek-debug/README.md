@@ -25,7 +25,8 @@ VCS 跑掛 → VCD（native `$dumpvars`，或 FSDB 經 `fsdb2vcd`）+ vcs.log �
 
 | 檔案 | 內容 |
 |------|------|
-| [`HANDOFF_PLAN.md`](./HANDOFF_PLAN.md) | **交接計畫**：四種輸入對應、目錄結構、staging、bring-up 步驟、實測表、上線檢查表 |
+| [`TOMORROW_RUNBOOK.md`](./TOMORROW_RUNBOOK.md) | **明天照做**：tcsh 具體步驟、實驗對象選法、把你的 FSDB 轉出來餵 agent、agent 怎麼看出問題 |
+| [`HANDOFF_PLAN.md`](./HANDOFF_PLAN.md) | **交接計畫**：四種輸入對應、目錄結構、staging、Claude Code+tcsh bring-up、實測表、上線檢查表 |
 | [`skill/SKILL.md`](./skill/SKILL.md) | **給 agent 的 skill**（Claude Code frontmatter）：兩條迴圈流程 + 工具用法 + 抗幻覺硬規則 |
 | `tools/` | 確定性工具（純 Python stdlib，離線、**已實測**）：`vcd.py` / `cmodel_hex.py` / `compare.py` / `fsdb2vcd.sh` / `render_wavedrom.sh` / `_selftest.sh` |
 | [`examples/round_trip_example.md`](./examples/round_trip_example.md) | 具體走一遍 round-trip（含 RTL、WaveJSON、白話文修改、diff 驗證） |

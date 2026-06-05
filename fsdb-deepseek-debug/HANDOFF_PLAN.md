@@ -40,44 +40,44 @@ fsdb-deepseek-debug/
 
 ---
 
-## 3. 上線前要 stage 進氣隙網路的東西
+## 3. 上線前要 stage 進氣隙網路的東西（Claude Code 版）
+
+> 目標環境＝**工網內 Claude Code + tcsh + Linux**。Claude Code 本身就是 agent，
+> **不需要自架模型、不需要 vLLM/SGLang、不需要搬權重**——它已有檔案讀取、bash、tool-use。
 
 | 項目 | 怎麼準備 | 備註 |
 |------|---------|------|
-| 本 repo 這個目錄 | git/打包搬入 | 工具是 stdlib，無 pip 相依 |
+| 本目錄 `fsdb-deepseek-debug/` | git/打包搬入工網 | 工具是 Python stdlib，無 pip 相依 |
 | Python 3.8+ | 工網內通常已有 | `tools/` 只用標準庫 |
-| **模型權重** | 連網機 `hf download` → 搬 `~/.cache/huggingface` | 見 `EVALUATION.md` §6.4 |
-| 推理引擎 | vLLM 或 SGLang（DeepSeek 官方推 SGLang） | 開 OpenAI 相容 API + tool-call parser |
-| Verdi | 工網內既有 EDA 安裝 | 只有要解 FSDB 才需要；VCD 不需要 |
-| wavedrom-cli | 連網機 `npm pack wavedrom-cli` 把 tarball 搬入後 `npm i -g` | 只有要渲染 SVG 才需要；查詢/debug 不需要 |
+| Claude Code | 工網內既有 | agent 本體 |
+| Verdi | 工網內既有 EDA | 只有要解 FSDB 才需要；純 VCD 不需要 |
+| wavedrom-cli | 連網機 `npm pack wavedrom-cli` 搬入後 `npm i -g` | 只有要產 SVG 圖才需要；查詢/debug 不需要 |
 
-> **最小可跑集合**：Python + 本目錄 + 模型。VCD/log/hex 的 debug 完全不需要 Verdi 或 wavedrom——那兩個分別只在「來源是 FSDB」與「要產圖」時才用到。
+> **最小可跑集合**：Python + 本目錄 + Claude Code。要把 FSDB 轉成 VCD 才需要 Verdi；要產時序圖才需要 wavedrom。
 
 ---
 
-## 4. Bring-up 步驟（tcsh 範例）
+## 4. Bring-up 步驟（Claude Code + tcsh）
 
 ```tcsh
-# (1) 取得這包
-cd /proj/eda/tools
-# ...（把 fsdb-deepseek-debug/ 放這）
+# (1) 取得這包，放到一個固定路徑
+setenv RTLDBG /proj/eda/tools/fsdb-deepseek-debug
+cd $RTLDBG
 
-# (2) 自我測試：確認確定性工具在本機可跑（見 §6 預期輸出）
-cd fsdb-deepseek-debug
-sh tools/_selftest.sh          # 若未附，照 §6 手動跑一次
+# (2) 自我測試：確認確定性工具在本機可跑（預期 ALL PASS，見 §6）
+sh tools/_selftest.sh
 
-# (3) 起模型（範例：SGLang，單節點 8×H200）
-#     詳見 EVALUATION.md §6
-python -m sglang.launch_server --model-path <local-weights> \
-    --tool-call-parser deepseekv3 --reasoning-parser deepseek-v3 \
-    --host 0.0.0.0 --port 30000
-#     設離線、關 telemetry
-setenv HF_HUB_OFFLINE 1 ; setenv TRANSFORMERS_OFFLINE 1
-
-# (4) 把 skill 掛給 agent
-#     Claude Code: 放到 .claude/skills/rtl-waveform-debug/SKILL.md
-#     DeepSeek 自架: 把 SKILL.md 內容當 system prompt + 把 tools/ 註冊成 function call
+# (3) 安裝 skill 給 Claude Code（兩種擇一）
+#  A. 永久安裝：把 skill 放進 Claude Code 的 skills 目錄，工具也一起
+mkdir -p ~/.claude/skills/rtl-waveform-debug
+cp skill/SKILL.md ~/.claude/skills/rtl-waveform-debug/
+cp -r tools       ~/.claude/skills/rtl-waveform-debug/
+#  B. 當次使用：直接在 $RTLDBG 目錄裡啟動 claude，CWD 即 package 根，
+#     SKILL.md 內的相對路徑 tools/xxx 就能用（day-1 最省事，建議先用這個）
+cd $RTLDBG && claude
 ```
+
+> tcsh 注意：`tools/*.sh` 都是 `#!/bin/sh`，用 `sh tools/x.sh` 呼叫即可，不受登入 shell 是 tcsh 影響。
 
 ---
 
