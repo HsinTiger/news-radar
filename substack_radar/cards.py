@@ -207,8 +207,12 @@ _RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat
 
 # Per-card caps (safety net; the composer prompt is the primary lever). A bit
 # roomy so complete sentences fit and the graceful trim rarely fires.
-_CAP_COVER_TITLE = 24         # prompt ≤20; extra 4 for punctuation etc._CAP_INSIGHT_STMT = 32       # prompt ≤30; tiny slack for full-sentence wrapping_CAP_INSIGHT_SUPPORT = 42 # prompt ≤40_CAP_STAT_NUMBER = 10       # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
-_CAP_STAT_CAPTION = 26       # prompt ≤24_CAP_TAKEAWAY = 20               # prompt ≤18
+_CAP_COVER_TITLE = 24         # prompt ≤20; extra slack for punctuation etc.
+_CAP_INSIGHT_STMT = 32        # prompt ≤30; tiny slack for full-sentence wrapping
+_CAP_INSIGHT_SUPPORT = 42     # prompt ≤40
+_CAP_STAT_NUMBER = 10         # a hair over the 8-char target ("$1,234" etc.); longer ⇒ not a clean stat ⇒ skip card
+_CAP_STAT_CAPTION = 26        # prompt ≤24
+_CAP_TAKEAWAY = 20            # prompt ≤18
 _SENT_END = "。！？!?"
 _CLAUSE = "，,、；;：:"
 
