@@ -6,6 +6,11 @@
   --ac:#60a5fa;--gr:#34d399;--yl:#fbbf24;--rd:#f87171;
   --og:#fb923c;--pu:#a78bfa;
   --r:10px;--rs:6px;
+  /* aliases — app.js inline styles use long names; map to the short tokens above
+     so dynamically-rendered content (settings/source/tables/buttons) styles correctly */
+  --text-primary:var(--tx);--text-secondary:var(--tx2);--text-muted:var(--tx3);
+  --accent:var(--ac);--border:var(--bd);--bg-primary:var(--bg);--bg-card:var(--bg2);
+  --radius:var(--r);--radius-sm:var(--rs);--red:var(--rd);--green:var(--gr);--yellow:var(--yl);
 }
 html{font-size:15px}
 body{font-family:'Inter','Noto Sans TC',-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.5;overflow-x:hidden;-webkit-font-smoothing:antialiased}

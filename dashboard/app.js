@@ -21,6 +21,106 @@ const CONFIG = {
   REFRESH_INTERVAL: 300000, // 5 min
 };
 
+// === GitHub PAT (for immediate publish via workflow_dispatch) ===
+// Stored ONLY in this browser's localStorage — never committed to the repo.
+const PAT_KEY = 'news_radar_gh_pat';
+function getGitHubPat() { return (localStorage.getItem(PAT_KEY) || '').trim(); }
+function saveGitHubPat() {
+  var el = document.getElementById('gh-pat-input');
+  var v = el ? el.value.trim() : '';
+  if (!v) { showToast('請貼上 PAT', 'error'); return; }
+  localStorage.setItem(PAT_KEY, v);
+  showToast('✅ PAT 已存到此瀏覽器', 'success');
+  renderSettings();
+}
+function clearGitHubPat() {
+  localStorage.removeItem(PAT_KEY);
+  showToast('已清除 PAT', 'success');
+  renderSettings();
+}
+
+// Trigger the publish_now.yml workflow_dispatch for a URL (immediate compose+publish).
+async function triggerPublishNow(url, platforms, note) {
+  var pat = getGitHubPat();
+  if (!pat) {
+    showToast('未設定 GitHub PAT → 只暫存本機。到「設定」貼上 PAT 才能立即發布', 'error');
+    return false;
+  }
+  try {
+    var resp = await fetch(
+      `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/actions/workflows/publish_now.yml/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + pat,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({ ref: 'main', inputs: { url: url, platforms: (platforms || []).join(','), note: note || '' } }),
+      }
+    );
+    if (resp.status === 204) {
+      showToast('🚀 已觸發雲端發布', 'success');
+      startPublishWatch();
+      return true;
+    }
+    var t = await resp.text();
+    showToast('觸發失敗 (' + resp.status + ')：' + t.slice(0, 120), 'error');
+    return false;
+  } catch (e) {
+    showToast('觸發錯誤：' + e.message, 'error');
+    return false;
+  }
+}
+
+// Poll the latest publish_now run and render a live progress / success block.
+var _publishWatchTimer = null;
+function _publishWatchBox() {
+  var box = document.getElementById('publish-watch');
+  if (!box) {
+    var host = document.getElementById('page-source') || document.getElementById('main-content') || document.body;
+    box = document.createElement('div');
+    box.id = 'publish-watch';
+    box.style.cssText = 'margin:0 0 14px;padding:13px 15px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-card)';
+    host.insertBefore(box, host.firstChild);
+  }
+  return box;
+}
+async function startPublishWatch() {
+  var pat = getGitHubPat();
+  var box = _publishWatchBox();
+  box.innerHTML = '<div style="display:flex;gap:10px;align-items:center"><div class="loader" style="width:16px;height:16px;border-width:2px"></div><span>🚀 已觸發發布，等待雲端啟動…</span></div>';
+  var tries = 0;
+  clearInterval(_publishWatchTimer);
+  _publishWatchTimer = setInterval(async function () {
+    tries++;
+    try {
+      var r = await fetch(
+        `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/actions/workflows/publish_now.yml/runs?per_page=1`,
+        { headers: { 'Authorization': 'Bearer ' + pat, 'Accept': 'application/vnd.github+json' } }
+      );
+      var d = await r.json();
+      var run = d.workflow_runs && d.workflow_runs[0];
+      if (!run) return;
+      var url = run.html_url;
+      if (run.status === 'completed') {
+        clearInterval(_publishWatchTimer);
+        if (run.conclusion === 'success') {
+          box.innerHTML = '<div style="color:var(--green);font-weight:700;font-size:1rem">✅ 發布成功！三平台已送出</div>'
+            + '<a href="' + url + '" target="_blank" style="color:var(--accent);font-size:.85rem">查看雲端紀錄 →</a>';
+        } else {
+          box.innerHTML = '<div style="color:var(--red);font-weight:700">❌ 發布失敗（' + run.conclusion + '）</div>'
+            + '<a href="' + url + '" target="_blank" style="color:var(--accent);font-size:.85rem">查看紀錄找原因 →</a>';
+        }
+      } else {
+        box.innerHTML = '<div style="display:flex;gap:10px;align-items:center"><div class="loader" style="width:16px;height:16px;border-width:2px"></div><span>⏳ 發布中…（' + run.status + '）</span></div>'
+          + '<a href="' + url + '" target="_blank" style="color:var(--accent);font-size:.85rem;display:inline-block;margin-top:6px">即時紀錄 →</a>';
+      }
+    } catch (e) { /* keep polling */ }
+    if (tries > 72) clearInterval(_publishWatchTimer); // ~6 min cap @ 5s
+  }, 5000);
+}
+
 // === State ===
 let SQL = null;
 let db = null;
@@ -115,6 +215,9 @@ function navigateTo(page) {
 function showPage(pageId) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.querySelector(`.nav-item[data-page="${pageId}"]`)?.classList.add('active');
+  // mobile bottom-nav uses .bni — keep its active highlight in sync too
+  document.querySelectorAll('.bni').forEach(n => n.classList.remove('active'));
+  document.querySelector(`.bni[data-page="${pageId}"]`)?.classList.add('active');
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const page = document.getElementById('page-' + pageId);
   if (page) page.classList.add('active');
@@ -518,11 +621,23 @@ function renderSettings() {
   const reflectionEvents = q(`SELECT * FROM reflection_events ORDER BY ran_at DESC LIMIT 10`);
   const tokenUsage = q(`SELECT * FROM token_usage_daily ORDER BY date DESC LIMIT 14`);
   const queueCounts = q(`SELECT COALESCE(queue_status,'null') as qs, COUNT(*) as c FROM drafts GROUP BY qs`);
+  var hasPat = !!getGitHubPat();
 
   page.innerHTML = `
     <div class="page-header">
       <h2>設定</h2>
       <p>系統參數與狀態（唯讀）</p>
+    </div>
+
+    <h3 style="margin-bottom:8px;color:var(--text-secondary)">🔑 立即發布連線（GitHub PAT）</h3>
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:22px">
+      <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:10px;line-height:1.6">貼上你的 GitHub Personal Access Token（需 <b>actions:write</b> 權限）。只存在<b>這個瀏覽器</b>、不會上傳到任何地方。設定後，「提交來源」貼網址就會直接觸發雲端撰文＋發布。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="gh-pat-input" type="password" autocomplete="off" placeholder="${hasPat ? '••••••（已設定，重貼可覆蓋）' : 'ghp_… 或 github_pat_…'}" style="flex:1;min-width:200px;padding:9px 11px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.9rem">
+        <button onclick="saveGitHubPat()" style="padding:9px 18px;border:none;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-weight:600;cursor:pointer">儲存</button>
+        <button onclick="clearGitHubPat()" style="padding:9px 16px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);cursor:pointer">清除</button>
+      </div>
+      <p style="font-size:.82rem;margin-top:10px">狀態：${hasPat ? '<span style="color:var(--green)">✅ 已設定，可立即發布</span>' : '<span style="color:var(--yellow)">⚠️ 未設定（提交只會暫存本機）</span>'}</p>
     </div>
 
     <h3 style="margin-bottom:12px;color:var(--text-secondary)">📊 Queue 狀態分布</h3>
@@ -1359,11 +1474,22 @@ function submitSourceByTab() {
     status: 'pending'
   };
 
+  // Immediate publish: URL tab + PAT set → trigger publish_now.yml right now.
+  if (type === 'url' && getGitHubPat()) {
+    entry.status = 'dispatched';
+    triggerPublishNow(content, platforms, note);
+  } else {
+    showToast(
+      type === 'url'
+        ? '✅ 已暫存（到「設定」貼 GitHub PAT 後即可立即發布）'
+        : '✅ 已接收！下一輪 pipeline 會處理',
+      'success'
+    );
+  }
+
   var pending = loadPendingSources();
   pending.unshift(entry);
   savePendingSources(pending);
-
-  showToast('✅ 已接收！下一輪 pipeline 會處理', 'success');
 
   // Clear form
   if (tab === 'url') { var el = document.getElementById('sf-url'); if (el) el.value = ''; }
