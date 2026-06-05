@@ -1,5 +1,24 @@
 # News Radar · 更新日誌
 
+## [2026-06-03] Frontend-Backend 全面審計 + Dashboard 功能補完
+
+### 修復
+- **手機版選單無法打開**：CSS `display:none!important` 覆蓋手機版，導致左側抽屜被隱藏、點「☰」和「更多」畫面變暗但不出選單。在 `.mobile-drawer` 加上 `display:flex;`。
+- **Dashboard 所有 onclick 按鈕審計**：確認每個 HTML onclick handler 都有對應 JS 函式、每個 JS 函式都有對應後端或流程。
+
+### 新增
+- **提交來源 → 立即發布選項**：提交時可選「🚀 立即發布」（需設 GitHub PAT）或「⏳ 下一輪 pipeline」。設定頁可輸入 GitHub PAT。
+- **「我的提交」專區**：設定頁顯示本人提交統計（總篇數/已發布數）、歷史存檔頁可切換「全部 / 📝 我的提交」過濾。
+- **Carousel 卡片文字品質**：`_wrap()` 改為在句號/逗號邊界斷行，`_clip()` 確保不回傳殘缺句子。composer prompt 新增卡2-4 自測規則（主詞動詞受詞、禁止 AI 套話、禁止抽象方向）。
+- **排程發布 vs 即時發布**：兩種模式，使用者自由切換。
+
+### 變更
+- `publish_now.yml` + `publish_now.py` — 獨立 workflow，不經 2h 排程，直接 fetch→compose→publish。
+- `submit_source.py` — 新增 `--image-base64` 支援手機上傳圖片。
+- `full_pipeline.yml` — Stage 0 處理使用者提交來源。
+
+## [2026-06-02] Agent Ecosystem 建立
+
 ## [2026-06-02] Agent Ecosystem 建立
 
 ### 新增

@@ -456,6 +456,8 @@ function buildQueueTable(items) {
 }
 
 // === Archive Page ===
+let _archiveMine = false;
+function renderArchiveMine(){_archiveMine=true;renderArchive()}
 function renderArchive() {
   const page = document.getElementById('page-archive');
   const items = q(`
@@ -464,8 +466,9 @@ function renderArchive() {
            e.likes, e.comments, e.shares, e.views, e.reach
     FROM publish_log p
     JOIN drafts d ON d.id = p.draft_id
+    JOIN news_items n ON n.id = d.news_id
     LEFT JOIN engagement_stats_latest e ON e.draft_id = d.id AND e.platform = p.platform
-    WHERE p.success = 1
+    WHERE p.success = 1' + mineWhere + '
     ORDER BY p.posted_at DESC
     LIMIT 100
   `);
@@ -1345,7 +1348,7 @@ function renderSource() {
 
   page.innerHTML = '<div class="page-header">' +
     '<h2>📤 提交來源</h2>' +
-    '<p>支援 4 種類型：網址 / 純文字 / YouTube（自動萃取字幕）/ 圖片</p>' +
+    '<p>支援 4 種類型：網址 / 純文字 / YouTube（自動萃取字幕）/ 圖片<span id="my-posts-count" style="margin-left:12px;color:var(--tx3);font-size:.82rem"></span></p>' +
     '</div>' +
     '<div class="source-tabs" style="display:flex;gap:4px;margin-bottom:16px;overflow-x:auto;border-bottom:1px solid var(--border);padding-bottom:8px">' +
     '  <button class="source-tab ' + (tab==='url'?'active':'') + '" onclick="switchSourceTab(\'url\')">🔗 網址</button>' +
@@ -1422,7 +1425,7 @@ function renderTabForm(tabId) {
     '<label style="display:block;margin-bottom:6px;color:var(--text-secondary);font-size:.9rem">備註 <span style="color:var(--text-muted);font-weight:400">(選填)</span></label>' +
     '<input id="sf-note" type="text" style="width:100%;padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.9rem;font-family:inherit" placeholder="補充說明、主題分類建議、這篇適合哪種風格...">' +
     '</div>' +
-    '<button onclick="submitSourceByTab()" style="padding:10px 24px;border-radius:var(--radius-sm);border:none;background:var(--accent);color:#fff;font-weight:600;font-size:.9rem;cursor:pointer">📤 提交</button>';
+    '<label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;cursor:pointer;color:var(--tx);font-size:.85rem"><input type="radio" name="pub-timing" value="now" checked style="accent-color:var(--ac)"> 🚀 立即發布</label><label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--tx2);font-size:.85rem;margin-bottom:8px"><input type="radio" name="pub-timing" value="next" style="accent-color:var(--ac)"> ⏳ 下一輪 pipeline</label><button onclick="submitSourceByTab()" style="padding:10px 24px;border-radius:var(--radius-sm);border:none;background:var(--accent);color:#fff;font-weight:600;font-size:.9rem;cursor:pointer">📤 提交</button>';
 
   area.innerHTML = (forms[tabId] || forms.url) + footer;
 }
@@ -1475,7 +1478,10 @@ function submitSourceByTab() {
   };
 
   // Immediate publish: URL tab + PAT set → trigger publish_now.yml right now.
-  if (type === 'url' && getGitHubPat()) {
+  var pt = document.querySelector('input[name="pub-timing"]:checked');
+  entry.schedule = pt ? pt.value : 'next';
+  var imm = pt && pt.value === 'now' && type === 'url' && getGitHubPat();
+  if (imm) {
     entry.status = 'dispatched';
     triggerPublishNow(content, platforms, note);
   } else {

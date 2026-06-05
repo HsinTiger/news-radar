@@ -139,7 +139,7 @@ tr:hover td{background:var(--bg4)}
   .mob-title{flex:1;font-weight:600;font-size:.9rem}
   .mob-status{font-size:.9rem}
   /* Drawer */
-  .mobile-drawer{position:fixed;top:0;left:-290px;bottom:0;width:270px;box-sizing:border-box;padding-top:env(safe-area-inset-top,0);padding-left:env(safe-area-inset-left,0);background:var(--bg2);border-right:1px solid var(--bd);flex-direction:column;z-index:300;transition:left.2s}
+  .mobile-drawer{display:flex;position:fixed;top:0;left:-290px;bottom:0;width:270px;box-sizing:border-box;padding-top:env(safe-area-inset-top,0);padding-left:env(safe-area-inset-left,0);background:var(--bg2);border-right:1px solid var(--bd);flex-direction:column;z-index:300;transition:left.2s}
   .mobile-drawer.open{left:0}
   .drawer-header{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid var(--bd);font-weight:600}
   .drawer-header button{background:none;border:none;color:var(--tx3);font-size:1.3rem}
