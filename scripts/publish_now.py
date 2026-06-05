@@ -111,8 +111,11 @@ async def main() -> int:
         variant = getattr(draft, pf, None)
         if variant is None:
             print(f"   ⚠️ [{pf}] 無變體，跳過"); continue
-        fv, caption, _ok = finalize_variant(variant, pf)
-        ok, err, pid = await _publish_platform(pf, fv.title, draft.carousel, caption)
+        try:
+            fv, caption, _ok = finalize_variant(variant, pf)
+            ok, err, pid = await _publish_platform(pf, fv.title, draft.carousel, caption)
+        except Exception as exc:  # noqa: BLE001 — one platform must not crash the rest
+            ok, err, pid = False, f"exception: {exc!r}", None
         print(f"{'✅' if ok else '❌'} [{pf}] id={pid}" + ("" if ok else f"  err={err}"), flush=True)
         any_ok = any_ok or ok
     return 0 if any_ok else 1

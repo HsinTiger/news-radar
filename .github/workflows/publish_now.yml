@@ -79,6 +79,7 @@ jobs:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
         run: |
+          mkdir -p logs
           python scripts/publish_now.py \
             --url "${{ inputs.url }}" \
             --platforms "${{ inputs.platforms }}" \
