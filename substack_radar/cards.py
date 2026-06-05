@@ -41,8 +41,20 @@ def _wrap(draw, text: str, font, max_w: int):
         if not cur or draw.textlength(cur + tok, font=font) <= max_w:
             cur += tok
         else:
-            lines.append(cur)
-            cur = tok
+            # Prefer break at clause boundary (，。！？、) within cur
+            # to avoid mid-phrase line breaks
+            _CLAUSE_BOUNDARY = "。！？!?，,、；;"
+            break_at = -1
+            for i in range(len(cur) - 1, -1, -1):
+                if cur[i] in _CLAUSE_BOUNDARY:
+                    break_at = i + 1
+                    break
+            if break_at >= 4 and draw.textlength(cur[:break_at], font=font) <= max_w * 0.9:
+                lines.append(cur[:break_at].strip())
+                cur = cur[break_at:].strip() + tok
+            else:
+                lines.append(cur)
+                cur = tok
     if cur:
         lines.append(cur)
     # Avoid a lone trailing CJK character (orphan): pull the last char of the
