@@ -283,7 +283,7 @@ async def make_reel(
     # Step 3: Frames
     print(f"\n🖼️  [Step 3/5] FrameAgent: 渲染逐幀文字...")
     frame_paths = []
-    frame_duration = 2.0  # seconds per frame
+    frame_duration = 2.2  # seconds per frame
     for i in range(len(lines)):
         fp = _render_frame(lines, i)
         frame_paths.append(fp)
@@ -294,7 +294,7 @@ async def make_reel(
     mp4_path = REELS_DIR / f"{session_id}.mp4"
 
     try:
-        from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, transfx
+        from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
         from moviepy.video.fx import FadeIn, FadeOut
 
         # Create clips with Ken Burns zoom and crossfade
@@ -305,7 +305,7 @@ async def make_reel(
             clip = clip.with_position(("center", "center"))
             # Crossfade: fade in 0.3s, fade out 0.3s (but last clip doesn't fade out early)
             if i > 0:
-                clip = clip.with_effects([transfx.CrossFadeIn(0.3)])
+                clip = clip.crossfadein(0.3)
             clips.append(clip)
 
         # Concatenate with crossfade
@@ -328,7 +328,7 @@ async def make_reel(
             audio_codec="aac",
             fps=24,
             preset="medium",
-            bitrate="4000k",
+            bitrate="8000k",
             threads=2,
             logger=None,
         )
@@ -354,11 +354,11 @@ async def make_reel(
     if file_size > 100 * 1024 * 1024:
         print("  ⚠️ QC: 檔案過大 (>100MB)，IG 上限 60 秒/650MB")
 
-    if output_path:
-        import shutil
+    import shutil
+    final_path = output_path or mp4_path
+    if output_path and mp4_path != output_path:
         shutil.copy2(mp4_path, output_path)
-        return output_path
-    return mp4_path
+    return final_path
 
 
 async def _fallback_ffmpeg(frame_paths: List[Path], audio_path: Optional[Path],
@@ -386,7 +386,7 @@ async def _fallback_ffmpeg(frame_paths: List[Path], audio_path: Optional[Path],
         "-pix_fmt", "yuv420p",
         "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
         "-r", "24",
-        "-b:v", "4000k",
+        "-b:v", "8000k",
         "-preset", "fast",
         str(output),
     ]
