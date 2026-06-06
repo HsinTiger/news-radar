@@ -129,9 +129,10 @@ let refreshTimer = null;
 let charts = {};
 
 // === Init ===
-document.addEventListener('DOMContentLoaded', async () => {
-  initNavigation();
-  await initSQL();
+document.addEventListener('DOMContentLoaded', () => {
+  initNavigation();      // binds nav + renders the initial page (q() returns [] until DB loads)
+  hideLoading();         // app is usable immediately — don't freeze behind the ~26MB DB download
+  initSQL();             // load the DB in the BACKGROUND; refreshAll() re-renders when it arrives
   scheduleRefresh();
 });
 
@@ -148,11 +149,13 @@ async function initSQL() {
   }
 }
 
-async function loadDB() {
+async function loadDB(force = false) {
   setDBStatus('loading', '正在下載資料庫…');
   try {
+    // DB is large (~26MB); use the browser cache for fast (re)loads. The 🔄 button
+    // passes force=true to bypass cache and pull the freshest copy.
     const resp = await fetch(CONFIG.dbUrl(), {
-      cache: 'no-cache',
+      cache: force ? 'reload' : 'default',
       headers: { 'Accept': 'application/octet-stream' }
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -179,7 +182,7 @@ async function loadDB() {
 
 async function refreshDB() {
   showLoading('正在重新整理…');
-  await loadDB();
+  await loadDB(true);
 }
 
 function scheduleRefresh() {
@@ -221,7 +224,7 @@ function showPage(pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const page = document.getElementById('page-' + pageId);
   if (page) page.classList.add('active');
-  if (db) renderPage(pageId);
+  renderPage(pageId);   // safe without DB — q() returns [] until it loads; data pages fill in after
 }
 
 function renderPage(pageId) {
