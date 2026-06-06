@@ -305,7 +305,7 @@ async def make_reel(
             clip = clip.with_position(("center", "center"))
             # Crossfade: fade in 0.3s, fade out 0.3s (but last clip doesn't fade out early)
             if i > 0:
-                clip = clip.crossfadein(0.3)
+                clip = clip.with_duration(frame_duration)
             clips.append(clip)
 
         # Concatenate with crossfade

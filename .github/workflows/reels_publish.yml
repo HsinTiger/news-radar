@@ -96,6 +96,16 @@ jobs:
             --title "$T" --content "$C" \
             --output data/reels/latest.mp4 --publish "$P" 2>&1 | tee logs/reels_publish.log
 
+      - name: Debug - check output files
+        if: always()
+        run: |
+          echo "=== Files in data/reels/ ==="
+          find data/reels -type f 2>/dev/null | head -20
+          echo "=== Output file check ==="
+          ls -la data/reels/latest.mp4 2>/dev/null || echo "latest.mp4 NOT FOUND"
+          echo "=== Any mp4 in workspace ==="
+          find . -name "*.mp4" -type f 2>/dev/null | head -5
+
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
