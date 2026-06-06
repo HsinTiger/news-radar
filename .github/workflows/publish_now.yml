@@ -79,6 +79,7 @@ jobs:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
         run: |
+          set -o pipefail   # propagate python's exit code through the `| tee` (so success/fail is truthful)
           mkdir -p logs
           python scripts/publish_now.py \
             --url "${{ inputs.url }}" \
