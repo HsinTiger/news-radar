@@ -376,7 +376,22 @@ function renderHome() {
       </tr>`).join('')}
     </table></div>
   `;
-}
+
+  // Fetch feedback recommendations from feedback/latest.json
+  fetch(CONFIG.feedbackUrl(), { cache: 'no-cache' }).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(fb) {
+    var list = document.getElementById('feedback-rec-list');
+    if(!list) return;
+    var recs = fb.recommendations || fb.recs || [];
+    if(recs.length === 0) { list.innerHTML = '<p style="color:var(--text-muted)">尚無建議</p>'; return; }
+    list.innerHTML = recs.slice(0,6).map(function(r){
+      var m = r.message || r.msg || JSON.stringify(r.action || '');
+      return '<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:8px 12px;margin-bottom:6px;font-size:.85rem;color:var(--tx2)">' + esc(m) + '</div>';
+    }).join('');
+  }).catch(function(){ var el=document.getElementById('feedback-rec-list'); if(el) el.innerHTML='<p style="color:var(--text-muted)">載入失敗</p>'; });
+
 
 // === Queue Page ===
 function renderQueue() {
@@ -514,7 +529,22 @@ function renderArchive() {
       `).join('')}</div>`
     }
   `;
-}
+
+  // Fetch feedback recommendations from feedback/latest.json
+  fetch(CONFIG.feedbackUrl(), { cache: 'no-cache' }).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(fb) {
+    var list = document.getElementById('feedback-rec-list');
+    if(!list) return;
+    var recs = fb.recommendations || fb.recs || [];
+    if(recs.length === 0) { list.innerHTML = '<p style="color:var(--text-muted)">尚無建議</p>'; return; }
+    list.innerHTML = recs.slice(0,6).map(function(r){
+      var m = r.message || r.msg || JSON.stringify(r.action || '');
+      return '<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:8px 12px;margin-bottom:6px;font-size:.85rem;color:var(--tx2)">' + esc(m) + '</div>';
+    }).join('');
+  }).catch(function(){ var el=document.getElementById('feedback-rec-list'); if(el) el.innerHTML='<p style="color:var(--text-muted)">載入失敗</p>'; });
+
 
 // === Dropped Page ===
 function renderDropped() {
@@ -555,7 +585,22 @@ function renderDropped() {
       </table></div>`
     }
   `;
-}
+
+  // Fetch feedback recommendations from feedback/latest.json
+  fetch(CONFIG.feedbackUrl(), { cache: 'no-cache' }).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(fb) {
+    var list = document.getElementById('feedback-rec-list');
+    if(!list) return;
+    var recs = fb.recommendations || fb.recs || [];
+    if(recs.length === 0) { list.innerHTML = '<p style="color:var(--text-muted)">尚無建議</p>'; return; }
+    list.innerHTML = recs.slice(0,6).map(function(r){
+      var m = r.message || r.msg || JSON.stringify(r.action || '');
+      return '<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:8px 12px;margin-bottom:6px;font-size:.85rem;color:var(--tx2)">' + esc(m) + '</div>';
+    }).join('');
+  }).catch(function(){ var el=document.getElementById('feedback-rec-list'); if(el) el.innerHTML='<p style="color:var(--text-muted)">載入失敗</p>'; });
+
 
 function renderDroppedFiltered() {
   const filter = document.getElementById('drop-filter').value;
@@ -677,6 +722,10 @@ function renderSettings() {
       </table></div>`
     }
 
+    <div id="feedback-display"></div>
+    <h3 style="margin:20px 0 12px;color:var(--text-secondary)">🤖 最近反饋建議</h3>
+    <div id="feedback-rec-list"><p style="color:var(--text-muted)">載入中…</p></div>
+
     <h3 style="margin:20px 0 12px;color:var(--text-secondary)">🔄 最近 Reflection 事件</h3>
     ${reflectionEvents.length === 0
       ? '<p style="color:var(--text-muted)">尚無事件</p>'
@@ -691,7 +740,22 @@ function renderSettings() {
       </table></div>`
     }
   `;
-}
+
+  // Fetch feedback recommendations from feedback/latest.json
+  fetch(CONFIG.feedbackUrl(), { cache: 'no-cache' }).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(fb) {
+    var list = document.getElementById('feedback-rec-list');
+    if(!list) return;
+    var recs = fb.recommendations || fb.recs || [];
+    if(recs.length === 0) { list.innerHTML = '<p style="color:var(--text-muted)">尚無建議</p>'; return; }
+    list.innerHTML = recs.slice(0,6).map(function(r){
+      var m = r.message || r.msg || JSON.stringify(r.action || '');
+      return '<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:8px 12px;margin-bottom:6px;font-size:.85rem;color:var(--tx2)">' + esc(m) + '</div>';
+    }).join('');
+  }).catch(function(){ var el=document.getElementById('feedback-rec-list'); if(el) el.innerHTML='<p style="color:var(--text-muted)">載入失敗</p>'; });
+
 
 // === Detail Modal ===
 let currentModalTab = 'platforms';
