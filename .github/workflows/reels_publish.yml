@@ -1,0 +1,110 @@
+name: "News Radar · Reels Maker"
+
+on:
+  schedule:
+    - cron: "23 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      publish_to:
+        description: "Publish target"
+        default: "ig"
+        type: choice
+        options: [ig, fb, threads, none]
+
+concurrency:
+  group: news-radar-reels
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  reels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip -q
+          pip install -r requirements.txt -q
+
+      - name: Fonts
+        run: |
+          mkdir -p assets/fonts
+          B="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
+          curl -sSL -o assets/fonts/SourceHanSansTC-Bold.otf "$B/SourceHanSansTC-Bold.otf" 2>/dev/null || true
+          curl -sSL -o assets/fonts/SourceHanSansTC-Regular.otf "$B/SourceHanSansTC-Regular.otf" 2>/dev/null || true
+
+      - name: DB
+        run: |
+          mkdir -p data/01_harvest data/reels logs
+          git fetch origin state --depth=1 2>/dev/null || true
+          git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db 2>/dev/null || true
+
+      - name: Generate Reel
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "Picking latest news..."
+          TITLE=$(python scripts/pick_latest_news.py | head -1)
+          CONTENT=$(python scripts/pick_latest_news.py | tail -1)
+          echo "Title: $TITLE"
+          python scripts/reels_maker.py \
+            --title "$TITLE" \
+            --content "$CONTENT" \
+            --output data/reels/latest.mp4 \
+            --publish none 2>&1 | tee logs/reels_last.log
+
+      - name: QC
+        id: qc
+        run: |
+          if [ -f data/reels/latest.mp4 ] && [ -s data/reels/latest.mp4 ]; then
+            python scripts/reels_maker.py --qc-only --output data/reels/latest.mp4
+          else
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish
+        if: steps.qc.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          P="${{ inputs.publish_to || 'ig' }}"
+          [ "$P" = "none" ] && exit 0
+          T=$(python scripts/pick_latest_news.py | head -1)
+          C=$(python scripts/pick_latest_news.py | tail -1)
+          python scripts/reels_maker.py \
+            --title "$T" --content "$C" \
+            --output data/reels/latest.mp4 --publish "$P" 2>&1 | tee logs/reels_publish.log
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reels-${{ github.run_id }}
+          path: |
+            logs/reels_last.log
+            logs/reels_qc.log
+            logs/reels_publish.log
+            data/reels/latest.mp4
+          retention-days: 7
+          if-no-files-found: warn
