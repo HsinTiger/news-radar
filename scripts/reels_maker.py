@@ -356,8 +356,13 @@ async def make_reel(
 
     import shutil
     final_path = output_path or mp4_path
-    if output_path and mp4_path != output_path:
-        shutil.copy2(mp4_path, output_path)
+    if output_path:
+        out = Path(str(output_path)) if not isinstance(output_path, Path) else output_path
+        out.parent.mkdir(parents=True, exist_ok=True)
+        mp = Path(str(mp4_path))
+        if str(out) != str(mp):
+            shutil.copy2(str(mp), str(out))
+            print(f"  [Copy] {mp.name} -> {out}")
     return final_path
 
 
