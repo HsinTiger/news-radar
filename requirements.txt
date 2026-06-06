@@ -43,3 +43,4 @@ moviepy>=2.1.0            # Video compositing (text + images + audio -> MP4)
 #   Mac:    pip install -r requirements.txt -r requirements-mac.txt
 #   Cloud:  pip install -r requirements.txt           ← 不裝 requirements-mac.txt
 opencc>=1.3.1
+python-multipart==0.0.12

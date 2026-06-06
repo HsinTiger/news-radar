@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -196,9 +197,19 @@ def _trigger_immediate_publish(url: str, platforms: List[str], note: str = "") -
 # Routes
 # ===========================================================================
 
-@app.get("/")
-async def root():
-    return {"service": "news-radar-manual-submit", "status": "running"}
+# Serve the manual-submit frontend as static files at /app/
+FRONTEND_DIR = _REPO_ROOT / "manual-submit"
+if FRONTEND_DIR.exists():
+    app.mount("/app", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    # The frontend is also accessible at root with a redirect to /app/
+    @app.get("/")
+    async def root():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/app/")
+else:
+    @app.get("/")
+    async def root():
+        return {"service": "news-radar-manual-submit", "status": "running"}
 
 
 @app.post("/api/submit", response_model=SubmitResponse)

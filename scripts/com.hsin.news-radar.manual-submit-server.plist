@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  News Radar · Manual Submit API Server LaunchAgent
+  ===================================================
+  安裝：
+    cp ~/news_radar/scripts/com.hsin.news-radar.manual-submit-server.plist \
+       ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.hsin.news-radar.manual-submit-server.plist
+
+  手動開始：launchctl start com.hsin.news-radar.manual-submit-server
+  手動停止：launchctl stop com.hsin.news-radar.manual-submit-server
+  查看狀態：launchctl list | grep news-radar.manual
+
+  Server 會在 http://localhost:8765 啟動
+  日誌在 ~/Library/Logs/news-radar/manual-submit-server/
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hsin.news-radar.manual-submit-server</string>
+
+    <!-- Repo root for cwd -->
+    <key>WorkingDirectory</key>
+    <string>/Users/hsin/news_radar</string>
+
+    <!-- The uvicorn command -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/hsin/news_radar/.venv/bin/python</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>scripts.manual_submit_server:app</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8765</string>
+        <string>--log-level</string>
+        <string>info</string>
+    </array>
+
+    <!-- KeepAlive: auto-restart on crash. RunAtLoad: start on login. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Throttle: if it crashes more than once in 10 seconds, wait 30s -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>MANUAL_SUBMIT_PORT</key>
+        <string>8765</string>
+    </dict>
+
+    <!-- Log paths -->
+    <key>StandardOutPath</key>
+    <string>/Users/hsin/Library/Logs/news-radar/manual-submit-server/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/hsin/Library/Logs/news-radar/manual-submit-server/stderr.log</string>
+
+    <!-- Watchdog: check health every 30 seconds -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/hsin/news_radar/scripts/manual_submit_server.py</string>
+    </array>
+</dict>
+</plist>

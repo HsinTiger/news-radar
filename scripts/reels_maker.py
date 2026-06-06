@@ -315,10 +315,7 @@ async def make_reel(
         if audio_result and audio_result.exists():
             audio = AudioFileClip(str(audio_result))
             # Loop audio if shorter than video, or trim if longer
-            if audio.duration < video.duration:
-                audio = audio.loop(duration=video.duration)
-            else:
-                audio = audio.subclip(0, video.duration)
+            audio = audio.subclip(0, min(audio.duration, video.duration))
             video = video.with_audio(audio)
 
         # Write

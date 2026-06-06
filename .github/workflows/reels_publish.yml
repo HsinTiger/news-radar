@@ -115,6 +115,6 @@ jobs:
             logs/reels_last.log
             logs/reels_qc.log
             logs/reels_publish.log
-            data/reels/latest.mp4
+            data/reels/*.mp4
           retention-days: 7
           if-no-files-found: warn
