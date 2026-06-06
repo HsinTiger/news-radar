@@ -66,7 +66,7 @@ NVIDIA 上季營收
 請直接輸出 4-5 行腳本，不要前言、不要編號、不要說明。"""
 
 
-def _generate_script(title: str, content: str) -> List[str]:
+async def _generate_script(title: str, content: str) -> List[str]:
     """ContentAgent: 用 Gemini 生成震撼腳本。"""
     from src.llm_brain import call_for_json
     from pydantic import BaseModel
@@ -75,13 +75,13 @@ def _generate_script(title: str, content: str) -> List[str]:
         lines: List[str]
 
     prompt = _CONTENT_SCRIPT_PROMPT.format(title=title, content=content[:2000])
-    result = asyncio.run(call_for_json(
+    result = await call_for_json(
         system="你是專業短影音腳本寫手。輸出 JSON {lines: [\"行1\", \"行2\", ...]}，4-5 行。",
         prompt=prompt,
         response_model=ScriptResult,
         temperature=0.4,
         gemini_model="gemini-2.5-flash",
-    ))
+    )
 
     if result.data and result.data.lines:
         print(f"[ContentAgent] 生成腳本 ({len(result.data.lines)} 行):")
@@ -265,7 +265,7 @@ async def make_reel(
 
     # Step 1: Script
     print("\n📝 [Step 1/5] ContentAgent: 生成腳本...")
-    lines = _generate_script(title, content)
+    lines = await _generate_script(title, content)
     if not lines:
         print("  ❌ 腳本生成失敗")
         return None
