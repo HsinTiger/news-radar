@@ -254,8 +254,19 @@ async def make_carousel_reel(
 
     print(f"\n🎬 Carousel Reels ({n} cards, {20.0:.0f}s)")
 
-    # Voiceover
-    script = "。".join(card_texts)
+    # Voiceover: pick first non-empty line from each card, strip markdown
+    import re
+    voice_lines = []
+    for ct in card_texts:
+        line = ct.strip().lstrip("#-=* ").split("\n")[0].split(chr(10))[0].strip()
+        if not line:
+            continue
+        line = re.sub(r'\[.*?\]|\(.*?\)|[*#-]', '', line).strip()
+        if len(line) > 40:
+            line = line[:40]
+        if line:
+            voice_lines.append(line)
+    script = "。".join(voice_lines[:4]) if voice_lines else card_texts[0][:40]
     ap = REELS_DIR / f"{sid}_audio.mp3"
     audio = await _gen_voice(script, ap, voice)
 
@@ -266,26 +277,27 @@ async def make_carousel_reel(
     frame_dir = REELS_DIR / sid
     frame_dir.mkdir(exist_ok=True)
 
+    frame_idx = 0
     for ci, cp in enumerate(card_paths):
         if not cp.exists():
             img = Image.new("RGB", (1080, 1920), (15, 17, 23))
         else:
             img = Image.open(cp).convert("RGB")
         img3x = img.resize((3240, 5760), Image.LANCZOS)
-
         for fi in range(frames_per_card):
             t = fi / max(1, frames_per_card - 1)
             scale = 1.0 + 0.06 * t
             sw, sh = int(1080 * scale), int(1920 * scale)
             sx, sy = (img3x.width - sw) // 2, (img3x.height - sh) // 2
             cropped = img3x.crop((sx, sy, sx + sw, sy + sh)).resize((1080, 1920), Image.LANCZOS)
-            fp = frame_dir / f"f_{ci:02d}_{fi:04d}.png"
+            fp = frame_dir / f"frame_{frame_idx:06d}.png"
             cropped.save(fp)
+            frame_idx += 1
         print(f"  ✅ Card {ci+1}/{n} rendered")
 
     # Compile
     mp4 = REELS_DIR / f"{sid}.mp4"
-    pattern = str(frame_dir / "f_%02d_%04d.png")
+    pattern = str(frame_dir / "frame_%06d.png")
     cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", pattern]
     if audio and audio.exists():
         cmd += ["-i", str(audio), "-c:a", "aac", "-shortest"]
