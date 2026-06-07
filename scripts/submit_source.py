@@ -340,6 +340,40 @@ def process_image_base64(base64_data: str, filename: str = "upload.jpg", caption
 # ====================================================================
 # CLI
 # ====================================================================
+_RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
+
+
+def process_images(paths: list, note: str = "", platforms: list = None) -> dict:
+    """One or more uploaded screenshots → ONE Meta source (carousel images)."""
+    platforms = platforms or ["fb", "ig", "threads"]
+    paths = [p.strip() for p in paths if p.strip()]
+    if not paths:
+        return {"status": "error", "message": "no image paths"}
+    urls = [_RAW_BASE + p for p in paths]
+    key = "|".join(sorted(paths))
+    news_id = _make_news_id("meta_img_" + hashlib.md5(key.encode()).hexdigest())
+    conn = dbmod.get_conn()
+    if dbmod.news_exists(conn, news_id):
+        conn.close()
+        return {"status": "already_exists", "id": news_id}
+    refs = "\n".join(f"![screenshot]({u})" for u in urls)
+    item = NewsItem(
+        id=news_id, feed_name="user_submission", feed_tier="primary",
+        source_type="article", url=urls[0],
+        title=note or f"{len(urls)} 張截圖",
+        published_at=datetime.now(timezone.utc).isoformat(),
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        clean_markdown=(f"User submitted {len(urls)} image(s). Note: {note}\n\n{refs}"),
+        word_count=len(note or "") + 20, og_image_url=urls[0],
+        tags=["user_submission", "user_image", f"images:{len(urls)}"] + [f"platform:{p}" for p in platforms],
+        status="fetched",
+    )
+    dbmod.upsert_news(conn, item)
+    conn.close()
+    _append_processed({"type": "images", "paths": paths, "platforms": platforms}, "created")
+    return {"status": "created", "id": news_id, "count": len(urls)}
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Submit source for News Radar")
@@ -347,6 +381,7 @@ def main():
     parser.add_argument("--text", type=str, help="Article text body")
     parser.add_argument("--yt", type=str, help="YouTube video URL")
     parser.add_argument("--image", type=str, help="Image URL")
+    parser.add_argument("--images", type=str, help="Comma-separated repo-relative image paths")
     parser.add_argument("--image-base64", type=str, help="Base64 image data (from mobile upload)")
     parser.add_argument("--image-filename", type=str, default="upload.jpg", help="Original filename")
     parser.add_argument("--image-caption", type=str, default="", help="Image caption")
@@ -367,6 +402,8 @@ def main():
         result = process_text(args.text, args.note, platforms)
     elif args.yt:
         result = process_youtube(args.yt, args.note, platforms)
+    elif args.images:
+        result = process_images(args.images.split(","), args.note, platforms)
     elif args.image:
         result = process_image(args.image, args.note, platforms)
     elif args.image_base64:

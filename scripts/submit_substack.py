@@ -100,12 +100,37 @@ def process_youtube(url: str, note: str = "") -> dict:
                                source_type="youtube", extra_tags=["youtube", "video"])
 
 
+_RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
+
+
+def process_images(paths: list[str], note: str = "") -> dict:
+    """One or more uploaded screenshots → ONE Substack draft seed.
+
+    There is no OCR in the cloud, so `note` is REQUIRED and used as the textual
+    seed (what the images are about / your angle). The images are embedded as
+    markdown refs so compose.py can reference them in the draft.
+    """
+    paths = [p.strip() for p in paths if p.strip()]
+    if not paths:
+        return {"status": "error", "error": "no image paths"}
+    if not note.strip():
+        return {"status": "error", "error": "note required for image submission (no OCR — describe the topic/angle)"}
+
+    key = "|".join(sorted(paths))
+    news_id = _make_news_id("substack_img_" + hashlib.md5(key.encode()).hexdigest())
+    refs = "\n".join(f"![screenshot]({_RAW_BASE}{p})" for p in paths)
+    body = f"# {note}\n\n（使用者上傳 {len(paths)} 張截圖作為素材，主題：{note}）\n\n{refs}"
+    return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=note, body=body,
+                               source_type="image", extra_tags=["user_image", f"images:{len(paths)}"])
+
+
 def main():
     import argparse
     p = argparse.ArgumentParser(description="Submit a source for a SUBSTACK draft")
     p.add_argument("--url", type=str)
     p.add_argument("--text", type=str)
     p.add_argument("--yt", type=str)
+    p.add_argument("--images", type=str, help="comma-separated repo-relative image paths")
     p.add_argument("--note", type=str, default="")
     args = p.parse_args()
 
@@ -115,8 +140,10 @@ def main():
         result = process_text(args.text, args.note)
     elif args.yt:
         result = process_youtube(args.yt, args.note)
+    elif args.images:
+        result = process_images(args.images.split(","), args.note)
     else:
-        result = {"status": "error", "error": "one of --url / --text / --yt required"}
+        result = {"status": "error", "error": "one of --url / --text / --yt / --images required"}
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") in ("created", "already_exists") else 1

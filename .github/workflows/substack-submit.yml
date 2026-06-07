@@ -1,4 +1,5 @@
 name: 📝 Substack Submit (手動提交 → Substack 草稿)
+run-name: "📝 Substack: ${{ inputs.note || inputs.content }}"
 
 # Substack counterpart to submit-source.yml (which is Meta fb/ig/threads).
 # This writes the submitted source into the state-branch DB tagged
@@ -19,8 +20,9 @@ on:
           - url
           - text
           - youtube
+          - image
       content:
-        description: "內容（URL / 全文 / YouTube 網址）"
+        description: "內容（URL / 全文 / YouTube 網址 / 圖片路徑逗號分隔）"
         required: true
         type: string
       note:
@@ -71,6 +73,7 @@ jobs:
             url)     FLAG=--url ;;
             text)    FLAG=--text ;;
             youtube) FLAG=--yt ;;
+            image)   FLAG=--images ;;
             *)       echo "unknown source_type"; exit 1 ;;
           esac
           python scripts/submit_substack.py \

@@ -250,7 +250,7 @@ async def make_carousel_reel(
     REELS_DIR.mkdir(parents=True, exist_ok=True)
     sid = f"cr_{random.randint(1000,9999)}"
     n = len(card_paths)
-    spc = 20.0 / max(n, 1)  # seconds per card
+    spc = 8.0 / max(n, 1)  # seconds per card
 
     print(f"\n🎬 Carousel Reels ({n} cards, {20.0:.0f}s)")
 
@@ -585,7 +585,7 @@ async def main():
     # Make reel
     output = Path(args.output) if args.output else None
     if card_paths and len(card_paths) >= 2:
-        print("\n🎴 Using carousel card slideshow (20s)")
+        print("\n🎴 Using carousel card slideshow (~8s)")
         video = await make_carousel_reel(card_paths[:4], card_texts[:4], output, voice=args.voice)
     else:
         video = await make_reel(title, content, output, voice=args.voice)
