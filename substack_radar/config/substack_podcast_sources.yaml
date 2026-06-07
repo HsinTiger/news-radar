@@ -202,3 +202,32 @@ sources:
   - url: https://www.youtube.com/@deepdivewithalice/videos
     topic_category: other
     max_videos: 1
+
+  # ======================================================================
+  # 第七類：華爾街投行 / 宏觀策略（2026-06-08 新增，handle+字幕已驗證）
+  # 補強原本偏弱的「投行視角」。高盛/大摩官方頻道混雜大量短 clip，
+  # composer 會自動跳過 <3000 字的逐字稿，故風險可控。
+  # ======================================================================
+  - url: https://www.youtube.com/@GoldmanSachs/videos        # Goldman Sachs Exchanges
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@morganstanley/videos       # MS Thoughts on the Market
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@BloombergPodcasts/videos   # Masters in Business 等
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@thecompoundnews/videos     # The Compound (Ritholtz)
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@CapitalAllocatorsPodcast/videos  # Capital Allocators (Ted Seides)
+    topic_category: us_stocks
+    max_videos: 1
+
+  - url: https://www.youtube.com/@joerogan/videos            # Joe Rogan Experience（完整集已回 YouTube）
+    topic_category: other
+    max_videos: 1
