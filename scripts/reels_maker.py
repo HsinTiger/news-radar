@@ -240,6 +240,70 @@ def _render_frame(text_lines: List[str], line_index: int,
     return path
 
 
+async def make_carousel_reel(
+    card_paths: List[Path],
+    card_texts: List[str],
+    output_path: Optional[Path] = None,
+    voice: str = "zh-CN-XiaoxiaoNeural",
+) -> Optional[Path]:
+    """Carousel 圖卡幻燈片 → 20 秒 Reels。每張卡 5 秒 + Ken Burns zoom + edge-tts 配音。"""
+    REELS_DIR.mkdir(parents=True, exist_ok=True)
+    sid = f"cr_{random.randint(1000,9999)}"
+    n = len(card_paths)
+    spc = 20.0 / max(n, 1)  # seconds per card
+
+    print(f"\n🎬 Carousel Reels ({n} cards, {20.0:.0f}s)")
+
+    # Voiceover
+    script = "。".join(card_texts)
+    ap = REELS_DIR / f"{sid}_audio.mp3"
+    audio = await _gen_voice(script, ap, voice)
+
+    # Frames: each card with Ken Burns zoom
+    fps = 24
+    frames_per_card = int(spc * fps)
+    from PIL import Image
+    frame_dir = REELS_DIR / sid
+    frame_dir.mkdir(exist_ok=True)
+
+    for ci, cp in enumerate(card_paths):
+        if not cp.exists():
+            img = Image.new("RGB", (1080, 1920), (15, 17, 23))
+        else:
+            img = Image.open(cp).convert("RGB")
+        img3x = img.resize((3240, 5760), Image.LANCZOS)
+
+        for fi in range(frames_per_card):
+            t = fi / max(1, frames_per_card - 1)
+            scale = 1.0 + 0.06 * t
+            sw, sh = int(1080 * scale), int(1920 * scale)
+            sx, sy = (img3x.width - sw) // 2, (img3x.height - sh) // 2
+            cropped = img3x.crop((sx, sy, sx + sw, sy + sh)).resize((1080, 1920), Image.LANCZOS)
+            fp = frame_dir / f"f_{ci:02d}_{fi:04d}.png"
+            cropped.save(fp)
+        print(f"  ✅ Card {ci+1}/{n} rendered")
+
+    # Compile
+    mp4 = REELS_DIR / f"{sid}.mp4"
+    pattern = str(frame_dir / "f_%02d_%04d.png")
+    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", pattern]
+    if audio and audio.exists():
+        cmd += ["-i", str(audio), "-c:a", "aac", "-shortest"]
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "12000k", "-preset", "fast", str(mp4)]
+    import subprocess
+    subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+    if not mp4.exists():
+        print("  ❌ FFmpeg failed"); return None
+
+    print(f"  ✅ Video: {mp4} ({mp4.stat().st_size / 1024 / 1024:.1f}MB)")
+    if output_path:
+        import shutil
+        shutil.copy2(str(mp4), str(output_path))
+        return Path(output_path)
+    return mp4
+
+
 async def make_reel(
     title: str,
     content: str,
@@ -520,7 +584,11 @@ async def main():
 
     # Make reel
     output = Path(args.output) if args.output else None
-    video = await make_reel(title, content, output, voice=args.voice)
+    if card_paths and len(card_paths) >= 2:
+        print("\n🎴 Using carousel card slideshow (20s)")
+        video = await make_carousel_reel(card_paths[:4], card_texts[:4], output, voice=args.voice)
+    else:
+        video = await make_reel(title, content, output, voice=args.voice)
 
     if not video:
         print("❌ Reels 製作失敗")
