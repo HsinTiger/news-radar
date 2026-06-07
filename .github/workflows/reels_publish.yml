@@ -31,7 +31,7 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install
+      - name: Install deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python -m pip install --upgrade pip -q
@@ -42,9 +42,8 @@ jobs:
           mkdir -p assets/fonts
           B="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
           curl -sSL -o assets/fonts/SourceHanSansTC-Bold.otf "$B/SourceHanSansTC-Bold.otf" 2>/dev/null || true
-          curl -sSL -o assets/fonts/SourceHanSansTC-Regular.otf "$B/SourceHanSansTC-Regular.otf" 2>/dev/null || true
 
-      - name: DB
+      - name: Restore DB
         run: |
           mkdir -p data/01_harvest data/reels logs
           git fetch origin state --depth=1 2>/dev/null || true
@@ -55,21 +54,21 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: "1"
         run: |
-          echo "Picking latest news..."
           TITLE=$(python scripts/pick_latest_news.py | head -1)
           CONTENT=$(python scripts/pick_latest_news.py | tail -1)
           echo "Title: $TITLE"
-          python scripts/reels_maker.py \
-            --title "$TITLE" \
-            --content "$CONTENT" \
-            --output data/reels/latest.mp4 \
-            --publish none 2>&1 | tee logs/reels_last.log
+          python scripts/reels_maker.py --title "$TITLE" --content "$CONTENT" --publish none 2>&1 | tee logs/reels_last.log
+          REEL=$(ls -t data/reels/*.mp4 2>/dev/null | head -1)
+          if [ -n "$REEL" ]; then
+            cp "$REEL" data/reels/publish.mp4
+            echo "Copied to data/reels/publish.mp4"
+          fi
 
       - name: QC
         id: qc
         run: |
-          if [ -f data/reels/latest.mp4 ] && [ -s data/reels/latest.mp4 ]; then
-            python scripts/reels_maker.py --qc-only --output data/reels/latest.mp4
+          if [ -f data/reels/publish.mp4 ] && [ -s data/reels/publish.mp4 ]; then
+            python scripts/reels_maker.py --qc-only --output data/reels/publish.mp4
           else
             echo "skip=true" >> $GITHUB_OUTPUT
           fi
@@ -86,25 +85,13 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
         run: |
           P="${{ inputs.publish_to || 'ig' }}"
           [ "$P" = "none" ] && exit 0
-          T=$(python scripts/pick_latest_news.py | head -1)
-          C=$(python scripts/pick_latest_news.py | tail -1)
-          python scripts/reels_maker.py \
-            --title "$T" --content "$C" \
-            --output data/reels/latest.mp4 --publish "$P" 2>&1 | tee logs/reels_publish.log
-
-      - name: Debug - check output files
-        if: always()
-        run: |
-          echo "=== Files in data/reels/ ==="
-          find data/reels -type f 2>/dev/null | head -20
-          echo "=== Output file check ==="
-          ls -la data/reels/latest.mp4 2>/dev/null || echo "latest.mp4 NOT FOUND"
-          echo "=== Any mp4 in workspace ==="
-          find . -name "*.mp4" -type f 2>/dev/null | head -5
+          TITLE=$(python scripts/pick_latest_news.py | head -1)
+          python scripts/publish_reel.py data/reels/publish.mp4 "$P" "$TITLE"
 
       - name: Upload artifact
         if: always()
@@ -113,8 +100,7 @@ jobs:
           name: reels-${{ github.run_id }}
           path: |
             logs/reels_last.log
-            logs/reels_qc.log
-            logs/reels_publish.log
+            data/reels/publish.mp4
             data/reels/*.mp4
           retention-days: 7
           if-no-files-found: warn

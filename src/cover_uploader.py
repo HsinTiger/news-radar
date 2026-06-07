@@ -104,7 +104,7 @@ COMMIT_AUTHOR_EMAIL = "noreply@local"
 # Filename + URL helpers (pure)
 # ---------------------------------------------------------------------------
 
-def cover_filename(draft_id: str, platform_key: str) -> str:
+def cover_filename(draft_id: str, platform_key: str, _ext: str = "png") -> str:
     """Construct the canonical cover filename in cover-cdn.
 
     Pure function — no IO, no validation beyond shape. Mirrored in the
@@ -115,7 +115,7 @@ def cover_filename(draft_id: str, platform_key: str) -> str:
         raise ValueError(f"platform_key must be 'fb', 'ig', or 'threads', got {platform_key!r}")
     if not draft_id:
         raise ValueError("draft_id must be non-empty")
-    return f"{draft_id}_{platform_key}.png"
+    return f"{draft_id}_{platform_key}.{_ext}"
 
 
 def construct_raw_url(
@@ -253,6 +253,7 @@ def upload_cover(
     draft_id: str,
     platform_key: str,
     *,
+    file_ext: str = "png",
     owner: str = DEFAULT_OWNER,
     repo: str = DEFAULT_REPO,
     branch: str = COVER_BRANCH,
@@ -272,7 +273,7 @@ def upload_cover(
         return None
 
     try:
-        fname = cover_filename(draft_id, platform_key)
+        fname = cover_filename(draft_id, platform_key, file_ext)
     except ValueError as exc:
         logger.warning("[cover_uploader] bad input: %s", exc)
         return None
