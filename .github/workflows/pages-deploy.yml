@@ -1,10 +1,12 @@
-name: 🌐 Pages · Deploy dashboard + manual-submit
+name: 🌐 Pages · Deploy dashboard + submit frontends
 
 # Single Pages deploy. GitHub Pages replaces the ENTIRE site on every deploy,
-# so dashboard and manual-submit MUST be assembled in one workflow — otherwise
-# whichever ran last clobbers the other (which is exactly what happened before).
-#   dashboard      → https://hsintiger.github.io/news-radar/
-#   manual-submit  → https://hsintiger.github.io/news-radar/manual-submit/
+# so ALL pages MUST be assembled in one workflow — otherwise whichever ran last
+# clobbers the others (which is exactly what happened before).
+#   dashboard       → https://hsintiger.github.io/news-radar/
+#   Meta 三平台      → https://hsintiger.github.io/news-radar/meta-submit/
+#   Substack 草稿    → https://hsintiger.github.io/news-radar/substack-submit/
+#   manual-submit   → https://hsintiger.github.io/news-radar/manual-submit/  (本機 server 版,保留)
 
 on:
   push:
@@ -12,6 +14,8 @@ on:
     paths:
       - 'dashboard/**'
       - 'manual-submit/**'
+      - 'meta-submit/**'
+      - 'substack-submit/**'
       - '.github/workflows/pages-deploy.yml'
   workflow_dispatch:
 
@@ -34,13 +38,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Assemble site (dashboard at root, manual-submit in subdir)
+      - name: Assemble site (dashboard at root, submit pages in subdirs)
         run: |
-          mkdir -p _site/manual-submit
-          cp -r dashboard/*     _site/
-          cp -r manual-submit/* _site/manual-submit/
-          echo "✅ root:" && ls _site/
-          echo "✅ manual-submit:" && ls _site/manual-submit/
+          mkdir -p _site/manual-submit _site/meta-submit _site/substack-submit
+          cp -r dashboard/*       _site/
+          cp -r manual-submit/*   _site/manual-submit/
+          cp -r meta-submit/*     _site/meta-submit/
+          cp -r substack-submit/* _site/substack-submit/
+          echo "✅ root:"           && ls _site/
+          echo "✅ meta-submit:"    && ls _site/meta-submit/
+          echo "✅ substack-submit:" && ls _site/substack-submit/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

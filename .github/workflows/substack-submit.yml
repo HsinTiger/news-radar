@@ -1,0 +1,102 @@
+name: 📝 Substack Submit (手動提交 → Substack 草稿)
+
+# Substack counterpart to submit-source.yml (which is Meta fb/ig/threads).
+# This writes the submitted source into the state-branch DB tagged
+# `substack_source` (feed_name=user_substack). The Mac's hourly sync pulls the
+# state DB; then the local launchd job composes the draft token-free via
+# substack_radar/compose.py (Claude/Gemini CLI). Drafts land on the Mac +
+# OneDrive + Substack — composition is NOT done in the cloud (no CLI there).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_type:
+        description: "來源類型"
+        required: true
+        default: "url"
+        type: choice
+        options:
+          - url
+          - text
+          - youtube
+      content:
+        description: "內容（URL / 全文 / YouTube 網址）"
+        required: true
+        type: string
+      note:
+        description: "備註 / 標題（選填）"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: state
+          path: _state
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -q
+
+      - name: Restore DB
+        run: |
+          mkdir -p data/01_harvest
+          if [ -f _state/data/01_harvest/news_radar.db ]; then
+            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
+            echo "[restore] DB: $(du -h data/01_harvest/news_radar.db | cut -f1)"
+          fi
+
+      - name: Process Substack submission
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          case "${{ inputs.source_type }}" in
+            url)     FLAG=--url ;;
+            text)    FLAG=--text ;;
+            youtube) FLAG=--yt ;;
+            *)       echo "unknown source_type"; exit 1 ;;
+          esac
+          python scripts/submit_substack.py \
+            "$FLAG" "${{ inputs.content }}" \
+            --note "${{ inputs.note }}" 2>&1
+
+      - name: Persist DB to state branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ ! -f data/01_harvest/news_radar.db ]; then
+            echo "[skip] no DB to persist"
+            exit 0
+          fi
+          STATE_DIR="$(mktemp -d)"
+          cd "$STATE_DIR"
+          git init -q -b state
+          git config user.name "news-radar-bot"
+          git config user.email "noreply@github.com"
+          mkdir -p data/01_harvest
+          cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
+          git add -A
+          if git diff --cached --quiet; then
+            echo "[persist] no change"
+            exit 0
+          fi
+          git commit -q -m "state: manual Substack source submission"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" state
