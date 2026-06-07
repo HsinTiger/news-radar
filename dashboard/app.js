@@ -1484,16 +1484,27 @@ function submitSourceByTab() {
   var pt = document.querySelector('input[name="pub-timing"]:checked');
   entry.schedule = pt ? pt.value : 'next';
   var imm = pt && pt.value === 'now' && type === 'url' && getGitHubPat();
+
+  // Also try to submit via the local API server (news_radar manual-submit backend)
+  var apiBase = localStorage.getItem('news_radar_api_base') || 'http://localhost:8765';
+  var apiPayload = {
+    type: type,
+    content: type === 'image' ? (window.imgUploadData || '') : content,
+    platforms: platforms,
+    note: note,
+    schedule: entry.schedule,
+  };
+  fetch(apiBase + '/api/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(apiPayload),
+  }).catch(function() { /* API not available — submission saved locally */ });
   if (imm) {
     entry.status = 'dispatched';
     triggerPublishNow(content, platforms, note);
+    showToast('🚀 已觸發即時發布（API 伺服器在線時也會同步提交）', 'success');
   } else {
-    showToast(
-      type === 'url'
-        ? '✅ 已暫存（到「設定」貼 GitHub PAT 後即可立即發布）'
-        : '✅ 已接收！下一輪 pipeline 會處理',
-      'success'
-    );
+    showToast('✅ 已接收（API 伺服器在線時會同步提交到 pipeline）', 'success');
   }
 
   var pending = loadPendingSources();
