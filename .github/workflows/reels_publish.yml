@@ -57,14 +57,16 @@ jobs:
           TITLE=$(python scripts/pick_latest_news.py | head -1)
           CONTENT=$(python scripts/pick_latest_news.py | tail -1)
           echo "Title: $TITLE"
-          python scripts/reels_maker.py             --title "$TITLE"             --content "$CONTENT"             --output data/reels/publish.mp4             --publish none 2>&1 | tee logs/reels_last.log
-          ls -la data/reels/publish.mp4
+          python scripts/reels_maker.py             --title "$TITLE"             --content "$CONTENT"             --output "$GITHUB_WORKSPACE/$GITHUB_WORKSPACE/data/reels/publish.mp4"             --publish none 2>&1 | tee logs/reels_last.log
+          ls -la "$GITHUB_WORKSPACE/$GITHUB_WORKSPACE/data/reels/publish.mp4" || echo "publish.mp4 not found"
+          # Fallback: try to find any mp4
+          find data/reels -name "*.mp4" -type f 2>/dev/null | head -3
 
       - name: QC
         id: qc
         run: |
-          if [ -f data/reels/publish.mp4 ] && [ -s data/reels/publish.mp4 ]; then
-            python scripts/reels_maker.py --qc-only --output data/reels/publish.mp4
+          if [ -f $GITHUB_WORKSPACE/data/reels/publish.mp4 ] && [ -s $GITHUB_WORKSPACE/data/reels/publish.mp4 ]; then
+            python scripts/reels_maker.py --qc-only --output $GITHUB_WORKSPACE/$GITHUB_WORKSPACE/data/reels/publish.mp4
           else
             echo "skip=true" >> $GITHUB_OUTPUT
           fi
@@ -87,7 +89,7 @@ jobs:
           P="${{ inputs.publish_to || 'ig' }}"
           [ "$P" = "none" ] && exit 0
           TITLE=$(python scripts/pick_latest_news.py | head -1)
-          python scripts/publish_reel.py data/reels/publish.mp4 "$P" "$TITLE"
+          python scripts/publish_reel.py $GITHUB_WORKSPACE/data/reels/publish.mp4 "$P" "$TITLE"
 
       - name: Upload artifact
         if: always()
@@ -96,7 +98,7 @@ jobs:
           name: reels-${{ github.run_id }}
           path: |
             logs/reels_last.log
-            data/reels/publish.mp4
+            $GITHUB_WORKSPACE/data/reels/publish.mp4
             data/reels/*.mp4
           retention-days: 7
           if-no-files-found: warn
