@@ -542,6 +542,8 @@ async def main():
     # Resolve content
     title = args.title or ""
     content = args.content or ""
+    card_paths = []
+    card_texts = []
 
     if args.url:
         # Fetch article from URL
