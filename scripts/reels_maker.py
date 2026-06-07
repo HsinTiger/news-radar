@@ -324,7 +324,7 @@ async def make_reel(
     file_size = mp4_path.stat().st_size if mp4_path.exists() else 0
     print(f"  檔案: {mp4_path}")
     print(f"  大小: {file_size / 1024 / 1024:.1f} MB")
-    print(f"  時長: {frame_duration * len(lines):.1f} 秒 ({len(lines)} 幀)")
+    print(f"  時長: {2.2 * len(lines):.1f} 秒 ({len(lines)} 幀)")
     print(f"  腳本: {'→'.join(lines)}")
 
     # QC Check
