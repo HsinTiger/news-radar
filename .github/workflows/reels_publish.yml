@@ -55,14 +55,14 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: "1"
         run: |
-          TITLE=$(python scripts/pick_latest_news.py | head -1)
-          CONTENT=$(python scripts/pick_latest_news.py | tail -1)
-          echo "Title: $TITLE"
           cd $GITHUB_WORKSPACE
-          python scripts/reels_maker.py \
-            --title "$TITLE" \
-            --content "$CONTENT" \
-            --publish none 2>&1 | tee logs/reels_last.log
+          DRAFT_ID=$(python3 scripts/pick_latest_draft.py 2>/dev/null || echo "")
+          if [ -n "$DRAFT_ID" ]; then
+            echo "Using draft: $DRAFT_ID"
+            python scripts/reels_maker.py --draft-id "$DRAFT_ID" --publish none 2>&1 | tee logs/reels_last.log
+          else
+            python scripts/reels_maker.py --title "Market" --content "News" --publish none 2>&1 | tee logs/reels_last.log
+          fi
           LATEST=$(ls -t data/reels/*.mp4 2>/dev/null | head -1)
           if [ -n "$LATEST" ]; then
             cp "$LATEST" data/reels/publish.mp4
@@ -112,8 +112,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           P="${{ inputs.publish_to || 'ig' }}"
           [ "$P" = "none" ] && exit 0
-          TITLE=$(python scripts/pick_latest_news.py | head -1)
-          python scripts/publish_reel.py data/reels/publish.mp4 "$P" "$TITLE" 2>&1 | tee logs/reels_publish.log
+          python scripts/publish_reel.py data/reels/publish.mp4 "$P" "Carousel Reel" 2>&1 | tee logs/reels_publish.log
 
       - name: Upload artifact
         if: always()
