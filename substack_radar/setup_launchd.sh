@@ -8,8 +8,8 @@
 #   1. Install python-substack if missing
 #   2. Verify .env has SUBSTACK_AUTO_DRAFT / COOKIES_STRING / PUBLICATION_URL
 #   3. Kick off today's MORNING draft in background (catches up any missed slot)
-#   4. Kick off today's EVENING draft in background (parallel — different source)
-#   5. Install macOS launchd cron for daily 09:00 + 18:00 starting tomorrow
+#   4. Kick off today's PODCAST + EVENING drafts in background
+#   5. Install macOS launchd cron for daily 08:00 · 13:00 · 13:30 · 17:00 starting tomorrow
 #
 # Safe to re-run: idempotent. Existing launchd jobs get replaced.
 set -e
@@ -18,7 +18,7 @@ REPO="$HOME/news_radar"
 cd "$REPO"
 
 echo "================================================================"
-echo "News Radar · Substack daily-2-draft pipeline setup"
+echo "News Radar · Substack daily-4-draft pipeline setup"
 echo "================================================================"
 echo ""
 
@@ -81,12 +81,27 @@ echo ""
 mkdir -p logs
 TS=$(date +%Y%m%d_%H%M%S)
 MORNING_LOG="logs/substack_morning_${TS}.log"
+PODCAST1_LOG="logs/substack_podcast1_${TS}.log"
+PODCAST2_LOG="logs/substack_podcast2_${TS}.log"
 EVENING_LOG="logs/substack_evening_${TS}.log"
 
 echo "[3/6] Triggering morning draft in background..."
 nohup .venv/bin/python substack_radar/compose.py morning --harvest > "$MORNING_LOG" 2>&1 &
 MORNING_PID=$!
 echo "  → PID $MORNING_PID  log: $MORNING_LOG"
+echo ""
+
+echo "[3b/6] Triggering podcast draft #1 (with harvest) in background..."
+nohup .venv/bin/python substack_radar/compose.py podcast --harvest > "$PODCAST1_LOG" 2>&1 &
+PODCAST1_PID=$!
+echo "  → PID $PODCAST1_PID  log: $PODCAST1_LOG"
+echo ""
+
+echo "[3c/6] Triggering podcast draft #2 (no harvest, picks next unused) in background..."
+# Second podcast draft runs 5 min later to let #1 finish harvesting + composing
+(sleep 300 && nohup .venv/bin/python substack_radar/compose.py podcast > "$PODCAST2_LOG" 2>&1) &
+PODCAST2_PID=$!
+echo "  → PID $PODCAST2_PID  log: $PODCAST2_LOG (delayed 5 min)"
 echo ""
 
 echo "[4/6] Triggering evening draft in background..."
@@ -105,11 +120,13 @@ mkdir -p "$AGENT_DIR"
 MORNING_PLIST="$AGENT_DIR/com.newsradar.substack_morning.plist"
 EVENING_PLIST="$AGENT_DIR/com.newsradar.substack_evening.plist"
 PODCAST_PLIST="$AGENT_DIR/com.newsradar.substack_podcast.plist"
+PODCAST2_PLIST="$AGENT_DIR/com.newsradar.substack_podcast2.plist"
 
 # Unload existing first (idempotent re-run)
 launchctl unload "$MORNING_PLIST" 2>/dev/null || true
 launchctl unload "$EVENING_PLIST" 2>/dev/null || true
 launchctl unload "$PODCAST_PLIST" 2>/dev/null || true
+launchctl unload "$PODCAST2_PLIST" 2>/dev/null || true
 
 cat > "$MORNING_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -222,14 +239,53 @@ cat > "$PODCAST_PLIST" <<EOF
 </plist>
 EOF
 
+cat > "$PODCAST2_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.newsradar.substack_podcast2</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>cd $REPO &amp;&amp; .venv/bin/python -u substack_radar/compose.py podcast</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>13</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$REPO/logs/launchd_podcast2.log</string>
+  <key>StandardErrorPath</key>
+  <string>$REPO/logs/launchd_podcast2.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
 launchctl load -w "$MORNING_PLIST"
 launchctl load -w "$EVENING_PLIST"
 launchctl load -w "$PODCAST_PLIST"
+launchctl load -w "$PODCAST2_PLIST"
 
 echo "  → installed: $MORNING_PLIST"
 echo "  → installed: $EVENING_PLIST"
 echo "  → installed: $PODCAST_PLIST"
-echo "  → cron active. Daily fire: 08:00 morning · 13:00 podcast · 17:00 evening."
+echo "  → installed: $PODCAST2_PLIST"
+echo "  → cron active. Daily fire: 08:00 morning · 13:00 podcast×2 · 17:00 evening."
 echo ""
 
 # ----------------------------------------------------------------------
@@ -269,13 +325,15 @@ echo "✅ Setup complete."
 echo "================================================================"
 echo ""
 echo "Today's drafts (running NOW in background, ~3-5 min each):"
-echo "  Morning  PID $MORNING_PID  →  tail -f $REPO/$MORNING_LOG"
-echo "  Evening  PID $EVENING_PID  →  tail -f $REPO/$EVENING_LOG"
+echo "  Morning   PID $MORNING_PID  →  tail -f $REPO/$MORNING_LOG"
+echo "  Podcast 1 PID $PODCAST1_PID  →  tail -f $REPO/$PODCAST1_LOG"
+echo "  Podcast 2 PID $PODCAST2_PID  →  tail -f $REPO/$PODCAST2_LOG (delayed 5 min)"
+echo "  Evening   PID $EVENING_PID  →  tail -f $REPO/$EVENING_LOG"
 echo ""
 echo "When you get home, check:"
 echo "  https://hsin73.substack.com/publish/drafts"
 echo "  ~/Library/CloudStorage/OneDrive-RealtekSemiconductorCorp/文件/antigravity_workspace/substack/autogen/$(date +%Y-%m-%d)/"
 echo ""
-echo "Tomorrow onwards: daily 09:00 morning + 18:00 evening, fully automatic."
-echo "To uninstall: launchctl unload ~/Library/LaunchAgents/com.newsradar.substack_{morning,evening}.plist"
+echo "Tomorrow onwards: daily 08:00 morning · 13:00 podcast×2 · 17:00 evening, fully automatic."
+echo "To uninstall: launchctl unload ~/Library/LaunchAgents/com.newsradar.substack_{morning,evening,podcast,podcast2}.plist"
 echo ""
