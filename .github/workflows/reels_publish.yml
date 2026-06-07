@@ -78,14 +78,24 @@ jobs:
         id: qc
         run: |
           cd $GITHUB_WORKSPACE
-          if [ -f data/reels/publish.mp4 ] && [ -s data/reels/publish.mp4 ]; then
-            python scripts/reels_maker.py --qc-only --output data/reels/publish.mp4
+          FP="data/reels/publish.mp4"
+          if [ -f "$FP" ] && [ -s "$FP" ]; then
+            SIZE=$(stat -c%s "$FP" 2>/dev/null || stat -f%z "$FP" 2>/dev/null || echo "0")
+            DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$FP" 2>/dev/null || echo "0")
+            echo "QC: size=${SIZE} duration=${DUR}"
+            if [ "$SIZE" -gt 100000 ] && [ "$(echo "$DUR > 3" | bc 2>/dev/null || echo 0)" = "1" ]; then
+              echo "QC_PASS=true" >> $GITHUB_OUTPUT
+            else
+              echo "QC failed: size or duration too low"
+              echo "skip=true" >> $GITHUB_OUTPUT
+            fi
           else
+            echo "No video found"
             echo "skip=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Publish
-        if: steps.qc.outputs.skip != 'true'
+        if: steps.qc.outputs.QC_PASS == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
