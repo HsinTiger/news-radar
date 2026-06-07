@@ -561,18 +561,55 @@ async def main():
             print(f"  ⚠️ 抓取失敗: {e}")
 
     elif args.draft_id:
-        # Read from DB
+        # Build carousel cards from news content
         from src import db as dbmod
         conn = dbmod.get_conn()
-        row = conn.execute(
+        news = conn.execute(
             "SELECT n.title, n.clean_markdown FROM news_items n "
             "JOIN drafts d ON d.news_id = n.id WHERE d.id = ?",
             (args.draft_id,)
         ).fetchone()
+        if news:
+            title = news["title"] or title
+            raw = news["clean_markdown"] or ""
+            text_chunks = [p.strip()[:120] for p in raw.split(chr(10)+chr(10)) if p.strip() and len(p.strip()) > 30][:4]
+            if text_chunks:
+                card_texts = text_chunks
+        # If no news found, try draft directly
+        if not card_texts:
+            draft = conn.execute("SELECT title FROM drafts WHERE id=?", (args.draft_id,)).fetchone()
+            if draft:
+                title = draft["title"] or title
+                card_texts = [(title or "Market")[j:j+50] for j in range(0, min(len(title or "Market"), 200), 50)][:4]
         conn.close()
-        if row:
-            title = row["title"] or title
-            content = row["clean_markdown"] or content
+        # Show what we got
+        if card_texts:
+            print(f"  \U0001f0cf {len(card_texts)} text chunks for cards")
+            # Generate card images
+            from PIL import Image, ImageDraw
+            cdir = Path(str(REELS_DIR / "cards_reel"))
+            cdir.mkdir(parents=True, exist_ok=True)
+            for ci, txt in enumerate(card_texts[:4]):
+                im = Image.new("RGB", (1080, 1920), (10, 15, 30))
+                d = ImageDraw.Draw(im)
+                from scripts.reels_visuals import _load_font as lf
+                d.text((50, 80), f"  {ci+1}/4", font=lf(28), fill=(96, 165, 250))
+                lines = [txt[j:j+16] for j in range(0, min(len(txt), 160), 16)][:8]
+                for li, ln in enumerate(lines):
+                    bx = d.textbbox((0, 0), ln, font=lf(52))
+                    x = (1080 - (bx[2] - bx[0])) // 2
+                    y = 300 + li * 68
+                    d.text((x+2, y+2), ln, font=lf(52), fill=(0, 0, 0, 100))
+                    d.text((x, y), ln, font=lf(52), fill=(232, 234, 237))
+                d.rectangle([0, 1800, 1080, 1920], fill=(15, 20, 40))
+                d.text((40, 1830), "主力爸爸我錯了", font=lf(30), fill=(96, 165, 250))
+                fp = cdir / f"card_{ci}.png"
+                im.save(fp, "PNG")
+                card_paths.append(fp)
+                print(f"  Card {ci+1}: {txt[:30]}...")
+            print(f"\n\U0001f3b4 {len(card_paths)} cards ready")
+            if card_texts:
+                content = card_texts[0]  # ensure content is not empty
 
     if not content:
         print("❌ 請提供 --title + --content 或 --url 或 --draft-id")
