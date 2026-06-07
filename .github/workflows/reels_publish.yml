@@ -57,12 +57,8 @@ jobs:
           TITLE=$(python scripts/pick_latest_news.py | head -1)
           CONTENT=$(python scripts/pick_latest_news.py | tail -1)
           echo "Title: $TITLE"
-          python scripts/reels_maker.py --title "$TITLE" --content "$CONTENT" --publish none 2>&1 | tee logs/reels_last.log
-          REEL=$(ls -t data/reels/*.mp4 2>/dev/null | head -1)
-          if [ -n "$REEL" ]; then
-            cp "$REEL" data/reels/publish.mp4
-            echo "Copied to data/reels/publish.mp4"
-          fi
+          python scripts/reels_maker.py             --title "$TITLE"             --content "$CONTENT"             --output data/reels/publish.mp4             --publish none 2>&1 | tee logs/reels_last.log
+          ls -la data/reels/publish.mp4
 
       - name: QC
         id: qc
