@@ -280,61 +280,44 @@ async def make_reel(
     else:
         print(f"  ✅ 語音: {audio_result}")
 
-    # Step 3: Frames
-    print(f"\n🖼️  [Step 3/5] FrameAgent: 渲染逐幀文字...")
-    frame_paths = []
-    frame_duration = 2.2  # seconds per frame
-    for i in range(len(lines)):
-        fp = _render_frame(lines, i)
-        frame_paths.append(fp)
-        print(f"  ✅ 幀 {i+1}/{len(lines)}")
+    # Step 3: Build scenes for visual engine
+    print(f"\n🖼️  [Step 3/5] FrameAgent: 使用視覺引擎 (animated gradient + particle)...")
+    from scripts.reels_visuals import ReelsComposer
 
-    # Step 4: Composite with MoviePy
-    print(f"\n🎞️  [Step 4/5] CompositeAgent: 合成影片...")
+    scenes = []
+    bg_types = ["gradient", "particle", "gradient", "particle", "gradient"]
+    font_sizes = [76, 80, 76, 80, 68]
+
+    for i, line in enumerate(lines):
+        bt = bg_types[i % len(bg_types)]
+        fs = font_sizes[i % len(font_sizes)]
+        scenes.append({
+            "type": "text",
+            "text": line,
+            "duration_sec": 2.2,
+            "bg_type": bt,
+            "font_size": fs,
+            "animation": "still",
+        })
+
+    # Step 4: Composite with visual engine
+    print(f"\n🎞️  [Step 4/5] CompositeAgent: 視覺合成 (ReelsComposer)...")
     mp4_path = REELS_DIR / f"{session_id}.mp4"
 
-    try:
-        from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
-        from moviepy.video.fx import FadeIn, FadeOut
+    composer = ReelsComposer(scenes, fps=12)
+    audio_fp = audio_result if (audio_result and audio_result.exists()) else None
+    result = composer.render(mp4_path, audio_path=audio_fp)
 
-        # Create clips with Ken Burns zoom and crossfade
-        clips = []
-        for i, fp in enumerate(frame_paths):
-            clip = ImageClip(str(fp), duration=frame_duration)
-            clip = clip.resized(lambda t: 1 + 0.03 * t / frame_duration)  # 3% Ken Burns zoom over duration
-            clip = clip.with_position(("center", "center"))
-            # Crossfade: fade in 0.3s, fade out 0.3s (but last clip doesn't fade out early)
-            if i > 0:
-                clip = clip.with_duration(frame_duration)
-            clips.append(clip)
-
-        # Concatenate with crossfade
-        video = concatenate_videoclips(clips, method="compose", padding=-0.3)
-
-        # Add audio if available
-        if audio_result and audio_result.exists():
-            audio = AudioFileClip(str(audio_result))
-            # Loop audio if shorter than video, or trim if longer
-            video = video.with_audio(audio)
-
-        # Write
-        video.write_videofile(
-            str(mp4_path),
-            codec="libx264",
-            audio_codec="aac",
-            fps=24,
-            preset="medium",
-            bitrate="8000k",
-            threads=2,
-            logger=None,
-        )
-        video.close()
-        print(f"  ✅ 影片: {mp4_path}")
-
-    except Exception as e:
-        print(f"  ❌ MoviePy 合成失敗: {e}")
-        # Fallback: use FFmpeg directly
-        return await _fallback_ffmpeg(frame_paths, audio_result, mp4_path, frame_duration)
+    if result and result.exists():
+        print(f"  ✅ 影片: {result}")
+    else:
+        print(f"  ⚠️ 視覺引擎失敗，使用 FFmpeg fallback...")
+        # Old-style fallback frames
+        frame_paths = []
+        for i in range(len(lines)):
+            fp = _render_frame(lines, i)
+            frame_paths.append(fp)
+        return await _fallback_ffmpeg(frame_paths, audio_result, mp4_path, 2.2)
 
     # Step 5: Export & QC
     print(f"\n✅ [Step 5/5] 完成!")

@@ -26,7 +26,7 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 # ====================================================================
 # 工具

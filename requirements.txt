@@ -33,7 +33,9 @@ pygithub>=2.5.0           # GitHub API wrapper for repo management
 youtube-transcript-api==0.6.3  # YouTube transcript extraction for source submissions
 # ===== Reels/Short Video Generation (2026-06-03) =====
 edge-tts>=6.1.0           # Microsoft Edge TTS - free Chinese voiceover, no API key needed
-moviepy>=2.1.0            # Video compositing (text + images + audio -> MP4)
+moviepy>=2.1.0
+matplotlib>=3.8.0
+numpy>=1.24.0            # Video compositing (text + images + audio -> MP4)
 # ===== Substack draft API — moved to requirements-mac.txt (2026-05-13) =====
 # python-substack 只有 Mac 端 tools/substack_compose.py 會用到。Cloud GH Actions
 # 的 publish_queue.yml / reflect_*.yml 等 workflows 完全用不到、且 v0.1.18 在
