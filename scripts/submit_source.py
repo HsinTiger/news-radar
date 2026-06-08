@@ -67,12 +67,52 @@ def _make_news_id(url_or_text: str) -> str:
     return hashlib.sha1(url_or_text.encode()).hexdigest()
 
 
+def _resolve_google_news(url: str) -> str:
+    """Google News /read/ & /articles/ URLs wrap the real article in a base64
+    token. Resolve to the destination via Google's batchexecute API. Returns the
+    real URL, or the original url on any failure."""
+    import re, json
+    import httpx
+    if "news.google.com" not in url:
+        return url
+    m = re.search(r"/(?:read|articles|rss/articles)/([A-Za-z0-9_\-]+)", url)
+    if not m:
+        return url
+    H = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = httpx.get(f"https://news.google.com/rss/articles/{m.group(1)}",
+                      headers=H, timeout=20, follow_redirects=True)
+        sig = re.search(r'data-n-a-sg="([^"]+)"', r.text)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', r.text)
+        gid = re.search(r'data-n-a-id="([^"]+)"', r.text)
+        if not (sig and ts and gid):
+            return url
+        inner = ('["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,'
+                 'null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],'
+                 '"%s",%s,"%s"]') % (gid.group(1), ts.group(1), sig.group(1))
+        freq = json.dumps([[["Fbv4je", inner, None, "generic"]]])
+        resp = httpx.post(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
+            headers={**H, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+            data={"f.req": freq}, timeout=20)
+        # response embeds: ["garturlres","<REAL_URL>",1,"<AMP_URL>"]
+        mm = re.search(r'\\"garturlres\\",\\"(https?://[^\\"]+)\\"', resp.text)
+        if mm:
+            return mm.group(1).encode().decode("unicode_escape")
+    except Exception:
+        pass
+    return url
+
+
 def _fetch_page_text(url: str) -> Optional[str]:
-    """Fetch article text from URL using trafilatura."""
+    """Fetch article text from URL using trafilatura. Resolves Google News
+    wrapper URLs to the real article first."""
     import httpx
     import trafilatura
+    url = _resolve_google_news(url)
     try:
-        resp = httpx.get(url, timeout=15, follow_redirects=True)
+        resp = httpx.get(url, timeout=15, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"})
         if resp.status_code == 200:
             text = trafilatura.extract(resp.text)
             return text if text else None
