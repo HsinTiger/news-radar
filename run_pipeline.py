@@ -363,14 +363,30 @@ async def _publish_platform(
 
     # --- Phase 10 (2026-06-02): 2–4 圖卡 carousel（有蒸餾卡片內容時優先）。
     # 任何一步失敗都 fall through 到下面的單圖流程，發文絕不因圖卡失敗而中斷。 ---
-    if carousel is not None:
+    # Phase 10 carousel: try structured carousel first, then auto-generate from text.
+    _carousel_to_use = carousel
+    if _carousel_to_use is None and variant.body:
+        # Auto-generate 4 cards from the platform text (split by paragraphs)
+        from src.schema import CarouselCards
+        paras = [p.strip() for p in variant.body.split("\n") if p.strip() and len(p.strip()) > 10][:4]
+        if len(paras) >= 2:
+            _carousel_to_use = CarouselCards(
+                insight_statement=paras[0] if len(paras) > 0 else None,
+                insight_support=paras[1] if len(paras) > 1 else None,
+                stat_number=None,
+                stat_caption=None,
+                takeaways=paras[2:4],
+            )
+            print(f"   ↳ [Phase 10] 自動生成 {len(_carousel_to_use.takeaways)} 張圖卡（從 body 內容）")
+
+    if _carousel_to_use is not None:
         try:
             import re as _re
             import tempfile as _tmp
             from substack_radar.cards import build_cards, render_cards
             from src.cover_uploader import upload_cards
 
-            cards = build_cards(title=variant.title or "", subtitle="", carousel=carousel)
+            cards = build_cards(title=variant.title or "", subtitle="", carousel=_carousel_to_use)
             if len(cards) >= 2:
                 cdir = Path(_tmp.mkdtemp(prefix="cards_"))
                 card_paths = render_cards(

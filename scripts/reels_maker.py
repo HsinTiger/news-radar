@@ -556,6 +556,8 @@ async def main():
     content = args.content or ""
     card_paths = []
     card_texts = []
+    card_paths = []
+    card_texts = []
 
     if args.url:
         # Fetch article from URL
@@ -573,18 +575,35 @@ async def main():
             print(f"  ⚠️ 抓取失敗: {e}")
 
     elif args.draft_id:
-        # Build carousel cards from news content
+        # Read carousel data directly from drafts.carousel_json
         from src import db as dbmod
+        from src.schema import CarouselCards
         conn = dbmod.get_conn()
-        news = conn.execute(
-            "SELECT n.title, n.clean_markdown FROM news_items n "
-            "JOIN drafts d ON d.news_id = n.id WHERE d.id = ?",
-            (args.draft_id,)
-        ).fetchone()
-        if news:
-            title = news["title"] or title
-            raw = news["clean_markdown"] or ""
-            text_chunks = [p.strip()[:120] for p in raw.split(chr(10)+chr(10)) if p.strip() and len(p.strip()) > 30][:4]
+        draft_row = conn.execute("SELECT * FROM drafts WHERE id=?", (args.draft_id,)).fetchone()
+        if draft_row:
+            title = draft_row["title"] or title
+            carousel_json = draft_row["carousel_json"] if "carousel_json" in draft_row.keys() else None
+            if carousel_json:
+                try:
+                    carousel = CarouselCards.model_validate_json(carousel_json)
+                    card_texts = [
+                        carousel.insight_statement or "",
+                        carousel.insight_support or "",
+                        str(carousel.stat_number or "") + (" " + (carousel.stat_caption or "") if carousel.stat_caption else ""),
+                    ] + (carousel.takeaways or [])
+                    card_texts = [t for t in card_texts if t][:4]
+                    if not card_texts:
+                        card_texts = [title[:60], "市場分析快報"]
+                except Exception:
+                    pass
+            # Fallback to body if no carousel
+            if not card_texts:
+                pd_rows = conn.execute("SELECT body FROM platform_drafts WHERE draft_id=?", (args.draft_id,)).fetchall()
+                card_texts = [r["body"][:140] for r in pd_rows if r["body"]][:4]
+            if not card_texts:
+                news = conn.execute("SELECT title FROM news_items n JOIN drafts d ON d.news_id=n.id WHERE d.id=?", (args.draft_id,)).fetchone()
+                if news:
+                    card_texts = [news["title"][:60]]
             if text_chunks:
                 card_texts = text_chunks
         # If no news found, try draft directly
