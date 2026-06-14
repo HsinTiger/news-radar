@@ -116,13 +116,13 @@ def _get_tts():
     return _EDGE_TTS
 
 
-async def _gen_voice(text: str, output_path: Path, voice: str = "zh-CN-XiaoxiaoNeural") -> Optional[Path]:
+async def _gen_voice(text: str, output_path: Path, voice: str = "zh-TW-HsiaoChenNeural") -> Optional[Path]:
     """Edge-TTS 生成中文語音。完全免費、不需 API key。
 
-    支援的繁體中文語音：
-      - zh-CN-XiaoxiaoNeural (女聲, 推薦)
-      - zh-CN-YunxiNeural (男聲)
-      - zh-HK-HiuGaaiNeural (粵語女聲, 但可讀國語)
+    台灣國語語音（品牌口音，預設）：
+      - zh-TW-HsiaoChenNeural (女聲, 推薦)
+      - zh-TW-HsiaoYuNeural   (女聲)
+      - zh-TW-YunJheNeural    (男聲)
     """
     try:
         import edge_tts
@@ -149,89 +149,76 @@ async def _get_audio_duration(path: Path) -> float:
         return 0.0
 
 
+# News Radar brand palette (visual_brand_system.md §2)
+_PAPER = (242, 238, 229)   # #F2EEE5 背景，永不純白
+_INK = (20, 20, 20)        # #141414 near-black hero text
+_SIENNA = (200, 74, 50)    # #C84A32 house accent，一格 ONE placement
+_STONE = (138, 131, 120)   # #8A8378 secondary / meta
+
+
 def _render_frame(text_lines: List[str], line_index: int,
                   width: int = 1080, height: int = 1920,
-                  bg_color: Tuple[int, ...] = (15, 17, 23)) -> Path:
-    """Render a single frame with text using Pillow.
-
-    Text animation:
-    - Lines before current: small, dimmed (already revealed)
-    - Current line: large, white, bold
-    - Lines after: invisible
-    """
+                  bg_color: Tuple[int, ...] = _PAPER, issue_no: str = "—") -> Path:
+    """Render one reel frame in the News Radar editorial brand:
+    Cold Paper bg · Press Ink serif hero · single Sienna accent · mono masthead.
+    Already-read lines dim to Stone; the current line is the Ink focal."""
     from PIL import Image, ImageDraw, ImageFont
 
     img = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Try to load fonts
-    font_paths = [
-        REPO / "assets" / "fonts" / "SourceHanSansTC-Bold.otf",
-        REPO / "assets" / "fonts" / "SourceHanSansTC-Regular.otf",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    ]
+    serif = [REPO / "assets" / "fonts" / "SourceHanSerifTC-Light.otf",
+             "/System/Library/Fonts/Hiragino Sans GB.ttc"]
+    sans = [REPO / "assets" / "fonts" / "SourceHanSansTC-Bold.otf",
+            "/System/Library/Fonts/PingFang.ttc"]
 
-    title_font = None
-    body_font = None
-    sub_font = None
-    for fp in font_paths:
-        p = Path(fp)
-        if p.exists():
-            try:
-                title_font = ImageFont.truetype(str(p), 80)
-                body_font = ImageFont.truetype(str(p), 64)
-                sub_font = ImageFont.truetype(str(p), 36)
-                break
-            except Exception:
-                continue
+    def _load(paths, size):
+        for fp in paths:
+            p = Path(fp)
+            if p.exists():
+                try:
+                    return ImageFont.truetype(str(p), size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
 
-    if title_font is None:
-        title_font = ImageFont.load_default()
-        body_font = ImageFont.load_default()
-        sub_font = ImageFont.load_default()
-
+    hero_font = _load(serif, 78)     # 當前句：serif hero
+    read_font = _load(serif, 44)     # 已讀句：縮小
+    mast_font = _load(sans, 30)      # masthead mono-ish
+    foot_font = _load(sans, 30)
     center_x = width // 2
 
-    # Calculate vertical centering for N lines
-    line_height = 110
+    # ── 頂部 masthead：NEWS RADAR · Nº xxx（RADAR 著 Sienna，全篇唯一 accent）──
+    mast_y = 90
+    draw.text((70, mast_y), "NEWS ", font=mast_font, fill=_INK)
+    nw = draw.textbbox((0, 0), "NEWS ", font=mast_font)[2]
+    draw.text((70 + nw, mast_y), "RADAR", font=mast_font, fill=_SIENNA)
+    rw = draw.textbbox((0, 0), "RADAR", font=mast_font)[2]
+    draw.text((70 + nw + rw, mast_y), f"  ·  Nº {issue_no}", font=mast_font, fill=_STONE)
+    draw.rectangle([70, mast_y + 52, width - 70, mast_y + 54], fill=_INK)  # 2px ink rule
+
+    # ── 中央 hero 文字（垂直置中）──
+    line_height = 120
     total_h = len(text_lines) * line_height
     start_y = (height - total_h) // 2
-
     for i, line in enumerate(text_lines):
         y = start_y + i * line_height
         if i < line_index:
-            # Dimmed (already read)
-            font = sub_font
-            color = (100, 100, 110)
-            alpha = 180
+            font, color = read_font, _STONE
         elif i == line_index:
-            # Current line
-            font = title_font
-            color = (232, 234, 237)
-            alpha = 255
+            font, color = hero_font, _INK
         else:
-            # Not yet visible
             continue
-
-        # Measure text
         bbox = draw.textbbox((0, 0), line, font=font)
-        tw = bbox[2] - bbox[0]
-        x = center_x - tw // 2
-
-        # Draw with slight shadow for depth
-        if i == line_index:
-            draw.text((x + 3, y + 3), line, font=font, fill=(0, 0, 0, 180))
+        x = center_x - (bbox[2] - bbox[0]) // 2
         draw.text((x, y), line, font=font, fill=color)
 
-    # Bottom brand
+    # ── 底部 wordmark + 頁碼（mono / Stone）──
     brand = "主力爸爸我錯了"
-    bbox = draw.textbbox((0, 0), brand, font=sub_font)
-    bw = bbox[2] - bbox[0]
-    draw.text((center_x - bw // 2, height - 120), brand, font=sub_font, fill=(60, 62, 68))
-
-    # Frame number
-    draw.text((30, 30), f"  {line_index+1}/{len(text_lines)}", font=sub_font, fill=(50, 50, 56))
+    bw = draw.textbbox((0, 0), brand, font=foot_font)[2]
+    draw.text((center_x - bw // 2, height - 130), brand, font=foot_font, fill=_STONE)
+    draw.text((70, height - 130), f"{line_index+1:02d} / {len(text_lines):02d}",
+              font=foot_font, fill=_STONE)
 
     out = REPO / "data" / "reels" / "frames"
     out.mkdir(parents=True, exist_ok=True)
@@ -244,7 +231,7 @@ async def make_carousel_reel(
     card_paths: List[Path],
     card_texts: List[str],
     output_path: Optional[Path] = None,
-    voice: str = "zh-CN-XiaoxiaoNeural",
+    voice: str = "zh-TW-HsiaoChenNeural",
 ) -> Optional[Path]:
     """Carousel 圖卡幻燈片 → 20 秒 Reels。每張卡 5 秒 + Ken Burns zoom + edge-tts 配音。"""
     REELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -280,7 +267,7 @@ async def make_carousel_reel(
     frame_idx = 0
     for ci, cp in enumerate(card_paths):
         if not cp.exists():
-            img = Image.new("RGB", (1080, 1920), (15, 17, 23))
+            img = Image.new("RGB", (1080, 1920), _PAPER)
         else:
             img = Image.open(cp).convert("RGB")
         img3x = img.resize((3240, 5760), Image.LANCZOS)
