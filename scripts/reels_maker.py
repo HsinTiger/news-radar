@@ -523,13 +523,54 @@ def qc_check(video_path: Path) -> Dict:
 # 主 CLI
 # ====================================================================
 
+async def make_brand_reel(
+    card_texts: List[str],
+    output_path: Optional[Path] = None,
+    voice: str = "zh-TW-HsiaoChenNeural",
+    issue_no: str = "—",
+) -> Optional[Path]:
+    """News Radar 編輯風 Reels（2026-06-14 使用者批准的形式）：
+    報紙風 _render_frame（Paper/Ink/serif/masthead + Sienna RADAR）逐句揭示
+    + 台灣口音 edge-tts 配音。取代原本的漸層粒子引擎。"""
+    import re as _re
+    REELS_DIR.mkdir(parents=True, exist_ok=True)
+    sid = f"brand_{random.randint(1000,9999)}"
+
+    # 視覺：每句硬斷 ≤14 字（78px serif 在 1080 寬不溢出），逐句揭示
+    def _wrap(s: str, n: int = 14) -> List[str]:
+        s = _re.sub(r'\[.*?\]|\(.*?\)|[*#=]', '', s or '').strip()
+        return [s[i:i+n] for i in range(0, len(s), n)] if s else []
+    lines: List[str] = []
+    for ct in (card_texts or []):
+        lines += _wrap(ct)
+    lines = [l for l in lines if l][:8] or ["News Radar"]
+
+    # 配音：用原始完整句子（自然朗讀），非斷行版
+    voice_src = [_re.sub(r'\[.*?\]|\(.*?\)|[*#=-]', '', c).strip()[:48] for c in (card_texts or []) if c.strip()]
+    script = "。".join(voice_src[:5]) if voice_src else "".join(lines)
+    ap = REELS_DIR / f"{sid}_audio.mp3"
+    audio = await _gen_voice(script, ap, voice)
+
+    # 逐句揭示幀（frame i 顯示 line 0..i）
+    frames = [_render_frame(lines, i, issue_no=issue_no) for i in range(len(lines))]
+
+    # 節奏：總長對齊配音（每句平均），無音時每句 2.4s
+    out = Path(str(output_path)) if output_path else REELS_DIR / f"{sid}.mp4"
+    if audio and audio.exists():
+        adur = await _get_audio_duration(audio)
+        per = max(1.6, min(3.2, adur / max(len(frames), 1))) if adur > 0 else 2.4
+    else:
+        per = 2.4
+    return await _fallback_ffmpeg(frames, audio if (audio and audio.exists()) else None, out, per)
+
+
 async def main():
     parser = argparse.ArgumentParser(description="News Radar Reels Maker")
     parser.add_argument("--title", type=str, help="新聞標題")
     parser.add_argument("--content", type=str, help="新聞內文")
     parser.add_argument("--url", type=str, help="從 URL 爬取文章")
     parser.add_argument("--draft-id", type=str, help="從現有 draft_id 製作")
-    parser.add_argument("--voice", type=str, default="zh-CN-XiaoxiaoNeural",
+    parser.add_argument("--voice", type=str, default="zh-TW-HsiaoChenNeural",
                        help="語音 (zh-CN-XiaoxiaoNeural 女聲 / zh-CN-YunxiNeural 男聲)")
     parser.add_argument("--output", type=str, help="輸出路徑")
     parser.add_argument("--publish", choices=["ig", "fb", "threads", "none"], default="none",
@@ -637,13 +678,16 @@ async def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["passed"] else 1
 
-    # Make reel
+    # Make reel — 統一走品牌編輯風（使用者 2026-06-14 批准）。
+    # card_texts 來自 carousel_json（已繁化）；無 draft 時用 title/content 切句。
     output = Path(args.output) if args.output else None
-    if card_paths and len(card_paths) >= 2:
-        print("\n🎴 Using carousel card slideshow (~8s)")
-        video = await make_carousel_reel(card_paths[:4], card_texts[:4], output, voice=args.voice)
-    else:
-        video = await make_reel(title, content, output, voice=args.voice)
+    reel_lines = card_texts[:5] if card_texts else None
+    if not reel_lines:
+        import re as _re2
+        reel_lines = [s.strip() for s in _re2.split(r'[。\n！？]', content or title or "")
+                      if s.strip()][:5] or [title or "News Radar"]
+    issue_no = (args.draft_id[:6] if args.draft_id else "—")
+    video = await make_brand_reel(reel_lines, output, voice=args.voice, issue_no=issue_no)
 
     if not video:
         print("❌ Reels 製作失敗")
