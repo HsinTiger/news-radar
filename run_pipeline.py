@@ -518,7 +518,7 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     content = row["clean_markdown"] or ""
     og_image = row["og_image_url"]
     news_url = row["url"]
-    tags_raw = row.get("tags") if "tags" in row.keys() else None
+    tags_raw = row["tags"] if "tags" in row.keys() else None
 
     print(f"\n[Pipeline] 處理新聞: {title[:40]}...")
 

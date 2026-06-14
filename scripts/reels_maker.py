@@ -604,8 +604,6 @@ async def main():
                 news = conn.execute("SELECT title FROM news_items n JOIN drafts d ON d.news_id=n.id WHERE d.id=?", (args.draft_id,)).fetchone()
                 if news:
                     card_texts = [news["title"][:60]]
-            if text_chunks:
-                card_texts = text_chunks
         # If no news found, try draft directly
         if not card_texts:
             draft = conn.execute("SELECT title FROM drafts WHERE id=?", (args.draft_id,)).fetchone()
