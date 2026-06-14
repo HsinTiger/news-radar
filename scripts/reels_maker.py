@@ -188,11 +188,11 @@ def _render_frame(text_lines: List[str], line_index: int,
                     continue
         return ImageFont.load_default()
 
-    hero_font = _load(serif, 78)     # 當前句：serif hero
-    read_font = _load(serif, 44)     # 已讀句：縮小
+    read_font = _load(serif, 38)     # 已讀句：縮小
     mast_font = _load(sans, 30)      # masthead mono-ish
     foot_font = _load(sans, 30)
     center_x = width // 2
+    max_w = width - 150              # 文字安全寬度（兩側留白，避免裁切）
 
     # ── 頂部 masthead：NEWS RADAR · Nº xxx（RADAR 著 Sienna，全篇唯一 accent）──
     mast_y = 90
@@ -212,7 +212,13 @@ def _render_frame(text_lines: List[str], line_index: int,
         if i < line_index:
             font, color = read_font, _STONE
         elif i == line_index:
-            font, color = hero_font, _INK
+            # 當前句 serif hero，字級自動縮放至塞進安全寬度（絕不裁切）
+            color = _INK
+            sz = 66
+            font = _load(serif, sz)
+            while sz > 32 and draw.textbbox((0, 0), line, font=font)[2] > max_w:
+                sz -= 3
+                font = _load(serif, sz)
         else:
             continue
         bbox = draw.textbbox((0, 0), line, font=font)
@@ -542,10 +548,21 @@ async def make_brand_reel(
     REELS_DIR.mkdir(parents=True, exist_ok=True)
     sid = f"brand_{random.randint(1000,9999)}"
 
-    # 視覺：每句硬斷 ≤14 字（78px serif 在 1080 寬不溢出），逐句揭示
-    def _wrap(s: str, n: int = 14) -> List[str]:
+    # 視覺斷行：只在自然標點/空白處斷，絕不切斷英文單字或詞中（字級會自動縮放塞進寬度）
+    def _wrap(s: str, n: int = 16) -> List[str]:
         s = _re.sub(r'\[.*?\]|\(.*?\)|[*#=]', '', s or '').strip()
-        return [s[i:i+n] for i in range(0, len(s), n)] if s else []
+        if not s:
+            return []
+        parts = _re.split(r'(?<=[，,。、；;！!？?\s])', s)
+        segs, cur = [], ""
+        for p in parts:
+            if not cur or len(cur) + len(p) <= n:
+                cur += p
+            else:
+                segs.append(cur.strip()); cur = p
+        if cur.strip():
+            segs.append(cur.strip())
+        return [x for x in segs if x]
     lines: List[str] = []
     for ct in (card_texts or []):
         lines += _wrap(ct)
