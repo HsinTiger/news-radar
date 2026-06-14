@@ -686,7 +686,19 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     # Phase 10 (2026-06-03)：把 carousel 圖卡內容持久化到 draft 層，讓雲端
     # run_publish_queue 能 render+發 carousel（沒有則維持單圖）。
     if bundle.carousel is not None:
-        dbmod.set_carousel_json(conn, draft_id, bundle.carousel.model_dump_json())
+        # 簡→繁台灣 backstop：carousel 卡片內容是獨立欄位，不經 finalize_variant，
+        # 所以雲端 Gemini 吐的簡體字必須在這裡攔下（與 caption 同一套 OpenCC s2tw）。
+        from src.locale_tw import fix_mainland_text as _fmt, to_traditional as _t2t
+        _tw = lambda s: _fmt(_t2t(s))[0] if s else s
+        c = bundle.carousel
+        c = c.model_copy(update={
+            "insight_statement": _tw(c.insight_statement),
+            "insight_support": _tw(c.insight_support),
+            "stat_number": _tw(c.stat_number),
+            "stat_caption": _tw(c.stat_caption),
+            "takeaways": [_tw(t) for t in (c.takeaways or [])],
+        })
+        dbmod.set_carousel_json(conn, draft_id, c.model_dump_json())
 
     # 6. 寫入三個 platform_drafts row
     created_at = datetime.now(timezone.utc).isoformat()

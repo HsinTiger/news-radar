@@ -59,7 +59,7 @@ from dotenv import load_dotenv
 from src.llm_brain import call_for_json
 from src.schema import MultiPlatformDraft, PlatformVariant
 from src.cta_pool import decide_cta, get_cta_prompt_fragment
-from src.locale_tw import fix_mainland_text
+from src.locale_tw import fix_mainland_text, to_traditional
 
 # 定位 .env 與設定
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -247,11 +247,12 @@ def _validate_and_fix_hashtags(variant: PlatformVariant) -> PlatformVariant:
 def finalize_variant(variant: PlatformVariant, platform: str) -> Tuple[PlatformVariant, str, bool]:
     """統一出口：修 hashtag、修大陸用語、壓字數、組 full_text、回傳 (variant, full_text, ok)。"""
     fixed = _validate_and_fix_hashtags(variant)
-    # 大陸→台灣用語決定性修正（與 substack 共用 src/locale_tw 同一張表）。
+    # 簡→繁台灣（OpenCC s2tw）+ 大陸→台灣用語決定性修正（與 substack 共用同一套）。
+    # to_traditional 先跑：字元層 backstop，雲端 Gemini 偶爾吐簡體也不會發出去。
     # 在壓字數之前修，char_count 才會算到修正後的字串。
-    nt, t_fixes = fix_mainland_text(fixed.title or "")
-    nb, b_fixes = fix_mainland_text(fixed.body or "")
-    if t_fixes or b_fixes:
+    nt, t_fixes = fix_mainland_text(to_traditional(fixed.title or ""))
+    nb, b_fixes = fix_mainland_text(to_traditional(fixed.body or ""))
+    if nt != (fixed.title or "") or nb != (fixed.body or ""):
         fixed = fixed.model_copy(update={"title": nt, "body": nb})
         for m in t_fixes + b_fixes:
             print(f"   ↳ [{platform} 用語] {m}")
