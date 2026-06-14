@@ -167,10 +167,16 @@ def _render_frame(text_lines: List[str], line_index: int,
     img = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
+    # serif 為品牌首選；後備串一定要含雲端會下載的 SANS .otf，否則載不到
+    # serif 時會掉到 load_default → 中文變空白（2026-06-14 的 IG 空白 reel 事故）。
+    _sans_otf = REPO / "assets" / "fonts" / "SourceHanSansTC-Bold.otf"
     serif = [REPO / "assets" / "fonts" / "SourceHanSerifTC-Light.otf",
-             "/System/Library/Fonts/Hiragino Sans GB.ttc"]
-    sans = [REPO / "assets" / "fonts" / "SourceHanSansTC-Bold.otf",
-            "/System/Library/Fonts/PingFang.ttc"]
+             _sans_otf,  # 雲端 fallback：Fonts step 一定有下載
+             "/System/Library/Fonts/Hiragino Sans GB.ttc",
+             "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"]
+    sans = [_sans_otf, "/System/Library/Fonts/PingFang.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"]
 
     def _load(paths, size):
         for fp in paths:

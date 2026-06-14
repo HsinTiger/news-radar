@@ -40,8 +40,12 @@ jobs:
       - name: Fonts
         run: |
           mkdir -p assets/fonts
-          B="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
-          curl -sSL -o assets/fonts/SourceHanSansTC-Bold.otf "$B/SourceHanSansTC-Bold.otf" 2>/dev/null || true
+          SANS="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
+          SERIF="https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/TraditionalChinese"
+          curl -sSL -o assets/fonts/SourceHanSansTC-Bold.otf "$SANS/SourceHanSansTC-Bold.otf" 2>/dev/null || true
+          # 品牌 hero 用 serif；之前漏下載它 → reels 畫面變空白（2026-06-14 修）
+          curl -sSL -o assets/fonts/SourceHanSerifTC-Light.otf "$SERIF/SourceHanSerifTC-Light.otf" 2>/dev/null || true
+          ls -la assets/fonts/
 
       - name: Restore DB
         run: |
