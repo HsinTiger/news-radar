@@ -56,14 +56,15 @@ def build_scenes(c: dict, title: str, issue: str) -> List[dict]:
                        "kicker": _short(c.get("stat_caption") or "關鍵數字", 12),
                        **st, "sub": _short(c.get("stat_caption") or "", 16),
                        "voice": c.get("stat_caption") or c.get("stat_number")})
-    ins = c.get("insight_statement")
+    ins = (c.get("insight_statement") or "").strip()
     if ins:
         scenes.append({"template": "quote", "quote": _short(ins, 44),
                        "attribution": "", "voice": ins})
-    tk = [t for t in (c.get("takeaways") or []) if t][:3]
+    # takeaways：strip 後仍非空才算數；全空就跳過 list 場景（不產空白頁）
+    tk = [s for s in (_short(t, 22) for t in (c.get("takeaways") or [])) if s.strip()][:3]
     if tk:
         scenes.append({"template": "list", "heading": "帶走重點",
-                       "items": [_short(t, 22) for t in tk], "voice": "、".join(tk)})
+                       "items": tk, "voice": "、".join(tk)})
     scenes.append({"template": "outro",
                    "punch": _short(tk[0] if tk else (ins or title), 20),
                    "handle": "@主力爸爸我錯了",
