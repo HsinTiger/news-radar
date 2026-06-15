@@ -80,7 +80,8 @@ def _ff(*args):
 
 
 async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
-                         voice: str = "zh-TW-HsiaoChenNeural", fps: int = 30) -> Optional[Path]:
+                         voice: str = "zh-TW-HsiaoChenNeural", fps: int = 30,
+                         music: Optional[Path] = None) -> Optional[Path]:
     REELS_DIR.mkdir(parents=True, exist_ok=True)
     work = REELS_DIR / f"html_{random.randint(1000,9999)}"
     seqdir = work / "seq"
@@ -122,9 +123,19 @@ async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
     full_audio = work / "full.mp3"
     _ff("-f", "concat", "-safe", "0", "-i", str(listf), "-c", "copy", str(full_audio))
 
-    # 5) 幀 + 音軌 → mp4
+    # 5) 幀 + 音軌 → mp4（可選背景音樂，側鏈 ducking 讓配音永遠在前）
     out = Path(str(output_path)) if output_path else REELS_DIR / f"{work.name}.mp4"
-    _ff("-framerate", str(fps), "-i", str(seqdir / "g_%06d.png"),
-        "-i", str(full_audio), "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-shortest", "-r", str(fps), str(out))
+    base = ["-framerate", str(fps), "-i", str(seqdir / "g_%06d.png"), "-i", str(full_audio)]
+    if music and Path(music).exists():
+        # [voice] 全音量；[music] 基底 0.18，配音出現時側鏈壓到更低 → 不蓋配音
+        filt = ("[2:a]aloop=loop=-1:size=2000000000,volume=0.18[m];"
+                "[1:a]asplit=2[v1][vk];"
+                "[m][vk]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=260[md];"
+                "[v1][md]amix=inputs=2:duration=first:normalize=0[a]")
+        _ff(*base, "-i", str(music), "-filter_complex", filt,
+            "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest", "-r", str(fps), str(out))
+    else:
+        _ff(*base, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest", "-r", str(fps), str(out))
     return out if out.exists() else None

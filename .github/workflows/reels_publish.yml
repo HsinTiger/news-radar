@@ -47,6 +47,17 @@ jobs:
           curl -sSL -o assets/fonts/SourceHanSerifTC-Light.otf "$SERIF/SourceHanSerifTC-Light.otf" 2>/dev/null || true
           ls -la assets/fonts/
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: HTML reel engine (Node + Chrome)
+        run: |
+          cd reels_html && npm i puppeteer-core@latest --no-audit --no-fund -s
+          CH=$(which google-chrome || which google-chrome-stable || which chromium-browser || true)
+          echo "CHROME_PATH=$CH" >> $GITHUB_ENV
+          echo "using chrome: $CH"; "$CH" --version || true
+
       - name: Restore DB
         run: |
           mkdir -p data/01_harvest data/reels logs

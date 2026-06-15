@@ -607,8 +607,7 @@ async def main():
     content = args.content or ""
     card_paths = []
     card_texts = []
-    card_paths = []
-    card_texts = []
+    carousel_dict = {}   # 結構化 carousel 欄位 → HTML 多模板引擎
 
     if args.url:
         # Fetch article from URL
@@ -637,6 +636,7 @@ async def main():
             if carousel_json:
                 try:
                     carousel = CarouselCards.model_validate_json(carousel_json)
+                    carousel_dict = carousel.model_dump()
                     card_texts = [
                         carousel.insight_statement or "",
                         carousel.insight_support or "",
@@ -701,16 +701,32 @@ async def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["passed"] else 1
 
-    # Make reel — 統一走品牌編輯風（使用者 2026-06-14 批准）。
-    # card_texts 來自 carousel_json（已繁化）；無 draft 時用 title/content 切句。
+    # Make reel — HTML 多模板動態引擎（使用者 2026-06-15 批准上線）。
+    # 有結構化 carousel → 自動分鏡多模板；否則退回品牌編輯風文字幀。
     output = Path(args.output) if args.output else None
-    reel_lines = card_texts[:5] if card_texts else None
-    if not reel_lines:
-        import re as _re2
-        reel_lines = [s.strip() for s in _re2.split(r'[。\n！？]', content or title or "")
-                      if s.strip()][:5] or [title or "News Radar"]
     issue_no = (args.draft_id[:6] if args.draft_id else "—")
-    video = await make_brand_reel(reel_lines, output, voice=args.voice, issue_no=issue_no)
+    music = None
+    _mdir = REPO / "assets" / "music"
+    if _mdir.exists():
+        _tracks = sorted(list(_mdir.glob("*.mp3")) + list(_mdir.glob("*.m4a")))
+        if _tracks:
+            import random as _rnd
+            music = _rnd.choice(_tracks)
+    video = None
+    try:
+        from scripts.reels_html_maker import build_scenes, make_html_reel
+        scenes = build_scenes(carousel_dict, title, issue_no)
+        print(f"\n🎬 HTML 引擎分鏡: {[s['template'] for s in scenes]}" + (f" + 配樂 {music.name}" if music else ""))
+        video = await make_html_reel(scenes, output, voice=args.voice, music=music)
+    except Exception as e:
+        print(f"  ⚠️ HTML 引擎失敗，退回編輯風文字幀: {e}")
+    if not video:
+        reel_lines = card_texts[:5] if card_texts else None
+        if not reel_lines:
+            import re as _re2
+            reel_lines = [s.strip() for s in _re2.split(r'[。\n！？]', content or title or "")
+                          if s.strip()][:5] or [title or "News Radar"]
+        video = await make_brand_reel(reel_lines, output, voice=args.voice, issue_no=issue_no)
 
     if not video:
         print("❌ Reels 製作失敗")
