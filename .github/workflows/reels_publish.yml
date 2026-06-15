@@ -2,7 +2,9 @@ name: "News Radar · Reels Maker"
 
 on:
   schedule:
-    - cron: "23 */4 * * *"
+    # 明確時數列表（每4h）比 "*/4" 在 GitHub 上更穩定不被跳過——
+    # full_pipeline 用同樣寫法都有正常 firing（2026-06-15 改）。
+    - cron: "23 1,5,9,13,17,21 * * *"
   workflow_dispatch:
     inputs:
       publish_to:
