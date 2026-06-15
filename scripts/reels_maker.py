@@ -608,6 +608,7 @@ async def main():
     card_paths = []
     card_texts = []
     carousel_dict = {}   # 結構化 carousel 欄位 → HTML 多模板引擎
+    body_text = ""       # 文章原文 → 給 reel 撈更多數據（卡片太薄時的厚源頭）
 
     if args.url:
         # Fetch article from URL
@@ -651,6 +652,13 @@ async def main():
             if not card_texts:
                 pd_rows = conn.execute("SELECT body FROM platform_drafts WHERE draft_id=?", (args.draft_id,)).fetchall()
                 card_texts = [r["body"][:140] for r in pd_rows if r["body"]][:4]
+            # 撈文章原文供 reel 數據面板使用（卡片蒸餾太薄，回原文找數據）
+            try:
+                nb = conn.execute("SELECT n.clean_markdown FROM news_items n JOIN drafts d ON d.news_id=n.id WHERE d.id=?", (args.draft_id,)).fetchone()
+                if nb and nb["clean_markdown"]:
+                    body_text = nb["clean_markdown"]
+            except Exception:
+                pass
             if not card_texts:
                 news = conn.execute("SELECT title FROM news_items n JOIN drafts d ON d.news_id=n.id WHERE d.id=?", (args.draft_id,)).fetchone()
                 if news:
@@ -715,7 +723,7 @@ async def main():
     video = None
     try:
         from scripts.reels_html_maker import build_scenes, make_html_reel
-        scenes = build_scenes(carousel_dict, title, issue_no)
+        scenes = build_scenes(carousel_dict, title, issue_no, body=body_text)
         print(f"\n🎬 HTML 引擎分鏡: {[s['template'] for s in scenes]}" + (f" + 配樂 {music.name}" if music else ""))
         video = await make_html_reel(scenes, output, voice=args.voice, music=music)
     except Exception as e:

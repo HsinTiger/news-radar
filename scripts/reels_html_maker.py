@@ -43,19 +43,51 @@ def parse_stat(s: Optional[str]):
             "decimals": 1 if '.' in num else 0, "suffix": m.group(3).strip()}
 
 
-def build_scenes(c: dict, title: str, issue: str) -> List[dict]:
+def mine_figures(text: str, limit: int = 4) -> List[dict]:
+    """從文章原文撈帶單位的關鍵數據（label→value）。carousel 卡片被蒸餾太薄，
+    這裡回到原文把數據找回來填 stat_panel。只收帶符號/單位的值，避免抓裸數字。"""
+    text = re.sub(r'\s+', ' ', text or '')
+    val = r'(?:US\$|NT\$|\$)?[+\-]?\d[\d,\.]*\s?(?:%|個百分點|億美元|億元|億|兆|萬|倍|美元|B|M|bps)'
+    out, seen = [], set()
+    for m in re.finditer(val, text):
+        v = m.group(0).strip()
+        key = re.sub(r'\s', '', v)
+        if key in seen:
+            continue
+        pre = re.split(r'[，。、：；,.:;（）()「」\s]', text[max(0, m.start() - 14):m.start()])
+        label = ([p for p in pre if p] or [''])[-1][-8:]
+        if len(label) < 2:
+            continue
+        seen.add(key)
+        out.append({"label": label, "value": v})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def build_scenes(c: dict, title: str, issue: str, body: str = "") -> List[dict]:
     """依 carousel 欄位自動選模板。c 可含 insight_statement/insight_support/
     stat_number/stat_caption/takeaways。"""
     c = c or {}
     scenes: List[dict] = []
     scenes.append({"template": "hook", "kicker": "NEWS RADAR",
                    "headline": _short(title, 18), "voice": title})
+    support = (c.get("insight_support") or "").strip()
     st = parse_stat(c.get("stat_number"))
     if st:
         scenes.append({"template": "number",
                        "kicker": _short(c.get("stat_caption") or "關鍵數字", 12),
                        **st, "sub": _short(c.get("stat_caption") or "", 16),
+                       "detail": _short(support, 30),   # 支撐說明，數字不再孤伶伶
                        "voice": c.get("stat_caption") or c.get("stat_number")})
+    # 數據面板：優先用 composer 的 key_figures，否則回文章原文撈（卡片太薄就挖原文）
+    figs = c.get("key_figures") or mine_figures(body)
+    figs = [f for f in figs if f.get("label") and f.get("value")][:4]
+    if len(figs) >= 2:
+        if figs:
+            figs[0]["hl"] = True
+        scenes.append({"template": "statpanel", "kicker": "關鍵數據", "rows": figs,
+                       "voice": "、".join(f"{f['label']} {f['value']}" for f in figs[:3])})
     ins = (c.get("insight_statement") or "").strip()
     if ins:
         scenes.append({"template": "quote", "quote": _short(ins, 44),

@@ -48,6 +48,14 @@
   .punch{font-family:'HanSerif';font-size:96px;line-height:1.3;color:var(--ink);max-width:900px;}
   .handle{font-family:'HanSans';font-size:40px;color:var(--sienna);letter-spacing:.08em;margin-top:60px;}
   .subbtn{font-family:'HanSans';font-size:32px;color:var(--stone);margin-top:24px;letter-spacing:.1em;}
+  .panel{display:flex;flex-direction:column;width:880px;}
+  .prow{display:flex;justify-content:space-between;align-items:baseline;padding:30px 6px;
+    border-bottom:1px solid rgba(138,131,120,.35);}
+  .prow:first-child{border-top:1px solid rgba(138,131,120,.35);}
+  .plabel{font-family:'HanSans';font-size:42px;color:var(--stone);text-align:left;max-width:480px;}
+  .pval{font-family:'HanSerif';font-size:66px;color:var(--ink);font-feature-settings:"tnum";white-space:nowrap;}
+  .pval.hl{color:var(--sienna);}
+  .nsub{font-family:'HanSans';font-size:36px;color:var(--stone);margin-top:30px;max-width:840px;line-height:1.4;}
 </style>
 </head>
 <body>
@@ -88,7 +96,8 @@ window.setData=function(d){
     C.innerHTML=`<div class="kicker" id="k">${esc(D.kicker||'')}</div>
       <div class="num" id="n" style="margin-top:36px;">${esc(D.prefix||'')}0${esc(D.suffix||'')}</div>
       <svg class="uline" id="ulsvg" width="420" height="6" viewBox="0 0 420 6" preserveAspectRatio="none"><line id="ul" x1="3" y1="3" x2="417" y2="3"/></svg>
-      <div class="sub" id="s" style="margin-top:40px;">${esc(D.sub||'')}</div>`;
+      <div class="sub" id="s" style="margin-top:40px;">${esc(D.sub||'')}</div>
+      <div class="nsub" id="ns">${esc(D.detail||'')}</div>`;
     E('ul').style.strokeDasharray=414;
     const val=+D.value||0, dec=D.decimals==null?1:D.decimals;
     _anim=t=>{
@@ -99,6 +108,7 @@ window.setData=function(d){
       E('n').style.transform=`scale(${pop})`; E('n').style.opacity=clamp(.18,.30,t); E('n').style.filter=`blur(${(1-clamp(.18,.34,t))*8}px)`;
       E('ul').style.strokeDashoffset=414*(1-eOut(clamp(.40,.70,t)));
       const s=eOut(clamp(.58,.78,t)); E('s').style.opacity=s; E('s').style.transform=`translateY(${(1-s)*20}px)`;
+      const d=eOut(clamp(.70,.88,t)); E('ns').style.opacity=d; E('ns').style.transform=`translateY(${(1-d)*16}px)`;
     };
   }
   else if(T==='quote'){
@@ -167,6 +177,16 @@ window.setData=function(d){
       const p=eOut(clamp(.1,.4,t)); E('p').style.opacity=p; E('p').style.transform=`scale(${.96+.04*p})`;
       E('h').style.opacity=eOut(clamp(.45,.65,t));
       E('sb').style.opacity=eOut(clamp(.6,.8,t));
+    };
+  }
+  else if(T==='statpanel'){
+    const rows=(D.rows||[]).slice(0,4);
+    C.innerHTML=`<div class="kicker" id="k">${esc(D.kicker||'關鍵數據')}</div>
+      <div class="panel" style="margin-top:70px;">`+
+      rows.map((r,i)=>`<div class="prow" id="pr${i}"><span class="plabel">${esc(r.label)}</span><span class="pval ${r.hl?'hl':''}">${esc(r.value)}</span></div>`).join('')+`</div>`;
+    _anim=t=>{
+      E('k').style.opacity=eOut(clamp(.06,.2,t));
+      rows.forEach((_,i)=>{const a0=.22+i*.15;const a=eOut(clamp(a0,a0+.18,t));const el=E('pr'+i);el.style.opacity=a;el.style.transform=`translateY(${(1-a)*28}px)`;});
     };
   }
   else { C.innerHTML=`<div class="headline">${esc(D.headline||D.text||'News Radar')}</div>`; _anim=()=>{}; }
