@@ -123,3 +123,4 @@ tools/.last_emergency_draft_id
 .env.bak*
 llm-router-report/reports/
 .claude/
+reels_html/node_modules/

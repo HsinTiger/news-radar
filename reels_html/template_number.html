@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family:'HanSerif'; src:url('file:///Users/hsin/news_radar/assets/fonts/SourceHanSerifTC-Light.otf'); }
+  @font-face { font-family:'HanSans'; src:url('file:///Users/hsin/news_radar/assets/fonts/SourceHanSansTC-Bold.otf'); }
+  :root{ --paper:#F2EEE5; --ink:#141414; --sienna:#C84A32; --stone:#8A8378; --bone:#E8E3D6; }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:1080px;height:1920px;overflow:hidden;background:var(--paper);}
+  #stage{position:relative;width:1080px;height:1920px;background:
+     radial-gradient(120% 80% at 50% 38%, #FAF7F0 0%, var(--paper) 55%, #ECE7DB 100%);}
+  /* 紙質顆粒 */
+  #grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:multiply;
+     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  /* 暗角 */
+  #vignette{position:absolute;inset:0;pointer-events:none;
+     background:radial-gradient(70% 60% at 50% 45%, transparent 60%, rgba(20,20,20,.10) 100%);}
+  /* Sienna 呼吸光暈 */
+  #glow{position:absolute;left:50%;top:46%;width:900px;height:900px;transform:translate(-50%,-50%);
+     border-radius:50%;background:radial-gradient(circle, rgba(200,74,50,.16) 0%, transparent 62%);filter:blur(20px);}
+
+  #mast{position:absolute;left:70px;top:90px;right:70px;font-family:'HanSans';}
+  #mast .row{font-size:30px;letter-spacing:.06em;color:var(--ink);white-space:nowrap;}
+  #mast .row .r{color:var(--sienna);}
+  #mast .row .meta{color:var(--stone);letter-spacing:.28em;}
+  #rule{position:absolute;left:70px;top:148px;height:2px;background:var(--ink);transform-origin:left;}
+
+  #wrap{position:absolute;left:0;right:0;top:540px;text-align:center;}
+  .kicker{font-family:'HanSans';font-size:34px;letter-spacing:.34em;color:var(--stone);
+     text-transform:uppercase;}
+  .num{font-family:'HanSerif';color:var(--ink);font-size:260px;line-height:1.05;margin-top:36px;
+     font-feature-settings:"tnum";letter-spacing:-.01em;}
+  #underline{display:block;margin:18px auto 0;width:420px;height:6px;}
+  #underline line{stroke:var(--sienna);stroke-width:6;stroke-linecap:round;}
+  .sub{font-family:'HanSerif';font-size:50px;color:var(--ink);margin-top:46px;}
+
+  #foot{position:absolute;left:70px;right:70px;bottom:90px;font-family:'HanSans';
+     display:flex;justify-content:space-between;color:var(--stone);font-size:30px;}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="grain"></div>
+  <div id="glow"></div>
+  <div id="mast"><div class="row"><span>NEWS </span><span class="r">RADAR</span><span class="meta">&nbsp;&nbsp;·&nbsp;&nbsp;Nº DAC1B9</span></div></div>
+  <div id="rule"></div>
+  <div id="wrap">
+    <div class="kicker" id="kicker">SpaceX 估值傳聞</div>
+    <div class="num" id="num">$0</div>
+    <svg id="underline" viewBox="0 0 420 6" preserveAspectRatio="none"><line id="ul" x1="3" y1="3" x2="417" y2="3"/></svg>
+    <div class="sub" id="sub">史上最大未上市估值</div>
+  </div>
+  <div id="foot"><span id="pg">06 / 08</span><span>主力爸爸我錯了</span></div>
+</div>
+<script>
+  // 內容資料（pipeline 會注入；此處示範）
+  const DATA = { kicker:"SpaceX 估值傳聞", prefix:"$", value:2.1, decimals:1, suffix:"兆", sub:"史上最大未上市估值" };
+  const E = id=>document.getElementById(id);
+  const clamp=(a,b,t)=>Math.max(0,Math.min(1,(t-a)/(b-a)));
+  const easeOut=x=>1-Math.pow(1-x,3);
+  const easeOutBack=x=>{const c=1.70158;return 1+ (c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+
+  E('kicker').textContent = DATA.kicker;
+  E('sub').textContent = DATA.sub;
+
+  const UL_LEN = 414;
+  E('ul').style.strokeDasharray = UL_LEN;
+
+  window.seek = function(t){
+    // masthead rule 畫入 0–0.12
+    E('rule').style.transform = `scaleX(${easeOut(clamp(0,0.12,t))})`;
+    E('mast').style.opacity = clamp(0,0.08,t);
+
+    // kicker 淡入上移 0.10–0.26
+    const k=easeOut(clamp(0.10,0.26,t));
+    E('kicker').style.opacity=k;
+    E('kicker').style.transform=`translateY(${(1-k)*24}px)`;
+
+    // 數字 count-up 0.18–0.62 + 進場放大
+    const np=clamp(0.18,0.62,t);
+    const cur = DATA.value*easeOut(np);
+    E('num').textContent = DATA.prefix + cur.toFixed(DATA.decimals) + DATA.suffix;
+    const pop = 0.92 + 0.08*easeOutBack(clamp(0.18,0.42,t));
+    E('num').style.transform=`scale(${pop})`;
+    E('num').style.opacity=clamp(0.18,0.30,t);
+    E('num').style.filter=`blur(${(1-clamp(0.18,0.34,t))*8}px)`;
+
+    // 底線畫出 0.40–0.70
+    E('ul').style.strokeDashoffset = UL_LEN*(1-easeOut(clamp(0.40,0.70,t)));
+
+    // 副標 0.58–0.78
+    const s=easeOut(clamp(0.58,0.78,t));
+    E('sub').style.opacity=s; E('sub').style.transform=`translateY(${(1-s)*20}px)`;
+
+    // 光暈呼吸
+    E('glow').style.opacity = 0.6 + 0.4*Math.sin(t*Math.PI);
+    E('foot').style.opacity = clamp(0.2,0.4,t);
+  };
+  window.seek(0);
+</script>
+</body>
+</html>
