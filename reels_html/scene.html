@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <style>
-  @font-face{font-family:'HanSerif';src:url('file:///Users/hsin/news_radar/assets/fonts/SourceHanSerifTC-Light.otf');}
-  @font-face{font-family:'HanSans';src:url('file:///Users/hsin/news_radar/assets/fonts/SourceHanSansTC-Bold.otf');}
+  /* 相對 scene.html 的路徑（reels_html/ → ../assets/fonts），本機與雲端 runner 皆可解析。
+     之前寫死 /Users/hsin 絕對路徑 → 雲端載不到 → 中文全消失（2026-06-15 修）。 */
+  @font-face{font-family:'HanSerif';src:url('../assets/fonts/SourceHanSerifTC-Light.otf');}
+  @font-face{font-family:'HanSans';src:url('../assets/fonts/SourceHanSansTC-Bold.otf');}
   :root{--paper:#F2EEE5;--ink:#141414;--sienna:#C84A32;--stone:#8A8378;--bone:#E8E3D6;}
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{width:1080px;height:1920px;overflow:hidden;}
