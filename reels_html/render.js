@@ -31,7 +31,8 @@ const CHROME = process.env.CHROME_PATH ||
   for (let i = 0; i < N; i++) {
     const t = N === 1 ? 1 : i / (N - 1);
     await page.evaluate((tt) => window.seek(tt), t);
-    await page.screenshot({ path: path.join(outDir, `f_${String(i).padStart(5, '0')}.png`) });
+    // JPEG 比 PNG 快 5-10×（CI 逐幀截圖的瓶頸），畫質 92 對影片足夠
+    await page.screenshot({ path: path.join(outDir, `f_${String(i).padStart(5, '0')}.jpg`), type: 'jpeg', quality: 92 });
   }
   await browser.close();
   console.log(`rendered ${N} frames @ ${fps}fps → ${outDir}`);

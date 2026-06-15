@@ -72,6 +72,8 @@ def build_scenes(c: dict, title: str, issue: str) -> List[dict]:
     for i, s in enumerate(scenes):
         s["issue"] = issue
         s["page"] = f"{i+1:02d} / {n:02d}"
+        # 限制每段旁白 ≤30 字（≈6s）→ 控制總幀數，CI 逐幀截圖才跑得完
+        s["voice"] = _short(s.get("voice", ""), 30)
     return scenes
 
 
@@ -80,7 +82,7 @@ def _ff(*args):
 
 
 async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
-                         voice: str = "zh-TW-HsiaoChenNeural", fps: int = 30,
+                         voice: str = "zh-TW-HsiaoChenNeural", fps: int = 24,
                          music: Optional[Path] = None) -> Optional[Path]:
     REELS_DIR.mkdir(parents=True, exist_ok=True)
     work = REELS_DIR / f"html_{random.randint(1000,9999)}"
@@ -94,7 +96,7 @@ async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
         ap = work / f"a{i}.mp3"
         await _gen_voice(sc.get("voice", ""), ap, voice)
         dur = await _get_audio_duration(ap) if ap.exists() else 0.0
-        secs = max(2.6, (dur or 2.0) + 0.7)
+        secs = min(6.0, max(2.6, (dur or 2.0) + 0.6))  # 上限 6s：控制總幀數 ≈ CI 速度
 
         # 2) 渲染該場景 HTML 動畫 → 幀
         dj = work / f"d{i}.json"
@@ -102,8 +104,8 @@ async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
         scdir = work / f"s{i}"
         subprocess.run([NODE, str(HTML_DIR / "render.js"), str(HTML_DIR / "scene.html"),
                         str(scdir), f"{secs:.2f}", str(fps), str(dj)], check=True)
-        for f in sorted(scdir.glob("f_*.png")):
-            (seqdir / f"g_{gidx:06d}.png").write_bytes(f.read_bytes())
+        for f in sorted(scdir.glob("f_*.jpg")):
+            (seqdir / f"g_{gidx:06d}.jpg").write_bytes(f.read_bytes())
             gidx += 1
 
         # 3) 該場景音軌補靜音到 secs（保持逐段 A/V 對齊）
@@ -125,7 +127,7 @@ async def make_html_reel(scenes: List[dict], output_path: Optional[Path] = None,
 
     # 5) 幀 + 音軌 → mp4（可選背景音樂，側鏈 ducking 讓配音永遠在前）
     out = Path(str(output_path)) if output_path else REELS_DIR / f"{work.name}.mp4"
-    base = ["-framerate", str(fps), "-i", str(seqdir / "g_%06d.png"), "-i", str(full_audio)]
+    base = ["-framerate", str(fps), "-i", str(seqdir / "g_%06d.jpg"), "-i", str(full_audio)]
     if music and Path(music).exists():
         # [voice] 全音量；[music] 基底 0.18，配音出現時側鏈壓到更低 → 不蓋配音
         filt = ("[2:a]aloop=loop=-1:size=2000000000,volume=0.18[m];"
