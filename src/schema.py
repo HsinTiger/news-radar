@@ -3,9 +3,10 @@ News Radar · Pydantic Schemas
 沿用 alpha_pipeline.py 的 Pydantic 強制 JSON 風格
 """
 from __future__ import annotations
+import re
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 # ---------- 抓到的原始新聞 ----------
@@ -76,8 +77,14 @@ class PlatformVariant(BaseModel):
     )
 
 
+class KeyFigure(BaseModel):
+    """一個關鍵數據點：label（這是什麼）+ value（帶單位/符號的數字）。"""
+    label: str = Field(description="這個數字是什麼，≤8 字，如『第三季營收』『年增』。")
+    value: str = Field(description="帶單位/符號的數值，≤10 字元，如 $351億 / 94% / 3 倍。")
+
+
 class CarouselCards(BaseModel):
-    """2–4 張可滑動社群圖卡的內容（從文章蒸餾），給 IG/FB/Threads carousel 用。
+    """2–5 張可滑動社群圖卡的內容（從文章蒸餾），給 IG/FB/Threads carousel 用。
     封面卡用 ig/fb 變體的 title；其餘卡用下面這些欄位。能填就填，缺的卡會自動略過。"""
     insight_statement: Optional[str] = Field(
         default=None, description="一句最反直覺的核心洞察（自己長一句，禁套範例句型）。")
@@ -89,6 +96,25 @@ class CarouselCards(BaseModel):
         default=None, description="那個數字代表什麼，1–2 句。")
     takeaways: List[str] = Field(
         default_factory=list, description="2–3 條讀者可帶走的具體判斷（每條一句）。")
+    key_figures: List[KeyFigure] = Field(
+        default_factory=list,
+        description="3–4 個關鍵數據（label+value）給『關鍵數據』卡與影片數據面板用；沒有夠力數據就留空。")
+
+    @field_validator("key_figures", mode="before")
+    @classmethod
+    def _coerce_key_figures(cls, v):
+        """容錯：LLM 偶爾回怪格式（字串 / 缺欄位）。壞的丟掉，絕不讓整個 carousel 解析失敗。"""
+        if not isinstance(v, list):
+            return []
+        out = []
+        for it in v:
+            if isinstance(it, dict) and str(it.get("label", "")).strip() and str(it.get("value", "")).strip():
+                out.append({"label": str(it["label"]).strip(), "value": str(it["value"]).strip()})
+            elif isinstance(it, str):
+                m = re.split(r"[：:＝=]", it, 1)
+                if len(m) == 2 and m[0].strip() and m[1].strip():
+                    out.append({"label": m[0].strip(), "value": m[1].strip()})
+        return out[:4]
 
 
 class MultiPlatformDraft(BaseModel):

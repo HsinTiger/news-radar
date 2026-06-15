@@ -202,7 +202,37 @@ def _draw_takeaway(W, H, pal, card, idx, total):
     return img
 
 
-_RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat, "takeaway": _draw_takeaway}
+def _draw_figures(W, H, pal, card, idx, total):
+    """關鍵數據卡：3-4 行 label→value，第一行 accent 強調（Bloomberg 風）。"""
+    img, d, pad = _frame(W, H, pal, idx, total)
+    ink, acc, sub = (_hx(pal[k]) for k in ("ink", "acc", "sub"))
+    d.text((pad, round(H * 0.15)), card.get("label", "關鍵數據"),
+           font=_font(FONT_TITLE_PATH, W * 0.038), fill=acc)
+    rows = card.get("rows", [])[:4]
+    n = max(len(rows), 1)
+    lf = _font(FONT_SUBTITLE_PATH, W * 0.044)
+    top, bot = round(H * 0.26), round(H * 0.84)
+    rh = (bot - top) // n
+    for i, r in enumerate(rows):
+        y = top + i * rh
+        d.line((pad, y, W - pad, y), fill=sub, width=1)
+        lab, val = r.get("label", ""), r.get("value", "")
+        vff = _font(FONT_TITLE_PATH, W * 0.072)
+        for ptr in range(72, 36, -4):
+            cand = _font(FONT_TITLE_PATH, W * ptr / 1000)
+            if d.textlength(val, font=cand) <= W * 0.44:
+                vff = cand
+                break
+        cy = y + rh // 2
+        d.text((W - pad - d.textlength(val, font=vff), cy - int(vff.size * 0.62)),
+               val, font=vff, fill=(acc if i == 0 else ink))
+        d.text((pad, cy - int(lf.size * 0.62)), lab, font=lf, fill=ink)
+    d.line((pad, top + n * rh, W - pad, top + n * rh), fill=sub, width=1)
+    return img
+
+
+_RENDERERS = {"cover": _draw_cover, "insight": _draw_insight, "stat": _draw_stat,
+              "takeaway": _draw_takeaway, "figures": _draw_figures}
 
 
 # Per-card caps (safety net; the composer prompt is the primary lever). A bit
@@ -268,7 +298,17 @@ def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:
     if points:
         cards.append({"type": "takeaway", "label": "帶走的判斷",
                       "points": points, "cta": "追蹤 主力爸爸我錯了"})
-    return cards[:4]
+
+    # 卡5 關鍵數據（key_figures）：讓貼文「有料」，不再只有空話
+    rows = []
+    for f in (g("key_figures") or []):
+        lab = f.get("label") if isinstance(f, dict) else getattr(f, "label", None)
+        val = f.get("value") if isinstance(f, dict) else getattr(f, "value", None)
+        if (lab or "").strip() and (val or "").strip():
+            rows.append({"label": _clip(lab, 8), "value": _clip(val, 12)})
+    if len(rows) >= 2:
+        cards.append({"type": "figures", "label": "關鍵數據", "rows": rows[:4]})
+    return cards[:5]
 
 
 def render_cards(
@@ -283,7 +323,7 @@ def render_cards(
         raise ValueError(f"aspect must be one of {list(ASPECTS)}")
     W, H = ASPECTS[aspect]
     pal = palette_for(topic_category)
-    cards = cards[:4]
+    cards = cards[:5]
     total = len(cards)
     output_dir.mkdir(parents=True, exist_ok=True)
     out: List[Path] = []
