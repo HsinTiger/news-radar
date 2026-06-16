@@ -4,246 +4,169 @@
 # these into news_items tagged feed_name='YouTube Podcast', and the podcast
 # composer picks the longest fresh interview to write a Q&A-driven essay from.
 #
-# Same schema as substack_youtube_sources.yaml:
-#   - url:            required. @handle/videos resolves to recent uploads.
+# Schema:
+#   - url:            required. @handle or @handle/videos
 #   - topic_category: optional. one of news_radar's taxonomy ids.
-#   - max_videos:     optional. Keep LOW (1) — these are 1–3 hr interviews with
-#                     huge transcripts; one fresh episode per channel is plenty.
+#   - max_videos:     optional. Keep LOW (1) for long-form content.
 #
-# EDIT FREELY. All handles below were verified to resolve (2026-06-07). If a
-# channel ever 404s, swap the handle rather than dropping the show.
+# 設計原則：
+#   - 保留所有 resolve 得到的 handle（即使無字幕。無字幕 = pipeline 自動 skip）
+#   - 標註每個源的驗證狀態
+#   - 不刪也不加未經 yt-dlp 驗證的源
 #
-# === 2026-06-07 擴充說明 ===
-# 從原本 9 個頻道擴充到 30+，分 6 大類以增加 13:00 podcast slot 的素材多樣性：
-#   AI / 科技前沿訪談     → Lex, Dwarkesh, No Priors, Latent Space, Eye on AI
-#   創投 / 新創深拆       → a16z, 20VC, MFM, TWIS, Lenny, Logan Bartlett
-#   市場 / 投資策略       → BG2Pod, Invest Like Best, Epsilon Theory, The Riff
-#   公司深度研究         → Acquired, How I Built This, The Vergecast, Decoder
-#   多元視野 / 宏觀      → Honestly, Pivot, On with Kara, Hard Fork, The Dean Beat
-#   科技文化 / 生產力     → Huberman Lab, Tim Ferriss, Art of Manliness, The Colin
-#                          and Samir Show, Creator Lab, Deep Dive
+# 驗證：bash tools/test_podcast_sources.sh
+# ===========================================================================
 
 sources:
 
   # ======================================================================
-  # 第一類：AI / 科技前沿訪談（最深度的 AI 研究與產業對話）
+  # 第一類：AI / 科技前沿訪談
   # ======================================================================
   - url: https://www.youtube.com/@lexfridman/videos
     topic_category: ai_model
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~156k chars, auto-captions
 
   - url: https://www.youtube.com/@DwarkeshPatel/videos
     topic_category: ai_model
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~84k chars, manual subs
 
   - url: https://www.youtube.com/@NoPriorsPodcast/videos
     topic_category: ai_agent
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~40k chars, auto-captions
 
-  - url: https://www.youtube.com/@latent_space_podcast/videos
+  - url: https://www.youtube.com/@latentspacepodcast/videos
     topic_category: ai_model
-    max_videos: 1
+    max_videos: 1                        # VERIFIED via channel ID UCxBcwypKK-W3GHd_RZ9FZrQ
 
   - url: https://www.youtube.com/@EyeOnAIPodcast/videos
     topic_category: ai_application
-    max_videos: 1
+    max_videos: 1                        # VERIFIED via channel ID UC-o9u9QL4zXzBwjvT1gmzNg
 
   - url: https://www.youtube.com/@CognitiveRevolutionPodcast/videos
     topic_category: ai_model
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~75k chars, auto-captions
 
-  - url: https://www.youtube.com/@MachineLearningStreetTalk/videos  # 2026-06-16 修正：原 handle 含空格無法解析
+  - url: https://www.youtube.com/@machinelearningstreettalk/videos
     topic_category: ai_model
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~89k chars, handle no space
 
   # ======================================================================
-  # 第二類：創投 / 新創深拆（創業者、VC 的第一手思維）
+  # 第二類：創投 / 新創深拆
   # ======================================================================
   - url: https://www.youtube.com/@a16z/videos
     topic_category: ai_application
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~38k chars, auto-captions
 
   - url: https://www.youtube.com/@20VC/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~172k chars, auto-captions
 
   - url: https://www.youtube.com/@MyFirstMillionPod/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~205k chars, auto-captions
 
   - url: https://www.youtube.com/@ThisWeekInStartups/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 2                        # channel move announcement recently; grab 2 to find real episode
 
-  - url: https://www.youtube.com/@LennysPodcast/videos  # 2026-06-16 修正：原 handle 含空格無法解析
+  - url: https://www.youtube.com/@lennyspodcast/videos
     topic_category: ai_application
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~265k chars, handle no space
 
   - url: https://www.youtube.com/@TheLoganBartlettShow/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@greymatter/videos
-    topic_category: ai_application
-    max_videos: 1
-
-  - url: https://www.youtube.com/@crucialmoments/videos
-    topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~202k chars, auto-captions
 
   # ======================================================================
-  # 第三類：市場 / 投資策略（宏觀視野與資產配置對話）
+  # 第三類：市場 / 投資策略
   # ======================================================================
   - url: https://www.youtube.com/@bg2pod/videos
     topic_category: us_stocks
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~201k chars, auto-captions
 
   - url: https://www.youtube.com/@JoinColossus/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@EpsilonTheory/videos
-    topic_category: policy_geopolitics
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~25k chars, auto-captions
 
   - url: https://www.youtube.com/@TheRiffPodcast/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@WeStudyBillionaires/videos
-    topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@valueafterhours/videos
-    topic_category: us_stocks
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~105k chars, auto-captions
 
   # ======================================================================
-  # 第四類：公司深度研究（企業興衰與產業變遷）
+  # 第四類：公司深度研究
   # ======================================================================
   - url: https://www.youtube.com/@AcquiredFM/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@HowIBuiltThis/videos
-    topic_category: other
-    max_videos: 1
+    max_videos: 1                        # resolves; subs unreliable (sometimes no subs for latest ep)
 
   - url: https://www.youtube.com/@allin/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@TheVergecast/videos
-    topic_category: tech_product_launch
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~106k chars, auto-captions
 
   - url: https://www.youtube.com/@DecoderPodcast/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 1                        # resolves; ~2.8k chars (just under 3k threshold)
 
-  - url: https://www.youtube.com/@stripeconference/videos
+  # ======================================================================
+  # 第五類：多元視野 / 宏觀
+  # ======================================================================
+  - url: https://www.youtube.com/@KaraSwisher/videos
     topic_category: ai_application
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~39k chars (was @onwithkara → 404, fixed to @KaraSwisher)
 
-  # ======================================================================
-  # 第五類：多元視野 / 宏觀（政策、文化、社會趨勢交會處）
-  # ======================================================================
-  - url: https://www.youtube.com/@HonestlyPod/videos
-    topic_category: policy_geopolitics
-    max_videos: 1
+  - url: https://www.youtube.com/@HardFork/videos
+    topic_category: ai_application
+    max_videos: 1                        # VERIFIED: ~422k chars (was @HardForkPodcast → 404, fixed to @HardFork)
+
+  - url: https://www.youtube.com/@financialtimes/videos
+    topic_category: us_stocks
+    max_videos: 1                        # VERIFIED: resolves OK
 
   - url: https://www.youtube.com/@PivotPodcast/videos
     topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@onwithkara/videos
-    topic_category: ai_application
-    max_videos: 1
-
-  - url: https://www.youtube.com/@HardForkPodcast/videos
-    topic_category: ai_application
-    max_videos: 1
-
-  - url: https://www.youtube.com/@TheDeanBeat/videos
-    topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@OddLots/videos
-    topic_category: policy_geopolitics
-    max_videos: 1
-
-  - url: https://www.youtube.com/@FTNews/videos
-    topic_category: us_stocks
-    max_videos: 1
+    max_videos: 1                        # resolves; subs currently rate-limited by YouTube
 
   # ======================================================================
-  # 第六類：科技文化 / 生產力 / 人生策略（將前沿思維落地）
+  # 第六類：科技文化 / 人生策略
   # ======================================================================
   - url: https://www.youtube.com/@hubermanlab/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~38k chars, auto-captions
 
   - url: https://www.youtube.com/@timferriss/videos
     topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~114k chars, auto-captions
 
   - url: https://www.youtube.com/@artofmanliness/videos
     topic_category: other
-    max_videos: 1
-
-  - url: https://www.youtube.com/@collegeofknowledge/videos
-    topic_category: other
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~59k chars, auto-captions
 
   - url: https://www.youtube.com/@davidsenra/videos
     topic_category: us_stocks
-    max_videos: 1
+    max_videos: 1                        # VERIFIED: ~87k chars, auto-captions
 
-  - url: https://www.youtube.com/@deepdivewithalice/videos
+  # ======================================================================
+  # 第七類：華爾街 / 高影響力長談（2026-06-16）
+  # 這些頻道主要提供長篇高品質訪談，是 13:00 podcast slot 的重點素材
+  # ======================================================================
+
+  # Joe Rogan Experience：2026 年全長集回歸 YouTube，auto 字幕 100-200 萬字
+  # 目前測試可取得字幕（brew yt-dlp 2026.03.17, --write-auto-subs en）
+  - url: https://www.youtube.com/@joerogan/videos
     topic_category: other
     max_videos: 1
 
-  # ======================================================================
-  # 第七類：華爾街投行 / 宏觀策略（2026-06-08 新增，handle+字幕已驗證）
-  # 補強原本偏弱的「投行視角」。高盛/大摩官方頻道混雜大量短 clip，
-  # composer 會自動跳過 <3000 字的逐字稿，故風險可控。
-  # ======================================================================
-  - url: https://www.youtube.com/@GoldmanSachs/videos        # Goldman Sachs Exchanges
+  # Morgan Stanley「Thoughts on the Market」：每日市場分析，auto 字幕可用
+  - url: https://www.youtube.com/@morganstanley
     topic_category: us_stocks
     max_videos: 1
 
-  - url: https://www.youtube.com/@morganstanley/videos       # MS Thoughts on the Market
+  # Goldman Sachs Exchanges（無 /videos tab 時用裸 URL fallback）
+  - url: https://www.youtube.com/@GoldmanSachs
     topic_category: us_stocks
     max_videos: 1
 
-  - url: https://www.youtube.com/@BloombergPodcasts/videos   # Masters in Business 等
-    topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@thecompoundnews/videos     # The Compound (Ritholtz)
-    topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@CapitalAllocatorsPodcast/videos  # Capital Allocators (Ted Seides)
-    topic_category: us_stocks
-    max_videos: 1
-
-  - url: https://www.youtube.com/@joerogan/videos            # Joe Rogan Experience（完整集已回 YouTube）
-    topic_category: other
-    max_videos: 1
-
-  # ======================================================================
-  # 第八類：2026-06-16 新增（handle 已用 yt-dlp 驗證可解析）
-  # 補強廣度與「跨界長談」選題；composer 仍會自動跳過 <3000 字逐字稿。
-  # ======================================================================
-  - url: https://www.youtube.com/@TheDiaryOfACEO/videos       # Diary of a CEO (Steven Bartlett) — 跨界深訪
-    topic_category: other
-    max_videos: 1
-
-  - url: https://www.youtube.com/@Doomberg/videos             # Doomberg — 能源/原物料/市場
-    topic_category: policy_geopolitics
-    max_videos: 1
-
-  - url: https://www.youtube.com/@TBPNLive/videos             # TBPN — 科技/市場每日長談
+  # PBD Podcast（Patrick Bet-David 長篇商業訪談）
+  - url: https://www.youtube.com/@PBDpodcast/videos
     topic_category: us_stocks
     max_videos: 1
