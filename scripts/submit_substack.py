@@ -92,12 +92,36 @@ def process_youtube(url: str, note: str = "") -> dict:
     info = _extract_yt_transcript(url)
     if not info:
         # No transcript — fall back to treating it as a URL source.
-        return process_url(url, note=note or "YouTube (no transcript)")
+        # 仍標 youtube + enrich_yt：Mac 端 drain 會用 Whisper 把無字幕影片轉出來。
+        news_id = _make_news_id("substack_yt_nocap_" + _make_news_id(url))
+        body = f"# {note or 'YouTube'}\n\n（無字幕，Mac 端會用 Whisper 轉逐字稿）\n\n## 種子來源\n{url}\n"
+        return _save_substack_item(news_id, url=url, title=note or "YouTube (no transcript)",
+                                   body=body, source_type="youtube",
+                                   extra_tags=["youtube", "video", "enrich_yt", "no_caption"])
     news_id = _make_news_id("substack_yt_" + info["video_id"])
     title = note or info["title"]
     body = f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}"
     return _save_substack_item(news_id, url=url, title=title, body=body,
-                               source_type="youtube", extra_tags=["youtube", "video"])
+                               source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"])
+
+
+def process_youtube_multi(urls: list[str], note: str = "") -> dict:
+    """多支 YouTube 種子（巨人之聲多源）：把全部網址寫進 body，讓 Mac 端 drain
+    觸發 enrich_youtube_sources.py 建『一主題 × 多一手源 + 書面深度報告』素材包。"""
+    urls = [u.strip() for u in urls if u.strip()]
+    if not urls:
+        return {"status": "error", "error": "no youtube urls"}
+    if len(urls) == 1:
+        return process_youtube(urls[0], note)
+    key = hashlib.md5("|".join(sorted(urls)).encode()).hexdigest()
+    news_id = _make_news_id("substack_ytmulti_" + key)
+    seeds = "\n".join(urls)
+    title = note or "巨人之聲 · 多源 YouTube"
+    body = (f"# {title}\n\n（{len(urls)} 支 YouTube 種子；Mac 端會自動建深度素材包："
+            f"全逐字稿（無字幕走 Whisper）＋自動搜尋對應書面深度報告）\n\n## 種子來源\n{seeds}\n")
+    return _save_substack_item(news_id, url=urls[0], title=title, body=body,
+                               source_type="youtube",
+                               extra_tags=["youtube", "video", "enrich_yt", "multi_source"])
 
 
 _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
@@ -129,7 +153,7 @@ def main():
     p = argparse.ArgumentParser(description="Submit a source for a SUBSTACK draft")
     p.add_argument("--url", type=str)
     p.add_argument("--text", type=str)
-    p.add_argument("--yt", type=str)
+    p.add_argument("--yt", type=str, help="YouTube 網址；可逗號分隔多支（巨人之聲多源種子）")
     p.add_argument("--images", type=str, help="comma-separated repo-relative image paths")
     p.add_argument("--note", type=str, default="")
     args = p.parse_args()
@@ -139,7 +163,7 @@ def main():
     elif args.text:
         result = process_text(args.text, args.note)
     elif args.yt:
-        result = process_youtube(args.yt, args.note)
+        result = process_youtube_multi(args.yt.split(","), args.note)
     elif args.images:
         result = process_images(args.images.split(","), args.note)
     else:

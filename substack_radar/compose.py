@@ -973,6 +973,21 @@ def mirror_to_onedrive(local_dir: Path, mirror_dir: Path) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 
+def _load_bundle_curated(path: str) -> str:
+    """深度素材包精華：取『完整逐字稿素材』標題之前的全部內容（重點參考資料＋各源關鍵
+    數據與要角＋對應書面深度報告）。逐字稿全文常達數萬字、不塞進 prompt；高訊號的含數據句／
+    要角／書面報告才是寫手對焦要的。讀不到就回空字串，讓 compose 照舊用原始素材。"""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return ""
+        text = p.read_text(encoding="utf-8")
+        marker = "## 完整逐字稿素材"
+        return (text.split(marker, 1)[0].strip() if marker in text else text.strip())
+    except Exception:
+        return ""
+
+
 async def run(args: argparse.Namespace) -> int:
     """Outer wrapper catches any unexpected failure and routes to notify.
 
@@ -1203,6 +1218,18 @@ async def _run_inner(args: argparse.Namespace) -> int:
             }
     print(f"[Source] mode={mode} title={raw_title!r} topic={topic_category}")
 
+    # 1b) 深度素材包（多源綜合）：有 --bundle 就把其精華疊進素材，啟動 soul §14 巨人之聲多源綜合法。
+    if getattr(args, "bundle", None):
+        bundle_extra = _load_bundle_curated(args.bundle)
+        if bundle_extra:
+            raw_content = (raw_content or "") + (
+                "\n\n===== 深度素材包（多源綜合用 · 依 substack_soul.md §14 巨人之聲多源綜合法）=====\n"
+                + bundle_extra
+            )
+            print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
+        else:
+            print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
+
     # 2) Compose
     recent_domains = load_recent_metaphor_domains()
     print(f"[Compose] recent_metaphor_domains={recent_domains}")
@@ -1350,6 +1377,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("mode", choices=["morning", "evening", "podcast"], help="Which slot to compose")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
+    p.add_argument(
+        "--bundle",
+        default=None,
+        help=(
+            "(any mode) 深度素材包 markdown 路徑（scripts/enrich_youtube_sources.py 產出）。"
+            "其精華（重點參考資料＋各源關鍵數據與要角）會疊進素材，觸發 substack_soul.md "
+            "§14 巨人之聲·多源綜合法。drain_substack.py 偵測到 YouTube 種子時會自動帶入。"
+        ),
+    )
     p.add_argument("--topic", default=None, help="(evening) override: free-text topic / 文章主題")
     p.add_argument(
         "--source-file",

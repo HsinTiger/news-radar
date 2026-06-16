@@ -16,14 +16,19 @@ Usage:
     python scripts/drain_substack.py --mark <id> # mark an id done without composing
 """
 from __future__ import annotations
-import argparse, json, sqlite3, subprocess, sys
+import argparse, json, re, sqlite3, subprocess, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DB = REPO / "data" / "01_harvest" / "news_radar.db"
 DONE_FILE = REPO / "data" / "substack_drafts" / ".substack_submissions.json"
 COMPOSE = REPO / "substack_radar" / "compose.py"
+ENRICH = REPO / "scripts" / "enrich_youtube_sources.py"
+BUNDLE_DIR = REPO / "data" / "source_bundles"
 PY = REPO / ".venv" / "bin" / "python"
+
+# YouTube 種子偵測：submit 進來的 url 欄位 + 內文裡的 youtube 連結都算。
+_YT_RE = re.compile(r"https?://(?:www\.)?(?:youtube\.com/[^\s)\]]+|youtu\.be/[^\s)\]]+)", re.I)
 
 
 def _load_done() -> set:
@@ -47,7 +52,7 @@ def _candidates() -> list:
     conn = sqlite3.connect(str(DB))
     try:
         rows = conn.execute(
-            "SELECT id, title, word_count FROM news_items "
+            "SELECT id, title, word_count, url, clean_markdown FROM news_items "
             "WHERE feed_name='user_substack' "
             "  AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 100 "
             "ORDER BY fetched_at ASC"
@@ -57,10 +62,43 @@ def _candidates() -> list:
     return rows
 
 
+def _yt_seeds(url, body) -> list:
+    """這筆 submission 的 YouTube 種子（url 欄位 + 內文連結，去重、去尾標點）。"""
+    seeds = []
+    for cand in ([url] if url else []) + _YT_RE.findall(body or ""):
+        s = (cand or "").strip().rstrip(".,)]。）")
+        if _YT_RE.match(s) and s not in seeds:
+            seeds.append(s)
+    return seeds
+
+
+def _enrich(rid, title, seeds):
+    """跑 enrich_youtube_sources.py 建深度素材包（含無字幕 Whisper + 自動找書面報告）。
+    回傳素材包路徑；任何失敗都回 None，讓 compose 照舊用原始素材，不阻斷出稿。"""
+    BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
+    out = BUNDLE_DIR / f"submit_{rid[:12]}.md"
+    print(f"[drain] 🎥 {len(seeds)} 個 YouTube 種子 → 建深度素材包（Whisper+書面報告，可能數分鐘）…")
+    try:
+        r = subprocess.run(
+            [str(PY), str(ENRICH), *seeds, "--topic", title or "", "--whisper", "--out", str(out)],
+            cwd=str(REPO), timeout=3600,
+        )
+    except Exception as e:
+        print(f"[drain]   ⚠️ enrich 例外：{e}；用原始素材續寫")
+        return None
+    if r.returncode == 0 and out.exists():
+        print(f"[drain]   ✅ 素材包 {out.name}")
+        return out
+    print(f"[drain]   ⚠️ enrich 失敗 (rc={r.returncode})；用原始素材續寫")
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--mark", type=str, help="mark this id as done without composing")
+    ap.add_argument("--no-enrich", action="store_true",
+                    help="跳過 YouTube 深度素材包 enrichment（純用原始 submission 內文）")
     args = ap.parse_args()
 
     done = _load_done()
@@ -74,20 +112,25 @@ def main():
     rows = _candidates()
     pending = [r for r in rows if r[0] not in done]
     print(f"[drain] {len(rows)} user_substack item(s), {len(pending)} pending compose")
-    for rid, title, wc in pending:
-        print(f"  · {rid[:12]}  {wc:>6}w  {title[:50]}")
+    for rid, title, wc, url, body in pending:
+        tag = "  🎥yt" if (not args.no_enrich and _yt_seeds(url, body)) else ""
+        print(f"  · {rid[:12]}  {wc:>6}w  {title[:50]}{tag}")
 
     if args.dry_run:
         print("[drain] dry-run — composed nothing.")
         return 0
 
     composed = 0
-    for rid, title, wc in pending:
+    for rid, title, wc, url, body in pending:
         print(f"[drain] composing {rid[:12]} …")
-        r = subprocess.run(
-            [str(PY), "-u", str(COMPOSE), "morning", "--news-id", rid],
-            cwd=str(REPO),
-        )
+        cmd = [str(PY), "-u", str(COMPOSE), "morning", "--news-id", rid]
+        if not args.no_enrich:
+            seeds = _yt_seeds(url, body)
+            if seeds:
+                bundle = _enrich(rid, title, seeds)
+                if bundle:
+                    cmd += ["--bundle", str(bundle)]
+        r = subprocess.run(cmd, cwd=str(REPO))
         if r.returncode == 0:
             done.add(rid)
             _save_done(done)          # persist after each success (crash-safe)
