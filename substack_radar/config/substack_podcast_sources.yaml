@@ -52,7 +52,7 @@ sources:
     topic_category: ai_model
     max_videos: 1
 
-  - url: https://www.youtube.com/@machinelearningstreet talk/videos
+  - url: https://www.youtube.com/@MachineLearningStreetTalk/videos  # 2026-06-16 修正：原 handle 含空格無法解析
     topic_category: ai_model
     max_videos: 1
 
@@ -75,7 +75,7 @@ sources:
     topic_category: other
     max_videos: 1
 
-  - url: https://www.youtube.com/@lennys podcast/videos
+  - url: https://www.youtube.com/@LennysPodcast/videos  # 2026-06-16 修正：原 handle 含空格無法解析
     topic_category: ai_application
     max_videos: 1
 
@@ -230,4 +230,20 @@ sources:
 
   - url: https://www.youtube.com/@joerogan/videos            # Joe Rogan Experience（完整集已回 YouTube）
     topic_category: other
+    max_videos: 1
+
+  # ======================================================================
+  # 第八類：2026-06-16 新增（handle 已用 yt-dlp 驗證可解析）
+  # 補強廣度與「跨界長談」選題；composer 仍會自動跳過 <3000 字逐字稿。
+  # ======================================================================
+  - url: https://www.youtube.com/@TheDiaryOfACEO/videos       # Diary of a CEO (Steven Bartlett) — 跨界深訪
+    topic_category: other
+    max_videos: 1
+
+  - url: https://www.youtube.com/@Doomberg/videos             # Doomberg — 能源/原物料/市場
+    topic_category: policy_geopolitics
+    max_videos: 1
+
+  - url: https://www.youtube.com/@TBPNLive/videos             # TBPN — 科技/市場每日長談
+    topic_category: us_stocks
     max_videos: 1

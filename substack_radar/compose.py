@@ -988,6 +988,43 @@ def _load_bundle_curated(path: str) -> str:
         return ""
 
 
+def _podcast_reports_block(title: str) -> str:
+    """podcast 一手逐字稿之外，自動上網搜對應書面深度報告（SemiAnalysis/Stratechery 等）當
+    第二瞭望台，並抓前 1–2 篇高品質源可讀的正文片段。觸發 soul §14 巨人之聲多源綜合法——
+    讓 13:00 那兩篇 podcast 取材的文章自動加厚、不靠人工。任何失敗回空字串，不阻斷出稿。"""
+    if not title:
+        return ""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_enrich", str(_REPO_ROOT / "scripts" / "enrich_youtube_sources.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        reports = mod._find_reports(title, n=5)
+    except Exception as e:
+        print(f"[Podcast] ⚠️ 書面報告搜尋略過：{e}")
+        return ""
+    if not reports:
+        return ""
+    lines = [
+        "\n\n===== 深度素材包（書面報告層 · 依 substack_soul.md §14 巨人之聲多源綜合法）=====",
+        "## 對應書面深度報告（自動搜尋 · podcast 主題的第二瞭望台，用來交叉驗證/加厚，不要照抄）",
+    ]
+    for r in reports:
+        tag = "⭐ " if r.get("quality") else ""
+        lines.append(f"- {tag}{r.get('title','')}\n  {r.get('url','')}")
+    # 前 1–2 篇高品質源抓可讀正文片段（付費牆通常只拿得到導言，仍是交叉驗證材料）。
+    try:
+        from scripts.submit_source import _fetch_page_text
+        for r in [x for x in reports if x.get("quality")][:2]:
+            txt = (_fetch_page_text(r["url"]) or "").strip()
+            if len(txt) > 200:
+                lines.append(f"\n### 摘錄自 {r.get('title','')[:50]}\n{txt[:1500]}")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
 async def run(args: argparse.Namespace) -> int:
     """Outer wrapper catches any unexpected failure and routes to notify.
 
@@ -1230,6 +1267,15 @@ async def _run_inner(args: argparse.Namespace) -> int:
         else:
             print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
 
+    # 1c) podcast 自動加書面深度報告層：一手逐字稿已在 raw_content，再上網搜對應書面報告當
+    #     第二瞭望台 → §14 多源綜合，13:00 兩篇 podcast 取材文章自動加厚（你說的「搭配
+    #     SemiAnalysis 查證」）。給了 --bundle 就以 bundle 為準、不重複搜。
+    elif mode == "podcast" and not getattr(args, "no_reports", False):
+        rblock = _podcast_reports_block(raw_title)
+        if rblock:
+            raw_content = (raw_content or "") + rblock
+            print("[Podcast] +書面深度報告層（§14 第二瞭望台）")
+
     # 2) Compose
     recent_domains = load_recent_metaphor_domains()
     print(f"[Compose] recent_metaphor_domains={recent_domains}")
@@ -1385,6 +1431,11 @@ def parse_args() -> argparse.Namespace:
             "其精華（重點參考資料＋各源關鍵數據與要角）會疊進素材，觸發 substack_soul.md "
             "§14 巨人之聲·多源綜合法。drain_substack.py 偵測到 YouTube 種子時會自動帶入。"
         ),
+    )
+    p.add_argument(
+        "--no-reports",
+        action="store_true",
+        help="(podcast) 關掉自動搜書面深度報告（SemiAnalysis/Stratechery 第二瞭望台）。預設開。",
     )
     p.add_argument("--topic", default=None, help="(evening) override: free-text topic / 文章主題")
     p.add_argument(
