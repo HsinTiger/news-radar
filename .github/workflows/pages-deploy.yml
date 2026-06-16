@@ -16,6 +16,7 @@ on:
       - 'manual-submit/**'
       - 'meta-submit/**'
       - 'substack-submit/**'
+      - 'wiki/**'
       - '.github/workflows/pages-deploy.yml'
   workflow_dispatch:
 
@@ -40,14 +41,16 @@ jobs:
 
       - name: Assemble site (dashboard at root, submit pages in subdirs)
         run: |
-          mkdir -p _site/manual-submit _site/meta-submit _site/substack-submit
+          mkdir -p _site/manual-submit _site/meta-submit _site/substack-submit _site/wiki
           cp -r dashboard/*       _site/
           cp -r manual-submit/*   _site/manual-submit/
           cp -r meta-submit/*     _site/meta-submit/
           cp -r substack-submit/* _site/substack-submit/
+          cp -r wiki/*            _site/wiki/
           echo "✅ root:"           && ls _site/
           echo "✅ meta-submit:"    && ls _site/meta-submit/
           echo "✅ substack-submit:" && ls _site/substack-submit/
+          echo "✅ wiki:"           && ls _site/wiki/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
