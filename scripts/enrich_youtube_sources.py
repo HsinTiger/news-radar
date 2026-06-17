@@ -96,7 +96,12 @@ def _whisper_transcript(vid: str, model_size: str = "base", max_minutes: int = 0
 
 _QUALITY_DOMAINS = ("semianalysis", "stratechery", "ben-thompson", "ft.com", "economist",
                     "bloomberg", "wsj.com", "reuters", "nytimes", ".edu", "arxiv",
-                    "newsletter", "blog.", "hbr.org", "sequoiacap", "a16z")
+                    "newsletter", "blog.", "hbr.org", "sequoiacap", "a16z",
+                    # 健康/科學/醫學權威源（2026-06-17）：讓非科技題材（睡眠、營養、神經科學…）
+                    # 也能精準配到書面文獻，不只退回逐字稿本身。
+                    "pubmed", "ncbi.nlm.nih.gov", "nih.gov", "nature.com", "science.org",
+                    "nejm.org", "thelancet", "cell.com", "jamanetwork", "bmj.com",
+                    "examine.com", "sciencedirect", "nber.org", "ssrn")
 
 
 def _find_reports(query: str, n: int = 6) -> list:

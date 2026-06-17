@@ -170,3 +170,22 @@ sources:
   - url: https://www.youtube.com/@PBDpodcast/videos
     topic_category: us_stocks
     max_videos: 1
+
+  # ======================================================================
+  # 第八類：2026-06-17 補（yt-dlp auto-subs 驗證，字幕量充足）
+  # ======================================================================
+
+  # Conversations with Tyler（Tyler Cowen，經濟/政策/文化跨界長談）
+  - url: https://www.youtube.com/@MercatusCenter/videos
+    topic_category: other
+    max_videos: 1                        # VERIFIED: ~174k chars, auto-subs
+
+  # Patrick Boyle（前對沖基金經理，金融/市場深拆，冷面幽默）
+  - url: https://www.youtube.com/@PBoyle/videos
+    topic_category: us_stocks
+    max_videos: 1                        # VERIFIED: ~201k chars, auto-subs
+
+  # Sharp Tech（Ben Thompson / Andrew Sharp，科技商業策略；Stratechery 系）
+  - url: https://www.youtube.com/@SharpTechPodcast/videos
+    topic_category: us_stocks
+    max_videos: 1                        # VERIFIED: ~127k chars, auto-subs
