@@ -101,7 +101,12 @@ _QUALITY_DOMAINS = ("semianalysis", "stratechery", "ben-thompson", "ft.com", "ec
                     # 也能精準配到書面文獻，不只退回逐字稿本身。
                     "pubmed", "ncbi.nlm.nih.gov", "nih.gov", "nature.com", "science.org",
                     "nejm.org", "thelancet", "cell.com", "jamanetwork", "bmj.com",
-                    "examine.com", "sciencedirect", "nber.org", "ssrn")
+                    "examine.com", "sciencedirect", "nber.org", "ssrn",
+                    # 財經/市場開放深度源（2026-06-17）：FT/Bloomberg 多在付費牆、DDG 排不上，
+                    # 補一批免費開放、曼報級的財經電子報，讓市場類題材也配得到真分析。
+                    "thediff", "netinterest", "appeconomyinsights", "mostlymetrics",
+                    "doomberg", "pitchbook", "cbinsights", "notboring", "generalist",
+                    "sherwood.news", "bytebytego", "platformer")
 
 
 def _find_reports(query: str, n: int = 6) -> list:
@@ -109,7 +114,14 @@ def _find_reports(query: str, n: int = 6) -> list:
     try:
         from ddgs import DDGS
         seen, out = set(), []
-        for q in (f"{query} analysis report", f"{query} SemiAnalysis OR Stratechery OR deep dive"):
+        # 多角度撒網：一般分析 + 科技深度源 + 財經深度電子報 + 學術。高品質域名最後再排序拉前。
+        queries = (
+            f"{query} analysis report",
+            f"{query} SemiAnalysis OR Stratechery OR deep dive",
+            f"{query} Net Interest OR The Diff OR equity research OR earnings analysis",
+            f"{query} deep dive newsletter",
+        )
+        for q in queries:
             for r in DDGS().text(q, max_results=n * 2):
                 href = r.get("href", "")
                 dom = re.sub(r"^https?://(www\.)?", "", href).split("/")[0]
