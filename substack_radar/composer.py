@@ -654,7 +654,13 @@ def _build_user_prompt(
 #                   緊急逃生口；不建議長期使用。
 #
 #   Override via env: SUBSTACK_COMPOSER_BACKEND=claude_cli|default
-SUBSTACK_BACKEND = os.getenv("SUBSTACK_COMPOSER_BACKEND", "gemini_cli").lower()
+#
+# 2026-06-20 (Hsin)：Gemini CLI 個人版被 Google 收掉(IneligibleTier) + Gemini API 偶發 503，
+# 兩條 Gemini 一起倒就整個出不了稿。故預設改成完整 fallback 鏈：沿用 llm_brain 既有 providers，
+# 維持 Gemini 主寫(品質/免費)，後面接 opencode(GLM-4.6,200k,長文兜底)→cerebras→groq。
+SUBSTACK_BACKEND = os.getenv(
+    "SUBSTACK_COMPOSER_BACKEND", "gemini_cli,gemini,opencode,cerebras,groq"
+).lower()
 
 
 _KNOWN_BACKENDS = {"claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
