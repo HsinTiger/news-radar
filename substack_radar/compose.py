@@ -154,16 +154,53 @@ def _load_used() -> set:
     return used
 
 
+def _lock_path() -> Path:
+    """Path to a simple filesystem lock for _mark_used concurrency."""
+    return SUBSTACK_USED_PATH.with_suffix(".used.lock")
+
+
+def _acquire_lock(lock: Path, timeout_s: int = 30) -> bool:
+    """Try to atomically create the lock file. Returns True if acquired."""
+    import os, time
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                pid = int(lock.read_text().strip())
+                # Stale lock: process that held it is gone
+                os.kill(pid, 0)
+            except (OSError, ValueError):
+                lock.unlink(missing_ok=True)
+                continue  # retry
+        time.sleep(0.1)
+    return False
+
+
+def _release_lock(lock: Path) -> None:
+    lock.unlink(missing_ok=True)
+
+
 def _mark_used(news_id: str, limit: int = 300) -> None:
-    used = list(_load_used())
-    if news_id in used:
+    lock = _lock_path()
+    if not _acquire_lock(lock):
+        print(f"[_mark_used] ⚠️ 無法取得檔案鎖（30s timeout），跳過標記 {news_id}")
         return
-    used.append(news_id)
-    used = used[-limit:]
-    SUBSTACK_USED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SUBSTACK_USED_PATH.write_text(
-        json.dumps({"used": used}, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    try:
+        used = list(_load_used())
+        if news_id in used:
+            return
+        used.append(news_id)
+        used = used[-limit:]
+        SUBSTACK_USED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SUBSTACK_USED_PATH.write_text(
+            json.dumps({"used": used}, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    finally:
+        _release_lock(lock)
 
 
 def _signal_density(text: str) -> float:
@@ -207,6 +244,23 @@ def _score_pool_item(row, now) -> float:
     return score
 
 
+def _last_used_feed_name(conn) -> Optional[str]:
+    """Look up the feed_name of the most recently used news item, to
+    enable source-diversity checks in _pick_top_from_pool."""
+    used = _load_used()
+    if not used:
+        return None
+    # "most recently used" = last appended = last element in iteration order
+    last_id = list(used)[-1]
+    try:
+        row = conn.execute(
+            "SELECT feed_name FROM news_items WHERE id = ?", (last_id,)
+        ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
 def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str, str, str]]:
     """Score the recent harvested pool deterministically and return the top UNUSED
     item as (id, title, clean_markdown, topic_category), marking it used.
@@ -215,7 +269,11 @@ def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str
     selection is now fully decoupled from the news_radar LLM scorer — it no longer
     reads `weighted_score`; every source is scored by `_score_pool_item` (script,
     zero token). morning takes the top unused item; evening (run later, sharing the
-    used-set) takes the next."""
+    used-set) takes the next.
+
+    2026-06-18 (Hsin feedback): add source-diversity penalty. If the last-used item
+    had the same feed_name as a candidate, penalize it by 2.0 so consecutive slots
+    (morning → evening) don't both pick Motley Fool S&P ETF comparisons."""
     if not NEWS_DB_PATH.exists():
         print(f"[{label}] ⚠️ News DB not found at {NEWS_DB_PATH}")
         return None
@@ -234,6 +292,7 @@ def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str
             LIMIT 300
             """
         ).fetchall()
+        last_feed = _last_used_feed_name(conn)
     except Exception as exc:
         print(f"[{label}] ⚠️ query failed: {exc}")
         return None
@@ -242,18 +301,25 @@ def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
+    if last_feed:
+        print(f"[{label}] last-used feed = {last_feed!r}  (penalising -2.0 if same)")
+
     best, best_score = None, -1.0
     for r in rows:
         if r[0] in used:
             continue
         s = _score_pool_item(r, now)
+        # Source-diversity penalty: if the last-used item was from the same feed,
+        # subtract 2.0 so the next slot naturally picks something different.
+        if last_feed and r[5] == last_feed:
+            s -= 2.0
         if s > best_score:
             best_score, best = s, r
     if best is None:
         return None
     nid, title, body, topic, *_ = best
     _mark_used(nid)
-    print(f"[{label}] ✅ id={nid[:10]} score={best_score:.2f} title={title[:48]!r}")
+    print(f"[{label}] ✅ id={nid[:10]} score={best_score:.2f} feed={best[5] if len(best) > 5 else '?'} title={title[:48]!r}")
     return (nid, title, body or "", topic or "other")
 
 
@@ -843,16 +909,19 @@ def _strip_title_subtitle_lines(md: str, *, title: str, subtitle: str) -> str:
 # File writers
 # ---------------------------------------------------------------------------
 
-def write_article_substack_md(out_dir: Path, draft: SubstackDraft) -> Path:
+def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block: str = "") -> Path:
     """The PASTE-READY version. Goes straight into Substack editor.
 
     Top line = 產文路線標記 (2026-05-31 Hsin directive): one deletable line marking
     which model/route wrote this draft. Single line (not the old cover block) —
-    刪掉即可再貼上 Substack。"""
+    刪掉即可再貼上 Substack。
+    sources_block（2026-06-20 Hsin directive）：緊接在 🧠 行後、標題前的『來源』區塊，
+    列主來源 podcast/文章網址 + 數據/書面文獻網址，供查證；發布前可移到文末或刪除。"""
     path = out_dir / "Article_Substack.md"
     route = getattr(draft, "generated_by", None) or "unknown"
     md = (
         f"> 🧠 產文路線：{route}　（發布前刪此行）\n\n"
+        f"{sources_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
         f"{draft.body_markdown.strip()}\n"
@@ -988,12 +1057,14 @@ def _load_bundle_curated(path: str) -> str:
         return ""
 
 
-def _podcast_reports_block(title: str) -> str:
+def _podcast_reports_block(title: str):
     """podcast 一手逐字稿之外，自動上網搜對應書面深度報告（SemiAnalysis/Stratechery 等）當
     第二瞭望台，並抓前 1–2 篇高品質源可讀的正文片段。觸發 soul §14 巨人之聲多源綜合法——
-    讓 13:00 那兩篇 podcast 取材的文章自動加厚、不靠人工。任何失敗回空字串，不阻斷出稿。"""
+    讓 13:00 那兩篇 podcast 取材的文章自動加厚、不靠人工。
+    回傳 (context_text, reports)：context_text 疊進素材給 LLM；reports 給文章最上面的來源區塊引用。
+    任何失敗回 ("", [])，不阻斷出稿。"""
     if not title:
-        return ""
+        return "", []
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -1003,9 +1074,9 @@ def _podcast_reports_block(title: str) -> str:
         reports = mod._find_reports(title, n=5)
     except Exception as e:
         print(f"[Podcast] ⚠️ 書面報告搜尋略過：{e}")
-        return ""
+        return "", []
     if not reports:
-        return ""
+        return "", []
     lines = [
         "\n\n===== 深度素材包（書面報告層 · 依 substack_soul.md §14 巨人之聲多源綜合法）=====",
         "## 對應書面深度報告（自動搜尋 · podcast 主題的第二瞭望台，用來交叉驗證/加厚，不要照抄）",
@@ -1022,7 +1093,30 @@ def _podcast_reports_block(title: str) -> str:
                 lines.append(f"\n### 摘錄自 {r.get('title','')[:50]}\n{txt[:1500]}")
     except Exception:
         pass
-    return "\n".join(lines)
+    return "\n".join(lines), reports
+
+
+def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
+    """Article_Substack.md 最上面的『來源』區塊：主來源 podcast/文章網址 + 數據/書面文獻網址。
+    給 Hsin 查證 / 標引用用，標成發布前可移到文末或刪除。完全沒網址就回空字串。"""
+    reports = reports or []
+    rep_lines, seen = [], set()
+    for r in reports:
+        u = (r.get("url") or "").strip()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        star = "⭐" if r.get("quality") else "•"
+        rep_lines.append(f"> {star} {(r.get('title') or u)[:72]}\n>    {u}")
+    if not source_url and not rep_lines:
+        return ""
+    block = ["> 📎 **來源 Sources**（供查證；發布前可整理進文末引用或刪除）"]
+    if source_url:
+        block.append(f"> 🎥 主來源：{(source_title or '原始來源')[:72]}\n>    {source_url}")
+    if rep_lines:
+        block.append("> 📄 參考數據／書面文獻：")
+        block += rep_lines
+    return "\n".join(block) + "\n\n"
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -1255,6 +1349,20 @@ async def _run_inner(args: argparse.Namespace) -> int:
             }
     print(f"[Source] mode={mode} title={raw_title!r} topic={topic_category}")
 
+    # 來源區塊用：主來源網址 + 引用到的書面報告（給 Article_Substack.md 最上面那塊）。
+    used_reports: list = []
+    source_url = None
+    _sid = source.get("id")
+    if _sid:
+        try:
+            import sqlite3 as _sq
+            _cx = _sq.connect(str(_REPO_ROOT / "data" / "01_harvest" / "news_radar.db"))
+            _row = _cx.execute("SELECT url FROM news_items WHERE id=?", (_sid,)).fetchone()
+            _cx.close()
+            source_url = _row[0] if _row and _row[0] else None
+        except Exception:
+            source_url = None
+
     # 1b) 深度素材包（多源綜合）：有 --bundle 就把其精華疊進素材，啟動 soul §14 巨人之聲多源綜合法。
     if getattr(args, "bundle", None):
         bundle_extra = _load_bundle_curated(args.bundle)
@@ -1264,6 +1372,19 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 + bundle_extra
             )
             print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
+            # 來源引用：素材包的影音一手源 + 書面深度報告都納入來源區塊
+            try:
+                import json as _json
+                _bj = Path(args.bundle).with_suffix(".json")
+                if _bj.exists():
+                    _bd = _json.loads(_bj.read_text(encoding="utf-8"))
+                    for _s in _bd.get("sources", []):
+                        if _s.get("url"):
+                            used_reports.append({"title": "🎥 " + (_s.get("title") or ""),
+                                                 "url": _s["url"], "quality": True})
+                    used_reports += _bd.get("reports", [])
+            except Exception:
+                pass
         else:
             print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
 
@@ -1271,7 +1392,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     #     第二瞭望台 → §14 多源綜合，13:00 兩篇 podcast 取材文章自動加厚（你說的「搭配
     #     SemiAnalysis 查證」）。給了 --bundle 就以 bundle 為準、不重複搜。
     elif mode == "podcast" and not getattr(args, "no_reports", False):
-        rblock = _podcast_reports_block(raw_title)
+        rblock, used_reports = _podcast_reports_block(raw_title)
         if rblock:
             raw_content = (raw_content or "") + rblock
             print("[Podcast] +書面深度報告層（§14 第二瞭望台）")
@@ -1330,7 +1451,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
     mirror_dir = ONEDRIVE_BASE / today / folder_name
 
     # 5) Write files
-    article_md = write_article_substack_md(local_dir, draft)
+    sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
+    article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
     write_article_full_md(local_dir, draft, mode=mode, source=source, audit_warnings=warnings)
     write_prompts_and_metadata(local_dir, draft, mode, source, warnings)
 
