@@ -82,9 +82,25 @@ class SubstackDraft(BaseModel):
         ...,
         description="本篇核心比喻 domain（最多一個、點到為止）。**完全不靠比喻就填 'none'**（鼓勵——比喻過多會文謅謅）。",
     )
-    hook_type: Literal["contrarian_question", "contrarian_reframe", "concrete_punch"] = Field(
+    hook_type: Literal[
+        "contrarian_question",
+        "contrarian_reframe",
+        "concrete_punch",
+        "narrative_hook",
+        "provocative_statement",
+        "insider_question",
+    ] = Field(
         ...,
-        description="標題採用的 hook 型態。(a) 反直覺問句 / (b) Contrarian reframe / (c) 具體衝擊收束。",
+        description=(
+            "標題 hook 型態。嚴格輪流使用不同類型，不可連續兩篇同型態。\n"
+            '  "contrarian_question": 反直覺問句（有時自然產生為什麼，但不必每篇如此）\n'
+            '  "contrarian_reframe": 把常識翻轉成全新框架\n'
+            '  "concrete_punch": 以一個具體數字/日期/事實直接開場，不做鋪陳\n'
+            '  "narrative_hook": 以一段簡潔的觀察/矛盾場景切入，不是問句\n'
+            '  "provocative_statement": 一個看起來不對但很可能正確的斷言\n'
+            '  "insider_question": 把讀者放在決策者位置——"你要怎麼選"類的問句\n'
+            "**不要連續兩篇用同一種 hook_type。**"
+        ),
     )
     cover_image_prompt: Optional[str] = Field(
         default=None,
@@ -535,6 +551,11 @@ def _build_user_prompt(
         f"=== 主題分類 ===\n{topic_category}\n\n"
         f"=== 多樣性提醒 ===\n{avoid}\n\n"
         # === 2026-06-02 反模板（Hsin：範例是參照不是照抄；先跑舉一反三推理鏈，別在固定句型裡輪轉）===
+        "=== 第零步：標題多樣性——禁止每篇都用『為什麼 X：為什麼 Y』模板 ===\n"
+        "最近的文章因為標題結構太固定（全是『為什麼 X：為什麼 Y』）被 Hsin 明確批評。"
+        "從這篇開始：**刻意輪換 hook_type**——可以用反直覺斷言開頭、用具體數字衝擊、"
+        "用場景觀察切入、或用決策者提問。hook_type 有 6 種可選，不要連續兩篇踩同一種。"
+        "標題不是『為什麼』公式填空。\n\n"
         "=== 第一步：先跑一條『舉一反三推理鏈』，再動筆（這步決定這篇是不是模板貨）===\n"
         "**最重要的元規則：本提示裡所有的範例字串（標題範例、thesis 句型、小標範例、§6 標題公式庫、"
         "metaphor domain 清單、各種「像『…』」舉例）全部只是『示意原理』用的，嚴禁照抄、嚴禁套殼填空。** "
@@ -590,7 +611,12 @@ def _build_user_prompt(
         "  6. 結尾最後加一句**邀請讀者回應的鉤子**（針對文章拋一個具體問題請讀者思考），不要只有訂閱鈕。\n\n"
         "=== 輸出格式：直接回一個 JSON object，欄位如下（缺一不可）===\n"
         "{\n"
-        '  "title": "...",                  // 8-60 字。**外層放好奇/情緒鉤**，**不要把硬數據/術語塞進標題**（數字與型號留給副標與內文）。§6 公式庫只是寫完後『檢查標題有沒有鉤子＋是不是新聞稿體』的清單，不是讓你套；先從這份素材長出標題，再對照。含一個具體錨點，禁新聞稿陳述式/震驚體/listicle。（鉤子示意、禁照抄：「也許我們不會再有下一個 X」「為什麼最完美的模型最先崩潰」只是示範「好奇感」，不要沿用這些句型。）\n'
+        '  "title": "...",                  // 8-60 字。**鉤子要多樣性**：不要連續兩篇用同一種 hook_type。'
+        '**尤其禁止每篇都用「為什麼」開頭**——那會讓你的 feed 看起來像同一個模板填不同素材。輪流用：'
+        'concrete_punch(數字衝擊)、narrative_hook(觀察切入)、provocative_statement(斷言)、'
+        'insider_question(決策者視角)、contrarian_question(反問)、contrarian_reframe(框架翻轉)。'
+        '外層放好奇/情緒鉤，不要把硬數據/術語塞進標題（數字與型號留給副標與內文）。'
+        '含一個具體錨點，禁新聞稿陳述式/震驚體/listicle。\n'
         '  "subtitle": "...",               // 10-80 字。不可重複 title。這裡才放最有力的「具體數字+反差」當 Substack 列表頁勾子。\n'
         f'  "body_markdown": "...",          // {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 中文字。\n'
         "                                   //   開場2句兌現承諾+前置 thesis；▉ 具名小標；中段 spike。\n"
@@ -600,9 +626,10 @@ def _build_user_prompt(
         '                                   //     "contrarian_markets" | "cinematic_pacing" |\n'
         '                                   //     "street_culture" | "architecture_space" | "none"\n'
         "                                   //   **預設 none**；真要用最多一個、點到為止；絕不用熱力學/化學/生物演化。\n"
-        '  "hook_type": "...",              // ENUM，必為以下其一：\n'
+        '  "hook_type": "...",              // ENUM 以下其一，**不要連續兩篇同一種**：\n'
         '                                   //     "contrarian_question" | "contrarian_reframe" |\n'
-        '                                   //     "concrete_punch"\n'
+        '                                   //     "concrete_punch" | "narrative_hook" |\n'
+        '                                   //     "provocative_statement" | "insider_question"\n'
         '  "cover_image_prompt": null,      // 已停用，固定填 null（封面改用 §13 段落圖片建議自選）。\n'
         '  "chart_prompt": null,            // 可選；若無數據可視化，填 null。\n'
         '  "reading_time_minutes": 5,       // 整數 4-7。目標 5。\n'
