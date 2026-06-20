@@ -123,6 +123,10 @@ HOOK_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".hook_history.jso
 _TECH_TOPICS = {"us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
                 "tech_product_launch", "supply_chain", "earnings"}
 _TECH_BOOST = 1.2
+
+# company mode（每週日 09:00 公司營運分析）
+COMPANY_NEXT_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".company_next"
+COMPANY_WATCHLIST_PATH = _REPO_ROOT / "substack_radar" / "config" / "company_watchlist.yaml"
 # Tracks news_items already used as a Substack source — SHARED by morning+evening
 # so the two daily slots never pick the same item. Legacy .evening_used.json is
 # still merged on load for backward-compat.
@@ -648,6 +652,45 @@ def append_hook_type(hook: str, limit: int = 30) -> None:
     HOOK_HISTORY_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def _resolve_company_ticker(args) -> str:
+    """company mode ticker：--ticker > .company_next（信哥從候選挑的）> watchlist top（永不卡稿）。"""
+    if getattr(args, "ticker", None):
+        return args.ticker.strip()
+    if COMPANY_NEXT_PATH.exists():
+        for line in COMPANY_NEXT_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                return line.split()[0]
+    try:
+        import yaml
+        wl = yaml.safe_load(COMPANY_WATCHLIST_PATH.read_text(encoding="utf-8")) or {}
+        for t in (wl.get("watchlist") or []):
+            return str(t["ticker"] if isinstance(t, dict) else t)
+    except Exception:
+        pass
+    return ""
+
+
+def _company_context(name: str, ticker: str):
+    """補商業模式/競爭脈絡：自動搜對應書面分析（數字仍以財報事實為準）。回 (md, reports)。"""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_enrich", str(_REPO_ROOT / "scripts" / "enrich_youtube_sources.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        reports = mod._find_reports(f"{name} business model moat competitive analysis", n=5)
+    except Exception:
+        reports = []
+    if not reports:
+        return "", []
+    lines = ["## 參考書面分析（自動搜尋 · 補商業模式/競爭脈絡；數字仍一律以上方『財報事實』為準）"]
+    for r in reports:
+        tag = "⭐ " if r.get("quality") else ""
+        lines.append(f"- {tag}{r.get('title','')}\n  {r.get('url','')}")
+    return "\n".join(lines), reports
 
 
 # ---------------------------------------------------------------------------
@@ -1400,6 +1443,26 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "topic_category": topic_category,
             "via": "podcast_pool",
         }
+    elif mode == "company":
+        # 每週公司營運分析（週日 09:00）。數字 = yfinance；商業模式/競爭脈絡 = 自動搜書面分析。
+        ticker = _resolve_company_ticker(args)
+        if not ticker:
+            print("[ERROR] company mode 需要 ticker（--ticker / .company_next / watchlist）。")
+            return 2
+        from substack_radar.company_financials import fetch_financials
+        print(f"[Company] {ticker} → 抓 yfinance 財報 + 補書面脈絡…")
+        fin_data, fin_md = fetch_financials(ticker)
+        raw_title = fin_data.get("name") or ticker          # 占位；composer 依 §6 生真標題
+        topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
+        ctx_md, company_reports = _company_context(raw_title, ticker)
+        raw_content = fin_md + ("\n\n" + ctx_md if ctx_md else "")
+        source = {
+            "id": None,
+            "title": raw_title,
+            "topic_category": topic_category,
+            "via": f"company:{ticker}",
+            "_company_reports": company_reports,
+        }
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
         # ranked) → yaml round-robin fallback. --topic override always wins.
@@ -1427,6 +1490,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 來源區塊用：主來源網址 + 引用到的書面報告（給 Article_Substack.md 最上面那塊）。
     used_reports: list = []
     source_url = None
+    if mode == "company":                       # 公司分析：來源 = 財報 + 參考書面分析
+        used_reports = source.get("_company_reports", []) or []
     _sid = source.get("id")
     if _sid:
         try:
@@ -1621,8 +1686,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Generate a daily Substack draft (morning type-A / evening type-B)."
     )
-    p.add_argument("mode", choices=["morning", "evening", "podcast"], help="Which slot to compose")
+    p.add_argument("mode", choices=["morning", "evening", "podcast", "company"], help="Which slot to compose")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
+    p.add_argument("--ticker", default=None, help="(company) 股票代號，如 NVDA / 2330.TW；不給則讀 .company_next 或 watchlist top")
     p.add_argument(
         "--bundle",
         default=None,

@@ -1,0 +1,36 @@
+# 每週公司營運分析 · 候選 watchlist（美/台科技商業，2026-06-20）
+# pick_company_candidate.py 會用「watchlist × 本週新聞熱度」提 2-3 候選給信哥拍板。
+# aliases 用來在新聞裡比對熱度（公司在新聞被提幾次）。EDIT FREELY。
+watchlist:
+  # --- 美股：AI / 半導體 ---
+  - {ticker: NVDA,    name: Nvidia,             aliases: [nvidia, jensen]}
+  - {ticker: AMD,     name: AMD,                aliases: [amd, "advanced micro"]}
+  - {ticker: AVGO,    name: Broadcom,           aliases: [broadcom]}
+  - {ticker: MU,      name: Micron,             aliases: [micron]}
+  - {ticker: ARM,     name: Arm Holdings,       aliases: [arm holdings]}
+  - {ticker: TSM,     name: TSMC (ADR),         aliases: [tsmc, "taiwan semiconductor"]}
+  # --- 美股：平台 / 軟體 / AI 應用 ---
+  - {ticker: MSFT,    name: Microsoft,          aliases: [microsoft, azure, copilot]}
+  - {ticker: GOOGL,   name: Alphabet,           aliases: [google, alphabet, gemini, deepmind]}
+  - {ticker: META,    name: Meta,               aliases: [meta, facebook, instagram]}
+  - {ticker: AMZN,    name: Amazon,             aliases: [amazon, aws]}
+  - {ticker: AAPL,    name: Apple,              aliases: [apple, iphone]}
+  - {ticker: PLTR,    name: Palantir,           aliases: [palantir, karp]}
+  - {ticker: ORCL,    name: Oracle,             aliases: [oracle]}
+  - {ticker: CRM,     name: Salesforce,         aliases: [salesforce]}
+  - {ticker: NOW,     name: ServiceNow,         aliases: [servicenow]}
+  - {ticker: SNOW,    name: Snowflake,          aliases: [snowflake]}
+  - {ticker: TSLA,    name: Tesla,              aliases: [tesla, musk]}
+  - {ticker: COIN,    name: Coinbase,           aliases: [coinbase]}
+  - {ticker: UBER,    name: Uber,               aliases: [uber]}
+  # --- 台股：半導體 / 供應鏈 / AI 硬體 ---
+  - {ticker: 2330.TW, name: 台積電,             aliases: [tsmc, "台積", "taiwan semiconductor"]}
+  - {ticker: 2454.TW, name: 聯發科,             aliases: [mediatek, "聯發"]}
+  - {ticker: 2317.TW, name: 鴻海,               aliases: [foxconn, hon hai, "鴻海"]}
+  - {ticker: 2308.TW, name: 台達電,             aliases: ["台達", delta electronics]}
+  - {ticker: 2382.TW, name: 廣達,               aliases: [quanta, "廣達"]}
+  - {ticker: 6669.TW, name: 緯穎,               aliases: [wiwynn, "緯穎"]}
+  - {ticker: 3231.TW, name: 緯創,               aliases: [wistron, "緯創"]}
+  - {ticker: 3711.TW, name: 日月光投控,         aliases: [ase, "日月光"]}
+  - {ticker: 2379.TW, name: 瑞昱,               aliases: [realtek, "瑞昱"]}
+  - {ticker: 3661.TW, name: 世芯-KY,            aliases: [alchip, "世芯"]}

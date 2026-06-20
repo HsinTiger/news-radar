@@ -150,6 +150,7 @@ class SubstackDraft(BaseModel):
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config"  # substack/config (2026-05-30 moved)
 SOUL_PATH = CONFIG_DIR / "substack_soul.md"
+COMPANY_SOUL_PATH = CONFIG_DIR / "company_analysis_soul.md"  # company mode 專屬方法論
 VOICE_ANCHOR_PATH = CONFIG_DIR / "substack_voice_anchor.md"
 
 
@@ -161,6 +162,14 @@ def load_substack_soul() -> str:
             "Run from news_radar repo root, or check config/ exists."
         )
     return SOUL_PATH.read_text(encoding="utf-8")
+
+
+def load_company_soul() -> str:
+    """company mode 的分析方法論（疊在 substack_soul 之上）。缺檔回空字串。"""
+    try:
+        return COMPANY_SOUL_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return ""
 
 
 def load_voice_anchor() -> str:
@@ -548,6 +557,14 @@ def _build_user_prompt(
             "重新組織成你自己的深度推論（可改寫、濃縮對話，但不可捏造他沒說的數字或主張）；"
             "③點出這個觀點對讀者的決策或對某個更大模式的意義。寧可深挖一點，也不要面面俱到的流水帳。"
         ),
+        "company": (
+            "【Mode: company / 每週公司營運分析】"
+            "下面素材含一段標『📊 財報事實』的 yfinance 數字 + 參考書面分析。"
+            "**嚴格按 soul §C0-§C3 的方法論寫**：六段結構（開場評等→§A 商業模式→§B 財務解析→"
+            "§C 競爭風險→§D 未來情境→可遷移反思）。**所有財務數字一律引用『財報事實』區塊、逐字對齊，"
+            "不准用記憶/網搜的數字取代它，缺的標『資料未揭露』。** 商業模式與競爭可用你的知識 + 參考分析，"
+            "但要 steelman 多空、最後下明確評等。3000-4500 字。"
+        ),
     }.get(mode, "")
 
     return (
@@ -734,7 +751,7 @@ async def compose_substack_article(
     *,
     title: str,
     content: str,
-    mode: Literal["morning", "evening", "podcast"] = "morning",
+    mode: Literal["morning", "evening", "podcast", "company"] = "morning",
     topic_category: str = "other",
     editorial_note: str = "",
     recent_metaphor_domains: Optional[List[str]] = None,
@@ -755,6 +772,8 @@ async def compose_substack_article(
         None on LLM failure (caller 必須 skip 並 notify user).
     """
     soul = load_substack_soul()
+    if mode == "company":                       # 疊上公司分析方法論（§C0-§C3）
+        soul = soul + "\n\n\n" + load_company_soul()
     system = _build_system_instruction(soul)
     prompt = _build_user_prompt(
         raw_title=title,
