@@ -514,12 +514,18 @@ def _build_user_prompt(
     topic_category: str,
     editorial_note: str,
     recent_metaphor_domains: List[str],
+    recent_hook_types: Optional[List[str]] = None,
 ) -> str:
     avoid = (
         f"最近 7 篇用過的 metaphor domain（請避開）：{recent_metaphor_domains}"
         if recent_metaphor_domains
         else "目前無歷史 domain，自由選擇。"
     )
+    if recent_hook_types:
+        avoid += (
+            f"\n最近幾篇的標題 hook_type（**強制避開、換一種**）：{recent_hook_types}"
+            "——這篇務必選一個沒在這串裡的 hook_type（見 soul §6/§6.1）。"
+        )
     mode_hint = {
         "morning": (
             "【Mode: morning / Type A 深度新聞】"
@@ -732,6 +738,7 @@ async def compose_substack_article(
     topic_category: str = "other",
     editorial_note: str = "",
     recent_metaphor_domains: Optional[List[str]] = None,
+    recent_hook_types: Optional[List[str]] = None,
     temperature: float = 0.4,
 ) -> Optional[SubstackDraft]:
     """產出單篇 Substack 長文草稿。
@@ -756,6 +763,7 @@ async def compose_substack_article(
         topic_category=topic_category,
         editorial_note=editorial_note,
         recent_metaphor_domains=recent_metaphor_domains or [],
+        recent_hook_types=recent_hook_types or [],
     )
 
     backends = _resolve_backends()

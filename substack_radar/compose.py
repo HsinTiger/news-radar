@@ -116,6 +116,13 @@ ONEDRIVE_BASE = Path(
 
 EVENING_TOPICS_PATH = Path(__file__).resolve().parent / "config" / "substack_evening_topics.yaml"
 METAPHOR_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".metaphor_history.json"
+HOOK_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".hook_history.json"
+
+# 科技/商業題材加重（2026-06-20 Hsin：每天 5 篇想多著重美/台科技商業；3 篇 podcast 不動，
+# 只偏 morning+evening 兩槽）。只影響 _score_pool_item 的挑文偏好。
+_TECH_TOPICS = {"us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
+                "tech_product_launch", "supply_chain", "earnings"}
+_TECH_BOOST = 1.2
 # Tracks news_items already used as a Substack source — SHARED by morning+evening
 # so the two daily slots never pick the same item. Legacy .evening_used.json is
 # still merged on load for backward-compat.
@@ -141,9 +148,27 @@ def _slug_from_title(title: str, max_len: int = 40) -> str:
 # Source selection
 # ---------------------------------------------------------------------------
 
+def _db_written_ids() -> set:
+    """DB 單一真相（2026-06-20）：news_items.substack_written_at 非 NULL = 已被任何 mode
+    寫成 substack 文。欄位不存在（首次）→ 回空 set。"""
+    if not NEWS_DB_PATH.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(str(NEWS_DB_PATH))
+        try:
+            rows = conn.execute(
+                "SELECT id FROM news_items WHERE substack_written_at IS NOT NULL"
+            ).fetchall()
+            return {r[0] for r in rows}
+        finally:
+            conn.close()
+    except Exception:
+        return set()  # 欄尚未建立
+
+
 def _load_used() -> set:
-    """Shared 'already used as a Substack source' set (morning + evening), so the
-    two daily slots never pick the same item. Merges legacy .evening_used.json."""
+    """Shared 'already used as a Substack source' set，所有 mode 共用 → 不重複撰寫同一來源。
+    來源：legacy JSON（.substack_used / .evening_used）+ DB 欄 substack_written_at（單一真相）。"""
     used: set = set()
     for path in (SUBSTACK_USED_PATH, EVENING_USED_PATH):
         if path.exists():
@@ -151,6 +176,7 @@ def _load_used() -> set:
                 used |= set(json.loads(path.read_text(encoding="utf-8")).get("used", []))
             except Exception:
                 pass
+    used |= _db_written_ids()   # DB 欄併入 → company/podcast/morning/evening 全自動去重
     return used
 
 
@@ -199,6 +225,24 @@ def _mark_used(news_id: str, limit: int = 300) -> None:
         SUBSTACK_USED_PATH.write_text(
             json.dumps({"used": used}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        # DB 單一真相：標 substack_written_at（欄不存在就先建，idempotent）。
+        try:
+            from datetime import datetime, timezone
+            conn = sqlite3.connect(str(NEWS_DB_PATH))
+            try:
+                try:
+                    conn.execute("ALTER TABLE news_items ADD COLUMN substack_written_at TEXT")
+                except Exception:
+                    pass  # 欄已存在
+                conn.execute(
+                    "UPDATE news_items SET substack_written_at=? WHERE id=?",
+                    (datetime.now(timezone.utc).isoformat(), news_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[_mark_used] ⚠️ DB 標記略過：{e}")
     finally:
         _release_lock(lock)
 
@@ -241,6 +285,8 @@ def _score_pool_item(row, now) -> float:
     wc = wc or len(body or "")
     if 500 <= wc <= 4000:                          # word-count sweet spot
         score += 0.5
+    if (_topic or "") in _TECH_TOPICS:             # 美/台科技商業加重（2026-06-20）
+        score += _TECH_BOOST
     return score
 
 
@@ -572,6 +618,35 @@ def append_metaphor_domain(domain: str, limit: int = 30) -> None:
     METAPHOR_HISTORY_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+
+
+def load_recent_hook_types(limit: int = 5) -> List[str]:
+    """最近幾篇用過的標題 hook_type（鏡像 metaphor 機制，2026-06-20）→ 餵給下一篇強制避開，
+    讓 soul §6.1 的『連兩篇別同型』真正跨篇生效。"""
+    if not HOOK_HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(HOOK_HISTORY_PATH.read_text(encoding="utf-8"))
+        return data.get("recent", [])[-limit:]
+    except Exception:
+        return []
+
+
+def append_hook_type(hook: str, limit: int = 30) -> None:
+    if not hook:
+        return
+    HOOK_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    data: Dict[str, Any] = {"recent": []}
+    if HOOK_HISTORY_PATH.exists():
+        try:
+            data = json.loads(HOOK_HISTORY_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            data = {"recent": []}
+    data["recent"].append(hook)
+    data["recent"] = data["recent"][-limit:]
+    HOOK_HISTORY_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -1399,7 +1474,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
 
     # 2) Compose
     recent_domains = load_recent_metaphor_domains()
-    print(f"[Compose] recent_metaphor_domains={recent_domains}")
+    recent_hooks = load_recent_hook_types()
+    print(f"[Compose] recent_metaphor_domains={recent_domains} recent_hooks={recent_hooks}")
     draft = await compose_substack_article(
         title=raw_title,
         content=raw_content or "",
@@ -1407,6 +1483,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         topic_category=topic_category,
         editorial_note=args.editorial_note or "",
         recent_metaphor_domains=recent_domains,
+        recent_hook_types=recent_hooks,
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")
@@ -1501,8 +1578,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # housekeeping failure must not flip the run to exit 1.
     try:
         append_metaphor_domain(draft.metaphor_domain_used)
+        append_hook_type(getattr(draft, "hook_type", ""))
     except Exception as exc:
-        print(f"[PostDraft] ⚠️ append_metaphor_domain failed (continuing): {exc}")
+        print(f"[PostDraft] ⚠️ append_metaphor_domain/hook failed (continuing): {exc}")
 
     # 9) Notify Hsin via configured channel (Gmail / macOS / both).
     # Read final article markdown back (footer + cover prompts already appended).
