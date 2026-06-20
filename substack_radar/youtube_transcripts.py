@@ -111,7 +111,13 @@ def _parse_sources_yaml(text: str) -> List[Dict[str, str]]:
             stripped = stripped[2:]
         if ":" in stripped and current is not None:
             key, _, val = stripped.partition(":")
-            current[key.strip()] = val.strip().strip("\"'")
+            val = val.strip()
+            # 去掉行內註解（YAML 規則：# 前須有空白才算註解 → 不會砍掉 URL 裡的 #）。
+            # 你在 yaml 給 max_videos 加了「# VERIFIED: ~156k chars」這類註解，原本被
+            # 連同數字一起讀進來導致 int() 解析爆掉、整個 harvest 掛掉（2026-06-20 修）。
+            if " #" in val:
+                val = val.split(" #", 1)[0].rstrip()
+            current[key.strip()] = val.strip("\"'")
     if current:
         sources.append(current)
     return sources
