@@ -343,11 +343,21 @@ async def _try_gemini_cli(
 # 只在本機（Mac）可用；雲端 runner 沒裝 agy → _agy_available() 回 False 自動略過。
 # --------------------------------------------------------------------------
 AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
-AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (Low)")
+AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (High)")
 
 
 def _agy_available() -> bool:
     return os.path.exists(AGY_BIN)
+
+
+def _agy_home_dirs() -> list:
+    """AGY_HOME_DIRS：逗號分隔的 HOME 目錄清單，每個 = 一個登入 agy 的 Google 帳號。
+    agy 憑證是 HOME 相對的（實測換 HOME 即要求重新登入），故比照 gemini-cli 用 HOME 切換多帳號。
+    空字串項 = 用真實 HOME（預設帳號）。未設則只用真實 HOME（單帳號）。"""
+    raw = os.getenv("AGY_HOME_DIRS", "")
+    if not raw.strip():
+        return [""]
+    return [d.strip() for d in raw.split(",")]
 
 
 async def _try_agy(
@@ -359,7 +369,8 @@ async def _try_agy(
     model_name: Optional[str] = None,
 ) -> LLMResult[T]:
     """Antigravity CLI（agy）：AI Pro 訂閱 → gemini-3.1-pro，token-free、headless。
-    `agy -p` 輸出純文字（無 -o json envelope），故 stdout 本身就是要解析的 JSON 回應。"""
+    `agy -p` 輸出純文字（無 -o json envelope），故 stdout 本身就是要解析的 JSON 回應。
+    多帳號：依 AGY_HOME_DIRS 逐一換 HOME = 換 Google 帳號（agy 憑證 HOME 相對；比照 gemini-cli）。"""
     model_name = model_name or AGY_MODEL
     schema_json = json.dumps(response_model.model_json_schema())
     full_prompt = (
@@ -373,41 +384,58 @@ async def _try_agy(
         "--model", model_name,
         "--print-timeout", f"{int(timeout_s)}s",
     ]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd="/tmp",  # 隔離，避免 agent 對專案目錄產生副作用
-        )
+    dirs = _agy_home_dirs()
+    last_error = "unknown"
+    for idx, home_dir in enumerate(dirs):
+        env = os.environ.copy()
+        if home_dir:
+            env["HOME"] = os.path.expanduser(home_dir)  # 換 HOME = 換 agy 登入的帳號
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + 20)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return LLMResult(data=None, provider="antigravity_cli", model=model_name,
-                             raw_error=f"Timeout ({timeout_s}s)")
-        if proc.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace")[:300]
-            return LLMResult(data=None, provider="antigravity_cli", model=model_name,
-                             raw_error=f"agy failed (exit {proc.returncode}): {err}")
-        text = stdout.decode("utf-8", errors="replace").strip()
-        for fence in ("```json", "```"):
-            if text.startswith(fence):
-                text = text[len(fence):]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-        # agy 偶爾在 JSON 前後夾話 → 抽第一個 { 到最後一個 }
-        if not text.startswith("{"):
-            i, j = text.find("{"), text.rfind("}")
-            if i != -1 and j > i:
-                text = text[i:j + 1]
-        parsed = response_model.model_validate_json(text)
-        return LLMResult(data=parsed, provider="antigravity_cli", model=model_name)
-    except Exception as e:
-        return LLMResult(data=None, provider="antigravity_cli", model=model_name,
-                         raw_error=f"agy execution error: {type(e).__name__}: {e}")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd="/tmp",  # 隔離，避免 agent 對專案目錄產生副作用
+                env=env,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + 20)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return LLMResult(data=None, provider="antigravity_cli", model=model_name,
+                                 raw_error=f"Timeout ({timeout_s}s)")
+            out = stdout.decode("utf-8", errors="replace")
+            err = stderr.decode("utf-8", errors="replace")
+            # 未登入 / 配額用盡 → 換下一組帳號
+            if proc.returncode != 0 or "Authentication required" in out or "Authentication required" in err:
+                last_error = f"agy exit {proc.returncode}: {(err or out).strip()[:200]}"
+                if idx < len(dirs) - 1:
+                    reason = "配額用盡" if _is_quota_error(last_error) else "未登入/失敗"
+                    print(f"[llm_brain] ⟳ agy 第 {idx + 1} 組帳號{reason}，換第 {idx + 2} 組。")
+                    continue
+                break
+            text = out.strip()
+            for fence in ("```json", "```"):
+                if text.startswith(fence):
+                    text = text[len(fence):]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            # agy 偶爾在 JSON 前後夾話 → 抽第一個 { 到最後一個 }
+            if not text.startswith("{"):
+                i, j = text.find("{"), text.rfind("}")
+                if i != -1 and j > i:
+                    text = text[i:j + 1]
+            parsed = response_model.model_validate_json(text)
+            if idx > 0:
+                print(f"[llm_brain] ℹ️ agy 換用第 {idx + 1} 組帳號成功。")
+            return LLMResult(data=parsed, provider="antigravity_cli", model=model_name)
+        except Exception as e:
+            # 解析/驗證失敗 = 內容問題，換帳號也沒用 → 直接跳出
+            last_error = f"agy parse/exec error: {type(e).__name__}: {e}"
+            break
+    return LLMResult(data=None, provider="antigravity_cli", model=model_name, raw_error=last_error)
 
 
 # --------------------------------------------------------------------------
