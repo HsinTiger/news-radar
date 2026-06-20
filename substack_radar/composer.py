@@ -655,15 +655,16 @@ def _build_user_prompt(
 #
 #   Override via env: SUBSTACK_COMPOSER_BACKEND=claude_cli|default
 #
-# 2026-06-20 (Hsin)：Gemini CLI 個人版被 Google 收掉(IneligibleTier) + Gemini API 偶發 503，
-# 兩條 Gemini 一起倒就整個出不了稿。故預設改成完整 fallback 鏈：沿用 llm_brain 既有 providers，
-# 維持 Gemini 主寫(品質/免費)，後面接 opencode(GLM-4.6,200k,長文兜底)→cerebras→groq。
+# 2026-06-20 (Hsin)：Gemini CLI 個人版被 Google 在 6/18 收掉，AI Pro 額度改由 Antigravity CLI
+# (agy) 取用 → 主寫換成 antigravity_cli(本機 agy -p，token-free gemini-3.1-pro)，倒了才退
+# gemini API(2.5-flash 免費)→opencode(長文兜底)→cerebras→groq。雲端沒裝 agy 會自動略過。
+# 注意：.lower() 會把模型名小寫化但 backend 名稱本就全小寫，agy 的 --model 在 _try_agy 內另給。
 SUBSTACK_BACKEND = os.getenv(
-    "SUBSTACK_COMPOSER_BACKEND", "gemini_cli,gemini,opencode,cerebras,groq"
+    "SUBSTACK_COMPOSER_BACKEND", "antigravity_cli,gemini,opencode,cerebras,groq"
 ).lower()
 
 
-_KNOWN_BACKENDS = {"claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
+_KNOWN_BACKENDS = {"antigravity_cli", "claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
 
 
 def _resolve_backends() -> Optional[tuple]:

@@ -335,6 +335,81 @@ async def _try_gemini_cli(
         raw_error=last_error
     )
 
+
+# --------------------------------------------------------------------------
+# Antigravity CLI (agy) — Gemini CLI 個人版 2026-06-18 被 Google 收掉後的接班。
+# 你的 AI Pro 訂閱額度改由 agy 取用：headless `agy -p` 直接拿 gemini-3.1-pro，token-free。
+# 注意：agy 走系統 keyring 單一登入（沒有 gemini-cli 那種多 gemhome 帳號輪替）；多帳號待官方支援。
+# 只在本機（Mac）可用；雲端 runner 沒裝 agy → _agy_available() 回 False 自動略過。
+# --------------------------------------------------------------------------
+AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
+AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (Low)")
+
+
+def _agy_available() -> bool:
+    return os.path.exists(AGY_BIN)
+
+
+async def _try_agy(
+    *,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    timeout_s: float,
+    model_name: Optional[str] = None,
+) -> LLMResult[T]:
+    """Antigravity CLI（agy）：AI Pro 訂閱 → gemini-3.1-pro，token-free、headless。
+    `agy -p` 輸出純文字（無 -o json envelope），故 stdout 本身就是要解析的 JSON 回應。"""
+    model_name = model_name or AGY_MODEL
+    schema_json = json.dumps(response_model.model_json_schema())
+    full_prompt = (
+        f"{system}\n\n"
+        f"IMPORTANT: Output ONLY a valid raw JSON object matching the schema. "
+        f"No explanations, no markdown code fences, no thoughts.\n\n"
+        f"SCHEMA:\n{schema_json}\n\n--- USER PROMPT ---\n{prompt}"
+    )
+    cmd = [
+        AGY_BIN, "-p", full_prompt,
+        "--model", model_name,
+        "--print-timeout", f"{int(timeout_s)}s",
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd="/tmp",  # 隔離，避免 agent 對專案目錄產生副作用
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + 20)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return LLMResult(data=None, provider="antigravity_cli", model=model_name,
+                             raw_error=f"Timeout ({timeout_s}s)")
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace")[:300]
+            return LLMResult(data=None, provider="antigravity_cli", model=model_name,
+                             raw_error=f"agy failed (exit {proc.returncode}): {err}")
+        text = stdout.decode("utf-8", errors="replace").strip()
+        for fence in ("```json", "```"):
+            if text.startswith(fence):
+                text = text[len(fence):]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        # agy 偶爾在 JSON 前後夾話 → 抽第一個 { 到最後一個 }
+        if not text.startswith("{"):
+            i, j = text.find("{"), text.rfind("}")
+            if i != -1 and j > i:
+                text = text[i:j + 1]
+        parsed = response_model.model_validate_json(text)
+        return LLMResult(data=parsed, provider="antigravity_cli", model=model_name)
+    except Exception as e:
+        return LLMResult(data=None, provider="antigravity_cli", model=model_name,
+                         raw_error=f"agy execution error: {type(e).__name__}: {e}")
+
+
 # --------------------------------------------------------------------------
 
 CLAUDE_CLI_BIN = os.getenv("CLAUDE_CLI_BIN", "claude")
@@ -1116,6 +1191,17 @@ async def call_for_json(
                 prompt=prompt,
                 response_model=response_model,
                 temperature=temperature,
+                timeout_s=timeout_s,
+            )
+
+        elif name == "antigravity_cli":
+            if not _agy_available():
+                print(f"[llm_brain] ℹ️ agy 不在 {AGY_BIN}，略過 antigravity_cli。")
+                continue
+            result = await _try_agy(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
                 timeout_s=timeout_s,
             )
 
