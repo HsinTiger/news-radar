@@ -22,6 +22,16 @@ def _pct(x) -> str:
     return f"{x * 100:.0f}%" if isinstance(x, (int, float)) else "N/A"
 
 
+def _cn(b, cur: str) -> str:
+    """把『B（十億）』換成中文單位，杜絕 LLM 把 4490.91B 誤寫成 4490 億（差 10 倍）。
+    1B = 10 億、1000B = 1 兆。"""
+    if not isinstance(b, (int, float)):
+        return "N/A"
+    if abs(b) >= 1000:
+        return f"{b / 1000:.2f} 兆{cur}"
+    return f"{b * 10:.0f} 億{cur}"
+
+
 def fetch_financials(ticker: str) -> Tuple[dict, str]:
     """抓一間公司的結構化財報 + 衍生指標。任何抓取失敗都 graceful，回 (部分 dict, markdown)。"""
     import yfinance as yf
@@ -107,8 +117,10 @@ def _format_md(d: dict) -> str:
     L = [
         f"## 📊 {d.get('name')} ({d.get('ticker')}) 財報事實",
         "（來源：yfinance；本區所有數字為唯一可信來源，分析時一律以此為準，缺漏標 N/A，禁止自行編造或用記憶中的舊數字）",
+        "（**單位換算鐵則**：B = 十億美元。寫中文時 1B=10 億、1000B=1 兆；例 4490.91B = 4.49 兆，**不是** 4490 億。"
+        "市值與營收下面已附好中文單位，照抄即可、別自己換算。）",
         f"- 幣別：{cur}",
-        f"- 市值：{d.get('market_cap_b','N/A')}B {cur}｜P/E(trailing)：{d.get('trailing_pe','N/A')}"
+        f"- 市值：{_cn(d.get('market_cap_b'), cur)}（{d.get('market_cap_b','N/A')}B {cur}）｜P/E(trailing)：{d.get('trailing_pe','N/A')}"
         f"｜P/E(forward)：{d.get('forward_pe','N/A')}｜P/S：{d.get('ps','N/A')}",
         f"- 毛利率：{_pct(d.get('gross_margin'))}｜營益率：{_pct(d.get('op_margin'))}"
         f"｜淨利率：{_pct(d.get('profit_margin'))}｜ROE：{_pct(d.get('roe'))}｜ROA：{_pct(d.get('roa'))}",
@@ -117,7 +129,8 @@ def _format_md(d: dict) -> str:
     if d.get("years"):
         L.append(f"- 年度（新→舊）：{d['years']}")
         if d.get("revenue_b"):
-            L.append(f"- 營收（B {cur}）：{d['revenue_b']}（近 {len(d['years'])} 年 CAGR≈{d.get('rev_cagr','N/A')}%）")
+            rev_cn = "、".join(_cn(v, cur) for v in d["revenue_b"])
+            L.append(f"- 營收（新→舊）：{rev_cn}（原值 {d['revenue_b']}B；近 {len(d['years'])} 年 CAGR≈{d.get('rev_cagr','N/A')}%）")
         if d.get("op_income_b"):
             L.append(f"- 營業利益（B）：{d['op_income_b']}")
         if d.get("op_margin_trend"):
