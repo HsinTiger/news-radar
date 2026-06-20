@@ -36,7 +36,7 @@ import re
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.llm_brain import call_for_json
 
@@ -141,6 +141,33 @@ class SubstackDraft(BaseModel):
             cap = {"title": 60, "subtitle": 80}.get(info.field_name)
             if cap and len(v) > cap:
                 return v[:cap].rstrip("，、。；：「」『』（）()【】 　")
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _heal_metadata(cls, v):
+        """metadata 自我修復（2026-06-21）：agy 等模型偶爾只給 title/subtitle/body、漏掉這 4 個
+        列舉/數值欄。它們是 housekeeping、不是文章內容 → 缺或非法就補預設，別讓整篇出稿失敗。"""
+        if not isinstance(v, dict):
+            return v
+        _META = {"signal_processing", "music_theory", "contrarian_markets", "cinematic_pacing",
+                 "street_culture", "architecture_space", "none"}
+        _HOOK = {"contrarian_question", "contrarian_reframe", "concrete_punch",
+                 "narrative_hook", "provocative_statement", "insider_question"}
+        _END = {"question", "paradox", "deeper_observation", "silent_hint"}
+        if v.get("metaphor_domain_used") not in _META:
+            v["metaphor_domain_used"] = "none"
+        if v.get("hook_type") not in _HOOK:
+            v["hook_type"] = "contrarian_reframe"
+        if v.get("open_ending_form") not in _END:
+            v["open_ending_form"] = "question"
+        rt = v.get("reading_time_minutes")
+        if not isinstance(rt, int):
+            try:
+                v["reading_time_minutes"] = int(float(rt))
+            except Exception:
+                body = v.get("body_markdown") or ""
+                v["reading_time_minutes"] = max(1, len(body) // 600)
         return v
 
 

@@ -372,12 +372,36 @@ async def _try_agy(
     `agy -p` 輸出純文字（無 -o json envelope），故 stdout 本身就是要解析的 JSON 回應。
     多帳號：依 AGY_HOME_DIRS 逐一換 HOME = 換 Google 帳號（agy 憑證 HOME 相對；比照 gemini-cli）。"""
     model_name = model_name or AGY_MODEL
-    schema_json = json.dumps(response_model.model_json_schema())
+    # agy 的 -p 約 32K 字截斷（2026-06-21 實測：company prompt 34.5K → 後段被截、agy 看不到任務）。
+    # 故用「精簡欄位表」取代冗長的 pydantic json schema dump（5.5K→~0.6K），欄位說明本就在 user prompt。
+    import typing as _typing
+    _fdesc = []
+    for _n, _f in response_model.model_fields.items():
+        _core = _f.annotation
+        _args = _typing.get_args(_core)
+        if _args and type(None) in _args:  # 解 Optional
+            _core = next((a for a in _args if a is not type(None)), str)
+            _args = _typing.get_args(_core)
+        if _args and all(isinstance(a, str) for a in _args):
+            _spec = "|".join(_args)
+        elif _core is int:
+            _spec = "整數"
+        else:
+            _spec = "字串"
+        _fdesc.append(f'  "{_n}": <{_spec}>{"" if _f.is_required() else "（可省略）"}')
+    schema_compact = "{\n" + ",\n".join(_fdesc) + "\n}"
+    required = ", ".join(response_model.model_fields.keys())
+    # 把「任務 + 必填欄位 + 禁抄範例」放在最後（最高注意力）。
     full_prompt = (
         f"{system}\n\n"
-        f"IMPORTANT: Output ONLY a valid raw JSON object matching the schema. "
-        f"No explanations, no markdown code fences, no thoughts.\n\n"
-        f"SCHEMA:\n{schema_json}\n\n--- USER PROMPT ---\n{prompt}"
+        f"輸出 JSON 欄位表（值照欄位說明寫；<a|b|c> 表示三選一）：\n{schema_compact}\n\n"
+        f"--- 任務素材 / USER PROMPT ---\n{prompt}\n\n"
+        f"=== 最終指令（最高優先，覆蓋以上任何衝突）===\n"
+        f"1. 只根據上面『任務素材 / USER PROMPT』指定的那一篇來寫；**嚴禁照抄或改寫『聲音錨點』、"
+        f"§6 標題公式庫等任何示範/範例文章**——那些只是學語氣用的，不是你要寫的主題。\n"
+        f"2. 只輸出一個 raw JSON 物件（無 markdown 圍欄、無任何說明或思考過程）。\n"
+        f"3. JSON **必含 schema 全部必填欄位**：{required}。其中 hook_type / metaphor_domain_used / "
+        f"open_ending_form 必為 schema 列舉值之一、reading_time_minutes 為整數，缺一不可。"
     )
     cmd = [
         AGY_BIN, "-p", full_prompt,
