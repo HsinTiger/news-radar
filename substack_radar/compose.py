@@ -809,16 +809,39 @@ def render_substack_cover(
     topic_category: str,
     output_dir: Path,
     source_image_path: Optional[Path] = None,
+    character: Optional[str] = None,
+    expression: Optional[str] = None,
 ) -> Optional[Path]:
     """Render the 1456×816 Substack hero cover. Returns saved PNG path or None.
 
-    2026-06-02: default is now the flat typographic "promise thumbnail" poster
-    with a per-category color palette (substack_radar/promise_cover.py) — big
-    curiosity-hook title that's readable as a feed/email thumbnail. The old
-    blurred-photo + navy-overlay path is kept below as a fallback. Pass
-    ``source_image_path`` only when you explicitly want the legacy photo cover.
+    Cover System (2026-06-21) cascade when ``source_image_path`` is None:
+      route 3 → ``character_cover`` composites the locked IP character (瑞瑞/達達)
+                onto a cream canvas + overlays the title — used when a character
+                asset exists in config/cover_ip/assets/.
+      route 2 → ``promise_cover`` typographic poster (cream + ink + one accent) —
+                the fallback when no character asset is available yet.
+    Pass ``source_image_path`` only for the legacy blurred-photo cover.
     """
     if source_image_path is None:
+        # Route 3: character cover (returns None if no asset → fall through).
+        try:
+            from substack_radar.character_cover import render_character_cover
+
+            p = render_character_cover(
+                title=title,
+                subtitle=subtitle,
+                topic_category=topic_category or "other",
+                character=character,
+                output_dir=output_dir,
+                expression=expression,
+            )
+            if p is not None:
+                print(f"[Cover] ✅ character cover ({character or 'auto'}) → {p.name}")
+                return p
+            print("[Cover] ℹ️ no character asset yet → promise_cover poster fallback.")
+        except Exception as exc:
+            print(f"[Cover] ⚠️ character_cover failed ({exc}); using promise_cover.")
+        # Route 2: typographic poster fallback.
         try:
             from substack_radar.promise_cover import render_promise_cover
 
@@ -1630,6 +1653,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         topic_category=topic_category or "other",
         output_dir=local_dir,
         source_image_path=None, # Fallback to synth noise
+        character=getattr(draft, "cover_character", None),  # route 3: IP character cover
     )
     
     # 5d) AI Inline images (2026-06-01 Hsin directive)
