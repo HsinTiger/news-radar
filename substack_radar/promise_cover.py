@@ -26,27 +26,30 @@ PAD = 92
 KICKER = "主力爸爸我錯了"
 SLOGAN = "每天 3 分鐘 · 拿走一個被市場藏起來的共識"
 
-# Per-category palettes (bg / hero ink / accent / subtitle). See module docstring.
-_PALETTES: Dict[str, Dict[str, str]] = {
-    "market":  {"bg": "#F2EEE5", "ink": "#141414", "acc": "#C84A32", "sub": "#5A5247"},
-    "ai":      {"bg": "#14171C", "ink": "#F2EEE5", "acc": "#E0653F", "sub": "#A8AEB8"},
-    "product": {"bg": "#E8EEF0", "ink": "#141414", "acc": "#1C6378", "sub": "#566069"},
-    "policy":  {"bg": "#EBE3CF", "ink": "#141414", "acc": "#7A4A12", "sub": "#6B5E45"},
-    "opinion": {"bg": "#EAE7E0", "ink": "#141414", "acc": "#3F4A7A", "sub": "#5A5A52"},
-    # 2026-06-02 新增（借 ui-ux-pro-max 編輯式配色，純加桶不動現有 5 組）：
-    # earnings = 財報/錢 → 森林綠；supply = 供應鏈/工業 → 鋼藍。語意明確又與現有桶可區分。
-    "earnings": {"bg": "#ECEFE6", "ink": "#141414", "acc": "#2F6B3D", "sub": "#55604E"},
-    "supply":   {"bg": "#E6E9EC", "ink": "#141414", "acc": "#34516B", "sub": "#586573"},
+# 2026-06-21 · Cover System D4: palette is now driven by config/cover_ip/cover_tokens.json
+# — paper-cream ground ALWAYS, ink title ALWAYS, exactly ONE accent (single_sienna by
+# default). This unifies the text-poster fallback with the character-cover system; the
+# old per-bucket colored/dark-AI backgrounds violated the new "cream ground only, one
+# sienna" brand rule. See cover_ip/COVER_SYSTEM.md §0/§D4/§D6-route-2.
+_TOKENS_PATH = Path(__file__).resolve().parent / "config" / "cover_ip" / "cover_tokens.json"
+# Readable warm-grey for subtitle/slogan — stone #8A8378 is meta-only (fails AA as body).
+_MUTED_SUB = "#5A5247"
+_FALLBACK_TOKENS: Dict = {
+    "base": {"cream": {"hex": "#F2EEE5"}, "ink": {"hex": "#141414"}, "sienna": {"hex": "#C84A32"}},
+    "category_accent": {"_default_mode": "single_sienna", "tokens": {}},
 }
+_tokens_cache: Dict | None = None
 
-# Pipeline topic_category → palette bucket. Unknown → "opinion" (the neutral default).
-_TOPIC_TO_BUCKET: Dict[str, str] = {
-    "us_stocks": "market", "tw_stocks": "market", "earnings": "earnings",
-    "ai_model": "ai", "ai_agent": "ai", "ai_application": "ai",
-    "tech_product_launch": "product",
-    "policy_geopolitics": "policy", "supply_chain": "supply",
-    "other": "opinion",
-}
+
+def _load_cover_tokens() -> Dict:
+    global _tokens_cache
+    if _tokens_cache is None:
+        try:
+            import json
+            _tokens_cache = json.loads(_TOKENS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _tokens_cache = _FALLBACK_TOKENS
+    return _tokens_cache
 
 
 def _hx(s: str) -> Tuple[int, int, int]:
@@ -55,7 +58,17 @@ def _hx(s: str) -> Tuple[int, int, int]:
 
 
 def palette_for(topic_category: str) -> Dict[str, str]:
-    return _PALETTES[_TOPIC_TO_BUCKET.get((topic_category or "other").strip(), "opinion")]
+    """Cover System D4: cream ground + ink title + ONE accent. single_sienna by default;
+    per-category accent only if the tokens set _default_mode away from single_sienna."""
+    tok = _load_cover_tokens()
+    base = tok["base"]
+    cat = tok.get("category_accent", {}) or {}
+    sienna = base["sienna"]["hex"]
+    if (cat.get("_default_mode") or "single_sienna") == "single_sienna":
+        acc = sienna
+    else:
+        acc = ((cat.get("tokens", {}) or {}).get((topic_category or "").strip(), {}) or {}).get("accent", sienna)
+    return {"bg": base["cream"]["hex"], "ink": base["ink"]["hex"], "acc": acc, "sub": _MUTED_SUB}
 
 
 def _font(path: Path, pt: int):

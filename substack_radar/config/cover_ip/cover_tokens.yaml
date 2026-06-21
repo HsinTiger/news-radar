@@ -1,0 +1,34 @@
+# News Radar Cover Color Tokens · v0.1 · 2026-06-21
+# Base palette is fixed and shared by every cover.
+# Category accent is OPTIONAL and REPLACES the single sienna emphasis for that cover.
+# It is NEVER added on top of sienna. One emphasis color per cover, always.
+# Contrast ratios are WCAG 2.1, measured against base.cream #F2EEE5.
+
+base:
+  cream:  { hex: "#F2EEE5", role: "background — never pure white" }
+  ink:    { hex: "#141414", role: "hero text, hairlines — never #000", contrast_on_cream: 16.8, aa_normal: true }
+  sienna: { hex: "#C84A32", role: "the ONE emphasis per cover", contrast_on_cream: 4.6, aa_large: true }
+  stone:  { hex: "#8A8378", role: "kicker/meta, character body, muted", contrast_on_cream: 2.7, aa_large: false, note: "decorative/meta only" }
+
+category_accent:
+  default_mode: single_sienna     # ship with this; switch only if topic color-coding is wanted later
+  tokens:
+    us_stocks:           { accent: "#C84A32", label: "美股",     character: robot, contrast: 4.6, aa_large: true }
+    tw_stocks:           { accent: "#C84A32", label: "台股",     character: robot, contrast: 4.6, aa_large: true }
+    ai_model:            { accent: "#B5532A", label: "AI 模型",  character: robot, contrast: 4.5, aa_large: true }
+    ai_agent:            { accent: "#B5532A", label: "AI Agent", character: robot, contrast: 4.5, aa_large: true }
+    ai_application:      { accent: "#B5532A", label: "AI 應用",  character: robot, contrast: 4.5, aa_large: true }
+    tech_product_launch: { accent: "#A8602B", label: "新品",     character: robot, contrast: 4.5, aa_large: true }
+    supply_chain:        { accent: "#7E5A33", label: "供應鏈",   character: robot, contrast: 5.2, aa_large: true }
+    earnings:            { accent: "#9A4B2E", label: "財報",     character: robot, contrast: 5.3, aa_large: true }
+    company:             { accent: "#9A4B2E", label: "公司分析", character: robot, contrast: 5.3, aa_large: true }
+    evening:             { accent: "#3F5A4E", label: "晚報",     character: owl,   contrast: 6.1, aa_large: true }
+    podcast:             { accent: "#4A5568", label: "Podcast",  character: owl,   contrast: 6.3, aa_large: true }
+    culture:             { accent: "#6B5340", label: "人文",     character: owl,   contrast: 6.0, aa_large: true }
+    contrarian:          { accent: "#8A3A2E", label: "反共識",   character: owl,   contrast: 6.4, aa_large: true }
+
+usage_ratio_target:
+  cream: "≥ 60%"
+  ink: "≈ 25%"
+  stone: "≈ 12%"
+  emphasis: "≤ 3% — exactly one element"

@@ -142,15 +142,40 @@ def _get_aesthetic_tail() -> str:
 # 完整人設文件：substack_radar/config/cover_characters.md。
 # 代號：robot / owl 是 species 代號（name-proof，永不隨改名動）；顯示名在 display 欄（瑞瑞/達達，暫定）。
 
-_CLAY_STYLE_TAIL = (
-    " — Style: warm soft-clay claymation miniature, tilt-shift macro, soft diffused "
-    "studio light, tactile hand-molded fingerprint texture, rounded chunky forms, "
-    "medium detail. Palette: paper-cream background #F2EEE5, ink-black #141414, ONE "
-    "sienna-red #C84A32 accent used once, muted stone-grey #8A8378. Cute but credible "
-    "(GitHub-Octocat-level charm, NOT babyish, NOT chibi-overload). Single subject, "
-    "centered, generous negative space for a title overlay. No text, no watermark, "
-    "no logo. Render aspect 16:9 (1456×816 px). [COVER_IP_VERSION = v1.0]"
+# Style bible split so the D5 composition line (cover_ip/cover_prompt_template.txt)
+# can sit BETWEEN the look and the technical tail. _CLAY_STYLE_BODY = the look;
+# _COVER_TECH_TAIL = the fixed aspect/negatives/ground rules.
+_CLAY_STYLE_BODY = (
+    "Warm soft-clay claymation miniature, tilt-shift macro, soft diffused studio "
+    "light, tactile hand-molded fingerprint texture, rounded chunky forms, medium "
+    "detail. Palette: paper-cream background #F2EEE5, ink-black #141414, ONE "
+    "sienna-red #C84A32 accent used once, muted stone-grey #8A8378. Cute but "
+    "credible — GitHub-Octocat-level charm, NOT babyish, NOT chibi-overload."
 )
+_COVER_TECH_TAIL = (
+    "Aspect ratio 16:9, 1456x816. No text, no watermark, no logo, no border, "
+    "no neon, no gradient, no 3D glow, no anime face. Paper-cream #F2EEE5 ground only."
+)
+# Backward-compatible single-line tail (kept for any older caller / external import).
+_CLAY_STYLE_TAIL = (
+    " — Style: " + _CLAY_STYLE_BODY + " Single subject, centered, generous negative "
+    "space for a title overlay. Render aspect 16:9 (1456×816 px). [COVER_IP_VERSION = v1.0]"
+)
+
+# Per-character expression hints (D5). Appended to the scene; default per species.
+_EXPRESSION_HINTS: dict = {
+    "robot": {
+        "gotcha":    "holding a magnifier up to its single eye, leaning forward, triumphant little smirk",
+        "skeptical": "one brow raised, radar antenna tilted, arms crossed, doubtful look",
+        "smug":      "arms crossed, corner-of-mouth smug grin, one eye winking",
+    },
+    "owl": {
+        "ahha":      "feathers bursting outward, both wings flung up, one eye huge through a magnifier",
+        "wink":      "playful single-eye wink, a wing gesturing knowingly",
+        "pondering": "head tilted, one wing under the beak, spectacles glinting, facing a big question mark",
+    },
+}
+_DEFAULT_EXPRESSION = {"robot": "gotcha", "owl": "ahha"}
 
 # Canonical look — Python owns this so the model never has to redraw the character.
 CHARACTERS: dict = {
@@ -202,6 +227,14 @@ def pick_character(topic_category=None, mode=None) -> str:
     return "owl"
 
 
+def _anchor_gaze(title=None):
+    """D2/D5: which side the character hugs (title goes opposite) + gaze direction.
+    Alternates deterministically by title so the feed isn't every cover identical."""
+    if (sum(map(ord, title or "")) % 2) == 0:
+        return "left", "looking right"
+    return "right", "looking left"
+
+
 def build_cover_prompt_block(
     scene=None,
     *,
@@ -210,6 +243,7 @@ def build_cover_prompt_block(
     subtitle=None,
     topic_category=None,
     mode=None,
+    expression=None,
     single=True,
     # --- legacy manual 3-version path (substack_radar/push_pasted_draft.py) ---
     cover_image_prompt=None,
@@ -245,16 +279,33 @@ def build_cover_prompt_block(
     char = CHARACTERS[char_key]
     scene = (scene or "").strip()
     if not scene:
-        # No model scene → fall back to the character's signature pose + a title hint.
-        scene = f"{char['default_pose']}; evoking the theme 「{title or subtitle or '本文主題'}」"
-    full = f"{char['look']}, {scene}{_CLAY_STYLE_TAIL}"
+        # No model scene → evoke the article theme; the expression hint carries the pose.
+        scene = f"in a setting that evokes the theme 「{title or subtitle or '本文主題'}」"
+    expr = expression if expression in _EXPRESSION_HINTS[char_key] else _DEFAULT_EXPRESSION[char_key]
+    hint = _EXPRESSION_HINTS[char_key][expr]
+    anchor, gaze = _anchor_gaze(title)
+    # D5 scaffold (cover_ip/cover_prompt_template.txt): look → scene+expr → composition
+    # (character one side, title zone opposite, gaze into title) → style → tech tail.
+    full = (
+        f"{char['look']}.\n"
+        f"Scene: {scene} ({hint}).\n"
+        f"Composition: single subject, placed on the {anchor} third of the frame, "
+        f"{gaze} toward the empty title zone; leave the opposite 55-60% as clean "
+        f"negative space for a Chinese headline overlay (do not render any text). "
+        f"Character occupies 32-42% of frame height, base near the lower third. "
+        f"Eye-line and any magnifier/gesture point INTO the title zone, guiding the reader.\n"
+        f"Style: {_CLAY_STYLE_BODY}\n"
+        f"{_COVER_TECH_TAIL} [COVER_IP v1.0]"
+    )
+    side = "左" if anchor == "left" else "右"
     return (
         "\n\n---\n\n"
         "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
-        f"**本篇出場角色：{char['display']}**　"
-        "（複製下面整段丟 ChatGPT image / NanoBanana / Midjourney → 拿圖換掉 cover.png "
-        "再 publish；發文前把這段刪掉。）\n\n"
-        f"> {full}\n"
+        f"**本篇出場角色：{char['display']}**　·　表情 `{expr}`　·　構圖：角色靠{side}、標題在另一側\n"
+        f"丟 ChatGPT image / NanoBanana / Midjourney，**連同對應角色的 v1 參考圖**"
+        f"（`cover_ip/assets/{char_key}_{expr}.png`，沒有就用 `cover_ip/modelsheet_poses_v1.png`）"
+        "一起送 → 拿圖換掉 cover.png 再 publish。發文前把這段刪掉。\n\n"
+        f"```\n{full}\n```\n"
     )
 
 
