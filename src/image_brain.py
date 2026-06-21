@@ -54,29 +54,11 @@ def _gemini_cli_dirs() -> list[str]:
     return dirs if dirs else [""]
 
 
-import base64
-import json
-import os
-import asyncio
-from pathlib import Path
-from typing import Optional, Tuple
-from google.oauth2.credentials import Credentials
-from google import genai
-from google.genai import types
-
-# 預設使用 Imagen 3 或支援產圖的 Gemini 模型
-DEFAULT_IMAGE_MODEL = "imagen-3.0-generate-001"
-
-import base64
-import os
-import asyncio
-from pathlib import Path
-from typing import Optional, Tuple
-from google import genai
-from google.genai import types
-
-# 絕對使用 Google 內部的 Imagen 3/4 模型
-DEFAULT_IMAGE_MODEL = "imagen-4.0-generate-001"
+# NOTE (2026-06-21): module-level `from google import genai` removed — it crashed
+# `import src.image_brain` whenever google-genai wasn't installed, which silently
+# disabled the cover-prompt block (compose.py caught the ImportError). The legacy
+# gen path imports google lazily inside generate_cover_image(), so prompt-only mode
+# (build_cover_prompt_block) now imports cleanly with zero heavy deps.
 
 def _get_api_keys() -> list[str]:
     """取得所有可用的 API Keys，供失敗時輪替。"""
@@ -150,9 +132,141 @@ def _get_aesthetic_tail() -> str:
         "[BRAND_AESTHETIC_VERSION = v0.2.2]"
     )
 
-    # Resolve the three slots. If explicit prompts not given, fan out from
-    # the single cover_image_prompt as a base + title/subtitle for variants.
-    v_scene = (scene_prompt or cover_image_prompt).strip()
+
+# ==========================================================================
+# Cover IP — 2-character claymation system (2026-06-21, Hsin directive)
+# ==========================================================================
+# 每篇 Substack 封面固定出現同一個可愛又專業的 IP（rada 機器人 / hoo 貓頭鷹），
+# 搭配當篇場景 → 品牌一致 + 標題更有帶入感。撰稿 AI 動態挑角色 + 寫一句 scene；
+# 固定造型 + 黏土美學由這裡統一補上（模型不必每次重畫，省 token、避免走樣）。
+# 完整人設文件：substack_radar/config/cover_characters.md。
+# 命名：rada / hoo 是內部代號（placeholder），信哥取正式名字後只改各角色 display 欄。
+
+_CLAY_STYLE_TAIL = (
+    " — Style: warm soft-clay claymation miniature, tilt-shift macro, soft diffused "
+    "studio light, tactile hand-molded fingerprint texture, rounded chunky forms, "
+    "medium detail. Palette: paper-cream background #F2EEE5, ink-black #141414, ONE "
+    "sienna-red #C84A32 accent used once, muted stone-grey #8A8378. Cute but credible "
+    "(GitHub-Octocat-level charm, NOT babyish, NOT chibi-overload). Single subject, "
+    "centered, generous negative space for a title overlay. No text, no watermark, "
+    "no logo. Render aspect 16:9 (1456×816 px). [COVER_IP_VERSION = v1.0]"
+)
+
+# Canonical look — Python owns this so the model never has to redraw the character.
+CHARACTERS: dict = {
+    "rada": {
+        "display": "Rada · 雷達機器人（數據獵手）",  # 信哥命名後改這欄
+        "look": (
+            "A chunky rounded desk-robot analyst made of soft matte clay, stone-grey "
+            "#8A8378 body, a small spinning radar-dish antenna on its head emitting a "
+            "tiny 'ping!' spark, one big glossy single lens-eye that sparkles, stubby "
+            "articulated arms, a sienna-red #C84A32 knitted scarf, squash-and-stretch "
+            "rubbery lively posing"
+        ),
+        "default_pose": (
+            "thrusting forward in a 'gotcha!' pose, holding a magnifying glass that "
+            "blows its single lens-eye up huge and sparkling, smug little grin"
+        ),
+    },
+    "hoo": {
+        "display": "Hoo · 雷達貓頭鷹（沉思追問）",  # 信哥命名後改這欄
+        "look": (
+            "A plump rounded owl made of soft matte clay, warm stone-grey #8A8378 "
+            "feathers with hand-molded texture, two huge radar-dish eyes behind round "
+            "wire spectacles, a small sienna-red #C84A32 bow-tie scarf, stubby wings, "
+            "feathers puffed up, theatrical squash-and-stretch posing"
+        ),
+        "default_pose": (
+            "in an 'ah-ha!' burst with feathers flung open and both wings thrown up, "
+            "one eye magnified huge through a magnifying glass, delighted realization"
+        ),
+    },
+}
+
+# Topics that lean Rada (hard tech / data / financials). Everything else → Hoo.
+_RADA_TOPICS = {
+    "us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
+    "tech_product_launch", "supply_chain", "earnings",
+}
+
+
+def pick_character(topic_category=None, mode=None) -> str:
+    """Deterministic fallback when the model didn't choose a character. mode wins
+    over topic: company→rada, podcast→hoo; else hard-tech topics→rada, rest→hoo."""
+    if mode == "company":
+        return "rada"
+    if mode == "podcast":
+        return "hoo"
+    if (topic_category or "") in _RADA_TOPICS:
+        return "rada"
+    return "hoo"
+
+
+def build_cover_prompt_block(
+    scene=None,
+    *,
+    character=None,
+    title=None,
+    subtitle=None,
+    topic_category=None,
+    mode=None,
+    single=True,
+    # --- legacy manual 3-version path (substack_radar/push_pasted_draft.py) ---
+    cover_image_prompt=None,
+    scene_prompt=None,
+    concept_prompt=None,
+    abstract_prompt=None,
+) -> str:
+    """Assemble the cover-image prompt markdown block.
+
+    Two modes, auto-dispatched:
+
+    (1) **Character IP path (default, auto pipeline)** — the model supplies only
+        ``character`` (rada/hoo) + a short ``scene`` (what the IP is doing in THIS
+        article's setting). Python supplies the canonical look + clay style bible,
+        so the IP stays on-model every time and the model spends ~zero tokens
+        redrawing it. Missing/invalid ``character`` → ``pick_character(topic, mode)``
+        so the cover never opens a hole.
+
+    (2) **Legacy 3-version cold-print path** — triggered when any of
+        ``scene_prompt``/``concept_prompt``/``abstract_prompt`` is passed (only
+        push_pasted_draft.py does this). Preserves the old cold-print editorial
+        output + the " — Style: COLD-PRINT EDITORIAL" sentinel that tool greps for.
+    """
+    if scene_prompt is not None or concept_prompt is not None or abstract_prompt is not None:
+        return _build_legacy_cover_block(
+            cover_image_prompt=cover_image_prompt or "",
+            title=title, subtitle=subtitle,
+            scene_prompt=scene_prompt, concept_prompt=concept_prompt,
+            abstract_prompt=abstract_prompt, single=single,
+        )
+
+    char_key = character if character in CHARACTERS else pick_character(topic_category, mode)
+    char = CHARACTERS[char_key]
+    scene = (scene or "").strip()
+    if not scene:
+        # No model scene → fall back to the character's signature pose + a title hint.
+        scene = f"{char['default_pose']}; evoking the theme 「{title or subtitle or '本文主題'}」"
+    full = f"{char['look']}, {scene}{_CLAY_STYLE_TAIL}"
+    return (
+        "\n\n---\n\n"
+        "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
+        f"**本篇出場角色：{char['display']}**　"
+        "（複製下面整段丟 ChatGPT image / NanoBanana / Midjourney → 拿圖換掉 cover.png "
+        "再 publish；發文前把這段刪掉。）\n\n"
+        f"> {full}\n"
+    )
+
+
+def _build_legacy_cover_block(
+    *, cover_image_prompt, title, subtitle,
+    scene_prompt, concept_prompt, abstract_prompt, single,
+) -> str:
+    """Old cold-print editorial cover block (3-version fan-out). Kept verbatim so
+    the manual paste tool (push_pasted_draft.py) and its COLD-PRINT sentinel still
+    work. New auto pipeline uses the character path above instead."""
+    aesthetic_tail = _get_aesthetic_tail()
+    v_scene = (scene_prompt or cover_image_prompt or "").strip()
     v_concept = (concept_prompt or
         f"用一張視覺隱喻代替文章直接場景，主題：「{title or '(本文主題)'}」"
     ).strip()
@@ -161,11 +275,6 @@ def _get_aesthetic_tail() -> str:
         f"抽 ≤6 字最強短語，Noto Serif TC 900 / 300-360px、"
         f"關鍵 1-2 字 sienna #C84A32 single accent。"
     ).strip()
-
-    # 2026-05-30 (Hsin directive): Substack pipeline wants ONE cover prompt, not
-    # three — the 3-version fan-out bloats Article_Substack.md (it's deterministic
-    # Python templating, not LLM tokens, but it's noise to scroll past / delete).
-    # The manual tool (push_pasted_draft) keeps the 3-version menu (single=False).
     if single:
         return (
             "\n\n---\n\n"
@@ -174,7 +283,6 @@ def _get_aesthetic_tail() -> str:
             "cover.png 再 publish。發文前把整段刪掉。\n\n"
             f"> {v_scene}{aesthetic_tail}\n"
         )
-
     return (
         "\n\n---\n\n"
         "## 📸 封面圖 Prompt · 發文前請刪除\n\n"

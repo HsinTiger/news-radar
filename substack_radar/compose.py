@@ -767,15 +767,18 @@ def append_footer_block(*, article_md_path: Path) -> None:
 
 
 def append_cover_prompt_block(
-    *, article_md_path: Path, draft, output_dir: Path
+    *, article_md_path: Path, draft, output_dir: Path,
+    topic_category: str = "", mode: str = "",
 ) -> None:
-    """Append the image prompt block to Article_Substack.md (and write a
-    standalone cover_prompts.md for easy copy-paste).
+    """Append the 2-character cover-IP prompt block to Article_Substack.md (and a
+    standalone cover_prompts.md for copy-paste).
 
-    Why this is the new primary path (2026-05-12): Claude's text descriptions
-    of visual composition consistently beat Gemini's text-to-image output for
-    Moleskine handdrawn aesthetic. Hsin drives the actual generation in
-    GPT web / NanoBanana with full control.
+    2026-06-21 (Hsin directive): every draft now carries a固定 IP 角色 (rada 雷達機器人 /
+    hoo 雷達貓頭鷹). The model picked ``draft.cover_character`` + a one-line
+    ``draft.cover_image_prompt`` scene; ``image_brain.build_cover_prompt_block``
+    layers the canonical look + clay style bible so the IP stays on-model every time.
+    If the model left the character null we fall back to ``pick_character(topic, mode)``
+    — the cover never opens a hole. Hsin generates the actual image in NanoBanana / GPT.
     """
     try:
         from src.image_brain import build_cover_prompt_block
@@ -783,17 +786,20 @@ def append_cover_prompt_block(
         print(f"[CoverPrompt] ⚠️ image_brain unavailable: {exc}")
         return
     block = build_cover_prompt_block(
-        draft.cover_image_prompt,
+        getattr(draft, "cover_image_prompt", None),
+        character=getattr(draft, "cover_character", None),
         title=draft.title,
         subtitle=draft.subtitle,
-        single=True,  # 2026-05-30: one cover prompt, not three (Hsin directive)
+        topic_category=topic_category,
+        mode=mode,
     )
     # Append to the main markdown so Hsin sees it when he opens the file
     existing = article_md_path.read_text(encoding="utf-8")
     article_md_path.write_text(existing.rstrip() + block, encoding="utf-8")
     # Also write standalone for quick copy-paste
     (output_dir / "cover_prompts.md").write_text(block.lstrip(), encoding="utf-8")
-    print(f"[CoverPrompt] ✅ appended to {article_md_path.name} + cover_prompts.md")
+    _picked = getattr(draft, "cover_character", None) or "auto"
+    print(f"[CoverPrompt] ✅ IP={_picked} → appended to {article_md_path.name} + cover_prompts.md")
 
 
 def render_substack_cover(
@@ -1096,7 +1102,10 @@ id: {source.get("id", "n/a")}
 
 ## 視覺指引
 
-（封面 prompt 區塊已停用；封面 = 自動 cover.png + 你從內文 §13 圖片建議自選。內文視覺建議見本文中的 🖼 標記。）
+**封面 IP 角色**：{getattr(draft, "cover_character", None) or "（自動依主題選 rada/hoo）"}
+**封面 scene**：{getattr(draft, "cover_image_prompt", None) or "（留空 → 用角色招牌動作 + 標題自動補）"}
+完整封面 prompt（含固定造型 + 黏土美學）見 Article_Substack.md 末段「📸 封面圖 Prompt」與 cover_prompts.md。
+內文視覺建議見本文中的 🖼 標記。
 
 ### 機制解構示意圖 prompt
 
@@ -1113,7 +1122,6 @@ def write_prompts_and_metadata(
     source: Dict[str, Any],
     audit_warnings: List[str],
 ) -> None:
-    # cover_prompt.txt removed (2026-05-31): cover-prompt block disabled.
     if draft.chart_prompt:
         (out_dir / "chart_prompt.txt").write_text(draft.chart_prompt, encoding="utf-8")
     metadata = {
@@ -1124,6 +1132,8 @@ def write_prompts_and_metadata(
         "hook_type": draft.hook_type,
         "open_ending_form": draft.open_ending_form,
         "metaphor_domain_used": draft.metaphor_domain_used,
+        "cover_character": getattr(draft, "cover_character", None),  # 2026-06-21 封面 IP
+        "cover_image_prompt": getattr(draft, "cover_image_prompt", None),
         "reading_time_minutes": draft.reading_time_minutes,
         "source": source,
         "audit_warnings": audit_warnings,
@@ -1601,10 +1611,17 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 5a) Brand footer: tagline + Subscribe placeholder (per soul.md §12).
     append_footer_block(article_md_path=article_md)
 
-    # 5b) Cover prompt BLOCK disabled (2026-05-31, Hsin directive): the
-    # 「📸 封面圖 Prompt · 發文前請刪除」block is no longer appended (clutter you had
-    # to delete every time). Cover now = Python-rendered cover.png below; you pick
-    # your real cover from the §13 inline-image suggestions when publishing.
+    # 5b) Cover IP prompt (2026-06-21, Hsin directive): every draft gets a SHORT
+    # cover prompt featuring a dynamically-picked 固定 IP 角色 (rada 雷達機器人 / hoo
+    # 雷達貓頭鷹). Model chose draft.cover_character + a one-line scene; image_brain
+    # layers the canonical look + clay style bible. Null character → pick by topic/mode.
+    append_cover_prompt_block(
+        article_md_path=article_md,
+        draft=draft,
+        output_dir=local_dir,
+        topic_category=topic_category or "",
+        mode=mode,
+    )
 
     # 5c) Substack Cover (Synthetic Base)
     cover_path = render_substack_cover(
