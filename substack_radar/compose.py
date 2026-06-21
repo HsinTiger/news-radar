@@ -773,8 +773,8 @@ def append_cover_prompt_block(
     """Append the 2-character cover-IP prompt block to Article_Substack.md (and a
     standalone cover_prompts.md for copy-paste).
 
-    2026-06-21 (Hsin directive): every draft now carries a固定 IP 角色 (rada 雷達機器人 /
-    hoo 雷達貓頭鷹). The model picked ``draft.cover_character`` + a one-line
+    2026-06-21 (Hsin directive): every draft now carries a固定 IP 角色 (robot=瑞瑞 雷達機器人 /
+    owl=達達 雷達貓頭鷹). The model picked ``draft.cover_character`` + a one-line
     ``draft.cover_image_prompt`` scene; ``image_brain.build_cover_prompt_block``
     layers the canonical look + clay style bible so the IP stays on-model every time.
     If the model left the character null we fall back to ``pick_character(topic, mode)``
@@ -1102,7 +1102,7 @@ id: {source.get("id", "n/a")}
 
 ## 視覺指引
 
-**封面 IP 角色**：{getattr(draft, "cover_character", None) or "（自動依主題選 rada/hoo）"}
+**封面 IP 角色**：{getattr(draft, "cover_character", None) or "（自動依主題選 robot/owl）"}
 **封面 scene**：{getattr(draft, "cover_image_prompt", None) or "（留空 → 用角色招牌動作 + 標題自動補）"}
 完整封面 prompt（含固定造型 + 黏土美學）見 Article_Substack.md 末段「📸 封面圖 Prompt」與 cover_prompts.md。
 內文視覺建議見本文中的 🖼 標記。
@@ -1612,7 +1612,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     append_footer_block(article_md_path=article_md)
 
     # 5b) Cover IP prompt (2026-06-21, Hsin directive): every draft gets a SHORT
-    # cover prompt featuring a dynamically-picked 固定 IP 角色 (rada 雷達機器人 / hoo
+    # cover prompt featuring a dynamically-picked 固定 IP 角色 (robot=瑞瑞 / owl=達達
     # 雷達貓頭鷹). Model chose draft.cover_character + a one-line scene; image_brain
     # layers the canonical look + clay style bible. Null character → pick by topic/mode.
     append_cover_prompt_block(

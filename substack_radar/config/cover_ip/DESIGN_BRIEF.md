@@ -1,6 +1,6 @@
 # 設計委託 · News Radar 封面視覺系統（雙 IP × 標題排版 × 分類色票）
 
-> **給 claude design 的任務書。** 目標：把已鎖定的雙 IP 角色（Rada / Hoo）發展成一套
+> **給 claude design 的任務書。** 目標：把已鎖定的雙 IP 角色（瑞瑞 / 達達）發展成一套
 > **可重複套用的封面視覺系統**，讓每天 5+ 篇 Substack 封面「又一致、又抓眼球、縮圖也讀得到」。
 > 你交付的是**設計系統規格 + 模板 + 可貼進 pipeline 的 prompt 鷹架/色票 tokens**，不是一次性美圖。
 
@@ -15,13 +15,13 @@
 - **受眾**：關注美國/台灣科技、商業、投資、AI 的中文讀者。
 - **調性**：硬商業邏輯 × 暖哲學靈魂。**可愛但可信（GitHub Octocat 等級的專業萌），絕非幼稚 chibi。**
 - **撰稿端已上線**：AI 寫稿時會自動選角（程式已 merge），規則見 `cover_characters.md`：
-  - **Rada · 雷達機器人（數據獵手）** → 硬科技/數據/財報/公司分析題。
-  - **Hoo · 雷達貓頭鷹（沉思追問）** → 人文/反共識/訪談（podcast）/輕主題。
-- **名字**：Rada / Hoo（暫定，已採用）。
+  - **瑞瑞 · 單眼雷達機器人（好奇與探索）** → 硬科技/數據/財報/公司分析題。（pipeline 代號 `robot`）
+  - **達達 · 雷達貓頭鷹（智慧與聰明）** → 人文/反共識/訪談（podcast）/輕主題。（pipeline 代號 `owl`）
+- **名字**：瑞瑞（機器人）/ 達達（貓頭鷹），2026-06-21 暫定。pipeline 代號用 species `robot`/`owl`（name-proof）。
 
 ## 2. 已鎖定的素材（請先讀這些）
 - `substack_radar/config/cover_ip/modelsheet_hero_v1.png`（1536×1024）— 兩角色 hero pose + 各 3 表情。**這是 v1 定裝基準，造型以此為準。**
-- `substack_radar/config/cover_ip/modelsheet_poses_v1.png`（1672×941）— 兩角色乾淨 3-pose 排（上 Rada / 下 Hoo）。
+- `substack_radar/config/cover_ip/modelsheet_poses_v1.png`（1672×941）— 兩角色乾淨 3-pose 排（上 瑞瑞/robot / 下 達達/owl）。
 - `substack_radar/config/cover_characters.md` — 角色人設聖經 + 動態選角規則 + scene 撰寫鐵律。
 - `src/image_brain.py` — `CHARACTERS`（造型字典）、`_CLAY_STYLE_TAIL`（美學聖經字串）、`build_cover_prompt_block()`（**現行**：組「角色造型 + 一句 scene + 黏土美學」成文字 prompt，交人手動生圖）。
 - `substack_radar/promise_cover.py` — **現行**自動 cover.png 渲染（純文字海報 + 分類色票，Python 決定論生成）。
@@ -51,10 +51,10 @@
 
 ## 5. 驗收標準（Acceptance）
 用以下**真實標題**各做 1 張封面 mockup，證明模板可套：
-- **Rada（硬題）**：「NVIDIA 的 5 兆美元幻象：晶片之王，還是基礎設施的終局？」
-- **Rada（硬題·短）**：「萬億俱樂部之外：三支 AI 基礎設施股的翻倍劇本」
-- **Hoo（軟題·反問）**：「為什麼我們總是為用不到的特權買單？」
-- **Hoo（軟題·觀察）**：「可口可樂的『無聊』：你錯過的不是成長，是時間的複利」
+- **瑞瑞/robot（硬題）**：「NVIDIA 的 5 兆美元幻象：晶片之王，還是基礎設施的終局？」
+- **瑞瑞/robot（硬題·短）**：「萬億俱樂部之外：三支 AI 基礎設施股的翻倍劇本」
+- **達達/owl（軟題·反問）**：「為什麼我們總是為用不到的特權買單？」
+- **達達/owl（軟題·觀察）**：「可口可樂的『無聊』：你錯過的不是成長，是時間的複利」
 
 通過條件：
 - 縮圖測試：60×40px 仍認得出是哪隻角色 + 讀得到標題最強鉤子。

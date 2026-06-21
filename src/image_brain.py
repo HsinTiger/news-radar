@@ -136,11 +136,11 @@ def _get_aesthetic_tail() -> str:
 # ==========================================================================
 # Cover IP — 2-character claymation system (2026-06-21, Hsin directive)
 # ==========================================================================
-# 每篇 Substack 封面固定出現同一個可愛又專業的 IP（rada 機器人 / hoo 貓頭鷹），
+# 每篇 Substack 封面固定出現同一個可愛又專業的 IP（robot=瑞瑞 機器人 / owl=達達 貓頭鷹），
 # 搭配當篇場景 → 品牌一致 + 標題更有帶入感。撰稿 AI 動態挑角色 + 寫一句 scene；
 # 固定造型 + 黏土美學由這裡統一補上（模型不必每次重畫，省 token、避免走樣）。
 # 完整人設文件：substack_radar/config/cover_characters.md。
-# 命名：rada / hoo 是內部代號（placeholder），信哥取正式名字後只改各角色 display 欄。
+# 代號：robot / owl 是 species 代號（name-proof，永不隨改名動）；顯示名在 display 欄（瑞瑞/達達，暫定）。
 
 _CLAY_STYLE_TAIL = (
     " — Style: warm soft-clay claymation miniature, tilt-shift macro, soft diffused "
@@ -154,8 +154,8 @@ _CLAY_STYLE_TAIL = (
 
 # Canonical look — Python owns this so the model never has to redraw the character.
 CHARACTERS: dict = {
-    "rada": {
-        "display": "Rada · 雷達機器人（數據獵手）",  # 信哥命名後改這欄
+    "robot": {
+        "display": "瑞瑞 · 單眼雷達機器人（好奇探索）",  # 顯示名；改名只動這欄
         "look": (
             "A chunky rounded desk-robot analyst made of soft matte clay, stone-grey "
             "#8A8378 body, a small spinning radar-dish antenna on its head emitting a "
@@ -168,8 +168,8 @@ CHARACTERS: dict = {
             "blows its single lens-eye up huge and sparkling, smug little grin"
         ),
     },
-    "hoo": {
-        "display": "Hoo · 雷達貓頭鷹（沉思追問）",  # 信哥命名後改這欄
+    "owl": {
+        "display": "達達 · 雷達貓頭鷹（智慧洞察）",  # 顯示名；改名只動這欄
         "look": (
             "A plump rounded owl made of soft matte clay, warm stone-grey #8A8378 "
             "feathers with hand-molded texture, two huge radar-dish eyes behind round "
@@ -183,8 +183,8 @@ CHARACTERS: dict = {
     },
 }
 
-# Topics that lean Rada (hard tech / data / financials). Everything else → Hoo.
-_RADA_TOPICS = {
+# Topics that lean robot/瑞瑞 (hard tech / data / financials). Everything else → owl/達達.
+_ROBOT_TOPICS = {
     "us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
     "tech_product_launch", "supply_chain", "earnings",
 }
@@ -192,14 +192,14 @@ _RADA_TOPICS = {
 
 def pick_character(topic_category=None, mode=None) -> str:
     """Deterministic fallback when the model didn't choose a character. mode wins
-    over topic: company→rada, podcast→hoo; else hard-tech topics→rada, rest→hoo."""
+    over topic: company→robot, podcast→owl; else hard-tech topics→robot, rest→owl."""
     if mode == "company":
-        return "rada"
+        return "robot"
     if mode == "podcast":
-        return "hoo"
-    if (topic_category or "") in _RADA_TOPICS:
-        return "rada"
-    return "hoo"
+        return "owl"
+    if (topic_category or "") in _ROBOT_TOPICS:
+        return "robot"
+    return "owl"
 
 
 def build_cover_prompt_block(
@@ -222,7 +222,7 @@ def build_cover_prompt_block(
     Two modes, auto-dispatched:
 
     (1) **Character IP path (default, auto pipeline)** — the model supplies only
-        ``character`` (rada/hoo) + a short ``scene`` (what the IP is doing in THIS
+        ``character`` (robot/owl) + a short ``scene`` (what the IP is doing in THIS
         article's setting). Python supplies the canonical look + clay style bible,
         so the IP stays on-model every time and the model spends ~zero tokens
         redrawing it. Missing/invalid ``character`` → ``pick_character(topic, mode)``

@@ -102,12 +102,12 @@ class SubstackDraft(BaseModel):
             "**不要連續兩篇用同一種 hook_type。**"
         ),
     )
-    cover_character: Optional[Literal["rada", "hoo"]] = Field(
+    cover_character: Optional[Literal["robot", "owl"]] = Field(
         default=None,
         description=(
             "封面 IP 角色（2026-06-21 啟用）。每篇動態選一隻固定角色出場：\n"
-            '  "rada"：雷達機器人·數據獵手 → 硬科技/數據/財報/company 題。\n'
-            '  "hoo"：雷達貓頭鷹·沉思追問 → 人文/反共識/訪談/輕主題（podcast/evening）。\n'
+            '  "robot"：瑞瑞·單眼雷達機器人（好奇探索）→ 硬科技/數據/財報/company 題。\n'
+            '  "owl"：達達·雷達貓頭鷹（智慧洞察）→ 人文/反共識/訪談/輕主題（podcast/evening）。\n'
             "依本篇氣質選一隻；留空 (null) 時 Python 會依 topic/mode 自動補。"
         ),
     )
@@ -116,7 +116,7 @@ class SubstackDraft(BaseModel):
         description=(
             "封面 scene（2026-06-21 重啟）：一句中文，描述上面選的角色『在本篇場景做什麼』"
             "（動作／道具／場景），**不要**重寫造型或美學（那些 Python 會自動補）。"
-            "例：「rada 站在用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，塔頂積木正搖晃」。"
+            "例：「瑞瑞(robot) 站在用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，塔頂積木正搖晃」。"
             "留空也可，Python 會用角色招牌動作 + 標題補一張。"
         ),
     )
@@ -175,7 +175,7 @@ class SubstackDraft(BaseModel):
         cc = v.get("cover_character")
         if isinstance(cc, str):
             cc = cc.strip().lower()
-        v["cover_character"] = cc if cc in {"rada", "hoo"} else None  # 非法/缺 → Python 依 topic 補
+        v["cover_character"] = cc if cc in {"robot", "owl"} else None  # 非法/缺 → Python 依 topic 補
         rt = v.get("reading_time_minutes")
         if not isinstance(rt, int):
             try:
@@ -695,11 +695,11 @@ def _build_user_prompt(
         '                                   //     "contrarian_question" | "contrarian_reframe" |\n'
         '                                   //     "concrete_punch" | "narrative_hook" |\n'
         '                                   //     "provocative_statement" | "insider_question"\n'
-        '  "cover_character": "...",        // ENUM "rada"|"hoo"：本篇封面固定 IP 出場角色。\n'
-        '                                   //   rada=雷達機器人(數據獵手)→硬科技/數據/財報；\n'
-        '                                   //   hoo=雷達貓頭鷹(沉思追問)→人文/反共識/訪談/輕主題。依本篇氣質選一隻。\n'
+        '  "cover_character": "...",        // ENUM "robot"|"owl"：本篇封面固定 IP 出場角色。\n'
+        '                                   //   robot=瑞瑞·雷達機器人(好奇探索)→硬科技/數據/財報；\n'
+        '                                   //   owl=達達·雷達貓頭鷹(智慧洞察)→人文/反共識/訪談/輕主題。依本篇氣質選一隻。\n'
         '  "cover_image_prompt": "...",     // 一句中文：上面那隻角色『在本篇場景做什麼』(動作/道具/場景)；\n'
-        '                                   //   不要重寫造型或美學(Python 會補)。例：「rada 舉放大鏡盯著一張急殺的股價K線得意奸笑」。\n'
+        '                                   //   不要重寫造型或美學(Python 會補)。例：「瑞瑞 舉放大鏡盯著一張急殺的股價K線得意奸笑」。\n'
         '  "chart_prompt": null,            // 可選；若無數據可視化，填 null。\n'
         '  "reading_time_minutes": 5,       // 整數 4-7。目標 5。\n'
         '  "open_ending_form": "..."        // ENUM，必為以下其一：\n'

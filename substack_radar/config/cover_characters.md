@@ -5,9 +5,9 @@
 > 「角色在做什麼／站在什麼場景」的**短 scene**；固定長相與美學由 Python
 > （`src/image_brain.py`）統一補上，模型不必每次重寫造型，省 token、避免走樣。
 >
-> **命名**：正式採用 **Rada**（機器人）/ **Hoo**（貓頭鷹）（2026-06-21 暫定確認）。
-> `rada` / `hoo` 為 pipeline 代號，與顯示名一致；日後若改名只需動 `image_brain.CHARACTERS`
-> 的 `display` 欄，代號不動。
+> **命名**：**瑞瑞**（機器人，好奇與探索）/ **達達**（貓頭鷹，智慧與聰明）（2026-06-21 暫定）。
+> pipeline 代號改用 species：`robot` / `owl`（name-proof，永不隨改名動）；顯示名（瑞瑞/達達）
+> 放 `image_brain.CHARACTERS` 的 `display` 欄，日後改名只動那一欄、代號不動。
 >
 > **v1 定裝參考圖（已鎖定）**：`cover_ip/modelsheet_hero_v1.png`（hero + 各 3 表情）、
 > `cover_ip/modelsheet_poses_v1.png`（乾淨 3-pose 排）。造型以這兩張為基準；完整視覺系統
@@ -31,10 +31,10 @@ space for a title overlay. No text, no watermark, no logo.
 
 ---
 
-## 角色 A · `rada` — 雷達機器人（數據獵手 / The Data Hunter）
+## 角色 A · `robot`（瑞瑞）— 單眼雷達機器人（好奇與探索 / The Curious Explorer）
 
-**人設**：桌上型黏土小機器人分析師。永遠在「抓」——抓出數字背後的破綻、抓出被忽略的訊號。
-個性自信、愛現、帶一點得意的奸笑，但抓到的東西是真的硬。
+**人設**：桌上型黏土單眼小機器人。骨子裡是「好奇與探索」——拿放大鏡到處戳、追著數字背後的
+破綻跑，挖到的瞬間得意地「抓到了！」。自信、愛現，但挖出來的東西是真的硬。
 
 **固定長相（Python 補，模型不用寫）**：
 ```
@@ -55,10 +55,10 @@ knitted scarf. Squash-and-stretch rubbery posing, exaggerated and lively.
 
 ---
 
-## 角色 B · `hoo` — 雷達貓頭鷹（沉思追問 / The Wise Owl）
+## 角色 B · `owl`（達達）— 雷達貓頭鷹（智慧與聰明 / The Wise Owl）
 
-**人設**：戴圓眼鏡的黏土貓頭鷹智者。看得比別人遠、問得比別人深，常常一個歪頭就把
-問題問到骨子裡。誇張、戲劇化，但氣質是「想通了」的睿智，不是耍寶。
+**人設**：戴圓眼鏡的黏土貓頭鷹智者，主打「智慧與聰明」。看得比別人遠、問得比別人深，
+常常一個歪頭就把問題問到骨子裡。誇張、戲劇化，但氣質是「想通了」的睿智，不是耍寶。
 
 **固定長相（Python 補，模型不用寫）**：
 ```
@@ -81,13 +81,13 @@ theatrical squash-and-stretch posing.
 
 ## 動態選角規則（撰稿 AI 用）
 
-1. **先看 mode**：`company` → `rada`；`podcast` → `hoo`。
-2. **再看 topic_category**：落在 rada 的硬科技/財報清單 → `rada`；其餘人文/反共識/輕主題 → `hoo`。
-3. **最後看文章氣質**：拚數字、抓破綻、講機制 → `rada`；翻框架、講人性、慢思考 → `hoo`。
-4. 模型在 JSON 填 `cover_character`（`rada`/`hoo`）+ 一句中文 `cover_image_prompt`（角色在當篇場景做什麼）。
+1. **先看 mode**：`company` → `robot`（瑞瑞）；`podcast` → `owl`（達達）。
+2. **再看 topic_category**：落在 robot 的硬科技/財報清單 → `robot`；其餘人文/反共識/輕主題 → `owl`。
+3. **最後看文章氣質**：拚數字、抓破綻、講機制 → `robot`；翻框架、講人性、慢思考 → `owl`。
+4. 模型在 JSON 填 `cover_character`（`robot`/`owl`）+ 一句中文 `cover_image_prompt`（角色在當篇場景做什麼）。
    留空時 Python 依規則 1-2 自動補（`image_brain.pick_character`）→ 永不開天窗。
 
 > 鐵律：scene 只描述「角色 + 當篇場景／動作／道具」，**不要**重寫造型或美學
 > （那些 Python 會補）；保持一句話、具體、有畫面。例：
-> 「rada 站在一座用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，
+> 「瑞瑞(robot) 站在一座用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，
 > 塔頂那塊積木正在搖晃」。
