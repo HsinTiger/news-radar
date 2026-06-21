@@ -5,8 +5,13 @@
 > 「角色在做什麼／站在什麼場景」的**短 scene**；固定長相與美學由 Python
 > （`src/image_brain.py`）統一補上，模型不必每次重寫造型，省 token、避免走樣。
 >
-> **命名**：以下 `rada` / `hoo` 為**內部代號（placeholder）**，信哥另外取正式名字後，
-> 只需改這份文件的標題與 `image_brain.CHARACTERS` 的 `display` 欄，pipeline 代號不用動。
+> **命名**：正式採用 **Rada**（機器人）/ **Hoo**（貓頭鷹）（2026-06-21 暫定確認）。
+> `rada` / `hoo` 為 pipeline 代號，與顯示名一致；日後若改名只需動 `image_brain.CHARACTERS`
+> 的 `display` 欄，代號不動。
+>
+> **v1 定裝參考圖（已鎖定）**：`cover_ip/modelsheet_hero_v1.png`（hero + 各 3 表情）、
+> `cover_ip/modelsheet_poses_v1.png`（乾淨 3-pose 排）。造型以這兩張為基準；完整視覺系統
+> 委託見 `cover_ip/DESIGN_BRIEF.md`。
 
 ---
 
