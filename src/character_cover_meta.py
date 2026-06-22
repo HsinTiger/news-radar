@@ -104,20 +104,20 @@ def _fit_char(asset_path, max_w, max_h, anchor=None):
     return cut.resize((max(1, int(cut.width * scale)), max(1, int(cut.height * scale))), Image.LANCZOS)
 
 
-def render_meta_character_cover(
+def compose_meta_character_cover(
     *,
     title: str,
     subtitle: Optional[str],
     topic_category: Optional[str],
     aspect: str,
-    output_dir: Path,
     brand_name: str = "@smartmmmoney",
     character: Optional[str] = None,
     mode: Optional[str] = None,
-) -> Optional[Path]:
-    """Composite a Meta IP character cover → output_dir/character_<aspect>.png.
-    Returns the path, or None when aspect unknown / no character asset (→ caller
-    falls back to the photo cover)."""
+):
+    """Compose a Meta IP character cover → return a PIL Image (RGB), or None when
+    aspect unknown / no character asset (→ caller falls back to the photo cover or
+    the typographic cover card). Used by both render_meta_character_cover (saves to
+    file, for cover_pipeline) and cards.render_cards (uses the image as carousel slide 0)."""
     from PIL import Image, ImageDraw
     from src.image_brain import _anchor_gaze
 
@@ -185,7 +185,30 @@ def render_meta_character_cover(
     d.line((M, H - 70, M + 96, H - 70), fill=_SIENNA, width=6)
     d.text((M, H - 56), brand_name, font=bf, fill=_STONE)
 
+    return img.convert("RGB")
+
+
+def render_meta_character_cover(
+    *,
+    title: str,
+    subtitle: Optional[str],
+    topic_category: Optional[str],
+    aspect: str,
+    output_dir: Path,
+    brand_name: str = "@smartmmmoney",
+    character: Optional[str] = None,
+    mode: Optional[str] = None,
+) -> Optional[Path]:
+    """Compose + save a Meta IP character cover → output_dir/character_<aspect>.png.
+    Returns the path, or None (→ caller falls back to the photo cover). Thin wrapper
+    over compose_meta_character_cover (single-image cover path, cover_pipeline)."""
+    img = compose_meta_character_cover(
+        title=title, subtitle=subtitle, topic_category=topic_category, aspect=aspect,
+        brand_name=brand_name, character=character, mode=mode,
+    )
+    if img is None:
+        return None
     output_dir.mkdir(parents=True, exist_ok=True)
     out = output_dir / f"character_{aspect}.png"
-    img.convert("RGB").save(out, "PNG", optimize=True)
+    img.save(out, "PNG", optimize=True)
     return out

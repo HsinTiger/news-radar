@@ -14,6 +14,7 @@ Card content is a list of dicts (built upstream by the composer / a distill step
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -328,8 +329,21 @@ def render_cards(
     output_dir.mkdir(parents=True, exist_ok=True)
     out: List[Path] = []
     for i, card in enumerate(cards, 1):
-        draw_fn = _RENDERERS.get(card.get("type", ""), _draw_cover)
-        img = draw_fn(W, H, pal, card, i, total)
+        img = None
+        # 2026-06-23 Hsin：第一張封面卡 → IP 角色封面（瑞瑞/達達，依 topic + 標題角度選角）。
+        # 這才是 carousel 真正的「第一張圖」。失敗/關閉(META_CHARACTER_COVER=0) → 退回原字卡。
+        if i == 1 and card.get("type") == "cover" and os.getenv("META_CHARACTER_COVER", "1") != "0":
+            try:
+                from src.character_cover_meta import compose_meta_character_cover
+                img = compose_meta_character_cover(
+                    title=card.get("title", ""), subtitle=card.get("subtitle", ""),
+                    topic_category=topic_category, aspect=aspect, brand_name=KICKER,
+                )
+            except Exception:
+                img = None
+        if img is None:
+            draw_fn = _RENDERERS.get(card.get("type", ""), _draw_cover)
+            img = draw_fn(W, H, pal, card, i, total)
         p = output_dir / f"card_{aspect}_{i}.png"
         img.save(p, "PNG", optimize=True)
         out.append(p)
