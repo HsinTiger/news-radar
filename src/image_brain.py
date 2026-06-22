@@ -165,17 +165,52 @@ _CLAY_STYLE_TAIL = (
 # Per-character expression hints (D5). Appended to the scene; default per species.
 _EXPRESSION_HINTS: dict = {
     "robot": {
-        "gotcha":    "holding a magnifier up to its single eye, leaning forward, triumphant little smirk",
-        "skeptical": "one brow raised, radar antenna tilted, arms crossed, doubtful look",
-        "smug":      "arms crossed, corner-of-mouth smug grin, one eye winking",
+        "gotcha":     "holding a magnifier up to its single eye, leaning forward, triumphant little smirk",
+        "skeptical":  "one brow raised, radar antenna tilted, arms crossed, doubtful look",
+        "smug":       "arms crossed, corner-of-mouth smug grin, one eye winking",
+        "curious":    "leaning in wide-eyed, single lens-eye sparkling huge, antenna perked up, both stubby hands reaching forward eagerly",
+        "presenting": "standing upright, one arm gesturing outward to present, confident open posture",
     },
     "owl": {
-        "ahha":      "feathers bursting outward, both wings flung up, one eye huge through a magnifier",
-        "wink":      "playful single-eye wink, a wing gesturing knowingly",
-        "pondering": "head tilted, one wing under the beak, spectacles glinting, facing a big question mark",
+        "ahha":       "feathers bursting outward, both wings flung up, one eye huge through a magnifier",
+        "wink":       "playful single-eye wink, a wing gesturing knowingly",
+        "pondering":  "head tilted, one wing under the beak, spectacles glinting, facing a big question mark",
+        "reading":    "perched, looking down at an open book held in its wings, spectacles glinting, absorbed",
+        "warm":       "gentle closed-eye smile, wings softly folded, content and reflective",
     },
 }
 _DEFAULT_EXPRESSION = {"robot": "gotcha", "owl": "ahha"}
+
+
+def pick_expression(topic_category=None, mode=None, title=None) -> str:
+    """Map a post's category/mode/title-mood → a character expression (Cover System
+    D1, aligned to the live 發文類別). Character-first so we never cross species:
+    robot expressions for hard topics, owl for soft. Returns an expression key that
+    lives in _EXPRESSION_HINTS; if its asset is missing the compositor self-heals to
+    the species default (see character_cover._find_asset)."""
+    char = pick_character(topic_category, mode)
+    t = (title or "").strip()
+    tc = (topic_category or "").strip()
+    if char == "robot":
+        if any(k in t for k in ("早就", "錯了", "打臉")):
+            return "smug"                                   # 打臉/「早就說了」語氣
+        if mode == "company" or tc in ("earnings", "company"):
+            return "presenting"                             # 財報 / 公司分析（數據導讀）
+        if tc in ("ai_model", "ai_agent", "ai_application", "tech_product_launch"):
+            return "curious"                                # AI / 新品
+        if tc == "supply_chain":
+            return "skeptical"                              # 供應鏈 / 結構質疑
+        return "gotcha"                                     # 預設·硬題（morning / 美台股）
+    # owl
+    if "為什麼" in t or t.endswith("？") or t.endswith("?"):
+        return "pondering"                                  # 「為什麼…？」開放提問
+    if tc == "culture":
+        return "warm"                                       # 人文 / 反思
+    if tc == "contrarian":
+        return "wink"                                       # 反共識
+    if mode == "evening":
+        return "reading"                                    # 晚報（獨立選題 / 書 / 深度）
+    return "ahha"                                           # 預設·軟題（podcast）
 
 # Canonical look — Python owns this so the model never has to redraw the character.
 CHARACTERS: dict = {

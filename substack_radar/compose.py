@@ -811,6 +811,7 @@ def render_substack_cover(
     source_image_path: Optional[Path] = None,
     character: Optional[str] = None,
     expression: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> Optional[Path]:
     """Render the 1456×816 Substack hero cover. Returns saved PNG path or None.
 
@@ -834,6 +835,7 @@ def render_substack_cover(
                 character=character,
                 output_dir=output_dir,
                 expression=expression,
+                mode=mode,
             )
             if p is not None:
                 print(f"[Cover] ✅ character cover ({character or 'auto'}) → {p.name}")
@@ -1654,6 +1656,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         output_dir=local_dir,
         source_image_path=None, # Fallback to synth noise
         character=getattr(draft, "cover_character", None),  # route 3: IP character cover
+        mode=mode,  # → pick_expression maps 發文類別 → 角色表情
     )
     
     # 5d) AI Inline images (2026-06-01 Hsin directive)

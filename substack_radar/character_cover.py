@@ -20,11 +20,15 @@ from substack_radar.promise_cover import (
     W, H, KICKER, _font, _wrap, _hx, palette_for,
     FONT_TITLE_PATH, FONT_SUBTITLE_PATH,
 )
-from src.image_brain import pick_character, _anchor_gaze, _DEFAULT_EXPRESSION
+from src.image_brain import pick_character, pick_expression, _anchor_gaze, _DEFAULT_EXPRESSION
 
 ASSETS_DIR = Path(__file__).resolve().parent / "config" / "cover_ip" / "assets"
 _CREAM = (242, 238, 229)
 _MARGIN = 72
+# Source cutouts are drawn facing viewer-left; we flip so the character always faces
+# the title zone. Re-verify + flip this once the full-res assets land (the brief makes
+# them mirror-friendly, so worst case is a one-word change here).
+_ASSET_FACES = "left"
 
 
 def _find_asset(character: str, expression: Optional[str]) -> Optional[Path]:
@@ -71,13 +75,19 @@ def render_character_cover(
     character: Optional[str] = None,
     output_dir: Path,
     expression: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> Optional[Path]:
     """Composite a character cover to ``output_dir/cover.png``. Returns the path,
-    or None when no character asset is available (→ promise_cover fallback)."""
+    or None when no character asset is available (→ promise_cover fallback).
+
+    Expression is chosen by 發文類別 (pick_expression: topic_category/mode/title-mood)
+    unless one is passed explicitly; _find_asset self-heals to the species default
+    when that expression's asset isn't in the library yet."""
     from PIL import Image, ImageDraw
 
-    char = character if character in ("robot", "owl") else pick_character(topic_category, None)
-    asset = _find_asset(char, expression)
+    char = character if character in ("robot", "owl") else pick_character(topic_category, mode)
+    expr = expression or pick_expression(topic_category, mode, title)
+    asset = _find_asset(char, expr)
     if asset is None:
         return None  # graceful: no asset yet → text-poster cover handles it
 
@@ -88,6 +98,11 @@ def render_character_cover(
     # --- character: keyed, trimmed, scaled (taller for short titles = layout A,
     #     smaller for long titles = layout B), grounded near the lower third ---
     cut = _keyed_trim(Image.open(asset))
+    anchor, _ = _anchor_gaze(title)
+    # Title sits opposite the anchor; flip the cutout so the character faces it.
+    face_title = "right" if anchor == "left" else "left"
+    if face_title != _ASSET_FACES:
+        cut = cut.transpose(Image.FLIP_LEFT_RIGHT)
     tlen = len(title or "")
     frac = 0.82 if tlen <= 14 else (0.72 if tlen <= 24 else 0.62)
     target_h = int(H * frac)
@@ -95,7 +110,6 @@ def render_character_cover(
     cw, ch = max(1, int(cut.width * scale)), target_h
     cut = cut.resize((cw, ch), Image.LANCZOS)
 
-    anchor, _ = _anchor_gaze(title)
     col_w = max(cw, int(W * 0.30))
     if anchor == "left":
         cx = _MARGIN + (col_w - cw) // 2
