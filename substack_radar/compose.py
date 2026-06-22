@@ -1064,8 +1064,8 @@ def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block
     Top line = 產文路線標記 (2026-05-31 Hsin directive): one deletable line marking
     which model/route wrote this draft. Single line (not the old cover block) —
     刪掉即可再貼上 Substack。
-    sources_block（2026-06-20 Hsin directive）：緊接在 🧠 行後、標題前的『來源』區塊，
-    列主來源 podcast/文章網址 + 數據/書面文獻網址，供查證；發布前可移到文末或刪除。"""
+    sources_block（2026-06-22 Hsin directive）：緊接在 🧠 行後、標題前的『本文取材』區塊，
+    列主來源 + 延伸參考的可點擊連結。**面向讀者保留**（增加可信度與厚度），不再是發布前刪除的私註。"""
     path = out_dir / "Article_Substack.md"
     route = getattr(draft, "generated_by", None) or "unknown"
     md = (
@@ -1250,25 +1250,24 @@ def _podcast_reports_block(title: str):
 
 
 def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
-    """Article_Substack.md 最上面的『來源』區塊：主來源 podcast/文章網址 + 數據/書面文獻網址。
-    給 Hsin 查證 / 標引用用，標成發布前可移到文末或刪除。完全沒網址就回空字串。"""
+    """Article_Substack.md 開頭、**面向讀者保留**的『本文取材』來源區塊（2026-06-22 Hsin：
+    從『發布前刪除的私註』改成『保留、給讀者看』，增加可信度與厚度）。主來源 + 延伸參考
+    用 markdown 連結呈現（點擊查證）。完全沒網址就回空字串。"""
     reports = reports or []
-    rep_lines, seen = [], set()
+    rep_links, seen = [], set()
     for r in reports:
         u = (r.get("url") or "").strip()
         if not u or u in seen:
             continue
         seen.add(u)
-        star = "⭐" if r.get("quality") else "•"
-        rep_lines.append(f"> {star} {(r.get('title') or u)[:72]}\n>    {u}")
-    if not source_url and not rep_lines:
+        rep_links.append(f"[{(r.get('title') or u)[:60]}]({u})")
+    if not source_url and not rep_links:
         return ""
-    block = ["> 📎 **來源 Sources**（供查證；發布前可整理進文末引用或刪除）"]
+    block = ["> 📚 **本文取材**（公開來源、可點擊查證）"]
     if source_url:
-        block.append(f"> 🎥 主來源：{(source_title or '原始來源')[:72]}\n>    {source_url}")
-    if rep_lines:
-        block.append("> 📄 參考數據／書面文獻：")
-        block += rep_lines
+        block.append(f"> 主來源 — [{(source_title or '原始來源')[:60]}]({source_url})")
+    if rep_links:
+        block.append("> 延伸參考 — " + " ｜ ".join(rep_links))
     return "\n".join(block) + "\n\n"
 
 
