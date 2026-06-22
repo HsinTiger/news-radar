@@ -23,7 +23,11 @@
 2. 加一句「single character, **transparent background**（或 plain #F2EEE5 background）, full body, centered, no title text」。
 3. 丟 ChatGPT image / nanobanana 生圖 → 存成上面的命名 → 放進這個資料夾。完成。
 
-## 目前狀態（2026-06-21）
-- `robot_gotcha_sm.png`、`owl_ahha_sm.png`：claude design v1 裁切的**縮圖**（250–270px），MVP 測試用。
-- ⏳ **待補**：全尺寸 `robot_gotcha.png` / `owl_ahha.png`（design 專案裡有，但超過 MCP 256KB 取檔上限 →
-  請從 claude.ai 下載拖進來，或用上面流程重生）＋其餘表情（skeptical/smug/wink/pondering）。
+## 目前狀態（2026-06-22）✅ 全 14 表情上線
+全 14 張**全尺寸透明去背**裁切圖（短邊 800、RGBA）都在這個資料夾，由 claude design 從信哥用
+ChatGPT/Gemini 生的圖處理，經本機（信哥下載整包專案到 ~/Downloads）拷進 repo：
+- **robot（7）**：gotcha、skeptical、smug、curious、presenting、alert、celebrating
+- **owl（7）**：ahha、wink、warm、pondering、cautionary、reading、teaching
+
+實測：合成器自動選表情（依 topic/mode/標題語氣）+ 水平鏡像讓角色面向標題，封面清晰、構圖正確。
+要再加表情/姿勢，照上面命名慣例丟新檔即可（`_web` 後綴也認得）。
