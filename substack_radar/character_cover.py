@@ -42,7 +42,7 @@ def _find_asset(character: str, expression: Optional[str]) -> Optional[Path]:
     if default and default not in exprs:
         exprs.append(default)
     for e in exprs:
-        for suffix in ("", "_sm"):
+        for suffix in ("", "_web", "_sm"):  # full-res → web (≤240KB) → thumbnail
             p = ASSETS_DIR / f"{character}_{e}{suffix}.png"
             if p.exists():
                 return p
