@@ -12,18 +12,24 @@
 - **達達 `owl`**：warm stone-grey `#8A8378` 黏土貓頭鷹，兩顆超大雷達盤眼+圓框細金屬眼鏡，暖赭黃喙與三趾腳，sienna-red `#C84A32` 蝴蝶結（= 唯一的紅）。
 
 ## 要產出的 10 張（單一角色、全身、表情依下表）
-| 檔名 | 角色 | 表情/動作（精確描述，對齊 pipeline）| 用於 |
+每個表情都對應一種**實際發文類別**（合成器會依文章的 mode/topic_category 自動選表情）。
+
+| 檔名 | 角色 | 表情/動作（精確描述，對齊 pipeline）| 對應發文類別 |
 |---|---|---|---|
-| `robot_gotcha.png` | 瑞瑞 | holding a magnifier up to its single eye, leaning forward, triumphant little smirk | 揭露/數據抓包（預設）|
-| `robot_skeptical.png` | 瑞瑞 | one brow raised, radar antenna tilted, arms crossed, doubtful look | 質疑某個說法 |
-| `robot_smug.png` | 瑞瑞 | arms crossed, corner-of-mouth smug grin, one eye winking | 早就說了 |
-| `robot_curious.png` | 瑞瑞 | leaning in wide-eyed, single lens-eye sparkling huge, antenna perked up, both stubby hands reaching forward eagerly | 新東西/科普 |
-| `robot_presenting.png` | 瑞瑞 | standing upright, one arm gesturing outward to present, confident open posture | 拆解/數據導讀 |
-| `owl_ahha.png` | 達達 | feathers bursting outward, both wings flung up, one eye huge through a magnifier | 頓悟/洞察（預設）|
-| `owl_wink.png` | 達達 | playful single-eye wink, a wing gesturing knowingly | 了然/反共識 |
-| `owl_pondering.png` | 達達 | head tilted, one wing under the beak, spectacles glinting, facing a big question mark | 開放提問 |
-| `owl_reading.png` | 達達 | perched, looking down at an open book held in its wings, spectacles glinting, absorbed | 深度/書評/分析 |
-| `owl_warm.png` | 達達 | gentle closed-eye smile, wings softly folded, content and reflective | 反思/人文/哲學 |
+| `robot_gotcha.png` | 瑞瑞 | holding a magnifier up to its single eye, leaning forward, triumphant little smirk | **預設·硬題**；morning 深度新聞、`us_stocks`/`tw_stocks` 美台股 |
+| `robot_presenting.png` | 瑞瑞 | standing upright, one arm gesturing outward to present, confident open posture | `earnings` 財報、`company` 週日公司分析（數據導讀）|
+| `robot_curious.png` | 瑞瑞 | leaning in wide-eyed, single lens-eye sparkling huge, antenna perked up, both stubby hands reaching forward eagerly | `ai_model`/`ai_agent`/`ai_application` AI、`tech_product_launch` 新品 |
+| `robot_skeptical.png` | 瑞瑞 | one brow raised, radar antenna tilted, arms crossed, doubtful look | `supply_chain` 供應鏈/結構質疑 |
+| `robot_smug.png` | 瑞瑞 | arms crossed, corner-of-mouth smug grin, one eye winking | 硬題·打臉行情/「早就說了」語氣標題 |
+| `owl_ahha.png` | 達達 | feathers bursting outward, both wings flung up, one eye huge through a magnifier | **預設·軟題**；`podcast` 訪談萃取（頓悟洞察）|
+| `owl_reading.png` | 達達 | perched, looking down at an open book held in its wings, spectacles glinting, absorbed | `evening` 晚報（獨立選題/書/深度）|
+| `owl_warm.png` | 達達 | gentle closed-eye smile, wings softly folded, content and reflective | `culture` 人文/反思 |
+| `owl_wink.png` | 達達 | playful single-eye wink, a wing gesturing knowingly | `contrarian` 反共識 |
+| `owl_pondering.png` | 達達 | head tilted, one wing under the beak, spectacles glinting, facing a big question mark | 軟題·標題是「為什麼…？」開放提問 |
+
+> 對照邏輯給合成器用：先 character（robot 硬題 / owl 軟題）→ 再依 topic_category/mode 選表情，
+> 兩個 mood 型（robot_smug 打臉、owl_pondering 提問）由**標題語氣**觸發。對不到就用該角色預設
+> （gotcha / ahha）。所以 10 個表情把目前 4 個 mode + 13 個 topic_category 全包進去了。
 
 ## 檔案規格（重要 —— 決定能不能自動同步回 codebase）
 - **背景透明**（PNG alpha）為佳；cream `#F2EEE5` 純底也可（合成器會自動 key 掉）。
