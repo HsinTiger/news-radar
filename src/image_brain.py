@@ -169,7 +169,9 @@ _EXPRESSION_HINTS: dict = {
         "skeptical":  "one brow raised, radar antenna tilted, arms crossed, doubtful look",
         "smug":       "arms crossed, corner-of-mouth smug grin, one eye winking",
         "curious":    "leaning in wide-eyed, single lens-eye sparkling huge, antenna perked up, both stubby hands reaching forward eagerly",
-        "presenting": "standing upright, one arm gesturing outward to present, confident open posture",
+        "presenting":  "standing upright, one arm gesturing outward to present, confident open posture",
+        "alert":       "radar dish spinning fast with motion streaks, single lens-eye wide open, a small alarm spark, urgent leaning stance",
+        "celebrating": "both arms thrown up in triumph, radar dish lit, sparkles around, joyful open-mouthed cheer",
     },
     "owl": {
         "ahha":       "feathers bursting outward, both wings flung up, one eye huge through a magnifier",
@@ -177,6 +179,8 @@ _EXPRESSION_HINTS: dict = {
         "pondering":  "head tilted, one wing under the beak, spectacles glinting, facing a big question mark",
         "reading":    "perched, looking down at an open book held in its wings, spectacles glinting, absorbed",
         "warm":       "gentle closed-eye smile, wings softly folded, content and reflective",
+        "cautionary": "one wing raised palm-out in a 'careful' gesture, brow furrowed over the spectacles, a wary cautioning look",
+        "teaching":   "perched upright, one wing pointing out at a small floating diagram, spectacles on, didactic explaining pose",
     },
 }
 _DEFAULT_EXPRESSION = {"robot": "gotcha", "owl": "ahha"}
@@ -192,6 +196,10 @@ def pick_expression(topic_category=None, mode=None, title=None) -> str:
     t = (title or "").strip()
     tc = (topic_category or "").strip()
     if char == "robot":
+        if any(k in t for k in ("暴跌", "急殺", "閃崩", "崩", "重挫", "突發", "警報")):
+            return "alert"                                  # 突發 / 急殺 / 暴跌
+        if any(k in t for k in ("新高", "突破", "創紀錄", "里程碑", "飆", "大漲", "狂飆")):
+            return "celebrating"                            # 突破 / 新高 / 大漲
         if any(k in t for k in ("早就", "錯了", "打臉")):
             return "smug"                                   # 打臉/「早就說了」語氣
         if mode == "company" or tc in ("earnings", "company"):
@@ -202,6 +210,10 @@ def pick_expression(topic_category=None, mode=None, title=None) -> str:
             return "skeptical"                              # 供應鏈 / 結構質疑
         return "gotcha"                                     # 預設·硬題（morning / 美台股）
     # owl
+    if any(k in t for k in ("風險", "泡沫", "小心", "陷阱", "警訊", "別被", "別再")):
+        return "cautionary"                                 # 風險 / 示警
+    if any(k in t for k in ("什麼是", "入門", "科普", "懶人包", "一次搞懂", "解析")):
+        return "teaching"                                   # 科普 / 解析 / 講解
     if "為什麼" in t or t.endswith("？") or t.endswith("?"):
         return "pondering"                                  # 「為什麼…？」開放提問
     if tc == "culture":
