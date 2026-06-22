@@ -31,6 +31,26 @@ _SIENNA = (200, 74, 50)    # the one accent
 
 _SIZES = {"ig": (1080, 1350), "threads": (1080, 1350), "fb": (1080, 1080)}
 
+# Meta 選角（2026-06-23, Hsin 選「依標題角度」）：Meta 的 topic 分類偏科技財經（8 類→robot），
+# 純 topic 會讓達達幾乎不出場。改用標題「角度」讓兩隻都依內容出場——
+#   達達 owl：反思 / 反共識 / 大局 / 二選一 / 開放質疑的角度（即使是科技財經題）。
+#   瑞瑞 robot：硬數據 / 突發 / 具體爆點。
+#   都沒命中 → 照 topic 預設（pick_character）。owl 先判（反思框架壓過資料名詞）。
+_OWL_ANGLE_CUES = ("也許", "其實是", "其實", "還是", "真的能", "真的會", "真的要", "真的嗎",
+                   "誰來", "誰能", "憑什麼", "為何", "是不是", "會不會", "該不該",
+                   "不會是", "不只是", "沒有人", "沒人")
+_ROBOT_ANGLE_CUES = ("暴跌", "急殺", "閃崩", "崩", "重挫", "新高", "突破", "飆", "財報",
+                     "打臉", "賺爆", "用爆", "創紀錄", "燒錢", "%", "兆", "億", "倍")
+
+
+def _pick_meta_character(topic_category, title) -> str:
+    t = title or ""
+    if any(c in t for c in _OWL_ANGLE_CUES):
+        return "owl"
+    if any(c in t for c in _ROBOT_ANGLE_CUES):
+        return "robot"
+    return pick_character(topic_category, None)
+
 
 def _wrap(draw, text: str, font, max_w: int) -> list:
     """Greedy CJK wrap; keep ASCII/number tokens unbroken."""
@@ -104,8 +124,8 @@ def render_meta_character_cover(
     if aspect not in _SIZES:
         return None
     W, H = _SIZES[aspect]
-    char = character if character in ("robot", "owl") else pick_character(topic_category, mode)
-    expr = pick_expression(topic_category, mode, title)
+    char = character if character in ("robot", "owl") else _pick_meta_character(topic_category, title)
+    expr = pick_expression(topic_category, mode, title, character=char)
     asset = _find_asset(char, expr)
     if asset is None:
         return None

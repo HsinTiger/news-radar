@@ -186,13 +186,14 @@ _EXPRESSION_HINTS: dict = {
 _DEFAULT_EXPRESSION = {"robot": "gotcha", "owl": "ahha"}
 
 
-def pick_expression(topic_category=None, mode=None, title=None) -> str:
+def pick_expression(topic_category=None, mode=None, title=None, character=None) -> str:
     """Map a post's category/mode/title-mood → a character expression (Cover System
     D1, aligned to the live 發文類別). Character-first so we never cross species:
-    robot expressions for hard topics, owl for soft. Returns an expression key that
-    lives in _EXPRESSION_HINTS; if its asset is missing the compositor self-heals to
-    the species default (see character_cover._find_asset)."""
-    char = pick_character(topic_category, mode)
+    robot expressions for hard topics, owl for soft. Pass ``character`` to force the
+    species (e.g. Meta's title-angle picker) so the expression matches the chosen IP.
+    Returns an expression key in _EXPRESSION_HINTS; missing asset → compositor
+    self-heals to the species default (see character_cover._find_asset)."""
+    char = character if character in ("robot", "owl") else pick_character(topic_category, mode)
     t = (title or "").strip()
     tc = (topic_category or "").strip()
     if char == "robot":
