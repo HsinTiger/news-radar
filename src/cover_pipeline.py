@@ -56,6 +56,7 @@ Public API
 from __future__ import annotations
 
 import logging
+import os
 import random
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,7 +65,7 @@ from typing import Dict, Optional
 from PIL import Image
 
 from . import image_manager
-from .cover_renderer import ASSETS_DIR, CoverInput, OVERLAY_RGB, render_cover
+from .cover_renderer import ASSETS_DIR, COVER_CACHE_DIR, CoverInput, OVERLAY_RGB, render_cover
 from .cover_uploader import upload_cover
 
 logger = logging.getLogger(__name__)
@@ -220,14 +221,35 @@ async def prepare_publish_image(
         date_str=date_str or when.strftime("%Y/%m/%d"),
     )
     aspect = ASPECT_FOR_PLATFORM[platform_key]
-    try:
-        cover_path = render_cover(inp, aspect)
-    except Exception as exc:
-        logger.warning(
-            "[cover_pipeline] render failed for %s (%s); passthrough",
-            platform_key, exc,
-        )
-        return _passthrough(original_image_url)
+    cover_path = None
+    # Route A (2026-06-23 Hsin): IP 角色封面 — cream + 瑞瑞/達達（依 topic_category 自動選角）+ 標題，
+    # 與 Substack 封面同一套視覺。off-switch: META_CHARACTER_COVER=0。沒素材/出錯 → 退新聞照封面。
+    if os.getenv("META_CHARACTER_COVER", "1") != "0":
+        try:
+            from src.character_cover_meta import render_meta_character_cover
+            cover_path = render_meta_character_cover(
+                title=title or "(無標題)", subtitle=subtitle,
+                topic_category=topic_category, aspect=aspect,
+                output_dir=COVER_CACHE_DIR,
+                brand_name=("@" + BRAND_NAME_FOR_PLATFORM[platform_key]
+                            if not BRAND_NAME_FOR_PLATFORM[platform_key].startswith(("@", "主"))
+                            else BRAND_NAME_FOR_PLATFORM[platform_key]),
+            )
+            if cover_path is not None:
+                logger.info("[cover_pipeline] %s → IP 角色封面", platform_key)
+        except Exception as exc:
+            logger.warning("[cover_pipeline] character cover failed (%s); 退新聞照封面", exc)
+            cover_path = None
+    # Route B (fallback): 新聞照封面（blurred 原圖 + navy overlay + 標題）。
+    if cover_path is None:
+        try:
+            cover_path = render_cover(inp, aspect)
+        except Exception as exc:
+            logger.warning(
+                "[cover_pipeline] render failed for %s (%s); passthrough",
+                platform_key, exc,
+            )
+            return _passthrough(original_image_url)
 
     # 3) Upload to cover-cdn → public URL.
     try:
