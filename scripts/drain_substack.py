@@ -16,11 +16,13 @@ Usage:
     python scripts/drain_substack.py --mark <id> # mark an id done without composing
 """
 from __future__ import annotations
-import argparse, json, re, sqlite3, subprocess, sys
+import argparse, json, os, re, sqlite3, subprocess, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DB = REPO / "data" / "01_harvest" / "news_radar.db"
+# NEWS_RADAR_DB 覆寫：讓「立即」快速通道（drain_substack_fast.sh）能指向一份剛從
+# state branch 拉下來的暫存 DB，完全不碰主 DB，避免和每小時的 compose_hourly.sh 互踩。
+DB = Path(os.environ.get("NEWS_RADAR_DB") or (REPO / "data" / "01_harvest" / "news_radar.db"))
 DONE_FILE = REPO / "data" / "substack_drafts" / ".substack_submissions.json"
 COMPOSE = REPO / "substack_radar" / "compose.py"
 ENRICH = REPO / "scripts" / "enrich_youtube_sources.py"
@@ -45,21 +47,25 @@ def _save_done(done: set):
     DONE_FILE.write_text(json.dumps({"done": sorted(done)}, ensure_ascii=False, indent=2))
 
 
-def _candidates() -> list:
+def _candidates(only_immediate: bool = False) -> list:
     if not DB.exists():
         print(f"[drain] DB not found: {DB}")
         return []
     conn = sqlite3.connect(str(DB))
     try:
         rows = conn.execute(
-            "SELECT id, title, word_count, url, clean_markdown FROM news_items "
+            "SELECT id, title, word_count, url, clean_markdown, COALESCE(tags,'') FROM news_items "
             "WHERE feed_name='user_substack' "
             "  AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 100 "
             "ORDER BY fetched_at ASC"
         ).fetchall()
     finally:
         conn.close()
-    return rows
+    if only_immediate:
+        # tags 是 json.dumps 的陣列字串；子字串比對即可（無其他 tag 含 "immediate"）。
+        rows = [r for r in rows if "immediate" in (r[5] or "")]
+    # 回傳維持 5 元組（id, title, word_count, url, clean_markdown），下游解包不變。
+    return [r[:5] for r in rows]
 
 
 def _yt_seeds(url, body) -> list:
@@ -99,6 +105,8 @@ def main():
     ap.add_argument("--mark", type=str, help="mark this id as done without composing")
     ap.add_argument("--no-enrich", action="store_true",
                     help="跳過 YouTube 深度素材包 enrichment（純用原始 submission 內文）")
+    ap.add_argument("--only-immediate", action="store_true",
+                    help="只處理被標 immediate 的投稿（給每 5 分鐘的快速 drain 用）")
     args = ap.parse_args()
 
     done = _load_done()
@@ -109,9 +117,12 @@ def main():
         print(f"[drain] marked done: {args.mark}")
         return 0
 
-    rows = _candidates()
+    rows = _candidates(only_immediate=args.only_immediate)
     pending = [r for r in rows if r[0] not in done]
-    print(f"[drain] {len(rows)} user_substack item(s), {len(pending)} pending compose")
+    scope = " (immediate only)" if args.only_immediate else ""
+    print(f"[drain] {len(rows)} user_substack item(s){scope}, {len(pending)} pending compose")
+    if args.only_immediate and not pending:
+        return 0  # 快速通道沒事就安靜結束（每 5 分鐘跑一次，不洗 log）
     for rid, title, wc, url, body in pending:
         tag = "  🎥yt" if (not args.no_enrich and _yt_seeds(url, body)) else ""
         print(f"  · {rid[:12]}  {wc:>6}w  {title[:50]}{tag}")

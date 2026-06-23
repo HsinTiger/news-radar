@@ -133,7 +133,9 @@ COMPANY_WATCHLIST_PATH = _REPO_ROOT / "substack_radar" / "config" / "company_wat
 SUBSTACK_USED_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".substack_used.json"
 EVENING_USED_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".evening_used.json"
 
-NEWS_DB_PATH = _REPO_ROOT / "data" / "01_harvest" / "news_radar.db"
+# NEWS_RADAR_DB 覆寫：讓 Substack「立即」快速通道把 --news-id 指向一份從 state branch
+# 拉下來的暫存 DB（drain_substack_fast.sh），完全不碰主 DB。預設仍是本機主 DB。
+NEWS_DB_PATH = Path(os.environ.get("NEWS_RADAR_DB") or (_REPO_ROOT / "data" / "01_harvest" / "news_radar.db"))
 
 
 # ---------------------------------------------------------------------------
@@ -1530,7 +1532,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     if _sid:
         try:
             import sqlite3 as _sq
-            _cx = _sq.connect(str(_REPO_ROOT / "data" / "01_harvest" / "news_radar.db"))
+            _cx = _sq.connect(str(NEWS_DB_PATH))
             _row = _cx.execute("SELECT url FROM news_items WHERE id=?", (_sid,)).fetchone()
             _cx.close()
             source_url = _row[0] if _row and _row[0] else None

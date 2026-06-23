@@ -124,3 +124,6 @@ tools/.last_emergency_draft_id
 llm-router-report/reports/
 .claude/
 reels_html/node_modules/
+
+# wrangler 本機快取
+cloudflare-worker/.wrangler/

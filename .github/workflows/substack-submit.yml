@@ -29,6 +29,11 @@ on:
         description: "備註 / 標題（選填）"
         required: false
         type: string
+      immediate:
+        description: "立即寫稿（Mac 每 5 分鐘的快速 drain 優先處理，不等每小時排程）"
+        required: false
+        default: "false"
+        type: string
 
 permissions:
   contents: write
@@ -76,9 +81,11 @@ jobs:
             image)   FLAG=--images ;;
             *)       echo "unknown source_type"; exit 1 ;;
           esac
+          IMM=""
+          [ "${{ inputs.immediate }}" = "true" ] && IMM="--immediate"
           python scripts/submit_substack.py \
             "$FLAG" "${{ inputs.content }}" \
-            --note "${{ inputs.note }}" 2>&1
+            --note "${{ inputs.note }}" $IMM 2>&1
 
       - name: Persist DB to state branch
         env:

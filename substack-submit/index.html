@@ -98,6 +98,11 @@
     <label style="margin-top:14px;">備註 / 標題（截圖類必填）</label>
     <input type="text" id="in-note" placeholder="給這篇一個主題或角度...">
 
+    <label style="display:flex;align-items:center;gap:8px;margin:16px 0 4px;cursor:pointer;font-weight:600;color:var(--fg);">
+      <input type="checkbox" id="immediate" style="width:auto;margin:0;"> ⚡ 立即寫稿（不等每小時排程）
+    </label>
+    <div id="sched" class="hint" style="margin:0 0 12px;">計算下次自動寫稿時段…</div>
+
     <button class="go" id="submit">送出到 Substack 佇列</button>
     <div class="status" id="status"></div>
   </div>
@@ -189,6 +194,7 @@ function showStatus(msg, kind){ const s=document.getElementById("status"); s.cla
 
 document.getElementById("submit").addEventListener("click", async () => {
   const note = document.getElementById("in-note").value.trim();
+  const immediate = document.getElementById("immediate").checked;
   let content;
 
   if(curType === "image"){
@@ -207,10 +213,13 @@ document.getElementById("submit").addEventListener("click", async () => {
     }
     showStatus("⏳ 送出中…", "info");
     const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ action:"submit", wf:"substack-submit.yml", inputs:{ source_type:curType, content, note } }) });
+      body: JSON.stringify({ action:"submit", wf:"substack-submit.yml",
+        inputs:{ source_type:curType, content, note, immediate: immediate ? "true" : "false" } }) });
     const j = await resp.json().catch(()=>({}));
     if(resp.ok && j.ok){
-      showStatus("✅ 已送出到 Substack 佇列！\nMac 下次同步後會自動寫稿。", "ok");
+      showStatus(immediate
+        ? "✅ 已送出（標記立即）！Mac 每 5 分鐘檢查一次，約 5-10 分鐘出稿。"
+        : "✅ 已送出到 Substack 佇列！\nMac 下次同步後（約整點）會自動寫稿。", "ok");
       ["url","text","youtube"].forEach(t => document.getElementById("in-"+t).value = "");
       document.getElementById("in-note").value = ""; pickedFiles = []; renderThumbs();
       setTimeout(loadHistory, 2500);
@@ -220,6 +229,11 @@ document.getElementById("submit").addEventListener("click", async () => {
   } catch(e){ showStatus("❌ " + e.message, "err"); }
   finally { btn.disabled = false; }
 });
+
+// 排程：Mac 每小時整點同步 state DB 後寫稿。顯示下一個整點當「不立即」的預計時段。
+(function(){ var now=new Date(), nxt=new Date(now); nxt.setHours(now.getHours()+1,0,0,0);
+  var el=document.getElementById("sched");
+  if(el) el.textContent="🗓️ 不立即的話，下次自動寫稿約：" + nxt.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'}) + "（每小時一輪）"; })();
 
 // ---- history ----
 const histEl = document.getElementById("history");

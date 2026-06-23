@@ -68,13 +68,20 @@ export default {
           });
           return json({ ok: r.status === 204, status: r.status, text: r.status === 204 ? "" : await r.text() }, r.status === 204 ? 200 : 502, cors);
         }
-        // 立即發送 → 觸發 full_pipeline.yml force_publish
+        // 立即發送：
+        //   有 url → publish_now.yml（直接 fetch→組稿→三平台發該網址，免進佇列、無競態）
+        //   沒 url → full_pipeline.yml force_publish（把佇列裡現有的東西現在就發一輪）
         if (b.action === "publish_now") {
-          const r = await fetch(`${GH}/repos/${REPO}/actions/workflows/full_pipeline.yml/dispatches`, {
+          const useUrl = (b.url || "").trim();
+          const wf = useUrl ? "publish_now.yml" : "full_pipeline.yml";
+          const inputs = useUrl
+            ? { url: useUrl, platforms: b.platforms || "fb,ig,threads", note: b.note || "" }
+            : { force_publish: "true" };
+          const r = await fetch(`${GH}/repos/${REPO}/actions/workflows/${wf}/dispatches`, {
             method: "POST", headers: gh,
-            body: JSON.stringify({ ref: "main", inputs: { force_publish: "true" } }),
+            body: JSON.stringify({ ref: "main", inputs }),
           });
-          return json({ ok: r.status === 204, status: r.status, text: r.status === 204 ? "" : await r.text() }, r.status === 204 ? 200 : 502, cors);
+          return json({ ok: r.status === 204, status: r.status, wf, text: r.status === 204 ? "" : await r.text() }, r.status === 204 ? 200 : 502, cors);
         }
       }
       return json({ error: "unknown action" }, 400, cors);

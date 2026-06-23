@@ -108,19 +108,17 @@
     <label>備註 / 標題（選填）</label>
     <input type="text" id="in-note" placeholder="給這篇一個角度...">
 
+    <label style="display:flex;align-items:center;gap:8px;margin:16px 0 4px;cursor:pointer;font-weight:600;color:var(--fg);">
+      <input type="checkbox" id="immediate" style="width:auto;margin:0;"> ⚡ 送出後立即發送（不等排程）
+    </label>
+    <div id="sched" class="hint" style="margin:0 0 12px;">計算下次自動發送時段…</div>
+
     <button class="go" id="submit">送出到 Meta 佇列</button>
     <div class="status" id="status"></div>
   </div>
 
-  <h2>🕐 排程 / 立即發送</h2>
-  <div class="card">
-    <div id="sched" class="hint">下次自動發送時段：計算中…（每 2 小時一輪）</div>
-    <button class="go" id="publishNow" style="background:var(--ok);margin-top:12px;">⚡ 立即發送（觸發雲端立刻發佈佇列）</button>
-    <div class="status" id="pubstatus"></div>
-  </div>
-
   <h2>🗂️ 我的提交紀錄</h2>
-  <div class="card" id="history"><div class="hint">設定 Token 後自動顯示最近的提交…</div></div>
+  <div class="card" id="history"><div class="hint">自動顯示最近的提交…</div></div>
 </div>
 
 <script>
@@ -198,10 +196,16 @@ async function uploadImages(){
 }
 function showStatus(msg, kind){ const s=document.getElementById("status"); s.className="status "+kind; s.textContent=msg; }
 
+function clearInputs(){
+  ["url","text","youtube"].forEach(t => document.getElementById("in-"+t).value = "");
+  document.getElementById("in-note").value = ""; pickedFiles = []; renderThumbs();
+}
+
 document.getElementById("submit").addEventListener("click", async () => {
   const plats = [...document.querySelectorAll(".plat.on")].map(e => e.dataset.p);
   if(plats.length === 0){ showStatus("⚠️ 請至少選一個平台。", "err"); return; }
   const note = document.getElementById("in-note").value.trim();
+  const immediate = document.getElementById("immediate").checked;
   let content;
 
   if(curType === "image"){
@@ -214,15 +218,35 @@ document.getElementById("submit").addEventListener("click", async () => {
   const btn = document.getElementById("submit"); btn.disabled = true;
   try {
     if(curType === "image"){ content = (await uploadImages()).join(","); }
+
+    // 網址 + 立即發送 → 直接走 publish_now.yml（fetch→組稿→三平台），不進佇列、不會重複發。
+    if(immediate && curType === "url"){
+      showStatus("⏳ 立即發佈中（直接抓網址 → 組稿 → 三平台）…", "info");
+      const ok = await firePublishNow({ url: content, platforms: plats.join(","), note });
+      if(ok){
+        showStatus("✅ 已觸發立即發佈！約 3-5 分鐘後上線。\n平台：" + plats.join(", "), "ok");
+        clearInputs(); setTimeout(loadHistory, 3000);
+      }
+      return;
+    }
+
+    // 其餘：先寫進 Meta 佇列。
     showStatus("⏳ 送出中…", "info");
     const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ action:"submit", source_type:curType, content, platforms:plats.join(","), note }) });
     const j = await resp.json().catch(()=>({}));
     if(resp.ok && j.ok){
-      showStatus("✅ 已送出到 Meta 佇列！\n平台：" + plats.join(", "), "ok");
-      ["url","text","youtube"].forEach(t => document.getElementById("in-"+t).value = "");
-      document.getElementById("in-note").value = ""; pickedFiles = []; renderThumbs();
-      setTimeout(loadHistory, 2500);
+      clearInputs(); setTimeout(loadHistory, 3000);
+      if(immediate){
+        // 非網址類無法直接定點發；觸發一輪 full_pipeline，把佇列現有內容現在就發出。
+        showStatus("✅ 已送出，正在觸發立即發佈…", "info");
+        const ok = await firePublishNow({});
+        showStatus(ok
+          ? "✅ 已送出並觸發立即發佈！\n（此類型會在最近一輪 pipeline 一起發出，約數分鐘）"
+          : "✅ 已送出到佇列，但立即發佈觸發失敗，將於下次排程發出。", ok ? "ok" : "err");
+      } else {
+        showStatus("✅ 已送出到 Meta 佇列！\n平台：" + plats.join(", "), "ok");
+      }
     } else {
       showStatus(`❌ 失敗 (HTTP ${j.status||resp.status})\n${j.text||j.error||""}`, "err");
     }
@@ -231,18 +255,23 @@ document.getElementById("submit").addEventListener("click", async () => {
 });
 
 const histEl = document.getElementById("history");
+async function fetchRuns(wf){
+  try { const r = await fetch(WORKER+"?action=history&wf="+wf); if(!r.ok) return [];
+    return ((await r.json()).workflow_runs)||[]; } catch(e){ return []; }
+}
 async function loadHistory(){
   try {
-    const r = await fetch(WORKER+"?action=history&wf=submit-source.yml");
-    if(!r.ok){ histEl.innerHTML = `<div class="hint">無法載入紀錄 (HTTP ${r.status})</div>`; return; }
-    const data = await r.json();
-    const rows = (data.workflow_runs||[]).map(run => {
+    // 佇列提交（submit-source.yml）＋ 立即定點發佈（publish_now.yml）合併、依時間排序。
+    const [queued, direct] = await Promise.all([fetchRuns("submit-source.yml"), fetchRuns("publish_now.yml")]);
+    const runs = [...queued, ...direct].sort((a,b)=> new Date(b.created_at)-new Date(a.created_at)).slice(0,15);
+    if(runs.length === 0){ histEl.innerHTML = '<div class="hint">還沒有提交紀錄。</div>'; return; }
+    histEl.innerHTML = runs.map(run => {
       const t = new Date(run.created_at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
       const icon = run.conclusion==='success' ? '✅' : (run.conclusion===null ? '⏳' : '❌');
-      const title = (run.display_title||run.name||'').replace(LABEL_RE,'') || '(無標題)';
+      const bolt = /Publish Now/i.test(run.name||'') ? '⚡ ' : '';
+      const title = bolt + ((run.display_title||run.name||'').replace(LABEL_RE,'') || '(無標題)');
       return `<div class="hist-item"><span>${icon}</span><a href="${run.html_url}" target="_blank">${title}</a><span class="hist-time">${t}</span></div>`;
-    });
-    histEl.innerHTML = rows.join('') || '<div class="hint">還沒有提交紀錄。</div>';
+    }).join('');
   } catch(e){ histEl.innerHTML = `<div class="hint">載入紀錄錯誤：${e.message}</div>`; }
 }
 
@@ -253,20 +282,19 @@ function nextPublish(){ var now=new Date();
     if(u>now && u.getUTCHours()%2===1) return u; }
   return null; }
 (function(){ var d=nextPublish(), el=document.getElementById("sched");
-  if(d&&el) el.textContent="下次自動發送：約 "+d.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'})+"（每 2 小時一輪；不想等就按下面立即發送）"; })();
-document.getElementById("publishNow").addEventListener("click", async () => {
-  const ps=document.getElementById("pubstatus");
-  const btn=document.getElementById("publishNow"); btn.disabled=true;
-  ps.className="status info"; ps.textContent="⏳ 觸發雲端立即發佈中…";
+  if(d&&el) el.textContent="🗓️ 不立即發送的話，下次自動發送約：" + d.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'}) + "（每 2 小時一輪）"; })();
+// 立即發佈：帶 url → publish_now.yml（定點發該網址）；不帶 → full_pipeline force_publish。
+// 回傳是否成功；錯誤訊息直接寫進 #status，由呼叫端決定整體文案。
+async function firePublishNow(opts){
   try{
-    const r=await fetch(WORKER,{ method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ action:"publish_now" }) });
-    const j=await r.json().catch(()=>({}));
-    if(r.ok && j.ok){ ps.className="status ok"; ps.textContent="✅ 已觸發雲端立即發佈！約 3-5 分鐘後上線。"; }
-    else { ps.className="status err"; ps.textContent=`❌ 失敗 (HTTP ${j.status||r.status})\n${j.text||j.error||""}`; }
-  }catch(e){ ps.className="status err"; ps.textContent="❌ "+e.message; }
-  finally{ btn.disabled=false; }
-});
+    const r = await fetch(WORKER, { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(Object.assign({ action:"publish_now" }, opts||{})) });
+    const j = await r.json().catch(()=>({}));
+    if(r.ok && j.ok) return true;
+    showStatus(`❌ 立即發佈失敗 (HTTP ${j.status||r.status})\n${j.text||j.error||""}`, "err");
+    return false;
+  }catch(e){ showStatus("❌ 立即發佈："+e.message, "err"); return false; }
+}
 
 loadHistory();
 </script>

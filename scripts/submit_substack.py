@@ -45,7 +45,8 @@ SUBSTACK_FEED = "user_substack"
 
 
 def _save_substack_item(news_id: str, *, url: str | None, title: str,
-                        body: str, source_type: str, extra_tags: list[str]) -> dict:
+                        body: str, source_type: str, extra_tags: list[str],
+                        immediate: bool = False) -> dict:
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
         conn.close()
@@ -63,7 +64,10 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
         clean_markdown=body or "",
         word_count=len((body or "").split()),
         og_image_url=None,
-        tags=[SUBSTACK_TAG, "user_submission_substack", *extra_tags],
+        # `immediate` 標籤讓 Mac 端的快速 drain（每 5 分鐘）優先挑出這篇立刻寫稿，
+        # 不必等每小時的常規 drain。見 scripts/drain_substack.py --only-immediate。
+        tags=[SUBSTACK_TAG, "user_submission_substack", *extra_tags,
+              *(["immediate"] if immediate else [])],
         status="fetched",
     )
     dbmod.upsert_news(conn, item)
@@ -72,23 +76,24 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
             "word_count": item.word_count, "target": "substack"}
 
 
-def process_url(url: str, note: str = "") -> dict:
+def process_url(url: str, note: str = "", immediate: bool = False) -> dict:
     news_id = _make_news_id("substack_" + url)
     body = _fetch_page_text(url) or ""
     title = note or (url.split("/")[-1][:80] or "Substack submission")
     return _save_substack_item(news_id, url=url, title=title, body=body,
-                               source_type="article", extra_tags=[])
+                               source_type="article", extra_tags=[], immediate=immediate)
 
 
-def process_text(text: str, note: str = "") -> dict:
+def process_text(text: str, note: str = "", immediate: bool = False) -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
     title = note or (text[:60] + ("..." if len(text) > 60 else ""))
-    return _save_substack_item(news_id, url=None, title=title, body=text,
-                               source_type="text", extra_tags=["user_text"])
+    # NewsItem.url 是必填 str；全文投稿沒有來源網址 → 用空字串（下游 `if url` 與 None 同樣為假）。
+    return _save_substack_item(news_id, url="", title=title, body=text,
+                               source_type="text", extra_tags=["user_text"], immediate=immediate)
 
 
-def process_youtube(url: str, note: str = "") -> dict:
+def process_youtube(url: str, note: str = "", immediate: bool = False) -> dict:
     info = _extract_yt_transcript(url)
     if not info:
         # No transcript — fall back to treating it as a URL source.
@@ -97,22 +102,24 @@ def process_youtube(url: str, note: str = "") -> dict:
         body = f"# {note or 'YouTube'}\n\n（無字幕，Mac 端會用 Whisper 轉逐字稿）\n\n## 種子來源\n{url}\n"
         return _save_substack_item(news_id, url=url, title=note or "YouTube (no transcript)",
                                    body=body, source_type="youtube",
-                                   extra_tags=["youtube", "video", "enrich_yt", "no_caption"])
+                                   extra_tags=["youtube", "video", "enrich_yt", "no_caption"],
+                                   immediate=immediate)
     news_id = _make_news_id("substack_yt_" + info["video_id"])
     title = note or info["title"]
     body = f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}"
     return _save_substack_item(news_id, url=url, title=title, body=body,
-                               source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"])
+                               source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"],
+                               immediate=immediate)
 
 
-def process_youtube_multi(urls: list[str], note: str = "") -> dict:
+def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = False) -> dict:
     """多支 YouTube 種子（巨人之聲多源）：把全部網址寫進 body，讓 Mac 端 drain
     觸發 enrich_youtube_sources.py 建『一主題 × 多一手源 + 書面深度報告』素材包。"""
     urls = [u.strip() for u in urls if u.strip()]
     if not urls:
         return {"status": "error", "error": "no youtube urls"}
     if len(urls) == 1:
-        return process_youtube(urls[0], note)
+        return process_youtube(urls[0], note, immediate=immediate)
     key = hashlib.md5("|".join(sorted(urls)).encode()).hexdigest()
     news_id = _make_news_id("substack_ytmulti_" + key)
     seeds = "\n".join(urls)
@@ -121,13 +128,14 @@ def process_youtube_multi(urls: list[str], note: str = "") -> dict:
             f"全逐字稿（無字幕走 Whisper）＋自動搜尋對應書面深度報告）\n\n## 種子來源\n{seeds}\n")
     return _save_substack_item(news_id, url=urls[0], title=title, body=body,
                                source_type="youtube",
-                               extra_tags=["youtube", "video", "enrich_yt", "multi_source"])
+                               extra_tags=["youtube", "video", "enrich_yt", "multi_source"],
+                               immediate=immediate)
 
 
 _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
 
 
-def process_images(paths: list[str], note: str = "") -> dict:
+def process_images(paths: list[str], note: str = "", immediate: bool = False) -> dict:
     """One or more uploaded screenshots → ONE Substack draft seed.
 
     There is no OCR in the cloud, so `note` is REQUIRED and used as the textual
@@ -145,7 +153,8 @@ def process_images(paths: list[str], note: str = "") -> dict:
     refs = "\n".join(f"![screenshot]({_RAW_BASE}{p})" for p in paths)
     body = f"# {note}\n\n（使用者上傳 {len(paths)} 張截圖作為素材，主題：{note}）\n\n{refs}"
     return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=note, body=body,
-                               source_type="image", extra_tags=["user_image", f"images:{len(paths)}"])
+                               source_type="image", extra_tags=["user_image", f"images:{len(paths)}"],
+                               immediate=immediate)
 
 
 def main():
@@ -156,16 +165,18 @@ def main():
     p.add_argument("--yt", type=str, help="YouTube 網址；可逗號分隔多支（巨人之聲多源種子）")
     p.add_argument("--images", type=str, help="comma-separated repo-relative image paths")
     p.add_argument("--note", type=str, default="")
+    p.add_argument("--immediate", action="store_true",
+                   help="標記 immediate → Mac 端快速 drain（每 5 分鐘）優先立刻寫稿，不等每小時排程")
     args = p.parse_args()
 
     if args.url:
-        result = process_url(args.url, args.note)
+        result = process_url(args.url, args.note, immediate=args.immediate)
     elif args.text:
-        result = process_text(args.text, args.note)
+        result = process_text(args.text, args.note, immediate=args.immediate)
     elif args.yt:
-        result = process_youtube_multi(args.yt.split(","), args.note)
+        result = process_youtube_multi(args.yt.split(","), args.note, immediate=args.immediate)
     elif args.images:
-        result = process_images(args.images.split(","), args.note)
+        result = process_images(args.images.split(","), args.note, immediate=args.immediate)
     else:
         result = {"status": "error", "error": "one of --url / --text / --yt / --images required"}
 
