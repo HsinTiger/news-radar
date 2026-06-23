@@ -231,20 +231,31 @@ document.getElementById("submit").addEventListener("click", async () => {
     }
 
     // 其餘：先寫進 Meta 佇列。
+    const t0 = Date.now();
     showStatus("⏳ 送出中…", "info");
     const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ action:"submit", source_type:curType, content, platforms:plats.join(","), note }) });
     const j = await resp.json().catch(()=>({}));
     if(resp.ok && j.ok){
-      clearInputs(); setTimeout(loadHistory, 3000);
+      clearInputs();
       if(immediate){
-        // 非網址類無法直接定點發；觸發一輪 full_pipeline，把佇列現有內容現在就發出。
-        showStatus("✅ 已送出，正在觸發立即發佈…", "info");
-        const ok = await firePublishNow({});
-        showStatus(ok
-          ? "✅ 已送出並觸發立即發佈！\n（此類型會在最近一輪 pipeline 一起發出，約數分鐘）"
-          : "✅ 已送出到佇列，但立即發佈觸發失敗，將於下次排程發出。", ok ? "ok" : "err");
+        // 非網址類沒有可定點發佈的 url。關鍵：必須等「送進佇列」這支 workflow 真的跑完、把
+        // 項目寫進 state branch「之後」，才能觸發 full_pipeline。否則 full_pipeline 會在項目
+        // 落地前就 checkout 舊 state，結束時又把那份舊 state force-push 回去，反而把剛送的項目
+        // 洗掉（2026-06-23 踩過：文章因此整篇消失、從未發佈）。
+        showStatus("⏳ 已送出，正在等佇列寫入完成後再觸發發佈（約 1-2 分鐘，請先別關頁面）…", "info");
+        const res = await waitForSubmitRun(t0);
+        setTimeout(loadHistory, 1500);
+        if(res === "success"){
+          const ok = await firePublishNow({});
+          showStatus(ok
+            ? "✅ 已安全寫入佇列並觸發立即發佈！約 3-8 分鐘後上線。"
+            : "✅ 已安全寫入佇列；立即發佈觸發失敗，會在下次排程（≤2h）自動發出，不會遺失。", ok ? "ok" : "err");
+        } else {
+          showStatus("✅ 已安全寫入佇列。\n自動發佈未在等待時間內就緒，但項目已保存，會在下次排程（≤2h）自動發出。", "ok");
+        }
       } else {
+        setTimeout(loadHistory, 3000);
         showStatus("✅ 已送出到 Meta 佇列！\n平台：" + plats.join(", "), "ok");
       }
     } else {
@@ -283,6 +294,21 @@ function nextPublish(){ var now=new Date();
   return null; }
 (function(){ var d=nextPublish(), el=document.getElementById("sched");
   if(d&&el) el.textContent="🗓️ 不立即發送的話，下次自動發送約：" + d.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'}) + "（每 2 小時一輪）"; })();
+// 輪詢「送進佇列」的 submit-source run 直到 completed —— 以送出時間 t0 之後新建、最新的那
+// 筆 run 為準。回傳 conclusion（"success"/"failure"…）或 "timeout"。非網址立即發佈必須等它
+// success 才能觸發 full_pipeline，否則會把剛送的項目洗掉（見 submit 內註解）。
+async function waitForSubmitRun(t0, tries=30, gapMs=5000){
+  for(let i=0;i<tries;i++){
+    await new Promise(r=>setTimeout(r, gapMs));
+    const runs = await fetchRuns("submit-source.yml");
+    const mine = runs
+      .filter(r => new Date(r.created_at).getTime() >= t0 - 3000)
+      .sort((a,b)=> new Date(b.created_at) - new Date(a.created_at))[0];
+    if(mine && mine.status === "completed") return mine.conclusion || "completed";
+  }
+  return "timeout";
+}
+
 // 立即發佈：帶 url → publish_now.yml（定點發該網址）；不帶 → full_pipeline force_publish。
 // 回傳是否成功；錯誤訊息直接寫進 #status，由呼叫端決定整體文案。
 async function firePublishNow(opts){
