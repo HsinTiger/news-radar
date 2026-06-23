@@ -65,16 +65,7 @@
   <h1>提交來源 → Substack 草稿</h1>
   <p class="sub">送出後在雲端寫入佇列，你的 Mac 用 Claude/Gemini CLI 免費寫稿，草稿出現在 Substack + 本機 + OneDrive。</p>
 
-  <details id="tokset">
-    <summary>⚙️ 首次設定：GitHub Token（點開）</summary>
-    <p>用你的 GitHub Token 觸發雲端 workflow。建一個
-    <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">fine-grained PAT</a>，
-    Repository 選 <code>HsinTiger/news-radar</code>，權限給 <b>Contents: Read and write</b> 與 <b>Actions: Read and write</b>，貼到下面（只存在你瀏覽器）。</p>
-    <label>GitHub Token</label>
-    <input type="text" id="pat" placeholder="github_pat_...">
-    <div class="hint">存在你瀏覽器 localStorage / 主畫面捷徑，不會上傳任何伺服器。與 Meta 頁共用同一把。<br>💡 把本頁「加入主畫面」後 token 就不會被 Safari 清掉，不用再輸入。</div>
-  </details>
-  <div id="tokind" class="hint" style="display:none;">✓ GitHub Token 已設定（已隱藏）。<a href="#" onclick="var d=document.getElementById('tokset');d.style.display='';d.open=true;this.parentNode.style.display='none';return false;">更換</a></div>
+  <p class="hint" style="margin-bottom:16px;">🔒 免輸入任何 token —— 提交經由雲端 Worker 安全代理（GitHub PAT 藏在伺服器端加密 secret）。直接填內容、送出即可。</p>
 
   <div class="card">
     <div class="types" id="types">
@@ -122,18 +113,8 @@ const LABEL_RE = /^📝 Substack: |^📱 Meta: /;
 let curType = "url";
 let pickedFiles = [];
 
-const patEl = document.getElementById("pat");
-// 2026-06-23: 一次性 setup 連結 #pat=... → 植入 localStorage（主畫面捷徑每次開都會重植，
-// 不怕 Safari 閒置 ~7 天清掉 localStorage）；植入後清掉網址列 token，並隱藏整個 Token 區塊。
-(function(){ var m=(location.hash||"").match(/[#&]pat=([^&]+)/);
-  if(m){ try{ localStorage.setItem("nr_pat", decodeURIComponent(m[1]).trim()); }catch(e){}
-         try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){} } })();
-patEl.value = localStorage.getItem("nr_pat") || "";
-function reflectToken(){ var has=!!(localStorage.getItem("nr_pat")||"").trim();
-  var s=document.getElementById("tokset"), i=document.getElementById("tokind");
-  if(s) s.style.display = has ? "none" : ""; if(i) i.style.display = has ? "" : "none"; }
-patEl.addEventListener("input", () => { localStorage.setItem("nr_pat", patEl.value.trim()); reflectToken(); loadHistory(); });
-reflectToken();
+// 2026-06-23: 不再需要瀏覽器端 token。改打 Cloudflare Worker（PAT 藏在 Worker 加密 secret）。
+const WORKER = "https://news-radar-submit.smartmmmoney.workers.dev";
 
 document.querySelectorAll(".type-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -187,7 +168,7 @@ function downscale(file, max=1600, q=0.85){
   });
 }
 
-async function uploadImages(pat){
+async function uploadImages(){
   const date = new Date().toISOString().slice(0,10);
   const paths = [];
   for(let i=0;i<pickedFiles.length;i++){
@@ -195,12 +176,10 @@ async function uploadImages(pat){
     const b64 = await downscale(pickedFiles[i]);
     const uuid = Math.random().toString(36).slice(2,10);
     const path = `data/uploads/${date}/${uuid}_${i}.jpg`;
-    const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
-      method:"PUT",
-      headers:{ "Authorization":"Bearer "+pat, "Accept":"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28" },
-      body: JSON.stringify({ message:"upload screenshot "+path, content:b64, branch:"main" })
-    });
-    if(!r.ok) throw new Error(`圖片上傳失敗 (HTTP ${r.status}) ${await r.text()}`);
+    const r = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ action:"image", path, b64 }) });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || !j.ok) throw new Error(`圖片上傳失敗 (HTTP ${j.status||r.status}) ${j.text||j.error||""}`);
     paths.push(path);
   }
   return paths;
@@ -209,8 +188,6 @@ async function uploadImages(pat){
 function showStatus(msg, kind){ const s=document.getElementById("status"); s.className="status "+kind; s.textContent=msg; }
 
 document.getElementById("submit").addEventListener("click", async () => {
-  const pat = patEl.value.trim();
-  if(!pat){ showStatus("⚠️ 請先設定 GitHub Token。", "err"); return; }
   const note = document.getElementById("in-note").value.trim();
   let content;
 
@@ -225,22 +202,20 @@ document.getElementById("submit").addEventListener("click", async () => {
   const btn = document.getElementById("submit"); btn.disabled = true;
   try {
     if(curType === "image"){
-      const paths = await uploadImages(pat);
+      const paths = await uploadImages();
       content = paths.join(",");
     }
-    showStatus("⏳ 觸發雲端 workflow 中…", "info");
-    const resp = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
-      method:"POST",
-      headers:{ "Authorization":"Bearer "+pat, "Accept":"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28" },
-      body: JSON.stringify({ ref:"main", inputs:{ source_type:curType, content, note } })
-    });
-    if(resp.status === 204){
+    showStatus("⏳ 送出中…", "info");
+    const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ action:"submit", wf:"substack-submit.yml", inputs:{ source_type:curType, content, note } }) });
+    const j = await resp.json().catch(()=>({}));
+    if(resp.ok && j.ok){
       showStatus("✅ 已送出到 Substack 佇列！\nMac 下次同步後會自動寫稿。", "ok");
       ["url","text","youtube"].forEach(t => document.getElementById("in-"+t).value = "");
       document.getElementById("in-note").value = ""; pickedFiles = []; renderThumbs();
       setTimeout(loadHistory, 2500);
     } else {
-      showStatus(`❌ 失敗 (HTTP ${resp.status})\n${await resp.text()}\n\n常見：PAT 權限不足（需 Contents + Actions: Read and write）。`, "err");
+      showStatus(`❌ 失敗 (HTTP ${j.status||resp.status})\n${j.text||j.error||""}`, "err");
     }
   } catch(e){ showStatus("❌ " + e.message, "err"); }
   finally { btn.disabled = false; }
@@ -249,10 +224,8 @@ document.getElementById("submit").addEventListener("click", async () => {
 // ---- history ----
 const histEl = document.getElementById("history");
 async function loadHistory(){
-  const pat = patEl.value.trim(); if(!pat){ return; }
   try {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=15`, {
-      headers:{ "Authorization":"Bearer "+pat, "Accept":"application/vnd.github+json" } });
+    const r = await fetch(WORKER+"?action=history&wf=substack-submit.yml");
     if(!r.ok){ histEl.innerHTML = `<div class="hint">無法載入紀錄 (HTTP ${r.status})</div>`; return; }
     const data = await r.json();
     const rows = (data.workflow_runs||[]).map(run => {
