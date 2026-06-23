@@ -1,0 +1,9 @@
+{
+  "name": "News Radar · Substack 草稿提交",
+  "short_name": "Substack 提交",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#1877f2"
+}

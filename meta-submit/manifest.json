@@ -1,0 +1,9 @@
+{
+  "name": "News Radar · Meta 三平台提交",
+  "short_name": "Meta 提交",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#1877f2"
+}

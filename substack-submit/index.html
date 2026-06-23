@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>📝 Substack 草稿提交 · News Radar</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Substack 提交">
 <style>
   :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
           --accent:#ff6719; --ok:#2ea043; --err:#f85149; }
@@ -61,15 +65,16 @@
   <h1>提交來源 → Substack 草稿</h1>
   <p class="sub">送出後在雲端寫入佇列，你的 Mac 用 Claude/Gemini CLI 免費寫稿，草稿出現在 Substack + 本機 + OneDrive。</p>
 
-  <details>
+  <details id="tokset">
     <summary>⚙️ 首次設定：GitHub Token（點開）</summary>
     <p>用你的 GitHub Token 觸發雲端 workflow。建一個
     <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">fine-grained PAT</a>，
     Repository 選 <code>HsinTiger/news-radar</code>，權限給 <b>Contents: Read and write</b> 與 <b>Actions: Read and write</b>，貼到下面（只存在你瀏覽器）。</p>
     <label>GitHub Token</label>
     <input type="text" id="pat" placeholder="github_pat_...">
-    <div class="hint">儲存在 localStorage，不會上傳到任何伺服器。與 Meta 頁共用同一把。</div>
+    <div class="hint">存在你瀏覽器 localStorage / 主畫面捷徑，不會上傳任何伺服器。與 Meta 頁共用同一把。<br>💡 把本頁「加入主畫面」後 token 就不會被 Safari 清掉，不用再輸入。</div>
   </details>
+  <div id="tokind" class="hint" style="display:none;">✓ GitHub Token 已設定（已隱藏）。<a href="#" onclick="var d=document.getElementById('tokset');d.style.display='';d.open=true;this.parentNode.style.display='none';return false;">更換</a></div>
 
   <div class="card">
     <div class="types" id="types">
@@ -118,8 +123,17 @@ let curType = "url";
 let pickedFiles = [];
 
 const patEl = document.getElementById("pat");
+// 2026-06-23: 一次性 setup 連結 #pat=... → 植入 localStorage（主畫面捷徑每次開都會重植，
+// 不怕 Safari 閒置 ~7 天清掉 localStorage）；植入後清掉網址列 token，並隱藏整個 Token 區塊。
+(function(){ var m=(location.hash||"").match(/[#&]pat=([^&]+)/);
+  if(m){ try{ localStorage.setItem("nr_pat", decodeURIComponent(m[1]).trim()); }catch(e){}
+         try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){} } })();
 patEl.value = localStorage.getItem("nr_pat") || "";
-patEl.addEventListener("input", () => { localStorage.setItem("nr_pat", patEl.value.trim()); loadHistory(); });
+function reflectToken(){ var has=!!(localStorage.getItem("nr_pat")||"").trim();
+  var s=document.getElementById("tokset"), i=document.getElementById("tokind");
+  if(s) s.style.display = has ? "none" : ""; if(i) i.style.display = has ? "" : "none"; }
+patEl.addEventListener("input", () => { localStorage.setItem("nr_pat", patEl.value.trim()); reflectToken(); loadHistory(); });
+reflectToken();
 
 document.querySelectorAll(".type-btn").forEach(btn => {
   btn.addEventListener("click", () => {

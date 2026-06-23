@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>📱 Meta 三平台提交 · News Radar</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Meta 提交">
 <style>
   :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
           --accent:#1877f2; --ok:#2ea043; --err:#f85149; }
@@ -65,15 +69,16 @@
   <h1>提交來源 → FB / IG / Threads</h1>
   <p class="sub">送出後在雲端寫入 News Radar 佇列，經 compose → 三平台發文 pipeline 處理。</p>
 
-  <details>
+  <details id="tokset">
     <summary>⚙️ 首次設定：GitHub Token（點開）</summary>
     <p>用你的 GitHub Token 觸發雲端 workflow。建一個
     <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">fine-grained PAT</a>，
     Repository 選 <code>HsinTiger/news-radar</code>，權限給 <b>Contents: Read and write</b> 與 <b>Actions: Read and write</b>，貼到下面（只存在你瀏覽器）。</p>
     <label>GitHub Token</label>
     <input type="text" id="pat" placeholder="github_pat_...">
-    <div class="hint">儲存在 localStorage，不會上傳到任何伺服器。與 Substack 頁共用同一把。</div>
+    <div class="hint">存在你瀏覽器 localStorage / 主畫面捷徑，不會上傳任何伺服器。與 Substack 頁共用同一把。<br>💡 把本頁「加入主畫面」後 token 就不會被 Safari 清掉，不用再輸入。</div>
   </details>
+  <div id="tokind" class="hint" style="display:none;">✓ GitHub Token 已設定（已隱藏）。<a href="#" onclick="var d=document.getElementById('tokset');d.style.display='';d.open=true;this.parentNode.style.display='none';return false;">更換</a></div>
 
   <div class="card">
     <div class="types" id="types">
@@ -116,6 +121,13 @@
     <div class="status" id="status"></div>
   </div>
 
+  <h2>🕐 排程 / 立即發送</h2>
+  <div class="card">
+    <div id="sched" class="hint">下次自動發送時段：計算中…（每 2 小時一輪）</div>
+    <button class="go" id="publishNow" style="background:var(--ok);margin-top:12px;">⚡ 立即發送（觸發雲端立刻發佈佇列）</button>
+    <div class="status" id="pubstatus"></div>
+  </div>
+
   <h2>🗂️ 我的提交紀錄</h2>
   <div class="card" id="history"><div class="hint">設定 Token 後自動顯示最近的提交…</div></div>
 </div>
@@ -128,8 +140,17 @@ let curType = "url";
 let pickedFiles = [];
 
 const patEl = document.getElementById("pat");
+// 2026-06-23: 一次性 setup 連結 #pat=... → 植入 localStorage（主畫面捷徑每次開都會重植，
+// 不怕 Safari 閒置 ~7 天清掉 localStorage）；植入後清掉網址列 token，並隱藏整個 Token 區塊。
+(function(){ var m=(location.hash||"").match(/[#&]pat=([^&]+)/);
+  if(m){ try{ localStorage.setItem("nr_pat", decodeURIComponent(m[1]).trim()); }catch(e){}
+         try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){} } })();
 patEl.value = localStorage.getItem("nr_pat") || "";
-patEl.addEventListener("input", () => { localStorage.setItem("nr_pat", patEl.value.trim()); loadHistory(); });
+function reflectToken(){ var has=!!(localStorage.getItem("nr_pat")||"").trim();
+  var s=document.getElementById("tokset"), i=document.getElementById("tokind");
+  if(s) s.style.display = has ? "none" : ""; if(i) i.style.display = has ? "" : "none"; }
+patEl.addEventListener("input", () => { localStorage.setItem("nr_pat", patEl.value.trim()); reflectToken(); loadHistory(); });
+reflectToken();
 
 document.querySelectorAll(".type-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -251,6 +272,32 @@ async function loadHistory(){
     histEl.innerHTML = rows.join('') || '<div class="hint">還沒有提交紀錄。</div>';
   } catch(e){ histEl.innerHTML = `<div class="hint">載入紀錄錯誤：${e.message}</div>`; }
 }
+
+// 排程：full_pipeline cron = 奇數 UTC 小時 :17（每 2h）。算下一個、用本地時間顯示。
+function nextPublish(){ var now=new Date();
+  for(var i=0;i<48;i++){ var c=new Date(now.getTime()+i*3600000);
+    var u=new Date(Date.UTC(c.getUTCFullYear(),c.getUTCMonth(),c.getUTCDate(),c.getUTCHours(),17,0));
+    if(u>now && u.getUTCHours()%2===1) return u; }
+  return null; }
+(function(){ var d=nextPublish(), el=document.getElementById("sched");
+  if(d&&el) el.textContent="下次自動發送：約 "+d.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'})+"（每 2 小時一輪；不想等就按下面立即發送）"; })();
+const PUB_WORKFLOW="full_pipeline.yml";
+document.getElementById("publishNow").addEventListener("click", async () => {
+  const pat=(patEl.value.trim()||localStorage.getItem("nr_pat")||"");
+  const ps=document.getElementById("pubstatus");
+  if(!pat){ ps.className="status err"; ps.textContent="⚠️ 請先設定 GitHub Token。"; return; }
+  const btn=document.getElementById("publishNow"); btn.disabled=true;
+  ps.className="status info"; ps.textContent="⏳ 觸發雲端立即發佈中…";
+  try{
+    const r=await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${PUB_WORKFLOW}/dispatches`,{
+      method:"POST", headers:{"Authorization":"Bearer "+pat,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},
+      body: JSON.stringify({ ref:"main", inputs:{ force_publish:"true" } }) });
+    if(r.status===204){ ps.className="status ok"; ps.textContent="✅ 已觸發雲端立即發佈！約 3-5 分鐘後上線。"; }
+    else { ps.className="status err"; ps.textContent=`❌ 失敗 (HTTP ${r.status})\n${await r.text()}`; }
+  }catch(e){ ps.className="status err"; ps.textContent="❌ "+e.message; }
+  finally{ btn.disabled=false; }
+});
+
 loadHistory();
 </script>
 </body>
