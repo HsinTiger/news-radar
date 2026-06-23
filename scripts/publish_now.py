@@ -76,8 +76,11 @@ async def _publish_platform(pf: str, cover_title: str, carousel, caption: str) -
 
 
 async def main() -> int:
-    ap = argparse.ArgumentParser(description="Immediate single-URL carousel publish")
-    ap.add_argument("--url", required=True)
+    ap = argparse.ArgumentParser(description="Immediate single-item carousel publish (url 或 title+text)")
+    ap.add_argument("--url", help="文章網址（擇一：--url，或 --title 搭 --text/--file）")
+    ap.add_argument("--title", default="", help="標題（不抓 url 時，搭配 --text/--file 使用）")
+    ap.add_argument("--text", default="", help="直接給文章內文")
+    ap.add_argument("--file", default="", help="從檔案讀文章內文（markdown / 純文字）")
     ap.add_argument("--platforms", default="fb,ig,threads", help="comma list: fb,ig,threads")
     ap.add_argument("--note", default="", help="optional editorial hint fed to the composer")
     args = ap.parse_args()
@@ -90,11 +93,25 @@ async def main() -> int:
     if not plats:
         print("[publish_now] ❌ no valid platforms"); return 2
 
-    print(f"[publish_now] 🔗 fetching {args.url}", flush=True)
-    try:
-        title, text = fetch_article(args.url)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[publish_now] ❌ fetch failed: {exc}"); return 2
+    # 取得 (title, text)：有 url → 抓網頁；否則用 --title + --text/--file（直接給文字，
+    # 例如從救回的草稿重發、或文字型立即發送，免抓網頁、免進佇列）。
+    if args.url:
+        print(f"[publish_now] 🔗 fetching {args.url}", flush=True)
+        try:
+            title, text = fetch_article(args.url)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[publish_now] ❌ fetch failed: {exc}"); return 2
+    else:
+        title = args.title.strip()
+        text = args.text
+        if args.file:
+            try:
+                text = Path(args.file).read_text(encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[publish_now] ❌ 讀檔失敗: {exc}"); return 2
+        text = (text or "").strip()
+        if not title or not text:
+            print("[publish_now] ❌ 需要 --url，或 --title 搭配 --text/--file"); return 2
     print(f"[publish_now] 📄 title={title!r}  text={len(text)}字", flush=True)
     if len(text) < 80:
         print("[publish_now] ❌ 內文太短/抓不到 → 放棄"); return 2
