@@ -109,9 +109,9 @@
     <input type="text" id="in-note" placeholder="給這篇一個角度...">
 
     <label style="display:flex;align-items:center;gap:8px;margin:16px 0 4px;cursor:pointer;font-weight:600;color:var(--fg);">
-      <input type="checkbox" id="immediate" style="width:auto;margin:0;"> ⚡ 送出後立即發送（不等排程）
+      <input type="checkbox" id="immediate" checked style="width:auto;margin:0;"> ⚡ 送出後立即發送（直接組稿→三平台）
     </label>
-    <div id="sched" class="hint" style="margin:0 0 12px;">計算下次自動發送時段…</div>
+    <div id="sched" class="hint" style="margin:0 0 12px;">勾選＝直接發佈這一篇（約 3-8 分鐘上線）。</div>
 
     <button class="go" id="submit">送出到 Meta 佇列</button>
     <div class="status" id="status"></div>
@@ -219,45 +219,30 @@ document.getElementById("submit").addEventListener("click", async () => {
   try {
     if(curType === "image"){ content = (await uploadImages()).join(","); }
 
-    // 網址 + 立即發送 → 直接走 publish_now.yml（fetch→組稿→三平台），不進佇列、不會重複發。
-    if(immediate && curType === "url"){
-      showStatus("⏳ 立即發佈中（直接抓網址 → 組稿 → 三平台）…", "info");
-      const ok = await firePublishNow({ url: content, platforms: plats.join(","), note });
+    // 立即 → 一律走 publish_now（直接組稿→三平台發「這一篇」）。佇列那條路發文流程根本
+    // 不讀手動投稿（user_submission），歷來 0 篇發出，所以不能靠它。
+    if(immediate){
+      let payload;
+      if(curType === "url" || curType === "youtube") payload = { url: content, platforms: plats.join(","), note };
+      else if(curType === "text")                    payload = { title: note || content.slice(0,40), text: content, platforms: plats.join(","), note };
+      else /* image */                               payload = { title: note, text: note, platforms: plats.join(","), note };
+      showStatus("⏳ 立即發佈中（直接組稿 → FB / IG / Threads）…", "info");
+      const ok = await firePublishNow(payload);
       if(ok){
-        showStatus("✅ 已觸發立即發佈！約 3-5 分鐘後上線。\n平台：" + plats.join(", "), "ok");
+        showStatus("✅ 已觸發立即發佈！約 3-8 分鐘後上線。\n平台：" + plats.join(", "), "ok");
         clearInputs(); setTimeout(loadHistory, 3000);
       }
       return;
     }
 
-    // 其餘：先寫進 Meta 佇列。
-    const t0 = Date.now();
+    // 非立即 → 進佇列（誠實提醒：排程流程目前不會自動發手動投稿，要發請勾「立即發送」）。
     showStatus("⏳ 送出中…", "info");
     const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ action:"submit", source_type:curType, content, platforms:plats.join(","), note }) });
     const j = await resp.json().catch(()=>({}));
     if(resp.ok && j.ok){
-      clearInputs();
-      if(immediate){
-        // 非網址類沒有可定點發佈的 url。關鍵：必須等「送進佇列」這支 workflow 真的跑完、把
-        // 項目寫進 state branch「之後」，才能觸發 full_pipeline。否則 full_pipeline 會在項目
-        // 落地前就 checkout 舊 state，結束時又把那份舊 state force-push 回去，反而把剛送的項目
-        // 洗掉（2026-06-23 踩過：文章因此整篇消失、從未發佈）。
-        showStatus("⏳ 已送出，正在等佇列寫入完成後再觸發發佈（約 1-2 分鐘，請先別關頁面）…", "info");
-        const res = await waitForSubmitRun(t0);
-        setTimeout(loadHistory, 1500);
-        if(res === "success"){
-          const ok = await firePublishNow({});
-          showStatus(ok
-            ? "✅ 已安全寫入佇列並觸發立即發佈！約 3-8 分鐘後上線。"
-            : "✅ 已安全寫入佇列；立即發佈觸發失敗，會在下次排程（≤2h）自動發出，不會遺失。", ok ? "ok" : "err");
-        } else {
-          showStatus("✅ 已安全寫入佇列。\n自動發佈未在等待時間內就緒，但項目已保存，會在下次排程（≤2h）自動發出。", "ok");
-        }
-      } else {
-        setTimeout(loadHistory, 3000);
-        showStatus("✅ 已送出到 Meta 佇列！\n平台：" + plats.join(", "), "ok");
-      }
+      clearInputs(); setTimeout(loadHistory, 3000);
+      showStatus("✅ 已存進佇列。\n⚠️ 排程自動發佈目前不含手動投稿——要真的發出，請勾「立即發送」。", "ok");
     } else {
       showStatus(`❌ 失敗 (HTTP ${j.status||resp.status})\n${j.text||j.error||""}`, "err");
     }
@@ -286,31 +271,8 @@ async function loadHistory(){
   } catch(e){ histEl.innerHTML = `<div class="hint">載入紀錄錯誤：${e.message}</div>`; }
 }
 
-// 排程：full_pipeline cron = 奇數 UTC 小時 :17（每 2h）。算下一個、用本地時間顯示。
-function nextPublish(){ var now=new Date();
-  for(var i=0;i<48;i++){ var c=new Date(now.getTime()+i*3600000);
-    var u=new Date(Date.UTC(c.getUTCFullYear(),c.getUTCMonth(),c.getUTCDate(),c.getUTCHours(),17,0));
-    if(u>now && u.getUTCHours()%2===1) return u; }
-  return null; }
-(function(){ var d=nextPublish(), el=document.getElementById("sched");
-  if(d&&el) el.textContent="🗓️ 不立即發送的話，下次自動發送約：" + d.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'}) + "（每 2 小時一輪）"; })();
-// 輪詢「送進佇列」的 submit-source run 直到 completed —— 以送出時間 t0 之後新建、最新的那
-// 筆 run 為準。回傳 conclusion（"success"/"failure"…）或 "timeout"。非網址立即發佈必須等它
-// success 才能觸發 full_pipeline，否則會把剛送的項目洗掉（見 submit 內註解）。
-async function waitForSubmitRun(t0, tries=30, gapMs=5000){
-  for(let i=0;i<tries;i++){
-    await new Promise(r=>setTimeout(r, gapMs));
-    const runs = await fetchRuns("submit-source.yml");
-    const mine = runs
-      .filter(r => new Date(r.created_at).getTime() >= t0 - 3000)
-      .sort((a,b)=> new Date(b.created_at) - new Date(a.created_at))[0];
-    if(mine && mine.status === "completed") return mine.conclusion || "completed";
-  }
-  return "timeout";
-}
-
-// 立即發佈：帶 url → publish_now.yml（定點發該網址）；不帶 → full_pipeline force_publish。
-// 回傳是否成功；錯誤訊息直接寫進 #status，由呼叫端決定整體文案。
+// 立即發佈：帶 url → publish_now.yml 抓網頁發；帶 text → publish_now.yml 用 title+text 直接
+// 組稿發；兩者皆無 → full_pipeline force_publish（後備）。回傳是否成功；錯誤直接寫進 #status。
 async function firePublishNow(opts){
   try{
     const r = await fetch(WORKER, { method:"POST", headers:{"Content-Type":"application/json"},

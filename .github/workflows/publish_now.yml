@@ -9,8 +9,19 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Article URL to compose + publish now"
-        required: true
+        description: "Article URL（擇一：url，或 title+text）"
+        required: false
+        default: ""
+        type: string
+      title:
+        description: "標題（不抓 url 時，搭配 text）"
+        required: false
+        default: ""
+        type: string
+      text:
+        description: "文章內文（不抓 url 時直接給文字）"
+        required: false
+        default: ""
         type: string
       platforms:
         description: "Comma list: fb,ig,threads"
@@ -83,5 +94,7 @@ jobs:
           mkdir -p logs
           python scripts/publish_now.py \
             --url "${{ inputs.url }}" \
+            --title "${{ inputs.title }}" \
+            --text "${{ inputs.text }}" \
             --platforms "${{ inputs.platforms }}" \
             --note "${{ inputs.note }}" 2>&1 | tee logs/publish_now_last.log

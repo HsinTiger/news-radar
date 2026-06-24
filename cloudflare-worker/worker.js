@@ -68,15 +68,25 @@ export default {
           });
           return json({ ok: r.status === 204, status: r.status, text: r.status === 204 ? "" : await r.text() }, r.status === 204 ? 200 : 502, cors);
         }
-        // 立即發送：
-        //   有 url → publish_now.yml（直接 fetch→組稿→三平台發該網址，免進佇列、無競態）
-        //   沒 url → full_pipeline.yml force_publish（把佇列裡現有的東西現在就發一輪）
+        // 立即發送：一律走 publish_now.yml（直接組稿→三平台發「這一篇」，免進佇列、不碰
+        // state branch、無競態）。佇列那條路發文流程根本不讀 user_submission，永遠不會發。
+        //   有 url  → 抓網頁再組稿發佈
+        //   有 text → 直接用 title+text 組稿發佈（純文字投稿）
+        //   兩者皆無 → 後備：full_pipeline force_publish（純把佇列現有東西發一輪）
         if (b.action === "publish_now") {
           const useUrl = (b.url || "").trim();
-          const wf = useUrl ? "publish_now.yml" : "full_pipeline.yml";
-          const inputs = useUrl
-            ? { url: useUrl, platforms: b.platforms || "fb,ig,threads", note: b.note || "" }
-            : { force_publish: "true" };
+          const useText = (b.text || "").trim();
+          let wf, inputs;
+          if (useUrl) {
+            wf = "publish_now.yml";
+            inputs = { url: useUrl, title: "", text: "", platforms: b.platforms || "fb,ig,threads", note: b.note || "" };
+          } else if (useText) {
+            wf = "publish_now.yml";
+            inputs = { url: "", title: b.title || "", text: useText, platforms: b.platforms || "fb,ig,threads", note: b.note || "" };
+          } else {
+            wf = "full_pipeline.yml";
+            inputs = { force_publish: "true" };
+          }
           const r = await fetch(`${GH}/repos/${REPO}/actions/workflows/${wf}/dispatches`, {
             method: "POST", headers: gh,
             body: JSON.stringify({ ref: "main", inputs }),
