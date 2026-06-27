@@ -154,58 +154,80 @@ feeds:
     feed_added_at: 2026-04-19T00:00:00+00:00
     tags: [geopolitics, macro]
 
-  # === 加密貨幣產業 (Phase 8.15) ===
-  # 編輯方針：產業事件 / 協議升級 / 監管 / 機構動向 — 不收 alpha / 價格預測。
-  # 下列 RSS 路徑為常見官方 pattern；首次 harvest 跑起來若某一條回非 200 或 parse 失敗，
-  # 在 logs/ 會被捕捉成 DEAD_FEED，再進 config 裡改或移除。
-  - name: CoinDesk
-    url: https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml
+  # === 加密貨幣：2026-06-27 整類移除（信哥拍板：紅海、雜訊、不合新方向）===
+  #     原 CoinDesk / The Block / Decrypt / Cointelegraph 全數撤下。
+
+  # === 深度研究組織（SemiAnalysis 路線擴充，2026-06-27 · 皆 verified 200+XML）===
+  - name: Chips and Cheese
+    url: https://chipsandcheese.com/feed/
     tier: primary
     language: en
-    feed_added_at: 2026-04-19T00:00:00+00:00
-    tags: [crypto, news, industry]
-
-  - name: The Block
-    url: https://www.theblock.co/rss.xml
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [semiconductor, deep-research, hardware]
+  - name: Construction Physics
+    url: https://www.construction-physics.com/feed
+    tier: secondary
+    language: en
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [infrastructure, deep-research, industry]
+  - name: Damodaran on Valuation
+    url: https://aswathdamodaran.blogspot.com/feeds/posts/default
     tier: primary
     language: en
-    source_type: rss_summary
-    feed_added_at: 2026-04-19T00:00:00+00:00
-    tags: [crypto, news, institutional]
-    # Phase 8.15 首次 harvest 確認：RSS 本身 200，但所有文章頁 Cloudflare 403。
-    # 改用 rss_summary 模式：fetcher 從 RSS <description> 預填 clean_markdown，
-    # run_harvest.py 自動跳過 fetch_html。字數門檻降為 60（rss_summary 專屬）。
-    # 代價：每篇只有 80-200 字的 summary，無法支撐深度分析，但足夠 scorer 判斷訊號。
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [valuation, finance, deep-research]
 
-  - name: Decrypt
-    url: https://decrypt.co/feed
+  # === 台灣新聞 / 政治（2026-06-27 · 中文 · 皆 verified 200+XML）===
+  - name: 中央社 政治
+    url: https://feeds.feedburner.com/rsscna/politics
+    tier: primary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, politics, news]
+  - name: 中央社 國際
+    url: https://feeds.feedburner.com/rsscna/intworld
+    tier: primary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [international, world, news]
+  - name: 自由時報 政治
+    url: https://news.ltn.com.tw/rss/politics.xml
     tier: secondary
-    language: en
-    feed_added_at: 2026-04-19T00:00:00+00:00
-    tags: [crypto, news]
-
-  - name: Cointelegraph
-    url: https://cointelegraph.com/rss
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, politics, news]
+  - name: ETtoday 即時
+    url: https://feeds.feedburner.com/ettoday/realtime
     tier: secondary
-    language: en
-    source_type: rss_summary
-    feed_added_at: 2026-04-19T00:00:00+00:00
-    tags: [crypto, news]
-    # Phase 9 Item 1 (2026-04-28): rss_summary mode per silent feeds audit.
-    # Cointelegraph RSS bodies are 80-120 char summaries, tripping 200-word floor
-    # in regular article mode (34% drop rate). rss_summary: fetcher uses <description>,
-    # run_harvest skips fetch_html, word threshold drops to 60. Trade-off: ~100 char
-    # summaries vs. deep analysis, but sufficient for scorer classification + platform
-    # publishing. Resolves low draft yield + freshness-first queue starvation.
-    # 備註：Cointelegraph 價格/行情評論偏多，依賴 must_exclude_any 的 alpha 過濾詞過濾
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, news, entertainment, society]
+  - name: 聯合報 政治
+    url: https://udn.com/rssfeed/news/2/6638?ch=news
+    tier: secondary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, politics, news]
+  - name: 公視新聞 PTS
+    url: https://news.pts.org.tw/xml/newsfeed.xml
+    tier: primary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, news, public-broadcast]
 
-  # 以下 4 個源 Phase 8.15 首次 + 二次 harvest 確認失效，撤下（2026-04-19）：
-  #   * a16z crypto (a16zcrypto.com/feed/)：404，網站未公開 RSS
-  #   * Paradigm Research (paradigm.xyz/feed.xml)：404，網站未公開 RSS
-  #   * Bankless (bankless.substack.com/feed)：400 → (www.bankless.com/rss)：404
-  #     Bankless 這幾年換平台太多次，主站無穩定統一 RSS。放棄。
-  #
-  # 後續路徑：等有 headless-browser fetcher 或使用者自架 RSSHub 後，再補 VC / 研究類源。
+  # === 台灣事實查核 / 核實（2026-06-27 · 寫作流程的「查證/背書」層）===
+  - name: 台灣事實查核中心 TFC
+    url: https://tfc-taiwan.org.tw/feed
+    tier: primary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, factcheck, verify, official]
+  - name: MyGoPen 查核
+    url: https://www.mygopen.com/feeds/posts/default
+    tier: secondary
+    language: zh
+    feed_added_at: 2026-06-27T00:00:00+00:00
+    tags: [taiwan, factcheck, verify]
 
   # === Phase 8.20 新增：對齊 3 位 KOL 訊號風格 ===
   # 新加 feed 都標 `# UNVERIFIED` 附註。Hsin 首次跑 scripts/audit_feeds.py --urls-only
@@ -441,171 +463,14 @@ feeds:
 # ---------- 2. 關鍵字白名單 (Keyword Whitelist) ----------
 # 文章/影音必須命中至少一個關鍵字才進入處理流程
 keywords:
-  must_include_any:
-    # 華爾街大佬與財經巨頭
-    - Jamie Dimon
-    - Ray Dalio
-    - Bill Ackman
-    - Howard Marks
-    - Stanley Druckenmiller
-    - Jerome Powell
-    - Fed
-    - "Wall Street"
-    # 科技圈 CEO 與領袖
-    - Musk
-    - Elon
-    - "Sam Altman"
-    - "Satya Nadella"
-    - "Sundar Pichai"
-    - "Mark Zuckerberg"
-    - "Tim Cook"
-    - "Jensen Huang"
-    - "Lisa Su"
-    - "Peter Thiel"
-    - "Marc Andreessen"
-    - Karpathy
-    - Sutskever
-    - LeCun
-    # 軍工、國防與地緣政治
-    - Palantir
-    - "Alex Karp"
-    - Anduril
-    - "Palmer Luckey"
-    - "Peter Zeihan"
-    - "geopolitics"
-    - "defense"
-    - "Lockheed Martin"
-    - "military"
-    # 關鍵論壇與媒體關鍵字
-    - "World Economic Forum"
-    - WEF
-    - Davos
-    - "Milken Institute"
-    - CNBC
-    - WSJ
-    - Bloomberg
-    - interview
-    - CEO
-    # AI 模型與技術前哨
-    - Mistral
-    - Grok
-    - xAI
-    - Sora
-    - Midjourney
-    - "Apple Intelligence"
-    - AGI
-    - breakthrough
-    - benchmark
-    - leak
-    # 企業與產業鏈
-    - Anthropic
-    - OpenAI
-    - Claude
-    - GPT
-    - Gemini
-    - LLaMA
-    - agentic
-    - acquisition
-    - moat
-    - TSMC
-    - CoWoS
-    - HBM
-    - NVIDIA
-    # 人物與趨勢 (M7 Expansion)
-    - Musk
-    - Elon
-    - Sam Altman
-    - Trump
-    - Jensen Huang
-    - Karpathy
-    - Sutskever
-    - LeCun
-    # 模型與技術前哨 (M7 Expansion)
-    - Mistral
-    - Grok
-    - xAI
-    - Sora
-    - Midjourney
-    - Apple Intelligence
-    - AGI
-    - breakthrough
-    - benchmark
-    - leak
-    # 開發者工具
-    - "developer tool"
-    - coding agent
-    - "design tool"
-    - SaaS
-    - enterprise
-    # 加密貨幣產業 (Phase 8.15)
-    # 規則：用多字片語或長獨特詞，避免子字串陷阱
-    # （ETF→Netflix / SEC→second / DeFi→define / Circle→virtuous circle）
-    - Bitcoin
-    - Ethereum
-    - stablecoin
-    - Coinbase
-    - Binance
-    - Kraken
-    - Tether
-    - USDC
-    - MiCA
-    - "spot ETF"
-    - "Bitcoin ETF"
-    - "ETF flows"
-    - "ETF approval"
-    - "crypto regulation"
-    - "digital asset"
-    - tokenization
-    - Solana
-    - Chainlink
-    - Chainalysis
-    - OFAC
-    - CFTC
-    - Grayscale
-    - blockchain
-    - "proof of stake"
-    - "proof of work"
-    - "DeFi protocol"
-    - "layer 2"
-    - "Ethereum upgrade"
-
-    # === 2026-06-02 新增：繁體中文財經關鍵字 ===
-    - 營收
-    - 月增
-    - 月減
-    - 營收月增
-    - 營收月減
-    - 季報
-    - 財報
-    - EPS
-    - 每股
-    - 台股
-    - 殖利率
-    - 股利
-
-    # === 2026-06-02 新增：官方/政策關鍵字 ===
-    - "European Commission"
-    - ECB
-    - "central bank"
-    - "monetary policy"
-    - regulation
-    - regulatory
-    - legislation
-    - "supply chain"
-    - inflation
-    - GDP
-    - 半導體
-    - 晶片
-
-    # 若命中以下關鍵字，自動 Drop（雜訊過濾）
-    # Phase 8.15：移除 `crypto` 與 `web3`（不然新增的幣圈源整批進不來）
-    # 同步加上一組 alpha-filter 排除詞，把價格預測 / 年化收益攻略 / 投機氣味濾掉
+  # 2026-06-27 信哥拍板：移除白名單關鍵字。來源已嚴選（砍雜訊源、補台灣/查證源），
+  # 改由「精選來源」定義範疇，不再用 tech/finance 白名單把娛樂/台灣政治/國際新聞等
+  # 「被保留下來的題材」擋在門外。空 must_include_any → keyword_filter 直接放行
+  # （src/cleaner.py:188）。黑名單 must_exclude_any 仍保留以濾真正的 spam/scam。
+  must_include_any: []
   must_exclude_any:
     # 保留的舊排除詞（NFT / meme / celebrity / fan art / giveaway 仍視為雜訊）
     - NFT
-    - meme
-    - celebrity
-    - "fan art"
     - giveaway
     # Phase 8.15 新增：幣圈 alpha / 投機 / KOL 含糊文氣味
     # （注意：airdrop 會誤殺 Apple AirDrop，不放；ETF/SEC/DeFi 子字串陷阱太重，也不放排除）
