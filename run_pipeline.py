@@ -843,6 +843,14 @@ async def main():
             print(f"\n[Cadence] {reason}")
 
             pending_items = dbmod.get_pending_items(conn)
+            # 2026-06-27 時段選題路由：晚=政治桶、早午=市場桶優先（soft bias、桶內維持原序）。
+            # 藏在 EDITORIAL_MODE flag 後——關＝reorder no-op、完全沿用舊 weighted_score 行為（活下去）。
+            from src.slot_routing import reorder_by_slot, current_slot, editorial_mode
+            if editorial_mode():
+                _slot = current_slot()
+                if _slot:
+                    pending_items = reorder_by_slot(pending_items, _slot)
+                    print(f"[Slot] EDITORIAL_MODE on：slot={_slot} → 候選優先排「{_slot}」桶")
             if not pending_items:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] 無待處理項目。")
             elif not should_publish:
