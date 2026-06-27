@@ -609,10 +609,23 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
             "fallback 背景渲染封面（不再 skip）"
         )
 
+    # Phase 2 搜集：compose 前補「多源脈絡」增厚度（EDITORIAL_MODE 才跑；找不到/出錯就略過）。
+    from src.slot_routing import editorial_mode as _ed_mode
+    if _ed_mode():
+        try:
+            from src.gather import gather_brief
+            _tc = getattr(topic_cls, "category_id", None)
+            _brief = gather_brief(conn, news_id, title, topic_category=_tc)
+            if _brief:
+                content = content + "\n\n" + _brief
+                print(f"   📚 [Gather] 補入多源脈絡（{_brief.count(chr(10))} 行同主題來源）")
+        except Exception as _exc:  # noqa: BLE001 — 搜集失敗用原素材續寫，不擋出稿（活下去）
+            print(f"   ⚠️ [Gather] 例外，用原素材續寫：{_exc}")
+
     bundle = await compose_multi_platform(
-        title, 
-        content, 
-        final_img_url, 
+        title,
+        content,
+        final_img_url,
         editorial_note=score_data.editorial_note,
         platforms=active_platforms
     )
