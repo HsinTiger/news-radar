@@ -49,7 +49,7 @@ async def _return_none(*_a, **_kw):
 
 
 async def _high_score(*_a, **_kw):
-    from src.schema import NewsScore, ScoreBreakdown
+    from src.scorer import NewsScore, ScoreBreakdown
     return NewsScore(
         confidence_score=0.95,
         editorial_note="test editorial hook",
@@ -59,7 +59,6 @@ async def _high_score(*_a, **_kw):
             news_novelty=0.9,
             persona_fit=0.9,
         ),
-        primary_topic_tag="test",
     )
 
 

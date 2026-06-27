@@ -162,7 +162,7 @@ async def test_call_for_json_gemini_success(monkeypatch):
     monkeypatch.setattr("src.llm_brain._try_gemini", fake_gemini)
     monkeypatch.setattr("src.llm_brain._try_claude_cli", fake_claude)
 
-    r = await call_for_json(system="sys", prompt="p", response_model=_Demo)
+    r = await call_for_json(system="sys", prompt="p", response_model=_Demo, backends=("gemini", "claude_cli"))
     assert r.provider == "gemini"
     assert r.data == expected
     assert r.input_tokens == 50

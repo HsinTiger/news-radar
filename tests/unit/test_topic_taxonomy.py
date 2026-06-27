@@ -14,9 +14,9 @@ from src.topic_taxonomy import (
 
 
 def test_category_count_is_ten():
-    """Phase 8.20 seed 固定 10 類；新增/刪除類別視同 schema 變動，要提醒。"""
-    assert len(TOPIC_CATEGORIES) == 10, (
-        f"taxonomy 類別數被改動了：目前 {len(TOPIC_CATEGORIES)}，預期 10。"
+    """Phase 8.20 seed 固定 13 類；新增/刪除類別視同 schema 變動，要提醒。"""
+    assert len(TOPIC_CATEGORIES) == 13, (
+        f"taxonomy 類別數被改動了：目前 {len(TOPIC_CATEGORIES)}，預期 13。"
         "若要調整，請同步更新 schema.sql / topic_keywords.yaml / 這個測試。"
     )
 

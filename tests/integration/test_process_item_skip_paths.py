@@ -67,7 +67,7 @@ async def _noop_compose(*args, **kwargs):
 
 async def _fake_make_passthrough_score(monkeypatch):
     """給 composer-skip 測試用：讓 scorer 回一個高分 NewsScore，流程才會走到 composer。"""
-    from src.schema import NewsScore, ScoreBreakdown
+    from src.scorer import NewsScore, ScoreBreakdown
 
     async def _high_score(*_args, **_kwargs):
         return NewsScore(
@@ -79,7 +79,6 @@ async def _fake_make_passthrough_score(monkeypatch):
                 news_novelty=0.9,
                 persona_fit=0.9,
             ),
-            primary_topic_tag="test",
         )
 
     monkeypatch.setattr(run_pipeline, "score_news", _high_score)

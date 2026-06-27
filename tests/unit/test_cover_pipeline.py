@@ -16,9 +16,10 @@ from src.cover_pipeline import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Pass-through cases (no rendering should happen)
-# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def disable_character_cover(monkeypatch):
+    monkeypatch.setenv("META_CHARACTER_COVER", "0")
+
 
 @pytest.mark.asyncio
 async def test_no_image_url_uses_fallback_and_renders(tmp_path: Path):
