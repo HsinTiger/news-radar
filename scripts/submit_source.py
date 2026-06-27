@@ -134,7 +134,9 @@ def _extract_yt_transcript(url: str) -> Optional[Dict]:
 
     try:
         # Try manual subs first, fall back to auto-generated
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # youtube-transcript-api 1.x：class method list_transcripts() 改成 instance .list()。
+        # 0.6.x 的 .fetch() 因 YouTube 端點改版會 ParseError，故升級到 1.x（見 requirements.txt）。
+        transcript_list = YouTubeTranscriptApi().list(video_id)
         transcript = None
         lang = "zh-TW"
         try:

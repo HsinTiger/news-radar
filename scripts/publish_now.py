@@ -96,11 +96,24 @@ async def main() -> int:
     # 取得 (title, text)：有 url → 抓網頁；否則用 --title + --text/--file（直接給文字，
     # 例如從救回的草稿重發、或文字型立即發送，免抓網頁、免進佇列）。
     if args.url:
-        print(f"[publish_now] 🔗 fetching {args.url}", flush=True)
-        try:
-            title, text = fetch_article(args.url)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[publish_now] ❌ fetch failed: {exc}"); return 2
+        # YouTube 走逐字稿：trafilatura 讀影片頁只拿得到 ~78 字 → 必然 < 80 而放棄，
+        # 這正是 youtube 發文路徑「出錯」的原因。重用 submit_source 既有的逐字稿擷取。
+        # 註：雲端 GitHub runner IP 偶爾被 YouTube 擋；抓不到時給清楚訊息、可改本機或貼全文。
+        from scripts.submit_source import _extract_yt_transcript, YT_VIDEO_ID_RE
+        if YT_VIDEO_ID_RE.search(args.url):
+            print(f"[publish_now] ▶️ YouTube → 抓逐字稿 {args.url}", flush=True)
+            info = _extract_yt_transcript(args.url)
+            if not info or len((info.get("transcript") or "").strip()) < 80:
+                print("[publish_now] ❌ YouTube 抓不到逐字稿（無字幕／被擋）→ 放棄。"
+                      "可改用『全文』貼摘要，或在本機跑。"); return 2
+            title = (info.get("title") or args.note or "YouTube").strip()
+            text = info["transcript"]
+        else:
+            print(f"[publish_now] 🔗 fetching {args.url}", flush=True)
+            try:
+                title, text = fetch_article(args.url)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[publish_now] ❌ fetch failed: {exc}"); return 2
     else:
         title = args.title.strip()
         text = args.text
@@ -114,7 +127,8 @@ async def main() -> int:
             print("[publish_now] ❌ 需要 --url，或 --title 搭配 --text/--file"); return 2
     print(f"[publish_now] 📄 title={title!r}  text={len(text)}字", flush=True)
     if len(text) < 80:
-        print("[publish_now] ❌ 內文太短/抓不到 → 放棄"); return 2
+        print("[publish_now] ❌ 抓不到足夠內文（可能需登入／JS 渲染／防爬）→ 放棄。"
+              "請改用『全文』把內容貼上。"); return 2
 
     content = (f"{args.note}\n\n" if args.note else "") + text
     print("[publish_now] ✍️ composing…", flush=True)

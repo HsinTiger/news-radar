@@ -30,7 +30,7 @@ pytest>=7.0
 litellm>=1.60.0            # Unified API for 100+ LLM providers
 # ===== GitHub Actions deployment =====
 pygithub>=2.5.0           # GitHub API wrapper for repo management
-youtube-transcript-api==0.6.3  # YouTube transcript extraction for source submissions
+youtube-transcript-api>=1.2  # YouTube 逐字稿（1.x：0.6.x 的 fetch 因 YT 端點改版已壞）
 # ===== Reels/Short Video Generation (2026-06-03) =====
 edge-tts>=6.1.0           # Microsoft Edge TTS - free Chinese voiceover, no API key needed
 moviepy>=2.1.0
