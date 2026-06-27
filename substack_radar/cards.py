@@ -359,8 +359,6 @@ def render_cards(
     W, H = ASPECTS[aspect]
     pal = palette_for(topic_category)
     cards = cards[:5]
-    # Phase 5：IG 第一張卡改「金句卡」（僅 EDITORIAL_MODE；關／非 IG → 原樣，活下去）。
-    cards = _maybe_ig_quote_card(cards, aspect)
     total = len(cards)
     output_dir.mkdir(parents=True, exist_ok=True)
     out: List[Path] = []
