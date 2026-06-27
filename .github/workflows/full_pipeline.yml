@@ -212,6 +212,17 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ github.sha }}
         run: |
+          # Phase 0 互踩防護：persist 前先把 origin/state 上「並行 job 剛 push 的新列」
+          # （最常見＝手動投稿 user_submission）併進本地 DB，避免下面 orphan force-push
+          # 整碗覆蓋把對方剛加的列洗掉（曾兩次洗掉手動投稿）。全程 fail-safe、不阻斷 persist。
+          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
+            git -C "$GITHUB_WORKSPACE" fetch --quiet origin state 2>/dev/null || true
+            if git -C "$GITHUB_WORKSPACE" show origin/state:data/01_harvest/news_radar.db > /tmp/remote_state.db 2>/dev/null; then
+              python "$GITHUB_WORKSPACE/scripts/merge_state_db.py" \
+                "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" /tmp/remote_state.db || true
+              rm -f /tmp/remote_state.db
+            fi
+          fi
           STATE_DIR="$(mktemp -d)"
           cd "$STATE_DIR"
           git init -q -b state
