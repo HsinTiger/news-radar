@@ -262,4 +262,49 @@ policy_geopolitics:
   - "DOJ antitrust"
   - "semiconductor export"
 
+# === 2026-06-27 新增：晚間 slot（政治/政策/軍事/時事）類別 ===
+# 與 policy_geopolitics 同屬「晚間政治時事桶」；放最後＝低優先，只在自家特定詞命中、
+# 上面各類都 miss 時才歸這幾類（重疊到 policy 的個案讓 policy 先收，反正同桶）。
+tw_politics:
+  - "立法院"
+  - "立委"
+  - "朝野"
+  - "藍白"
+  - "藍綠"
+  - "民進黨"
+  - "國民黨"
+  - "民眾黨"
+  - "賴清德"
+  - "卓榮泰"
+  - "韓國瑜"
+  - "總統府"
+  - "行政院"
+  - "三讀"
+  - "付委"
+  - "罷免"
+  - "縣市長"
+  - "總預算"
+
+military_defense:
+  - "無人機"
+  - "無人載具"
+  - "軍購"
+  - "國防自主"
+  - "國防部"
+  - "台海"
+  - "軍演"
+  - "潛艦"
+  - "飛彈"
+  - "國軍"
+  - "defense procurement"
+
+current_affairs:
+  - "淹水"
+  - "豪雨"
+  - "颱風"
+  - "地震"
+  - "停班停課"
+  - "災情"
+  - "食安"
+
 # 注意：other 不定義 keywords — 若全部都 miss，classifier 會回 other（含低信心）

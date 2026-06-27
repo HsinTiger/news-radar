@@ -138,12 +138,43 @@ TOPIC_CATEGORIES: List[TopicCategory] = [
             "scorer 的基礎分勝出。"
         ),
     ),
+    # === 2026-06-27 新增：晚間 slot（政治/政策/軍事/時事）的桶 ===
+    # 配合台灣新聞/政治/軍事來源大改 + 一天三篇的時段三分（早午=市場、晚=政治時事）。
+    TopicCategory(
+        id="tw_politics",
+        display_name="台灣政治",
+        seed_weight=1.10,
+        description=(
+            "台灣國內政治：選舉、立法院朝野攻防、法案表決、政黨與政治人物動態、"
+            "地方政府施政與爭議。例：總預算/特別條例攻防、縣市長選戰、政院/立院/"
+            "總統府動態。守中立、不選邊——只陳述可查證事實與各方原話。"
+        ),
+    ),
+    TopicCategory(
+        id="military_defense",
+        display_name="軍事／國防",
+        seed_weight=1.05,
+        description=(
+            "軍事、國防自主、軍購與地緣軍事衝突。例：無人機／無人載具產業與條例、"
+            "軍購預算、台海安全、各國軍事行動與衝突。與 supply_chain/policy 重疊時，"
+            "若主角是『國防/軍事』面向歸這類。常與投資（國防供應鏈）相關。"
+        ),
+    ),
+    TopicCategory(
+        id="current_affairs",
+        display_name="時事／社會",
+        seed_weight=0.90,
+        description=(
+            "台灣社會大小事與重大時事：災防（豪雨/淹水/地震）、民生與重大社會事件、"
+            "公共議題。非純政治、非純科技商業，但有高關注度的『時事』。"
+        ),
+    ),
     TopicCategory(
         id="other",
         display_name="其它",
         seed_weight=0.70,
         description=(
-            "以上 9 類都不沾邊的消息。不直接刷掉（保留意外之財的渠道），但"
+            "以上各類都不沾邊的消息。不直接刷掉（保留意外之財的渠道），但"
             "權重打折。classifier 如果不確定就歸這類、別硬塞到其他類。"
         ),
     ),
