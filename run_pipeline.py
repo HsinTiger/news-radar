@@ -829,7 +829,19 @@ async def main():
                 # Phase 8.18：compose-only 模式的 buffer 上限檢查
                 queue_counts = dbmod.count_queue_status(conn)
                 queued_n = queue_counts.get("queued", 0)
-                if queued_n >= args.buffer_target:
+                # EDITORIAL_MODE 時段 buffer：只看「這個 slot 桶」有沒有料；桶空就 compose 一筆，
+                # 即使總 buffer 已被別桶（Mac 端非 slot-aware 填充）塞滿——否則晚間政治稿永遠擠不進。
+                from src.slot_routing import editorial_mode, current_slot, bucket_categories
+                _slot = current_slot() if editorial_mode() else None
+                if _slot:
+                    slot_n = dbmod.count_queued_in_categories(conn, bucket_categories(_slot))
+                    should_publish = slot_n < 1
+                    threshold = AUTO_PUBLISH_THRESHOLD
+                    reason = (f"slot={_slot} 桶已有料 ({slot_n})，跳過 compose" if slot_n >= 1
+                              else f"slot={_slot} 桶空 → compose 一筆")
+                    if not should_publish:
+                        print(f"\n[Compose-Only] {reason}")
+                elif queued_n >= args.buffer_target:
                     print(f"\n[Compose-Only] queue 已有 {queued_n} 筆 queued (≥{args.buffer_target})，buffer 已滿，本 cycle 跳過 compose")
                     should_publish = False
                     threshold = AUTO_PUBLISH_THRESHOLD

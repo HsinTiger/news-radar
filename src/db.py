@@ -734,7 +734,7 @@ def enqueue_draft(
     conn.commit()
 
 
-def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+def pick_freshest_queued(conn: sqlite3.Connection, prefer_categories=None) -> Optional[sqlite3.Row]:
     """Cloud publisher 的主選稿邏輯：挑 news_items.published_at 最新的那筆 queued draft。
 
     回傳單一 Row（包含 drafts + news_items 所有欄位）或 None。
@@ -760,8 +760,7 @@ def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     只改這裡會讓 dashboard 的文案、queue 的 UI 預期、以及 back-prop 的
     reflector rules 全部跟實際行為對不起來。
     """
-    return conn.execute(
-        """
+    _base = """
         SELECT d.*,
                n.published_at AS news_published_at,
                n.title        AS news_title,
@@ -774,10 +773,37 @@ def pick_freshest_queued(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
         JOIN news_items n ON d.news_id = n.id
         WHERE d.queue_status = 'queued'
           AND d.status IN ('approved', 'auto_approved')
-        ORDER BY n.published_at DESC
-        LIMIT 1
-        """
+    """
+    # EDITORIAL_MODE 時段路由：先試「該 slot 桶」裡最新的 queued draft；桶內沒料就
+    # 落到下面原本的 freshness-first（Phase 8.18 契約，預設 prefer_categories=None 完全不變）。
+    if prefer_categories:
+        cats = [c for c in prefer_categories if c]
+        if cats:
+            ph = ",".join("?" * len(cats))
+            row = conn.execute(
+                _base + f" AND n.topic_category IN ({ph}) ORDER BY n.published_at DESC LIMIT 1",
+                tuple(cats),
+            ).fetchone()
+            if row is not None:
+                return row
+    return conn.execute(_base + " ORDER BY n.published_at DESC LIMIT 1").fetchone()
+
+
+def count_queued_in_categories(conn: sqlite3.Connection, categories) -> int:
+    """數 queued（可直接發）draft 中、topic_category 落在 categories 的筆數。
+    給 EDITORIAL_MODE 的時段 buffer 用：某 slot 桶還沒料就該 compose，即使總 buffer 已被
+    別桶（Mac 端非 slot-aware 的填充）塞滿。"""
+    cats = [c for c in categories if c]
+    if not cats:
+        return 0
+    ph = ",".join("?" * len(cats))
+    row = conn.execute(
+        f"""SELECT COUNT(*) FROM drafts d JOIN news_items n ON d.news_id = n.id
+            WHERE d.queue_status = 'queued' AND d.status IN ('approved','auto_approved')
+              AND n.topic_category IN ({ph})""",
+        tuple(cats),
     ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:

@@ -38,6 +38,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      # 2026-06-27 啟用時段選題路由：晚=政治桶、早午=市場桶（soft bias、桶空自動退回最新）。
+      # 關掉就把這行刪掉/設空＝全線回舊行為（活下去）。Mac compose 端不設此旗、不受影響。
+      EDITORIAL_MODE: "1"
     timeout-minutes: 45
 
     steps:

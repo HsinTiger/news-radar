@@ -117,7 +117,10 @@ def _decide_cadence(conn, force: bool) -> tuple[bool, str, bool]:
 
 def _pick_draft(conn, allow_fallback: bool):
     """回傳 (row, mode) 或 (None, "empty")。mode ∈ {"fresh", "fallback"}."""
-    row = dbmod.pick_freshest_queued(conn)
+    # EDITORIAL_MODE 時段路由：晚優先發政治桶、早午優先發市場桶（soft——桶空自動退回最新）。
+    from src.slot_routing import editorial_mode, current_slot, bucket_categories
+    prefer = bucket_categories(current_slot()) if editorial_mode() else None
+    row = dbmod.pick_freshest_queued(conn, prefer_categories=(prefer or None))
     if row is not None:
         return row, "fresh"
     if allow_fallback:
