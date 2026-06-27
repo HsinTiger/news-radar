@@ -95,6 +95,31 @@ def _wrap(draw, text: str, font, max_w: int):
     return lines
 
 
+# 收尾用的標點邊界：截斷時盡量收在這些字元後，讓縮短後的標題/副標仍語意完整、不殘句。
+_BOUNDARY = "。！？!?，,、；;：:）)」』】》"
+
+
+def _cap_lines(lines, n, draw, font, max_w):
+    """把 wrap 後的行收進 ≤ n 行。沒超過 → 原樣；超過 → 只留前 n 行，並把第 n 行收在
+    標點/詞界＋補「…」：保證語意完整、不硬切在字中間、也不溢出文字區（封面寧可少
+    幾個字、不要殘句或爆框）。"""
+    lines = list(lines)
+    if len(lines) <= n:
+        return lines
+    kept = lines[:n]
+    last = kept[-1]
+    cut = -1
+    for i, ch in enumerate(last):
+        if ch in _BOUNDARY:
+            cut = i
+    base = (last[:cut + 1] if cut >= 2 else last).rstrip("，,、；;：:　 ")
+    tail = base + "…"
+    while len(base) > 1 and draw.textlength(tail, font=font) > max_w:
+        base = base[:-1].rstrip("，,、；;：:　 ")
+        tail = base + "…"
+    return kept[:-1] + [tail]
+
+
 def render_promise_cover(
     *,
     title: str,
@@ -117,9 +142,8 @@ def render_promise_cover(
     d.line((PAD, 120, PAD + 118, 120), fill=acc, width=6)
 
     # Hero title: auto-fit the largest size that fits ≤3 lines within the top half.
-    title_font = _font(FONT_TITLE_PATH, 80)
-    lines = _wrap(d, title, title_font, max_w)
-    line_h = int(80 * 1.18)
+    # 連最小字級都塞不下 3 行時 → 用最小字級＋邊界收尾「…」（不硬切字、不爆框溢到副標）。
+    title_font = lines = line_h = None
     for pt in range(148, 68, -6):
         f = _font(FONT_TITLE_PATH, pt)
         ls = _wrap(d, title, f, max_w)
@@ -127,6 +151,9 @@ def render_promise_cover(
         if len(ls) <= 3 and len(ls) * lh <= int(H * 0.50):
             title_font, lines, line_h = f, ls, lh
             break
+    if lines is None:
+        title_font, line_h = _font(FONT_TITLE_PATH, 70), int(70 * 1.18)
+        lines = _cap_lines(_wrap(d, title, title_font, max_w), 3, d, title_font, max_w)
     y = 180
     for ln in lines:
         d.text((PAD, y), ln, font=title_font, fill=ink)
@@ -134,9 +161,14 @@ def render_promise_cover(
 
     # Subtitle: anchored to a fixed bottom band (≤2 lines) so spacing is consistent.
     if subtitle:
+        # 先縮字級盡量塞進 2 行；真的還超過才收在標點邊界＋「…」（不中途硬切）。
         sf = _font(FONT_SUBTITLE_PATH, 38)
+        for spt in range(38, 29, -2):
+            sf = _font(FONT_SUBTITLE_PATH, spt)
+            if len(_wrap(d, subtitle, sf, max_w)) <= 2:
+                break
         sy = H - 215
-        for ln in _wrap(d, subtitle, sf, max_w)[:2]:
+        for ln in _cap_lines(_wrap(d, subtitle, sf, max_w), 2, d, sf, max_w):
             d.text((PAD, sy), ln, font=sf, fill=sub)
             sy += 52
 

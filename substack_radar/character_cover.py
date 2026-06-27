@@ -18,7 +18,7 @@ from typing import Optional
 
 from substack_radar.promise_cover import (
     W, H, KICKER, _font, _wrap, _hx, palette_for,
-    FONT_TITLE_PATH, FONT_SUBTITLE_PATH,
+    FONT_TITLE_PATH, FONT_SUBTITLE_PATH, _cap_lines,
 )
 from src.image_brain import pick_character, pick_expression, _anchor_gaze, _DEFAULT_EXPRESSION
 
@@ -128,9 +128,8 @@ def render_character_cover(
     d.line((title_x0, 116, title_x0 + 112, 116), fill=acc, width=6)
 
     # --- hero title: pure ink, auto-fit the largest size that fits ≤3 lines ---
-    title_font = _font(FONT_TITLE_PATH, 96)
-    lines = _wrap(d, title, title_font, tw)
-    line_h = int(96 * 1.16)
+    # 連最小字級都塞不下 3 行 → 用最小字級＋邊界收尾「…」（不硬切字、不爆框溢到副標）。
+    title_font = lines = line_h = None
     for pt in range(132, 56, -6):
         f = _font(FONT_TITLE_PATH, pt)
         ls = _wrap(d, title, f, tw)
@@ -138,6 +137,9 @@ def render_character_cover(
         if len(ls) <= 3 and len(ls) * lh <= int(H * 0.50):
             title_font, lines, line_h = f, ls, lh
             break
+    if lines is None:
+        title_font, line_h = _font(FONT_TITLE_PATH, 60), int(60 * 1.16)
+        lines = _cap_lines(_wrap(d, title, title_font, tw), 3, d, title_font, tw)
     y = 168
     for ln in lines:
         d.text((title_x0, y), ln, font=title_font, fill=ink)
@@ -145,9 +147,14 @@ def render_character_cover(
 
     # --- subtitle (muted), right under the title block ---
     if subtitle:
+        # 先縮字級盡量塞進 2 行；真的還超過才收在標點邊界＋「…」（不中途硬切）。
         sf = _font(FONT_SUBTITLE_PATH, 34)
+        for spt in range(34, 25, -2):
+            sf = _font(FONT_SUBTITLE_PATH, spt)
+            if len(_wrap(d, subtitle, sf, tw)) <= 2:
+                break
         sy = y + 18
-        for ln in _wrap(d, subtitle, sf, tw)[:2]:
+        for ln in _cap_lines(_wrap(d, subtitle, sf, tw), 2, d, sf, tw):
             d.text((title_x0, sy), ln, font=sf, fill=sub)
             sy += 46
 
