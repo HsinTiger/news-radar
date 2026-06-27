@@ -9,7 +9,14 @@ name: News Radar · Full Cloud Pipeline
 
 on:
   schedule:
-    - cron: "17 1,3,5,7,9,11,13,15,17,19,21,23 * * *"
+    # 2026-06-27 改：FB/IG（carousel）一天兩篇，挑台灣滑手機尖峰——早上起床 + 晚上到家。
+    # 少而好（信哥拍板：砍量、只發尖峰），取代原本每 2 小時一輪的洗版。台灣 = UTC+8。
+    # 排程刻意稍早於目標，吸收 GitHub Actions 排程延遲(~5–15min) + pipeline 跑稿(~6min)：
+    #   23:45 UTC = 07:45 台灣 → 貼文約 08:00 台灣（起床 / 通勤滑手機）
+    #   12:45 UTC = 20:45 台灣 → 貼文約 21:00 台灣（下班到家放鬆滑手機）
+    # 註：目前 Threads 也走同一條 carousel pipeline，會跟著一天兩篇；等 Threads 立場前線
+    #     獨立出來後再給它自己的節奏。Reels 仍走 reels_publish.yml（另議）。
+    - cron: "45 23,12 * * *"
   workflow_dispatch:
     inputs:
       force_publish:
