@@ -35,6 +35,12 @@ def editorial_mode() -> bool:
     return os.getenv("EDITORIAL_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def editor_enforce() -> bool:
+    """總編輯閘是否『真的殺稿』。預設關＝shadow mode（只跑五關、記 log，不擋發文），
+    讓人先觀察副編在真實稿上的判斷，校準後再 EDITOR_ENFORCE=1 開啟真殺。"""
+    return os.getenv("EDITOR_ENFORCE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def current_slot(now_utc: Optional[datetime] = None) -> Optional[str]:
     """依 UTC 小時推出當前 slot：'market'（早/午）/ 'politics'（晚）/ None（排程外）。
 

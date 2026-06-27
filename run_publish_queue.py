@@ -65,6 +65,7 @@ MAX_INTERVAL_SECONDS = 2 * 60 * 60       # 2h lower bound（頻率下限 = 至�
 # guard 主動攔、資料缺損已 mark_failed）都 exit 0。
 OUTCOME_PUBLISHED = "published"               # ≥1 平台成功 → exit 0
 OUTCOME_QUALITY_BLOCKED = "quality_blocked"   # guard 主動拒發 → exit 0（guard 正常工作）
+OUTCOME_EDITOR_KILLED = "editor_killed"       # 總編輯閘殺/退稿 → exit 0（編輯正常工作，非系統壞）
 OUTCOME_NO_PLATFORM_DRAFTS = "no_platform_drafts"  # 資料異常、已 mark_failed → exit 0
 OUTCOME_ALL_PLATFORMS_FAILED = "all_platforms_failed"  # Meta API 三平台全敗 → exit 1
 
@@ -169,6 +170,39 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
         # 不記 publish_log——這不是「發文失敗」而是 guard 主動拒發。
         # workflow 維持 exit 0（guard 做它該做的事，不是系統壞）。
         return OUTCOME_QUALITY_BLOCKED
+
+    # ---------- Phase 4：總編輯閘（EDITORIAL_MODE 才跑；fail-open 絕不擋發文）----------
+    # 在「機械式品質守門員」之後，加一層「總編輯」：跑編審五關殺填充物。殺/退＝不發、
+    # 標 failed、通知信哥手動處理（沿用 quality guard 的 notify 流程＝MVP 的人在環）。
+    from src.slot_routing import editorial_mode, current_slot, editor_enforce
+    if editorial_mode():
+        try:
+            from src.editor_desk import editor_review
+            _topic = row["topic_category"] if "topic_category" in row.keys() else None
+            try:
+                _dw = dbmod.get_topic_weight(conn, _topic) if _topic else None
+            except Exception:
+                _dw = None
+            _texts = [(pd["final_text"] or pd["full_text"] or "") for pd in platform_drafts]
+            _review_body = max(_texts, key=len) if _texts else ""
+            verdict = await editor_review(
+                title=guard_news_title, body=_review_body,
+                topic_category=_topic, demand_weight=_dw, slot=current_slot(),
+            )
+            one_line = f"[{verdict.verdict}] {verdict.reason} | ④{verdict.readable}"
+            if verdict.verdict in ("殺", "退"):
+                if editor_enforce():
+                    print(f"   🛑 [總編輯閘] 真殺 {one_line}")
+                    if not dry_run:
+                        dbmod.mark_queue_failed(conn, draft_id, reason=f"editor_{verdict.verdict}: {one_line[:180]}")
+                        notify_quality_block(draft_id=draft_id, reasons_one_line=("總編" + one_line)[:200])
+                    return OUTCOME_EDITOR_KILLED
+                # shadow mode（預設）：只記 log、照常發，讓信哥先觀察副編判斷再決定 enforce。
+                print(f"   👻 [總編輯閘·shadow] 本來會「{verdict.verdict}」（未 enforce、照發）：{one_line}")
+            else:
+                print(f"   ✅ [總編輯閘] 發：{verdict.reason[:60]}")
+        except Exception as exc:  # noqa: BLE001 — 總編閘任何故障都 fail-open、絕不擋發文（活下去）
+            print(f"   ⚠️ [總編輯閘] 例外，fail-open 放行：{exc}")
 
     image_url = row["og_image_url"]
     # og_video_url 暫不主動使用（Phase 8.18 範圍內；影片 path 已在 Phase 8.16 實作，
