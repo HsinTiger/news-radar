@@ -256,6 +256,22 @@ def finalize_variant(variant: PlatformVariant, platform: str) -> Tuple[PlatformV
         fixed = fixed.model_copy(update={"title": nt, "body": nb})
         for m in t_fixes + b_fixes:
             print(f"   ↳ [{platform} 用語] {m}")
+    # === Phase 5 分發（EDITORIAL_MODE）：FB 導流 — body 末尾補一句 Substack 深度版 CTA ===
+    # 「一個聲音、四個出口」：Threads 用 cta_pool 暗示、FB 給可點連結導到深度版、IG 走金句卡、
+    # Substack 是深度版本身。只動 fb，且在壓字數「之前」append、讓 CTA 算進 1000 上限。
+    # 關 flag / 出錯 → body 原樣（活下去、絕不擋發文）；cta 已在 body 內 → 不重複（冪等）。
+    if platform == "fb":
+        try:
+            from src.slot_routing import editorial_mode
+            if editorial_mode():
+                from src.cta_pool import fb_funnel_cta, SUBSTACK_URL
+                cta = fb_funnel_cta()
+                # 用 URL（非整句）判重 → 不管池子抽到哪一句，body 內已有連結就不再加（冪等）。
+                if cta and SUBSTACK_URL not in (fixed.body or ""):
+                    new_body = (fixed.body or "").rstrip() + "\n\n" + cta
+                    fixed = fixed.model_copy(update={"body": new_body})
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ↳ [FB導流] CTA 注入失敗，FB body 維持原樣：{type(exc).__name__}")
     limit = PLATFORM_LIMITS.get(platform, 500)
     squeezed, ok = _squeeze_to_limit(fixed, limit, platform)
     full_text = assemble_full_text(squeezed, platform)

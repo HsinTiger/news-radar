@@ -201,3 +201,40 @@ def peek_recent_history(n: int = 5) -> list[CTAStyle]:
 def get_history_path() -> Path:
     """exposed for tests + reflector"""
     return CTA_HISTORY_PATH
+
+
+# ===========================================================================
+# Phase 5 分發 · FB 導流（funnel）CTA — 2026-06-27
+# ===========================================================================
+# 與上面的 Threads CTA 同一個用意（把讀者帶到 Substack 深度版），但兩點刻意不同：
+#   1. FB 允許可點擊連結 → 直接給完整 URL（Threads 反指紋設計刻意不寫 URL）。
+#   2. 由 Python 決定性地 append 到 FB body 末尾、不走 LLM——FB 導流要穩、每篇都要有。
+# 聲線：去小丑、專業（「清醒非共識投資人」）。禁「歡迎訂閱／必看／錯過後悔」這類叫賣。
+# 整套只在 EDITORIAL_MODE 開時、由 composer.finalize_variant 對 fb 變體呼叫；
+# 任一步出錯 → 回空字串，FB body 維持原樣（活下去、絕不擋發文）。
+
+# 品牌 Substack（與 config/visual_brand_system.md、src/notify.py、§14.6 同一個域名）。
+SUBSTACK_URL = "https://hsin73.substack.com"
+
+# 風格池輪替、避免每篇同一句的指紋感。{url} 由 fb_funnel_cta 填入。
+_FB_FUNNEL_LINES: tuple[str, ...] = (
+    "完整推理與數據，深度版寫在 Substack：{url}",
+    "這篇的深度版（完整脈絡＋數據）在 Substack：{url}",
+    "短文先給結論，完整拆解在 Substack 深度版：{url}",
+    "想看到底怎麼推出來的，深度版在 Substack：{url}",
+)
+
+
+def fb_funnel_cta(url: Optional[str] = None) -> str:
+    """回傳一句 FB 用 Substack 導流 CTA（含可點連結）。出錯一律回空字串（活下去）。
+
+    這是 Threads CTA pool 的 FB 版：同樣把讀者導去 Substack 深度版，但 FB 給真連結、
+    且決定性 append（不靠 LLM）。從風格池隨機抽一句、降低指紋感。
+    """
+    try:
+        u = (url or SUBSTACK_URL).strip()
+        if not u:
+            return ""
+        return random.choice(_FB_FUNNEL_LINES).format(url=u)
+    except Exception:
+        return ""

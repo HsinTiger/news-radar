@@ -312,6 +312,40 @@ def build_cards(*, title: str, subtitle: str, carousel) -> List[Dict]:
     return cards[:5]
 
 
+def _maybe_ig_quote_card(cards: List[Dict], aspect: str) -> List[Dict]:
+    """Phase 5 分發（EDITORIAL_MODE）：IG 第一張封面卡 → 「金句卡」。
+
+    把全篇最利的一句判斷（carousel.insight_statement，已蒸餾在 insight 卡的 statement 裡）
+    拉上來當封面主視覺，仍走 IP 角色封面（瑞瑞/達達）——一句話 + 角色，滑到就被釘住。
+    只換封面卡的 hero 文字；換完不論走角色封面或退回字卡，主視覺都會是這句金句。
+
+    關 flag / 非 IG / 找不到金句 / 任一步出錯 → 原樣回傳，完全沿用原本的 title hook（活下去）。
+    複製封面卡而非就地改，確保不污染呼叫端共用的 cards（其他 aspect 還要用原 title）。
+    """
+    if aspect != "ig":
+        return cards
+    try:
+        from src.slot_routing import editorial_mode
+        if not editorial_mode():
+            return cards
+        if not cards or cards[0].get("type") != "cover":
+            return cards
+        quote = ""
+        for c in cards:
+            if c.get("type") == "insight":
+                quote = (c.get("statement") or "").strip()
+                break
+        quote = quote.strip("「」\"' 　").strip()
+        if not quote:
+            return cards
+        cover = dict(cards[0])                 # 複製、不動到呼叫端共用的 cards
+        cover["title"] = f"「{quote}」"
+        return [cover] + list(cards[1:])
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ↳ [IG金句卡] 產生失敗，沿用原封面 hook：{type(exc).__name__}")
+        return cards
+
+
 def render_cards(
     *,
     cards: List[Dict],
@@ -325,6 +359,8 @@ def render_cards(
     W, H = ASPECTS[aspect]
     pal = palette_for(topic_category)
     cards = cards[:5]
+    # Phase 5：IG 第一張卡改「金句卡」（僅 EDITORIAL_MODE；關／非 IG → 原樣，活下去）。
+    cards = _maybe_ig_quote_card(cards, aspect)
     total = len(cards)
     output_dir.mkdir(parents=True, exist_ok=True)
     out: List[Path] = []

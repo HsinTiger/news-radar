@@ -507,6 +507,26 @@ formulas are pure and Hsin-pinned, so they're shared across analyzers
 that correlate signal with engagement (Items 5/6/7). Imported by Item
 6 today; Items 5 / 7 will pick it up when they ship.
 
+### 6.6 EDITORIAL_MODE 分發層（Phase 5「一個聲音、四個出口」，2026-06-27）
+
+`EDITORIAL_MODE`（`src/slot_routing.py:33-35::editorial_mode()`，預設關）原本只 gating
+選題／搜集／查證／總編閘（Phases 0-4，見 `git log`）。Phase 5 把它延伸到**分發層**，
+讓 FB／IG／Threads／Substack 從同一篇稿長出彼此呼應的四個出口。本次（2026-06-27）落地兩條：
+
+| 出口 | 行為（只在 EDITORIAL_MODE 開時） | gate 點 |
+|---|---|---|
+| **IG 金句卡** | carousel 第一張封面卡的主視覺，從「標題 hook」換成「全篇最利的一句判斷」（`carousel.insight_statement`），仍走 IP 角色封面（瑞瑞/達達）。 | `substack_radar/cards.py::_maybe_ig_quote_card`（只在 `aspect=="ig"`，於 `render_cards` 開頭呼叫；**複製**封面卡、不污染呼叫端共用的 cards） |
+| **FB 導流** | FB body 末尾 append 一句含可點連結的 Substack CTA（`https://hsin73.substack.com`），驅動到深度版。 | `src/composer.py::finalize_variant`（只在 `platform=="fb"`、壓字數前 append，CTA 算進 1000 上限、以 URL 判重達成冪等）；CTA 句池在 `src/cta_pool.py::fb_funnel_cta`（Threads CTA pool 的 FB 版） |
+
+兩條都 fail-safe：旗標關／任一步出錯 → 完全沿用舊行為（IG 用標題 hook、FB 無 CTA、絕不 raise／絕不擋發文）。
+Threads 的 Substack CTA 早在 Phase 2（`src/cta_pool.py::decide_cta`，走 LLM、反指紋不寫 URL）就有；Substack 本身即深度版。
+驗證（本次 commit）：off-path FB `full_text` 兩次 finalize byte-identical 且無 substack；`render_cards` 在
+`aspect=="ig"` + 旗標開時，`compose_meta_character_cover` 收到的 `title` 為金句，旗標關/`aspect=="fb"` 時為原 hook。
+
+**SSOT 覆蓋缺口（open item）**：本檔「Last ground-truth pass」仍停在 2026-04-28；
+Phases 0-5 的 EDITORIAL_MODE 行為（slot 路由、gather、editor_desk、本分發層）尚未做完整
+ground-truth pass 併進 §1–§5。下次動 EDITORIAL_MODE 相關路徑時應補齊。
+
 ---
 
 ## 7. Case studies — failures that forced doc updates
@@ -676,6 +696,9 @@ See `news_radar/.claude/skills/<name>/SKILL.md` for the full definitions.
   current workload. Either upgrade the plan, or accept the cap and tune
   compose frequency down. Either way, once §7.1's fix is live, Claude CLI
   fallback should keep the pipeline running through Gemini outages.
+- EDITORIAL_MODE（Phases 0-5）整體尚未做完整 ground-truth pass 併進 §1–§5：
+  slot 路由、`src/gather.py`、`src/editor_desk.py`、Phase 5 分發層（§6.6）目前只在各模組 docstring
+  與本檔 §6.6 有記載。下次動到 EDITORIAL_MODE 路徑時，補一輪 §1–§5 並 bump「Last ground-truth pass」。
 
 ---
 
