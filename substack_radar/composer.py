@@ -151,7 +151,14 @@ class SubstackDraft(BaseModel):
         if isinstance(v, str):
             cap = {"title": 24, "subtitle": 80}.get(info.field_name)
             if cap and len(v) > cap:
-                return v[:cap].rstrip("，、。；：「」『』（）()【】 　")
+                # 在字數上限內收在「最後一個標點邊界」＝留一個語意完整的標題，而非從字
+                # 中間硬切（信哥 2026-06-28：要合理的標題、不要語意一半就斷）。找不到夠
+                # 靠後的邊界才退回硬切上限（保底）。
+                window = v[:cap]
+                cut = max((window.rfind(ch) for ch in "。！？!?，,、；;：:"), default=-1)
+                if cut >= cap // 2:        # 邊界要夠靠後，免得砍到只剩半句
+                    window = window[:cut + 1]
+                return window.rstrip("，、。；：:;,！？!?「」『』（）()【】 　")
         return v
 
     @model_validator(mode="before")

@@ -23,6 +23,7 @@ from src.cover_renderer import (
     TOPIC_CHIP_LABELS, _load_font,
 )
 from substack_radar.character_cover import _find_asset, _keyed_trim, _ASSET_FACES
+from substack_radar.promise_cover import _cap_lines
 
 _CREAM = (242, 238, 229)   # paper-cream ground
 _INK = (20, 20, 20)        # near-black title
@@ -76,7 +77,8 @@ def _fit_title(draw, title, max_w, max_total_h, pt_hi, pt_lo):
         if len(ls) <= 3 and len(ls) * lh <= max_total_h:
             return f, ls, lh
     f = _load_font(FONT_TITLE_PATH, pt_lo)
-    return f, _wrap(draw, title, f, max_w)[:3], int(pt_lo * 1.22)
+    # 連最小字級都塞不下 3 行 → 收在標點/詞界＋「…」（不硬切字、不爆框），不再硬丟尾段。
+    return f, _cap_lines(_wrap(draw, title, f, max_w), 3, draw, f, max_w), int(pt_lo * 1.22)
 
 
 def _chip(draw, x, y, label):
@@ -150,7 +152,7 @@ def compose_meta_character_cover(
         if subtitle:
             sf = _load_font(FONT_SUBTITLE_PATH, 44)
             sy = y + 16
-            for ln in _wrap(d, subtitle, sf, W - 2 * M)[:2]:
+            for ln in _cap_lines(_wrap(d, subtitle, sf, W - 2 * M), 2, d, sf, W - 2 * M):
                 d.text((M, sy), ln, font=sf, fill=_STONE)
                 sy += 58
         img.paste(cut, ((W - cut.width) // 2, H - 24 - char_h), cut)
@@ -176,7 +178,7 @@ def compose_meta_character_cover(
         if subtitle:
             sf = _load_font(FONT_SUBTITLE_PATH, 40)
             sy = y + 14
-            for ln in _wrap(d, subtitle, sf, tw)[:2]:
+            for ln in _cap_lines(_wrap(d, subtitle, sf, tw), 2, d, sf, tw):
                 d.text((tx0, sy), ln, font=sf, fill=_STONE)
                 sy += 52
 
