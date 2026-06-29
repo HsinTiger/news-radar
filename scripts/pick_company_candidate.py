@@ -1,69 +1,88 @@
 #!/usr/bin/env python3
-"""每週公司分析的半自動選股（週六跑）：watchlist × 本週新聞熱度 → 提 2-3 候選。
+"""每日公司分析選股（每天 11:25，由 substack_company job 串接 pick && compose 呼叫）：
+從 company_pool.txt（S&P500 + Russell3000）挑「還沒分析過」的一家，寫進 .company_next，
+並 append 到 .company_done（永久去重 → 每天不同公司、慢慢走完整個池，絕不重複）。
 
-寫進 data/substack_drafts/.company_next：第一行（非 # 開頭）的 ticker = 週日 09:00 要分析的公司。
-信哥若想換，把想要的 ticker 移到第一行即可；不動 → 自動取候選 top。compose.py company 會讀這檔。
+挑法：未分析過的公司裡，近 7 天新聞熱度最高者優先（夠即時）；都沒熱度 → 取池中下一個未分析的。
+once-per-day guard：今天已挑過（.company_done 末筆是今天）→ 不重挑、exit 1，讓串接的 compose
+跳過，避免「一天兩篇」（手動先跑一次 + 11:30 排程又跑）。
+信哥要指定 → 改 .company_next 第一行 ticker；要重分析某股 → 從 .company_done 移除該行。
 """
 from __future__ import annotations
-import sqlite3, subprocess, sys
+import sqlite3, subprocess, sys, datetime
 from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-WL_PATH = REPO / "substack_radar" / "config" / "company_watchlist.yaml"
+POOL_PATH = REPO / "substack_radar" / "config" / "company_pool.txt"
 NEXT_PATH = REPO / "data" / "substack_drafts" / ".company_next"
+DONE_PATH = REPO / "data" / "substack_drafts" / ".company_done"
 DB = REPO / "data" / "01_harvest" / "news_radar.db"
 
 
-def main() -> int:
-    import yaml
-    wl = (yaml.safe_load(WL_PATH.read_text(encoding="utf-8")) or {}).get("watchlist", [])
-    items = [(w["ticker"], w["name"], [w["name"]] + list(w.get("aliases", []))) for w in wl]
+def _load_pool():
+    items, seen = [], set()
+    if POOL_PATH.exists():
+        for ln in POOL_PATH.read_text(encoding="utf-8").splitlines():
+            if not ln.strip() or ln.lstrip().startswith("#"):
+                continue
+            parts = ln.split("\t")
+            tk = parts[0].strip()
+            nm = parts[1].strip() if len(parts) > 1 else tk
+            if tk and tk not in seen:
+                seen.add(tk); items.append((tk, nm))
+    return items
 
-    # 本週新聞熱度：每間公司在近 7 天 news_items 出現次數
+
+def _done_rows():
+    if not DONE_PATH.exists():
+        return []
+    return [l for l in DONE_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.lstrip().startswith("#")]
+
+
+def main() -> int:
+    today = datetime.date.today().isoformat()
+    rows = _done_rows()
+    if rows:
+        last = rows[-1].split("\t")
+        if len(last) >= 3 and last[2].strip() == today:
+            print(f"[pick] 今天（{today}）已挑過公司，跳過（避免一天兩篇）。"); return 1
+    items = _load_pool()
+    if not items:
+        print(f"[pick] 池空：{POOL_PATH}"); return 2
+    done = {r.split('\t')[0].split()[0] for r in rows}
+    undone = [(tk, nm) for tk, nm in items if tk not in done]
+    if not undone:
+        print(f"[pick] 整個池（{len(items)} 家）都分析過了——補池或清 .company_done。"); return 3
+
     heat: Counter = Counter()
     if DB.exists():
         try:
             conn = sqlite3.connect(str(DB))
-            rows = conn.execute(
+            blob = " ".join((t or "") + " " + (b or "") for t, b in conn.execute(
                 "SELECT title, substr(clean_markdown,1,600) FROM news_items "
-                "WHERE julianday('now') - julianday(fetched_at) < 7"
-            ).fetchall()
+                "WHERE julianday('now') - julianday(fetched_at) < 7").fetchall()).lower()
             conn.close()
-            blob = " ".join((t or "") + " " + (b or "") for t, b in rows).lower()
-            for tk, _name, aliases in items:
-                # 只用夠長、夠獨特的別名（避免 NOW→"now"、COIN→"coin" 這種短字串噪音）
-                keys = {k.lower() for k in aliases if len(str(k)) >= 4}
-                heat[tk] = sum(blob.count(k) for k in keys)
+            for tk, nm in undone:
+                key = nm.lower()
+                if len(key) >= 4:
+                    heat[tk] = blob.count(key)
         except Exception as e:
-            print(f"[pick] ⚠️ 熱度計算略過：{e}")
+            print(f"[pick] 熱度略過：{e}")
 
-    # 排除最近 8 週已分析過的（讀 .company_done）
-    done = set()
-    done_log = REPO / "data" / "substack_drafts" / ".company_done"
-    if done_log.exists():
-        done = {l.split()[0] for l in done_log.read_text(encoding="utf-8").splitlines() if l.strip()}
-
-    ranked = sorted(items, key=lambda x: -heat[x[0]])
-    cands = [c for c in ranked if c[0] not in done][:3] or ranked[:3]
-
-    lines = [
-        "# 本週公司分析候選（依本週新聞熱度排序）。",
-        "# 把你要分析的 ticker 放到第一行（非 # 開頭）即可；不改 → 週日 09:00 自動取下面第一個。",
-        "",
-    ]
-    for i, (tk, name, _a) in enumerate(cands):
-        prefix = "" if i == 0 else "# "
-        lines.append(f"{prefix}{tk}    # {name}（本週新聞熱度 {heat[tk]}）")
+    hot = [x for x in undone if heat[x[0]] > 0]
+    tk, nm = max(hot, key=lambda x: heat[x[0]]) if hot else undone[0]
     NEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    NEXT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    msg = "本週候選：" + "、".join(f"{tk}({name})" for tk, name, _ in cands)
-    print(f"[pick] {msg}\n[pick] 寫入 {NEXT_PATH}（改第一行可換股）")
+    NEXT_PATH.write_text(
+        "# 今日公司分析（每天 11:30 自動）。改第一行的 ticker 可指定要分析的公司。\n"
+        f"{tk}    # {nm}（近7天新聞熱度 {heat[tk]}）\n", encoding="utf-8")
+    with open(DONE_PATH, "a", encoding="utf-8") as f:
+        f.write(f"{tk}\t{nm}\t{today}\n")
+    print(f"[pick] 今日：{tk}（{nm}）熱度 {heat[tk]} | 池 {len(items)}・已分析 {len(done)+1}・剩 {len(undone)-1}")
     try:
         subprocess.run(["osascript", "-e",
-                        f'display notification "{msg}" with title "News Radar 週日公司分析候選"'],
-                       timeout=10)
+            f'display notification "今日：{tk} {nm}" with title "News Radar 每日財報分析"'], timeout=10)
     except Exception:
         pass
     return 0
