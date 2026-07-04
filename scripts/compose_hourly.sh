@@ -123,6 +123,9 @@ echo "↳ pipeline exit code: $PIPELINE_EXIT"
 echo ""
 echo "📤 Push DB 回 state branch..."
 STATE_DIR="$(mktemp -d)"
+# 2026-07-04 修 mktemp 洩漏：每輪 state-push 的暫存夾(含 80M DB 複本)用完要刪，否則
+# 累積(曾 115 個×80M＝7.4G)塞爆磁碟、Mac 卡死。trap 保證任何結束路徑都清掉。
+trap 'rm -rf "$STATE_DIR"' EXIT
 (
     cd "$STATE_DIR" || exit 10
     git init -q -b state
