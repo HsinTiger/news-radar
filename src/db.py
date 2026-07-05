@@ -403,6 +403,28 @@ def upsert_news(conn: sqlite3.Connection, item: NewsItem) -> bool:
     return True
 
 
+def prune_old_source_text(conn: sqlite3.Connection, keep_days: int = 14) -> int:
+    """把超過 keep_days 天的 news_items 的 clean_markdown 清空（保留 row 供去重）。
+
+    2026-07-05 加：DB 長到 100MB 就再也 push 不上 state branch（GitHub 硬限制），
+    整條 state 同步（雲端 full_pipeline persist、submit persist、Mac compose push）全掛，
+    投稿與排程一起死。clean_markdown（全文）是唯一大宗，且合成稿後就沒用了
+    （drafts 有自己的 full_text）。每次 harvest 後跑一次，把 DB 體積 bound 在約 14 天內。
+    只清舊列的正文、不刪列（id/url 去重鍵留著），對現行流程零影響。
+    回傳被清空的列數。VACUUM 交給偶發維護（每次跑太重）。"""
+    cur = conn.execute(
+        "UPDATE news_items SET clean_markdown='' "
+        "WHERE fetched_at < datetime('now', ?) AND clean_markdown IS NOT NULL "
+        "AND clean_markdown <> ''",
+        (f"-{int(keep_days)} days",),
+    )
+    conn.commit()
+    n = cur.rowcount if cur.rowcount is not None else 0
+    if n:
+        print(f"[DB]  ↳ prune：清空 {n} 篇 >{keep_days}天 舊素材正文（bound DB 體積）")
+    return n
+
+
 def mark_dropped(conn: sqlite3.Connection, news_id: str, reason: str) -> None:
     conn.execute(
         "UPDATE news_items SET status='dropped', drop_reason=? WHERE id=?",

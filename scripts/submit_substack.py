@@ -88,8 +88,11 @@ def process_text(text: str, note: str = "", immediate: bool = False) -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
     title = note or (text[:60] + ("..." if len(text) > 60 else ""))
-    # NewsItem.url 是必填 str；全文投稿沒有來源網址 → 用空字串（下游 `if url` 與 None 同樣為假）。
-    return _save_substack_item(news_id, url="", title=title, body=text,
+    # news_items.url 是 UNIQUE NOT NULL：全文投稿沒有來源網址，但不能用空字串——
+    # 第二篇 url='' 會撞 UNIQUE constraint 整個 submit 崩掉（2026-07-05 修）。
+    # 改用每篇唯一的合成 url（非 http scheme，下游不會去抓）＝內容雜湊，天然去重。
+    synthetic_url = f"manual-text://{h}"
+    return _save_substack_item(news_id, url=synthetic_url, title=title, body=text,
                                source_type="text", extra_tags=["user_text"], immediate=immediate)
 
 

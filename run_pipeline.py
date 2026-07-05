@@ -262,6 +262,16 @@ async def maybe_run_harvest(force: bool = False) -> bool:
         from run_harvest import run_harvest_once
         await run_harvest_once()
         _write_last_harvest_ts(now)
+        # 2026-07-05：每次 harvest 後把 >14 天舊素材正文清掉，讓 DB 體積永遠 bound 在
+        # 100MB 以下——否則 DB 撐爆 GitHub 檔案上限、state branch 整條 push 掛掉，
+        # 投稿與排程一起死（見 db.prune_old_source_text）。fail-safe，不擋 harvest。
+        try:
+            from src import db as _dbmod
+            _c = _dbmod.get_conn()
+            _dbmod.prune_old_source_text(_c, keep_days=14)
+            _c.close()
+        except Exception as _e:
+            print(f"[Harvest][prune][warn] 舊素材清理略過：{_e}")
         return True
     except Exception as e:
         print(f"[Harvest][Error] 抓取失敗：{e}")
