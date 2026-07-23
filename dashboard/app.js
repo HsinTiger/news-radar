@@ -18,6 +18,9 @@
     proposed: "待 owner 決策", approved: "已批准", applied: "已套用",
     superseded: "已取代",
   };
+  const HEALTH_COPY = {
+    substack_draft_worker: "Substack 草稿 worker",
+  };
   const GOOD = new Set(["published", "draft_created", "healthy", "approved", "applied"]);
   const BAD = new Set(["failed", "rejected", "error"]);
   const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
@@ -216,7 +219,7 @@
     rows.forEach(item=>{
       const severity=item.status==="healthy"?"good":(item.status==="error"?"bad":"warn");
       const row=node("div","row"); const dot=node("span",`health-dot ${severity}`);
-      const main=node("div","row-main"); main.append(node("div","row-title",`${PLATFORM_META[item.platform]?.label||"System"} · ${item.metric}`),node("div","row-detail",item.detail||"沒有 detail evidence"),node("div","row-meta",`觀測 ${when(item.captured_at)}`));
+      const main=node("div","row-main"); main.append(node("div","row-title",`${PLATFORM_META[item.platform]?.label||"System"} · ${HEALTH_COPY[item.metric]||item.metric}`),node("div","row-detail",item.detail||"沒有 detail evidence"),node("div","row-meta",`觀測 ${when(item.captured_at)}`));
       row.append(dot,main,badge(item.status)); host.appendChild(row);
     });
   }

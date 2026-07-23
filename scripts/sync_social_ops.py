@@ -390,6 +390,114 @@ def build_proposals(
     return result
 
 
+def _age_hours(value: str | None, now: datetime) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (now - parsed.astimezone(timezone.utc)).total_seconds() / 3600)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_substack_worker_health(
+    conn: sqlite3.Connection,
+    *,
+    captured_at: str,
+) -> dict[str, Any]:
+    """Expose draft-worker evidence without exporting owner article content."""
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "news_items" not in tables:
+        return {
+            "platform": "system",
+            "metric": "substack_draft_worker",
+            "status": "unknown",
+            "detail": "news_items=missing; draft worker evidence unavailable",
+            "captured_at": captured_at,
+        }
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
+    required = {"substack_draft_id", "substack_drafted_at"}
+    total_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total,MIN(fetched_at) AS oldest,MAX(fetched_at) AS newest
+          FROM news_items WHERE feed_name='user_substack'
+        """
+    ).fetchone()
+    total = int(total_row["total"] or 0)
+    if not required <= columns:
+        return {
+            "platform": "system",
+            "metric": "substack_draft_worker",
+            "status": "degraded" if total else "unknown",
+            "detail": (
+                f"schema=legacy; submissions={total}; remote_evidence=unavailable; "
+                f"oldest={total_row['oldest'] or 'none'}; "
+                f"newest={total_row['newest'] or 'none'}"
+            ),
+            "captured_at": captured_at,
+        }
+
+    local_term = (
+        "SUM(CASE WHEN substack_written_at IS NOT NULL THEN 1 ELSE 0 END)"
+        if "substack_written_at" in columns
+        else "0"
+    )
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN substack_drafted_at IS NULL OR substack_draft_id IS NULL
+                        THEN 1 ELSE 0 END) AS pending,
+               {local_term} AS local_written,
+               SUM(CASE WHEN substack_drafted_at IS NOT NULL AND substack_draft_id IS NOT NULL
+                        THEN 1 ELSE 0 END) AS remote_proven,
+               MIN(CASE WHEN substack_drafted_at IS NULL OR substack_draft_id IS NULL
+                        THEN fetched_at END) AS oldest_pending,
+               MAX(substack_drafted_at) AS latest_remote
+          FROM news_items WHERE feed_name='user_substack'
+        """
+    ).fetchone()
+    total = int(row["total"] or 0)
+    pending = int(row["pending"] or 0)
+    local_written = int(row["local_written"] or 0)
+    remote_proven = int(row["remote_proven"] or 0)
+    now = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    oldest_pending_hours = _age_hours(row["oldest_pending"], now)
+    latest_remote_hours = _age_hours(row["latest_remote"], now)
+    if total == 0:
+        status = "unknown"
+    elif pending:
+        status = (
+            "degraded"
+            if oldest_pending_hours is None or oldest_pending_hours >= 6
+            else "unknown"
+        )
+    else:
+        status = (
+            "healthy"
+            if remote_proven == total
+            and latest_remote_hours is not None
+            and latest_remote_hours <= 168
+            else "unknown"
+        )
+    return {
+        "platform": "system",
+        "metric": "substack_draft_worker",
+        "status": status,
+        "detail": (
+            f"submissions={total}; pending_remote={pending}; local_written={local_written}; "
+            f"remote_proven={remote_proven}; "
+            f"oldest_pending={row['oldest_pending'] or 'none'}; "
+            f"latest_remote={row['latest_remote'] or 'none'}; stale_gate=6h"
+        ),
+        "captured_at": captured_at,
+    }
+
+
 def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc).isoformat()
     engagement_columns = {
@@ -446,6 +554,7 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 },
             ]
         )
+    result.append(build_substack_worker_health(conn, captured_at=now))
     return result
 
 
