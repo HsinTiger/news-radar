@@ -149,7 +149,7 @@ def main():
         else:
             print(f"[drain] ⚠️ compose failed for {rid[:12]} (rc={r.returncode}); will retry next run")
     print(f"[drain] done. composed {composed}/{len(pending)}.")
-    return 0
+    return 0 if composed == len(pending) else 1
 
 
 if __name__ == "__main__":

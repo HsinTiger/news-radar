@@ -1,4 +1,19 @@
 name = "news-radar-submit"
 main = "worker.js"
-compatibility_date = "2026-06-01"
+compatibility_date = "2026-07-23"
 workers_dev = true
+
+[vars]
+AUTOMATION_MODE = "paused"
+SUBMISSION_PROCESSOR_MODE = "paused"
+ENABLE_META_PUBLISH_NOW = "false"
+
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hsintiger-social-ops"
+database_id = "6c5a3ff6-2608-49eb-b637-416487af1887"
+migrations_dir = "migrations"

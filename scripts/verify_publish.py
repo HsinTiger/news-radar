@@ -1,84 +1,94 @@
 #!/usr/bin/env python3
-"""
-Verify publish results — run AFTER publishing to Meta platforms.
-Checks: publish_log success rate, platform post IDs, no duplicate posts.
-Exits non-zero on critical failures.
-"""
+"""Fail-closed verification of recent Meta publication evidence."""
+
+from __future__ import annotations
+
+import argparse
 import sys
 from pathlib import Path
+
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 
 from src import db as dbmod
 
-def main():
+
+def verify(since_minutes: int, require_attempt: bool) -> int:
     conn = dbmod.get_conn()
+    failures: list[str] = []
     try:
-        # 1. Recent publish attempts
-        recent = conn.execute("""
-            SELECT p.id, p.draft_id, p.platform, p.posted_at, p.success, p.error_message,
-                   d.title
-            FROM publish_log p
-            JOIN drafts d ON d.id = p.draft_id
-            WHERE p.posted_at >= datetime('now', '-1 day')
-            ORDER BY p.posted_at DESC
-        """).fetchall()
-        print(f"[Verify:Publish] recent_attempts_24h={len(recent)}")
-
-        successes = [r for r in recent if r["success"]]
-        failures = [r for r in recent if not r["success"]]
-        print(f"[Verify:Publish] successes={len(successes)} failures={len(failures)}")
-
-        # 2. Check for platform-specific post IDs
-        for s in successes[:10]:
-            platform = s["platform"]
-            draft_id = s["draft_id"][:12]
-            post_id = conn.execute(
-                "SELECT platform_post_id FROM publish_log WHERE id=?",
-                (s["id"],)
-            ).fetchone()
-            pid = post_id["platform_post_id"] if post_id else None
-            print(f"  ✓ {platform} draft={draft_id} post_id={'✅' if pid else '❌ MISSING'}")
-
-            if not pid:
-                print(f"⚠️ [Verify:Publish] {platform} draft={draft_id}: No platform_post_id!")
-
-        # 3. Check for duplicate published rows
-        dups = conn.execute("""
-            SELECT draft_id, platform, COUNT(*) as c
-            FROM publish_log
-            WHERE success=1
-            GROUP BY draft_id, platform
-            HAVING c > 1
-        """).fetchall()
-        for d in dups:
-            print(f"⚠️ [Verify:Publish] draft={d['draft_id'][:12]} {d['platform']}: {d['c']} publish rows! (idempotency check)")
-
-        # 4. Check for recent publish failures
-        if failures:
-            for f in failures[:5]:
-                print(f"  ❌ {f['platform']} draft={f['draft_id'][:12]}: {f['error_message'] or 'no error msg'}")
-
-        # 5. Overall publish health
-        total_published = conn.execute(
-            "SELECT COUNT(*) as c FROM publish_log WHERE success=1"
-        ).fetchone()["c"]
+        recent = conn.execute(
+            """
+            SELECT p.id, p.draft_id, p.platform, p.platform_post_id,
+                   p.posted_at, p.success, p.error_message
+              FROM publish_log p
+             WHERE p.posted_at >= datetime('now', ?)
+             ORDER BY p.posted_at DESC
+            """,
+            (f"-{since_minutes} minutes",),
+        ).fetchall()
+        successes = [row for row in recent if row["success"]]
+        failed = [row for row in recent if not row["success"]]
+        print(
+            f"[Verify:Publish] window_minutes={since_minutes} "
+            f"attempts={len(recent)} successes={len(successes)} failures={len(failed)}"
+        )
+        if require_attempt and not recent:
+            failures.append("no_attempt_in_verification_window")
+        for row in successes:
+            if not row["platform_post_id"]:
+                failures.append(
+                    f"missing_platform_post_id:{row['draft_id'][:12]}:{row['platform']}"
+                )
+        for row in failed[:10]:
+            failures.append(
+                f"publish_failed:{row['draft_id'][:12]}:{row['platform']}:"
+                f"{row['error_message'] or 'unknown'}"
+            )
+        duplicates = conn.execute(
+            """
+            SELECT draft_id, platform, COUNT(*) AS count
+              FROM publish_log
+             WHERE success = 1
+             GROUP BY draft_id, platform
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        for row in duplicates:
+            failures.append(
+                f"duplicate_success:{row['draft_id'][:12]}:{row['platform']}:"
+                f"{row['count']}"
+            )
+        total_success = conn.execute(
+            "SELECT COUNT(*) FROM publish_log WHERE success=1"
+        ).fetchone()[0]
         total_failed = conn.execute(
-            "SELECT COUNT(*) as c FROM publish_log WHERE success=0"
-        ).fetchone()["c"]
-        print(f"[Verify:Publish] lifetime: {total_published} success / {total_failed} failed")
-
-        if total_failed > total_published * 2 and total_published > 0:
-            print("❌ [Verify:Publish] Failure rate > 66% — something is wrong!")
-            print("⚠️ check failed (non-blocking)")
-
-        # Not a failure if there are simply no attempts yet
-        if len(recent) == 0:
-            print("ℹ️ [Verify:Publish] No publish attempts in last 24h (may be normal for new setup)")
-        else:
-            print("✅ [Verify:Publish] PASS")
+            "SELECT COUNT(*) FROM publish_log WHERE success=0"
+        ).fetchone()[0]
+        print(
+            f"[Verify:Publish] lifetime_success={total_success} "
+            f"lifetime_failed={total_failed}"
+        )
+        if failures:
+            for failure in failures:
+                print(f"❌ [Verify:Publish] {failure}")
+            print("❌ [Verify:Publish] FAIL")
+            return 1
+        print("✅ [Verify:Publish] PASS")
+        return 0
     finally:
         conn.close()
 
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--since-minutes", type=int, default=30)
+    parser.add_argument("--require-attempt", action="store_true")
+    args = parser.parse_args()
+    if args.since_minutes <= 0:
+        parser.error("--since-minutes must be positive")
+    return verify(args.since_minutes, args.require_attempt)
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

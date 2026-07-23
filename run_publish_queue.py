@@ -133,8 +133,13 @@ def _pick_draft(conn, allow_fallback: bool):
 
 # ---------- 發布 ----------
 
-async def _publish_one(conn, row, dry_run: bool = False) -> str:
-    """把挑到的 draft 的三個 platform_drafts 各發一次。
+async def _publish_one(
+    conn,
+    row,
+    dry_run: bool = False,
+    platforms: set[str] | None = None,
+) -> str:
+    """Publish the selected draft to the explicitly requested platforms.
 
     回傳 OUTCOME_* 字串。main() 負責把它映射成 exit code。
     設計原則：_publish_one 只講「發生什麼」、不講「workflow 該紅還是綠」。
@@ -145,6 +150,12 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
     print(f"   ↳ 新聞發佈: {row['news_published_at']}")
 
     platform_drafts = dbmod.get_platform_drafts(conn, draft_id)
+    if platforms is not None:
+        platform_drafts = [
+            platform_draft
+            for platform_draft in platform_drafts
+            if platform_draft["platform"] in platforms
+        ]
     if not platform_drafts:
         print(f"   ⚠️ 找不到 platform_drafts → 無法發布，標 failed")
         if not dry_run:
@@ -201,8 +212,13 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
                 print(f"   👻 [總編輯閘·shadow] 本來會「{verdict.verdict}」（未 enforce、照發）：{one_line}")
             else:
                 print(f"   ✅ [總編輯閘] 發：{verdict.reason[:60]}")
-        except Exception as exc:  # noqa: BLE001 — 總編閘任何故障都 fail-open、絕不擋發文（活下去）
-            print(f"   ⚠️ [總編輯閘] 例外，fail-open 放行：{exc}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"   🛑 [總編輯閘] 例外，fail-closed：{exc}")
+            if not dry_run:
+                dbmod.mark_queue_failed(
+                    conn, draft_id, reason=f"editor_error: {str(exc)[:180]}"
+                )
+            return OUTCOME_EDITOR_KILLED
 
     image_url = row["og_image_url"]
     # og_video_url 暫不主動使用（Phase 8.18 範圍內；影片 path 已在 Phase 8.16 實作，
@@ -365,8 +381,24 @@ async def _publish_one(conn, row, dry_run: bool = False) -> str:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="News Radar Cloud Publisher (Phase 8.18)")
     parser.add_argument("--force", action="store_true", help="忽略 1h upper bound，強制挑一筆發（也允許 fallback）")
+    parser.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Never revive stale drafts when the fresh queue is empty",
+    )
+    parser.add_argument(
+        "--platforms",
+        default="facebook,instagram,threads",
+        help="Comma-separated canonical targets: facebook,instagram,threads",
+    )
     parser.add_argument("--dry-run", action="store_true", help="只印要發的內容，不呼叫 API、不改 DB")
     args = parser.parse_args()
+    platforms = {value.strip() for value in args.platforms.split(",") if value.strip()}
+    allowed_platforms = {"facebook", "instagram", "threads"}
+    if not platforms or not platforms <= allowed_platforms:
+        parser.error(
+            "--platforms must contain only facebook,instagram,threads"
+        )
 
     dbmod.init_db()
     refresh_threads_token()
@@ -375,6 +407,9 @@ async def main() -> int:
     try:
         # 1. Cadence 決策
         should_publish, reason, allow_fallback = _decide_cadence(conn, force=args.force)
+        if args.no_fallback:
+            allow_fallback = False
+            reason += "；no-fallback=true，只允許 fresh queued draft"
         print(f"[Cadence] {reason}")
         if not should_publish:
             print("[PublishQueue] 本 cycle 跳過。")
@@ -391,7 +426,9 @@ async def main() -> int:
         print(f"[PublishQueue] 選稿 mode={mode}")
 
         # 3. 發布
-        outcome = await _publish_one(conn, row, dry_run=args.dry_run)
+        outcome = await _publish_one(
+            conn, row, dry_run=args.dry_run, platforms=platforms
+        )
         print(f"[PublishQueue] 完成，outcome={outcome}")
         print(f"[Queue] 最終狀態分佈: {dbmod.count_queue_status(conn)}")
 

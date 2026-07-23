@@ -8,16 +8,8 @@ name: News Radar · Full Cloud Pipeline
 # ============================================================
 
 on:
-  schedule:
-    # 2026-06-27 信哥拍板：一天三篇，挑台灣滑手機尖峰。少而好、只發尖峰。台灣 = UTC+8。
-    # 排程刻意稍早於目標，吸收 GitHub Actions 排程延遲(~5–15min) + pipeline 跑稿(~6min)：
-    #   23:45 UTC = 07:45 台灣 → 貼文約 08:00（通勤・盤前・配合亞盤開盤）＝ 科技/商業/宏觀
-    #   04:15 UTC = 12:15 台灣 → 貼文約 12:30（午休・配合亞股收盤）       ＝ 科技/商業/總經
-    #   12:45 UTC = 20:45 台灣 → 貼文約 21:00（到家・深讀）             ＝ 政治/政策/軍事/時事
-    # 槽別「發什麼」由選題器依 slot×demand 路由（見計畫選題配比）；此處只管「何時發」。
-    # 兩行 cron：早晚同分鐘(:45)合一行，午盤(:15)另一行。
-    - cron: "45 23,12 * * *"
-    - cron: "15 4 * * *"
+  # Scheduling is owned by adaptive-scheduler.yml.  This workflow is an
+  # execution worker and never decides its own frequency.
   workflow_dispatch:
     inputs:
       force_publish:
@@ -25,9 +17,20 @@ on:
         required: false
         default: "false"
         type: boolean
+      platforms:
+        description: "Canonical comma list: facebook,instagram,threads"
+        required: false
+        default: "facebook,instagram,threads"
+        type: string
+      dispatch_reason:
+        description: "Governed scheduler evidence marker"
+        required: false
+        default: "manual"
+        type: string
 
 concurrency:
-  group: news-radar-full-pipeline
+  # All DB writers and external publishers share this group across workflows.
+  group: news-radar-production
   cancel-in-progress: false
 
 permissions:
@@ -41,17 +44,12 @@ jobs:
       # 2026-06-27 啟用時段選題路由：晚=政治桶、早午=市場桶（soft bias、桶空自動退回最新）。
       # 關掉就把這行刪掉/設空＝全線回舊行為（活下去）。Mac compose 端不設此旗、不受影響。
       EDITORIAL_MODE: "1"
+      EDITOR_ENFORCE: "1"
     timeout-minutes: 45
 
     steps:
       # ========== SETUP ==========
       - uses: actions/checkout@v5
-
-      - uses: actions/checkout@v5
-        continue-on-error: true
-        with:
-          ref: state
-          path: _state
 
       - uses: actions/setup-python@v6
         with:
@@ -76,21 +74,25 @@ jobs:
               "${BASE_SERIF}/${f}.otf" 2>/dev/null || true
           done
 
-      - name: Restore DB from state branch
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           for dir in data/01_harvest logs state archive data/05_reflect/proposals data/03_compose/pending_drafts; do
             mkdir -p "$dir"
           done
-          if [ -f _state/data/01_harvest/news_radar.db ]; then
-            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
-            echo "[restore] DB: $(du -h data/01_harvest/news_radar.db | cut -f1)"
-          else
-            echo "[restore] no existing DB"
-          fi
-          for src in logs archive state/last_harvest.txt data/05_reflect/proposals; do
-            [ -f "_state/$src" ] && cp "_state/$src" "$src" 2>/dev/null || true
-            [ -d "_state/$src" ] && cp -r "_state/$src/." "${src}/" 2>/dev/null || true
-          done
+          python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+          python -c "from scripts.state_store import validate_database; from pathlib import Path; print(validate_database(Path('data/01_harvest/news_radar.db')))"
 
       - name: Prime harvest throttle (skip if existing)
         run: |
@@ -102,8 +104,8 @@ jobs:
 
       # ========== STAGE 0: USER SUBMISSIONS ==========
       - name: "📤 [STAGE] Process user-submitted sources"
-        continue-on-error: true
         run: |
+          set -o pipefail
           echo "=== Pending Sources ==="
           python scripts/submit_source.py --from-pending 2>&1 | tee logs/submissions_last.log
           echo "=== Sources Complete ==="
@@ -112,11 +114,11 @@ jobs:
       - name: "🌾 [STAGE] Harvest RSS → clean → DB"
         id: harvest
         run: |
+          set -o pipefail
           python run_harvest.py 2>&1 | tee logs/harvest_last.log
 
       - name: "🔍 [VERIFY] Harvest — independent verifier script"
         if: always()
-        continue-on-error: true
         run: |
           echo "=== Harvest Verification (scripts/verify_harvest.py) ==="
           python scripts/verify_harvest.py 2>&1
@@ -132,14 +134,15 @@ jobs:
           LITELLM_MODEL: gemini/gemini-2.5-flash
           PYTHONUNBUFFERED: "1"
         run: |
+          set -o pipefail
           python run_pipeline.py --compose-only 2>&1 | tee logs/pipeline_last.log
 
       - name: "🔍 [VERIFY] Compose — independent verifier script"
         if: always()
-        continue-on-error: true
         env:
           PYTHONUNBUFFERED: "1"
         run: |
+          set -o pipefail
           echo "=== Compose Verification (scripts/verify_compose.py) ==="
           python scripts/verify_compose.py 2>&1
           echo "=== Verdict ==="
@@ -162,16 +165,17 @@ jobs:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
         run: |
-          python run_publish_queue.py --force 2>&1 | tee logs/publish_last.log
+          python run_publish_queue.py --no-fallback \
+            --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" \
+            2>&1 | tee logs/publish_last.log
 
       - name: "🔍 [VERIFY] Publish — independent verifier script"
         if: always()
-        continue-on-error: true
         env:
           PYTHONUNBUFFERED: "1"
         run: |
           echo "=== Publish Verification (scripts/verify_publish.py) ==="
-          python scripts/verify_publish.py 2>&1
+          python scripts/verify_publish.py --since-minutes 30 --require-attempt 2>&1
           echo "=== Verdict ==="
 
       # ========== STAGE 4: ENGAGEMENT POLLING ==========
@@ -202,78 +206,34 @@ jobs:
           python -m src.iteration_engine --mode report 2>&1 | tee logs/iteration_last.log
           echo "=== Feedback Complete ==="
 
-      # ========== STAGE 5: PERSIST TO STATE BRANCH ==========
-      - name: "💾 Persist state to state branch"
+      - name: "📈 Sync governed operational metadata to Social Ops"
+        if: always()
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 500
+
+      # ========== STAGE 5: PERSIST VERIFIED RELEASE STATE ==========
+      - name: "💾 Persist verified runtime state"
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          COMMIT: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # Phase 0 互踩防護：persist 前先把 origin/state 上「並行 job 剛 push 的新列」
-          # （最常見＝手動投稿 user_submission）併進本地 DB，避免下面 orphan force-push
-          # 整碗覆蓋把對方剛加的列洗掉（曾兩次洗掉手動投稿）。全程 fail-safe、不阻斷 persist。
-          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
-            git -C "$GITHUB_WORKSPACE" fetch --quiet origin state 2>/dev/null || true
-            if git -C "$GITHUB_WORKSPACE" show origin/state:data/01_harvest/news_radar.db > /tmp/remote_state.db 2>/dev/null; then
-              python "$GITHUB_WORKSPACE/scripts/merge_state_db.py" \
-                "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" /tmp/remote_state.db || true
-              rm -f /tmp/remote_state.db
-            fi
-          fi
-          STATE_DIR="$(mktemp -d)"
-          cd "$STATE_DIR"
-          git init -q -b state
-          git config user.name "news-radar-bot"
-          git config user.email "noreply@github.com"
+          python scripts/state_store.py push \
+            --repo "$GITHUB_REPOSITORY" \
+            --root . \
+            --producer "full_pipeline:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
 
-          for dir in data/01_harvest logs state archive data/05_reflect/proposals data/05_reflect/feedback; do
-            mkdir -p "$dir"
-          done
-
-          if [ -f "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" ]; then
-            cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
-          fi
-          if [ -d "$GITHUB_WORKSPACE/logs" ]; then
-            cp -r "$GITHUB_WORKSPACE/logs/." logs/ 2>/dev/null || true
-          fi
-          if [ -d "$GITHUB_WORKSPACE/archive" ]; then
-            cp -r "$GITHUB_WORKSPACE/archive/." archive/ 2>/dev/null || true
-          fi
-          if [ -f "$GITHUB_WORKSPACE/state/last_harvest.txt" ]; then
-            cp "$GITHUB_WORKSPACE/state/last_harvest.txt" state/last_harvest.txt
-          fi
-          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/proposals" ]; then
-            cp -r "$GITHUB_WORKSPACE/data/05_reflect/proposals/." data/05_reflect/proposals/ 2>/dev/null || true
-          fi
-          if [ -d "$GITHUB_WORKSPACE/data/05_reflect/feedback" ]; then
-            mkdir -p data/05_reflect/feedback
-            cp -r "$GITHUB_WORKSPACE/data/05_reflect/feedback/." data/05_reflect/feedback/ 2>/dev/null || true
-          fi
-
-          cat > LAST_RUN.txt <<EOF
-          last_run_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          run_id: ${RUN_ID}
-          run_url: ${RUN_URL}
-          commit: ${COMMIT}
-          kind: full_pipeline
-          EOF
-
-          if [ -f data/01_harvest/news_radar.db ]; then
-            echo "db_size: $(du -h data/01_harvest/news_radar.db | cut -f1)" >> LAST_RUN.txt
-          fi
-
-          git add -A
-          if git diff --cached --quiet; then
-            echo "[persist] 無變化，跳過推送"
-            exit 0
-          fi
-          git commit -q -m "state: full_pipeline run ${RUN_ID}"
-          git push --force \
-            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
-            state
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
 
       - name: Upload logs as artifact
         if: always()

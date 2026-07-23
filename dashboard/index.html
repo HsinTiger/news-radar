@@ -1,109 +1,105 @@
-<!DOCTYPE html>
-<html lang="zh-TW" data-theme="dark">
+<!doctype html>
+<html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <title>News Radar</title>
-  <script src="https://cdn.jsdelivr.net/npm/sql.js@1.11/dist/sql-wasm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07111f">
+  <title>HsinTiger Social Ops</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="app.js" defer></script>
 </head>
 <body>
-  <div id="app">
-    <!-- Desktop Sidebar -->
-    <nav class="sidebar desk-only" id="sidebar">
-      <div class="sidebar-header">
-        <span class="logo">📡</span>
-        <h1>News Radar</h1>
-      </div>
-      <div class="sidebar-nav" id="desk-nav">
-        <a class="nav-item active" data-page="home" href="#home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
-        <a class="nav-item" data-page="queue" href="#queue"><span class="nav-icon">📋</span><span class="nav-label">發布佇列</span><span class="nav-badge" id="queue-badge">0</span></a>
-        <a class="nav-item" data-page="archive" href="#archive"><span class="nav-icon">📚</span><span class="nav-label">歷史存檔</span></a>
-        <a class="nav-item" data-page="dropped" href="#dropped"><span class="nav-icon">🗑️</span><span class="nav-label">被擋掉的</span></a>
-        <a class="nav-item" data-page="persona" href="#persona"><span class="nav-icon">🎭</span><span class="nav-label">寫作風格</span></a>
-        <a class="nav-item" data-page="analytics" href="#analytics"><span class="nav-icon">📊</span><span class="nav-label">分析</span></a>
-        <a class="nav-item" data-page="source" href="#source"><span class="nav-icon">📤</span><span class="nav-label">提交來源</span></a>
-        <a class="nav-item" data-page="changelog" href="#changelog"><span class="nav-icon">📝</span><span class="nav-label">更新日誌</span></a>
-        <a class="nav-item" data-page="settings" href="#settings"><span class="nav-icon">⚙️</span><span class="nav-label">設定</span></a>
-      </div>
-      <div class="sidebar-footer">
-        <div class="db-status" id="db-status"><span class="status-dot offline"></span><span>資料庫離線</span></div>
-        <div class="last-update" id="last-update">—</div>
-        <button class="btn-refresh" onclick="refreshDB()">🔄 重新整理</button>
-      </div>
+  <div class="glow glow-a"></div><div class="glow glow-b"></div>
+  <header class="topbar">
+    <a class="brand" href="./"><span class="brand-mark">HT</span><span><strong>Social Ops</strong><small>governed attention system</small></span></a>
+    <nav>
+      <a href="../substack-submit/">一次性投稿</a>
+      <button id="refresh" type="button">重新整理</button>
+      <button id="lock" type="button">鎖定</button>
     </nav>
+  </header>
 
-    <!-- Mobile Top Bar -->
-    <div class="mobile-top mob-only" id="mobile-top">
-      <button class="mob-menu-btn" id="mob-menu-btn" onclick="toggleMobileMenu()">☰</button>
-      <span class="mob-title">📡 News Radar</span>
-      <span class="mob-status" id="mob-status">⚪</span>
-    </div>
-
-    <!-- Mobile Drawer Menu -->
-    <div class="mobile-drawer" id="mobile-drawer">
-      <div class="drawer-header">
-        <span>📡 News Radar</span>
-        <button onclick="toggleMobileMenu()">✕</button>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">OWNER CONTROL PLANE</div>
+        <h1>社群營運儀表板</h1>
+        <p>用平台原生訊號追蹤內容、觀眾與學習迴圈。未知資料明確標示，不用漂亮數字掩蓋缺口。</p>
       </div>
-      <div class="drawer-nav" id="mob-nav">
-        <a class="nav-item active" data-page="home" href="#home" onclick="closeMobileMenu()"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
-        <a class="nav-item" data-page="queue" href="#queue" onclick="closeMobileMenu()"><span class="nav-icon">📋</span><span class="nav-label">發布佇列</span><span class="nav-badge" id="mob-queue-badge">0</span></a>
-        <a class="nav-item" data-page="archive" href="#archive" onclick="closeMobileMenu()"><span class="nav-icon">📚</span><span class="nav-label">歷史存檔</span></a>
-        <a class="nav-item" data-page="dropped" href="#dropped" onclick="closeMobileMenu()"><span class="nav-icon">🗑️</span><span class="nav-label">被擋掉的</span></a>
-        <a class="nav-item" data-page="persona" href="#persona" onclick="closeMobileMenu()"><span class="nav-icon">🎭</span><span class="nav-label">寫作風格</span></a>
-        <a class="nav-item" data-page="analytics" href="#analytics" onclick="closeMobileMenu()"><span class="nav-icon">📊</span><span class="nav-label">分析</span></a>
-        <a class="nav-item" data-page="source" href="#source" onclick="closeMobileMenu()"><span class="nav-icon">📤</span><span class="nav-label">提交來源</span></a>
-        <a class="nav-item" data-page="changelog" href="#changelog" onclick="closeMobileMenu()"><span class="nav-icon">📝</span><span class="nav-label">更新日誌</span></a>
-        <a class="nav-item" data-page="settings" href="#settings" onclick="closeMobileMenu()"><span class="nav-icon">⚙️</span><span class="nav-label">設定</span></a>
+      <div class="hero-state">
+        <span class="state-dot paused" id="mode-dot"></span>
+        <div><small>Automation</small><strong id="automation-mode">LOCKED</strong></div>
       </div>
-      <div class="drawer-footer">
-        <div class="db-status"><span class="status-dot offline" id="mob-db-dot"></span><span id="mob-db-text">資料庫離線</span></div>
-        <button class="btn-refresh" onclick="refreshDB()">🔄 重新整理</button>
+    </section>
+
+    <section class="unlock panel" id="unlock-panel">
+      <div>
+        <strong>Owner 驗證</strong>
+        <p>Token 僅存在本分頁的 sessionStorage；關閉分頁即清除。</p>
       </div>
-    </div>
+      <input id="owner-token" type="password" autocomplete="off" placeholder="貼上 owner token">
+      <button class="primary" id="unlock" type="button">驗證並載入</button>
+      <span class="unlock-state" id="unlock-state">尚未驗證</span>
+    </section>
 
-    <!-- Drawer overlay -->
-    <div class="dr-overlay" id="drawer-overlay" onclick="closeMobileMenu()"></div>
+    <div class="error" id="error" hidden></div>
 
-    <!-- Mobile Bottom Nav -->
-    <nav class="bottom-nav mob-only" id="bottom-nav">
-      <a class="bni active" data-page="home" href="#home"><span>🏠</span><span class="bnav-label">首頁</span></a>
-      <a class="bni" data-page="source" href="#source"><span>📤</span><span class="bnav-label">提交</span></a>
-      <a class="bni" data-page="queue" href="#queue"><span>📋</span><span class="bnav-label">佇列</span></a>
-      <a class="bni" data-page="archive" href="#archive"><span>📚</span><span class="bnav-label">存檔</span></a>
-      <a class="bni" data-page="more" href="#" onclick="event.preventDefault();toggleMobileMenu()"><span>⋯</span><span class="bnav-label">更多</span></a>
-    </nav>
+    <section class="kpi-grid" aria-label="營運摘要">
+      <article class="kpi"><span>已追蹤貼文</span><strong id="kpi-posts">—</strong><small id="kpi-posts-note">等待資料</small></article>
+      <article class="kpi"><span>待處理投稿</span><strong id="kpi-submissions">—</strong><small id="kpi-submissions-note">等待資料</small></article>
+      <article class="kpi"><span>知識資產</span><strong id="kpi-knowledge">—</strong><small id="kpi-knowledge-note">metadata only</small></article>
+      <article class="kpi"><span>待 owner 決策</span><strong id="kpi-proposals">—</strong><small>不自動套用提案</small></article>
+    </section>
 
-    <!-- Main Content -->
-    <main class="main-content" id="main-content">
-      <div class="loading-overlay" id="loading-overlay">
-        <div class="loader"></div>
-        <p>正在載入資料庫…</p>
-      </div>
-      <div class="error-banner" id="error-banner" style="display:none">
-        <span>⚠️</span><span id="error-text">無法連接到資料庫</span>
-        <button onclick="this.parentElement.style.display='none'">✕</button>
-      </div>
-      <div id="page-home" class="page active"></div>
-      <div id="page-queue" class="page"></div>
-      <div id="page-archive" class="page"></div>
-      <div id="page-dropped" class="page"></div>
-      <div id="page-persona" class="page"></div>
-      <div id="page-analytics" class="page"></div>
-      <div id="page-source" class="page"></div>
-      <div id="page-changelog" class="page"></div>
-      <div id="page-settings" class="page"></div>
-    </main>
-  </div>
+    <section>
+      <div class="section-head"><div><span class="eyebrow">CHANNEL LENS</span><h2>平台分開看</h2></div><span class="asof" id="asof">尚未載入</span></div>
+      <div class="platform-grid" id="platform-grid"></div>
+    </section>
 
-  <div id="toast-container" style="position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
-  <script src="app.js"></script>
+    <section class="split wide-left">
+      <article class="panel chart-panel">
+        <div class="panel-head"><div><h2>30 日平台原生互動</h2><p>likes / comments / shares / saves / replies / reposts / quotes；只看各平台內趨勢。</p></div><span class="evidence">PROVEN · D1</span></div>
+        <div class="chart-wrap"><canvas id="trend-chart"></canvas><div class="empty" id="trend-empty">尚無趨勢資料</div></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>資料健康</h2><p>資料不足不會被視為零。</p></div></div>
+        <div class="stack" id="health-list"></div>
+      </article>
+    </section>
+
+    <section class="split">
+      <article class="panel">
+        <div class="panel-head"><div><h2>投稿狀態</h2><p>從受理到真實 terminal state。</p></div><a href="../substack-submit/">新增投稿 ↗</a></div>
+        <div class="stack" id="submission-list"></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>近期內容</h2><p>分平台的發布證據。</p></div></div>
+        <div class="stack" id="post-list"></div>
+      </article>
+    </section>
+
+    <section class="split">
+      <article class="panel">
+        <div class="panel-head"><div><h2>知識沉澱</h2><p>素材 metadata、採用次數與題材分布。</p></div><span class="evidence">NO ARTICLE BODY</span></div>
+        <div class="topic-list" id="topic-list"></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>學習提案</h2><p>AI 可以提出，只有 owner 能批准。</p></div></div>
+        <div class="stack" id="proposal-list"></div>
+      </article>
+    </section>
+
+    <section class="panel audit-panel">
+      <div class="panel-head"><div><h2>稽核事件</h2><p>投稿、claim、同步與狀態變更。</p></div><span class="evidence" id="api-version">API —</span></div>
+      <div class="audit-table" id="event-list"></div>
+    </section>
+  </main>
+
+  <footer>HsinTiger Social Ops · Observe → Interpret → Propose → Owner approve → Execute → Verify → Learn</footer>
 </body>
 </html>

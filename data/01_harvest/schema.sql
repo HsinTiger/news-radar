@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS publish_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_publish_draft ON publish_log(draft_id);
+-- Exactly one successful external publication is allowed per draft/platform.
+-- Failed attempts remain append-only and may be retried.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_publish_success
+    ON publish_log(draft_id, platform)
+    WHERE success = 1;
 
 
 -- ============ 4. Token 用量追蹤（每日聚合）============

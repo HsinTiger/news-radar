@@ -1,0 +1,66 @@
+name: "Social Automation · Governed Scheduler"
+
+on:
+  schedule:
+    - cron: "12 * * * *"
+  workflow_dispatch:
+    inputs:
+      now:
+        description: "Optional ISO timestamp for replay"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: news-radar-scheduler
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  decide:
+    # Repository variable is intentionally absent/paused during migration.
+    if: vars.AUTOMATION_MODE == 'live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install minimal dependencies
+        run: pip install httpx==0.28.1
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+      - name: Decide bounded schedule
+        id: policy
+        env:
+          REQUESTED_NOW: ${{ inputs.now }}
+        run: |
+          EXTRA=()
+          [ -n "$REQUESTED_NOW" ] && EXTRA=(--now "$REQUESTED_NOW")
+          python scripts/adaptive_dispatch.py "${EXTRA[@]}"
+      - name: Dispatch production pipeline
+        if: steps.policy.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLATFORMS: ${{ steps.policy.outputs.platforms }}
+        run: |
+          gh workflow run full_pipeline.yml \
+            --ref main \
+            -f platforms="$PLATFORMS" \
+            -f dispatch_reason="adaptive-scheduler:${{ github.run_id }}"
+      - name: Upload decision evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: schedule-decision-${{ github.run_id }}
+          path: reports/schedule_decision.json
+          retention-days: 30
+          if-no-files-found: warn

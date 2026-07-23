@@ -95,7 +95,8 @@ def init_db() -> None:
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     print(f"[DB] 初始化 {DB_PATH.name}")
-    with get_conn() as conn:
+    conn = get_conn()
+    try:
         schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
         conn.executescript(schema_sql)
         # 針對舊 DB 補欄位（SQLite 的 CREATE TABLE IF NOT EXISTS 不會補欄位）
@@ -175,6 +176,10 @@ def init_db() -> None:
             views_sql = VIEWS_PATH.read_text(encoding="utf-8")
             conn.executescript(views_sql)
         conn.commit()
+    finally:
+        # sqlite3.Connection context exit does not close the handle. Explicit
+        # close is required for Windows temp DB cleanup and deterministic IO.
+        conn.close()
     print("[DB]  ↳ schema 套用完成")
 
 
@@ -551,22 +556,34 @@ def set_carousel_json(conn: sqlite3.Connection, draft_id: str, carousel_json: Op
 
 
 def log_publish(conn: sqlite3.Connection, result: PublishResult) -> None:
-    conn.execute(
-        """
-        INSERT INTO publish_log (
-            draft_id, platform, platform_post_id, posted_at, success, error_message
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            result.draft_id,
-            result.platform,
-            result.platform_post_id,
-            result.posted_at,
-            1 if result.success else 0,
-            result.error_message,
-        ),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            """
+            INSERT INTO publish_log (
+                draft_id, platform, platform_post_id, posted_at, success, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                result.draft_id,
+                result.platform,
+                result.platform_post_id,
+                result.posted_at,
+                1 if result.success else 0,
+                result.error_message,
+            ),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # The partial unique index is the final race guard.  A second writer
+        # that lost the race observes the durable success and treats its DB
+        # write as idempotent; all other constraint errors remain fatal.
+        if result.success and has_successful_publish(
+            conn, result.draft_id, result.platform
+        ):
+            conn.rollback()
+            return
+        conn.rollback()
+        raise
 
 
 def list_recent_titles(conn: sqlite3.Connection, limit: int = 30) -> List[str]:
@@ -889,10 +906,10 @@ def has_successful_publish(
         on top of the failed one, and a future success=1 row blocks
         further retries.
 
-    The platform argument MUST be one of the canonical publish_log
-    values: ``"facebook"`` / ``"instagram"`` / ``"threads"`` (NOT the
-    short "fb"/"ig" forms used in run_pipeline). Wire-up code is
-    responsible for the mapping.
+    The platform argument MUST use a canonical publish-log identity:
+    ``facebook`` / ``instagram`` / ``threads`` for feed posts, or the
+    corresponding ``*_reel`` identity for short video.  Short aliases such
+    as ``fb`` and ``ig`` are never stored.
 
     Limitations (deliberate, documented):
       * Does NOT defend against two concurrent publishers reading the
