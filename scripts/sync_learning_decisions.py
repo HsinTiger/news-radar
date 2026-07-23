@@ -3,7 +3,8 @@
 
 The service is a decision control plane, while the Release-state SQLite DB and
 proposal JSONL files are the durable execution record. Only exact approved
-``topic_weights`` actions are executable here. Publishing is out of scope.
+topic-weight and platform-cadence actions are executable here. Publishing is
+out of scope.
 """
 
 from __future__ import annotations
@@ -24,17 +25,25 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.reflector import mark_deployed
+from src.reflector.platform_policy import (
+    DECREASE_RATIO,
+    INCREASE_RATIO,
+    MIN_NONZERO_RATE,
+    effective_cadence,
+)
 from src.reflector.proposals import read_proposals, update_decision
 from src.reflector.topic import (
     GLOBAL_WEIGHT_CEIL,
     GLOBAL_WEIGHT_FLOOR,
     MAX_WEEKLY_DELTA,
 )
+from src.schedule_policy import load_policy
 
 
 DEFAULT_DB = Path("data/01_harvest/news_radar.db")
 DEFAULT_PROPOSALS_DIR = Path("data/05_reflect/proposals")
 DEFAULT_LEASE_FILE = Path(".runtime-state-lease.json")
+DEFAULT_POLICY = Path("config/social_automation_policy.json")
 WEIGHT_TOLERANCE = 1e-6
 FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 REMOTE_TO_LOCAL = {"approved": "approve", "rejected": "reject"}
@@ -209,11 +218,131 @@ def _validate_topic_action(
             raise DecisionSyncError(f"proposal {fire_id} has invalid total_samples")
         samples = max(0, int(raw_samples))
     return {
+        "type": "topic_weight",
         "field": field,
         "current": current,
         "proposed": proposed,
         "delta": delta,
         "samples": samples,
+    }
+
+
+def _validate_cadence_value(value: object, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise DecisionSyncError(f"{field} must be an object")
+    target = value.get("target_posts_per_day")
+    interval = value.get("minimum_interval_hours")
+    slots = value.get("local_slots")
+    if isinstance(target, bool) or not isinstance(target, int) or not 0 <= target <= 4:
+        raise DecisionSyncError(f"{field}.target_posts_per_day is invalid")
+    interval_value = _number(interval, f"{field}.minimum_interval_hours")
+    if not 4 <= interval_value <= 48:
+        raise DecisionSyncError(f"{field}.minimum_interval_hours is outside 4..48")
+    if not isinstance(slots, list) or len(slots) != target:
+        raise DecisionSyncError(f"{field}.local_slots must match the daily target")
+    if any(
+        isinstance(slot, bool) or not isinstance(slot, int) or not 0 <= slot <= 23
+        for slot in slots
+    ):
+        raise DecisionSyncError(f"{field}.local_slots contains an invalid hour")
+    if slots != sorted(set(slots)):
+        raise DecisionSyncError(f"{field}.local_slots must be sorted and unique")
+    circular_gaps = [right - left for left, right in zip(slots, slots[1:])]
+    if slots:
+        circular_gaps.append(24 - slots[-1] + slots[0])
+    if any(gap < interval_value for gap in circular_gaps):
+        raise DecisionSyncError(f"{field}.local_slots violate minimum spacing")
+    return {
+        "target_posts_per_day": target,
+        "minimum_interval_hours": interval_value,
+        "local_slots": slots,
+    }
+
+
+def _validate_schedule_action(
+    db_path: Path,
+    record: dict[str, Any],
+    lineage: sqlite3.Row,
+    *,
+    policy_path: Path = DEFAULT_POLICY,
+) -> dict[str, Any]:
+    fire_id = record["fire_id"]
+    action = record.get("action")
+    if not isinstance(action, dict):
+        raise DecisionSyncError(f"proposal {fire_id} has no action object")
+    if (
+        record.get("analyzer") != "platform_policy"
+        or record.get("proposal_type") != "adjust_cadence"
+        or lineage["analyzer"] != "platform_policy"
+        or lineage["proposal_type"] != "adjust_cadence"
+    ):
+        raise DecisionSyncError(f"proposal {fire_id} is not a cadence action")
+    if (
+        action.get("target_config") != "social_schedule"
+        or lineage["target_config"] != "social_schedule"
+    ):
+        raise DecisionSyncError(f"proposal {fire_id} target_config mismatch")
+    if record.get("boss_attention_required") is not True:
+        raise DecisionSyncError(f"proposal {fire_id} did not require owner attention")
+    platform = record.get("platform")
+    field = action.get("field")
+    if platform not in {"facebook", "instagram", "threads"}:
+        raise DecisionSyncError(f"proposal {fire_id} has an invalid platform")
+    if field != f"{platform}.cadence":
+        raise DecisionSyncError(f"proposal {fire_id} cadence identity mismatch")
+
+    current = _validate_cadence_value(action.get("current_value"), "action.current_value")
+    proposed = _validate_cadence_value(action.get("proposed_value"), "action.proposed_value")
+    target_delta = proposed["target_posts_per_day"] - current["target_posts_per_day"]
+    if abs(target_delta) != 1:
+        raise DecisionSyncError(f"proposal {fire_id} must change cadence by exactly one post/day")
+
+    evidence = record.get("evidence")
+    metrics = evidence.get("metrics") if isinstance(evidence, dict) else None
+    if not isinstance(metrics, dict):
+        raise DecisionSyncError(f"proposal {fire_id} has no cadence evidence")
+    current_metrics = metrics.get("current")
+    baseline_metrics = metrics.get("baseline")
+    if not isinstance(current_metrics, dict) or not isinstance(baseline_metrics, dict):
+        raise DecisionSyncError(f"proposal {fire_id} has malformed cadence windows")
+    policy = load_policy(policy_path)
+    adaptation = policy["adaptation"]
+    minimum_posts = int(adaptation["minimum_posts_per_platform"])
+    minimum_coverage = float(adaptation["minimum_metric_coverage"])
+    for name, window in (("current", current_metrics), ("baseline", baseline_metrics)):
+        posts = _number(window.get("posts"), f"evidence.{name}.posts")
+        coverage = _number(
+            window.get("metric_coverage"), f"evidence.{name}.metric_coverage"
+        )
+        nonzero = _number(window.get("nonzero_rate"), f"evidence.{name}.nonzero_rate")
+        if posts < minimum_posts:
+            raise DecisionSyncError(f"proposal {fire_id} fails the sample gate")
+        if coverage < minimum_coverage:
+            raise DecisionSyncError(f"proposal {fire_id} fails the metric coverage gate")
+        if nonzero < MIN_NONZERO_RATE:
+            raise DecisionSyncError(f"proposal {fire_id} fails the nonzero signal gate")
+    ratio = _number(metrics.get("score_ratio"), "evidence.score_ratio")
+    if target_delta > 0 and ratio < INCREASE_RATIO:
+        raise DecisionSyncError(f"proposal {fire_id} fails the increase ratio gate")
+    if target_delta < 0 and ratio > DECREASE_RATIO:
+        raise DecisionSyncError(f"proposal {fire_id} fails the decrease ratio gate")
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        observed = effective_cadence(conn, policy, platform)
+    expected = proposed if lineage["deployed_at"] else current
+    if observed != expected:
+        raise DecisionSyncError(
+            f"proposal {fire_id} cadence drift gate failed for {platform}: "
+            f"expected={expected} observed={observed}"
+        )
+    return {
+        "type": "social_schedule",
+        "field": field,
+        "platform": platform,
+        "current": current,
+        "proposed": proposed,
+        "score_ratio": ratio,
     }
 
 
@@ -338,6 +467,120 @@ def _apply_topic_action(
     }
 
 
+def _apply_schedule_action(
+    db_path: Path,
+    proposals_dir: Path,
+    record: dict[str, Any],
+    action: dict[str, Any],
+    *,
+    policy_path: Path = DEFAULT_POLICY,
+) -> dict[str, Any]:
+    fire_id = record["fire_id"]
+    lineage = _lineage(db_path, fire_id)
+    if lineage["hsin_decision"] not in {"approve", "approved"}:
+        raise DecisionSyncError(f"proposal {fire_id} is not locally approved")
+    if lineage["deployed_at"]:
+        mark_deployed(
+            fire_id,
+            deployed_at=lineage["deployed_at"],
+            db_path=db_path,
+            base_dir=proposals_dir,
+        )
+        return {"id": fire_id, "outcome": "already_applied", "field": action["field"]}
+
+    policy = load_policy(policy_path)
+    applied_at = _utcnow()
+    platform = action["platform"]
+    before_json = json.dumps(action["current"], ensure_ascii=False, sort_keys=True)
+    after_json = json.dumps(action["proposed"], ensure_ascii=False, sort_keys=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            decision = conn.execute(
+                "SELECT hsin_decision,deployed_at FROM reflector_proposal_lineage WHERE fire_id=?",
+                (fire_id,),
+            ).fetchone()
+            if decision is None or decision["hsin_decision"] not in {"approve", "approved"}:
+                raise DecisionSyncError(f"proposal {fire_id} approval changed before execution")
+            if decision["deployed_at"]:
+                raise DecisionSyncError(f"proposal {fire_id} deployment raced another worker")
+            observed = effective_cadence(conn, policy, platform)
+            if observed != action["current"]:
+                raise DecisionSyncError(f"proposal {fire_id} cadence drifted before execution")
+            proposed = action["proposed"]
+            conn.execute(
+                """
+                INSERT INTO social_policy_overrides(
+                  platform,target_posts_per_day,minimum_interval_hours,
+                  local_slots_json,source_proposal_id,updated_at
+                ) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(platform) DO UPDATE SET
+                  target_posts_per_day=excluded.target_posts_per_day,
+                  minimum_interval_hours=excluded.minimum_interval_hours,
+                  local_slots_json=excluded.local_slots_json,
+                  source_proposal_id=excluded.source_proposal_id,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    platform,
+                    proposed["target_posts_per_day"],
+                    proposed["minimum_interval_hours"],
+                    json.dumps(proposed["local_slots"]),
+                    fire_id,
+                    applied_at,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO social_policy_history(
+                  platform,recorded_at,cadence_before_json,cadence_after_json,
+                  source_proposal_id,rationale
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    platform,
+                    applied_at,
+                    before_json,
+                    after_json,
+                    fire_id,
+                    f"Owner-approved cadence; score_ratio={action['score_ratio']:.6f}",
+                ),
+            )
+            deployed = conn.execute(
+                "UPDATE reflector_proposal_lineage SET deployed_at=? WHERE fire_id=? AND deployed_at IS NULL",
+                (applied_at, fire_id),
+            )
+            if deployed.rowcount != 1:
+                raise DecisionSyncError(f"proposal {fire_id} deployment marker compare-and-swap failed")
+            if effective_cadence(conn, policy, platform) != proposed:
+                raise DecisionSyncError(f"proposal {fire_id} pre-commit cadence readback failed")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    mark_deployed(
+        fire_id,
+        deployed_at=applied_at,
+        db_path=db_path,
+        base_dir=proposals_dir,
+    )
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        observed = effective_cadence(conn, policy, platform)
+    if observed != action["proposed"]:
+        raise DecisionSyncError(f"proposal {fire_id} post-write cadence readback failed")
+    return {
+        "id": fire_id,
+        "outcome": "applied",
+        "field": action["field"],
+        "before": action["current"],
+        "after": action["proposed"],
+        "applied_at": applied_at,
+    }
+
+
 def process_decisions(
     db_path: Path,
     proposals_dir: Path,
@@ -381,17 +624,21 @@ def process_decisions(
 
         action: dict[str, Any] | None = None
         action_record = record.get("action")
-        if (
-            status == "approved"
-            and isinstance(action_record, dict)
-            and action_record.get("target_config") == "topic_weights"
-        ):
+        target_config = (
+            action_record.get("target_config")
+            if isinstance(action_record, dict)
+            else None
+        )
+        if status == "approved" and target_config == "topic_weights":
             action = _validate_topic_action(db_path, record, lineage)
+        elif status == "approved" and target_config == "social_schedule":
+            action = _validate_schedule_action(db_path, record, lineage)
+        if action is not None:
             if not lineage["deployed_at"]:
                 previous = pending_fields.setdefault(action["field"], fire_id)
                 if previous != fire_id:
                     raise DecisionSyncError(
-                        f"approved proposals {previous} and {fire_id} target the same topic"
+                        f"approved proposals {previous} and {fire_id} target the same field"
                     )
         prepared.append((decision, record, lineage, action))
 
@@ -431,8 +678,12 @@ def process_decisions(
             outcomes.append({"id": fire_id, "outcome": "rejected_mirrored"})
         elif action is None:
             outcomes.append({"id": fire_id, "outcome": "approved_unsupported_pending"})
-        else:
+        elif action["type"] == "topic_weight":
             outcomes.append(_apply_topic_action(db_path, proposals_dir, record, action))
+        elif action["type"] == "social_schedule":
+            outcomes.append(_apply_schedule_action(db_path, proposals_dir, record, action))
+        else:  # pragma: no cover - validated action types are exhaustive
+            raise DecisionSyncError(f"proposal {fire_id} has an unsupported action type")
 
     counts: dict[str, int] = {}
     for row in outcomes:

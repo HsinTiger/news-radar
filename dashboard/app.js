@@ -135,6 +135,7 @@
     const counts = data.platforms || [];
     const engagement = data.engagement || [];
     const audience = data.audience || [];
+    const quality = data.content_quality || [];
     const health = data.data_health || [];
     PLATFORM_ORDER.forEach(platform => {
       const meta = PLATFORM_META[platform];
@@ -144,6 +145,7 @@
       const lastPosted = rows.map(row=>row.last_posted_at).filter(Boolean).sort().at(-1);
       const eng = engagement.find(row=>row.platform===platform) || {};
       const aud = audience.find(row=>row.platform===platform) || {};
+      const q = quality.find(row=>row.platform===platform) || {};
       const h = health.find(row=>row.platform===platform && row.metric==="latest_post_canary") ||
         health.find(row=>row.platform===platform && row.metric==="engagement_api");
       const card = node("article", "platform"); card.style.setProperty("--platform-color", meta.color);
@@ -165,10 +167,20 @@
             metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
             metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Threads native"),
           ];
+      const qualityRate = n(q.evaluated)>0
+        ? `${(n(q.publish_ready_count)/n(q.evaluated)*100).toFixed(0)}%`
+        : "UNKNOWN";
       metrics.append(
         metric("已發布",fmt(published),`${fmt(total)} total records`),
         ...nativeMetrics,
-        metric("Followers",aud.followers===null||aud.followers===undefined?"UNKNOWN":fmt(aud.followers),aud.followers_delta_7d===null||aud.followers_delta_7d===undefined?"no 7d evidence":`${aud.followers_delta_7d>=0?"+":""}${fmt(aud.followers_delta_7d)} / 7d`)
+        metric("Followers",aud.followers===null||aud.followers===undefined?"UNKNOWN":fmt(aud.followers),aud.followers_delta_7d===null||aud.followers_delta_7d===undefined?"no 7d evidence":`${aud.followers_delta_7d>=0?"+":""}${fmt(aud.followers_delta_7d)} / 7d`),
+        metric(
+          "規則直通率",
+          qualityRate,
+          n(q.evaluated)>0
+            ? `${fmt(q.rewrite_count)} rewrite · ${fmt(q.block_count)} block · coverage ${(n(q.evidence_coverage)*100).toFixed(0)}%`
+            : "尚無品質 evidence",
+        )
       );
       const foot=node("div","platform-foot"); foot.append(node("span","",`最後發布 ${when(lastPosted)}`),node("span","",`資料 ${when(eng.last_captured_at)}`));
       card.append(head,metrics,foot); host.appendChild(card);
@@ -243,8 +255,9 @@
 
   function proposalChangeText(item) {
     const change=item.proposed_change||{};
+    const value=(input)=>input&&typeof input==="object"?JSON.stringify(input):text(input);
     return change.field
-      ? `${change.field}: ${text(change.current_value)} → ${text(change.proposed_value)}`
+      ? `${change.field}: ${value(change.current_value)} → ${value(change.proposed_value)}`
       : "尚無具體 change payload";
   }
 
@@ -260,6 +273,13 @@
     ];
     if(platformLikes.some(([,value])=>value!==undefined&&value!==null)){
       parts.push(`30d avg likes ${platformLikes.map(([label,value])=>`${label} ${text(value)}`).join(" / ")}`);
+    }
+    if(metrics.current&&metrics.baseline){
+      parts.push(
+        `本期 ${fmt(metrics.current.posts)} 篇／coverage ${(n(metrics.current.metric_coverage)*100).toFixed(0)}%`,
+        `median action ${text(metrics.baseline.median_action_score)} → ${text(metrics.current.median_action_score)}`,
+      );
+      if(metrics.score_ratio!==undefined) parts.push(`ratio ${n(metrics.score_ratio).toFixed(2)}`);
     }
     return parts.join(" · ");
   }

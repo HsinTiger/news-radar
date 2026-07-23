@@ -63,11 +63,23 @@ jobs:
             --lease-file .runtime-state-lease.json \
             | tee logs/learning-decisions.json
 
+      - name: Backfill content-quality evidence without changing draft status
+        run: |
+          set -o pipefail
+          python scripts/backfill_quality_evidence.py \
+            | tee logs/content-quality-backfill.json
+
       - name: Observe engagement and create next proposals
         run: |
           set -o pipefail
           python -m src.reflector.topic --no-report-file \
             | tee logs/learning-review.md
+
+      - name: Evaluate platform-specific cadence
+        run: |
+          set -o pipefail
+          python -m src.reflector.platform_policy \
+            | tee logs/platform-policy-review.json
 
       - name: Persist verified learning state
         env:
@@ -101,5 +113,7 @@ jobs:
           path: |
             logs/learning-decisions.json
             logs/learning-review.md
+            logs/platform-policy-review.json
+            logs/content-quality-backfill.json
           retention-days: 30
           if-no-files-found: warn

@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-23.v3";
+const API_VERSION = "2026-07-23.v4";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -475,6 +475,7 @@ async function syncOperationalData(request, env, cors) {
   const groups = {
     posts: listField(body, "posts"),
     engagement: listField(body, "engagement"),
+    quality: listField(body, "quality"),
     knowledge: listField(body, "knowledge"),
     audience: listField(body, "audience"),
     health: listField(body, "health"),
@@ -559,6 +560,60 @@ async function syncOperationalData(request, env, cors) {
     );
   }
   counts.engagement = groups.engagement.length;
+
+  for (const row of groups.quality) {
+    const platform = cleanString(row.platform, "platform", 20, true);
+    if (!PLATFORMS.has(platform)) throw new HTTPError(400, "unknown quality platform", "invalid_input");
+    const candidates = integer(row.candidates);
+    const evaluated = integer(row.evaluated);
+    const passCount = integer(row.pass_count);
+    const warnCount = integer(row.warn_count);
+    const rewriteCount = integer(row.rewrite_count);
+    const blockCount = integer(row.block_count);
+    const publishReadyCount = integer(row.publish_ready_count);
+    const coverage = Number(row.evidence_coverage);
+    if (!Number.isFinite(coverage) || coverage < 0 || coverage > 1) {
+      throw new HTTPError(400, "invalid quality evidence coverage", "invalid_input");
+    }
+    if (evaluated !== passCount + warnCount + rewriteCount + blockCount) {
+      throw new HTTPError(400, "quality decision counts do not reconcile", "invalid_input");
+    }
+    if (publishReadyCount !== passCount + warnCount || evaluated > candidates) {
+      throw new HTTPError(400, "invalid quality aggregate", "invalid_input");
+    }
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO content_quality_snapshots(
+          platform,captured_at,window_days,candidates,evaluated,evidence_coverage,
+          pass_count,warn_count,rewrite_count,block_count,publish_ready_count,
+          top_issue_codes_json,guard_version
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(platform,captured_at) DO UPDATE SET
+          window_days=excluded.window_days,candidates=excluded.candidates,
+          evaluated=excluded.evaluated,evidence_coverage=excluded.evidence_coverage,
+          pass_count=excluded.pass_count,warn_count=excluded.warn_count,
+          rewrite_count=excluded.rewrite_count,block_count=excluded.block_count,
+          publish_ready_count=excluded.publish_ready_count,
+          top_issue_codes_json=excluded.top_issue_codes_json,
+          guard_version=excluded.guard_version`,
+      ).bind(
+        platform,
+        cleanString(row.captured_at, "captured_at", 60, true),
+        integer(row.window_days),
+        candidates,
+        evaluated,
+        coverage,
+        passCount,
+        warnCount,
+        rewriteCount,
+        blockCount,
+        publishReadyCount,
+        jsonValue(row.top_issue_codes, 5000),
+        cleanString(row.guard_version, "guard_version", 80, true),
+      ),
+    );
+  }
+  counts.quality = groups.quality.length;
 
   for (const row of groups.knowledge) {
     statements.push(
@@ -732,7 +787,7 @@ async function audit(env, actor, action, subjectId, status, metadata) {
 async function dashboard(env, cors) {
   const [
     submissions, recentSubmissions, posts, recentPosts, engagement, engagementTrend,
-    audience, proposals, knowledgeTopics, knowledgeTotal, health, events,
+    audience, quality, proposals, knowledgeTopics, knowledgeTotal, health, events,
   ] = await env.DB.batch([
     env.DB.prepare("SELECT target,status,COUNT(*) AS count FROM submissions GROUP BY target,status"),
     env.DB.prepare(`SELECT id,target,source_type,note,platforms_json,requested_mode,status,
@@ -769,6 +824,12 @@ async function dashboard(env, cors) {
       SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
       FROM audience_snapshots
     ) SELECT platform,captured_at,followers,followers_delta_7d,metric_status FROM ranked WHERE rn=1`),
+    env.DB.prepare(`WITH ranked AS (
+      SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
+      FROM content_quality_snapshots
+    ) SELECT platform,captured_at,window_days,candidates,evaluated,evidence_coverage,
+      pass_count,warn_count,rewrite_count,block_count,publish_ready_count,
+      top_issue_codes_json,guard_version FROM ranked WHERE rn=1`),
     env.DB.prepare(`SELECT id,kind,status,summary,evidence_json,proposed_change_json,
       decision_comment,created_at,decided_at,applied_at
       FROM learning_proposals ORDER BY created_at DESC LIMIT 20`),
@@ -805,6 +866,11 @@ async function dashboard(env, cors) {
       engagement: engagement.results,
       engagement_trend: engagementTrend.results,
       audience: audience.results,
+      content_quality: quality.results.map((row) => ({
+        ...row,
+        top_issue_codes: JSON.parse(row.top_issue_codes_json || "[]"),
+        top_issue_codes_json: undefined,
+      })),
       learning_proposals: proposals.results.map((row) => ({
         ...row,
         evidence: JSON.parse(row.evidence_json || "{}"),

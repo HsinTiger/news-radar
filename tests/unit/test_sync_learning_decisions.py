@@ -9,14 +9,30 @@ import pytest
 
 from scripts.sync_learning_decisions import (
     DecisionSyncError,
+    _validate_cadence_value,
     process_decisions,
     validate_local_lease,
 )
+from src.reflector.platform_policy import cadence_for_target
 from src.reflector.proposals import read_proposals, write_proposal
+from src.schedule_policy import decide_schedule, load_policy
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "data/01_harvest/schema.sql"
+POLICY = ROOT / "config/social_automation_policy.json"
+
+
+def test_cadence_validator_checks_spacing_across_midnight() -> None:
+    with pytest.raises(DecisionSyncError, match="minimum spacing"):
+        _validate_cadence_value(
+            {
+                "target_posts_per_day": 2,
+                "minimum_interval_hours": 8,
+                "local_slots": [0, 20],
+            },
+            "cadence",
+        )
 
 
 def _environment(
@@ -77,6 +93,67 @@ def _decision(fire_id: str, status: str) -> dict[str, str]:
         "decision_comment": "owner decision",
         "decided_at": "2026-07-23T01:02:03+00:00",
     }
+
+
+def _cadence_environment(
+    tmp_path: Path,
+    *,
+    metric_coverage: float = 1.0,
+) -> tuple[Path, Path, str]:
+    db_path = tmp_path / "cadence.db"
+    proposals_dir = tmp_path / "cadence-proposals"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+        conn.commit()
+    fire_id = "cadence-proposal-0001"
+    current = {
+        "target_posts_per_day": 2,
+        "minimum_interval_hours": 8.0,
+        "local_slots": [8, 20],
+    }
+    proposed = cadence_for_target(3)
+    write_proposal(
+        {
+            "fire_id": fire_id,
+            "fire_at": "2026-07-23T00:00:00+00:00",
+            "analyzer": "platform_policy",
+            "platform": "threads",
+            "proposal_type": "adjust_cadence",
+            "evidence": {
+                "sample_ids": [],
+                "metrics": {
+                    "current": {
+                        "posts": 25,
+                        "valid_metrics": 25,
+                        "metric_coverage": metric_coverage,
+                        "nonzero_posts": 25,
+                        "nonzero_rate": 1.0,
+                        "median_action_score": 3.0,
+                    },
+                    "baseline": {
+                        "posts": 16,
+                        "valid_metrics": 16,
+                        "metric_coverage": 1.0,
+                        "nonzero_posts": 16,
+                        "nonzero_rate": 1.0,
+                        "median_action_score": 2.0,
+                    },
+                    "score_ratio": 1.5,
+                },
+                "confidence": "HIGH",
+            },
+            "action": {
+                "target_config": "social_schedule",
+                "field": "threads.cadence",
+                "current_value": current,
+                "proposed_value": proposed,
+            },
+            "boss_attention_required": True,
+        },
+        db_path=db_path,
+        base_dir=proposals_dir,
+    )
+    return db_path, proposals_dir, fire_id
 
 
 def test_approved_topic_weight_is_applied_once_with_readback(tmp_path: Path) -> None:
@@ -177,7 +254,7 @@ def test_two_approved_proposals_for_same_topic_fail_closed(tmp_path: Path) -> No
     second.pop("deployed_at", None)
     write_proposal(second, db_path=db_path, base_dir=proposals_dir)
 
-    with pytest.raises(DecisionSyncError, match="target the same topic"):
+    with pytest.raises(DecisionSyncError, match="target the same field"):
         process_decisions(
             db_path,
             proposals_dir,
@@ -220,3 +297,65 @@ def test_local_lease_must_be_well_formed_and_unexpired(tmp_path: Path) -> None:
     lease.write_text(json.dumps(expired), encoding="utf-8")
     with pytest.raises(DecisionSyncError, match="expired"):
         validate_local_lease(lease, now=now)
+
+
+def test_approved_platform_cadence_changes_scheduler_only_after_execution(
+    tmp_path: Path,
+) -> None:
+    db_path, proposals_dir, fire_id = _cadence_environment(tmp_path)
+    result = process_decisions(
+        db_path,
+        proposals_dir,
+        [_decision(fire_id, "approved")],
+    )
+    assert result["counts"] == {"applied": 1}
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM social_policy_overrides WHERE platform='threads'"
+        ).fetchone()
+        history = conn.execute(
+            "SELECT COUNT(*) FROM social_policy_history WHERE platform='threads'"
+        ).fetchone()[0]
+        decision = decide_schedule(
+            conn,
+            load_policy(POLICY),
+            datetime(2026, 7, 23, 6, 10, tzinfo=timezone.utc),
+        )
+    assert row["target_posts_per_day"] == 3
+    assert row["minimum_interval_hours"] == 6.0
+    assert json.loads(row["local_slots_json"]) == [8, 14, 20]
+    assert row["source_proposal_id"] == fire_id
+    assert history == 1
+    threads = next(item for item in decision.platform_decisions if item.platform == "threads")
+    assert threads.due is True
+    assert threads.policy_source == f"proposal:{fire_id}"
+
+    second = process_decisions(
+        db_path,
+        proposals_dir,
+        [_decision(fire_id, "approved")],
+    )
+    assert second["counts"] == {"already_applied": 1}
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM social_policy_history"
+        ).fetchone()[0] == 1
+
+
+def test_cadence_approval_fails_closed_on_metric_coverage(tmp_path: Path) -> None:
+    db_path, proposals_dir, fire_id = _cadence_environment(
+        tmp_path,
+        metric_coverage=0.5,
+    )
+    with pytest.raises(DecisionSyncError, match="metric coverage"):
+        process_decisions(
+            db_path,
+            proposals_dir,
+            [_decision(fire_id, "approved")],
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM social_policy_overrides"
+        ).fetchone()[0] == 0

@@ -170,6 +170,17 @@ async def _publish_one(
     for pd_row in platform_drafts:
         text_to_check = pd_row["final_text"] or pd_row["full_text"] or ""
         issues = check_quality(text_to_check, title=guard_news_title)
+        if not dry_run:
+            dbmod.record_quality_evaluation(
+                conn,
+                draft_id=draft_id,
+                news_id=row["news_id"],
+                platform=pd_row["platform"],
+                stage="pre_publish",
+                attempt=1,
+                full_text=text_to_check,
+                issues=issues,
+            )
         if has_blocking_issues(issues):
             block_reasons.append(f"{pd_row['platform']}: {format_issues(issues)}")
     if block_reasons:

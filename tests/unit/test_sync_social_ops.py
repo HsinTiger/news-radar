@@ -8,6 +8,7 @@ from scripts.sync_social_ops import (
     build_knowledge,
     build_posts,
     build_proposals,
+    build_quality,
     build_submission_updates,
 )
 
@@ -23,6 +24,7 @@ def _db() -> sqlite3.Connection:
           feed_name TEXT,tags TEXT,substack_written_at TEXT
         );
         CREATE TABLE drafts(id TEXT PRIMARY KEY,news_id TEXT,title TEXT,generated_at TEXT);
+        CREATE TABLE platform_drafts(draft_id TEXT,platform TEXT,full_text TEXT,final_text TEXT);
         CREATE TABLE publish_log(
           id INTEGER PRIMARY KEY,draft_id TEXT,platform TEXT,platform_post_id TEXT,
           posted_at TEXT,success INTEGER,error_message TEXT
@@ -37,11 +39,23 @@ def _db() -> sqlite3.Connection:
           fire_id TEXT,fire_at TEXT,proposal_type TEXT,target_config TEXT,
           hsin_decision TEXT,hsin_decision_at TEXT,deployed_at TEXT,evidence_json TEXT
         );
+        CREATE TABLE content_quality_evaluations(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,draft_id TEXT,news_id TEXT,
+          platform TEXT,stage TEXT,attempt INTEGER,checked_at TEXT,
+          guard_version TEXT,text_sha256 TEXT,decision TEXT,block_count INTEGER,
+          rewrite_count INTEGER,warn_count INTEGER,issue_codes_json TEXT,
+          issues_json TEXT
+        );
         INSERT INTO news_items VALUES(
           'n1','rss','https://example.com','Useful source','ai_application','scored',
           '2099-01-01T00:00:00Z',800,0.9,'rss','[]',NULL
         );
         INSERT INTO drafts VALUES('d1','n1','Useful draft','2099-01-02T00:00:00Z');
+        INSERT INTO platform_drafts VALUES('d1','threads','Useful post',NULL);
+        INSERT INTO content_quality_evaluations VALUES(
+          1,'d1','n1','threads','backfill',1,'2099-01-02T01:00:00Z',
+          'test-v1','abc','rewrite',0,1,0,'["uncited_stat"]','[]'
+        );
         INSERT INTO publish_log VALUES(
           1,'d1','threads','t-post','2099-01-03T00:00:00Z',1,NULL
         );
@@ -58,6 +72,7 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     posts = build_posts(conn, full=True)
     engagement = build_engagement(conn, full=True)
     knowledge = build_knowledge(conn, full=True, limit=0)
+    quality = build_quality(conn, full=True)
     assert posts[0]["status"] == "published"
     assert posts[0]["topic"] == "ai_application"
     assert engagement[0]["metric_status"] == "ok"
@@ -65,6 +80,13 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert engagement[0]["clicks"] == 0
     assert knowledge[0]["use_count"] == 1
     assert "clean_markdown" not in knowledge[0]
+    threads_quality = next(row for row in quality if row["platform"] == "threads")
+    assert threads_quality["evaluated"] == 1
+    assert threads_quality["evidence_coverage"] == 1.0
+    assert threads_quality["rewrite_count"] == 1
+    assert threads_quality["top_issue_codes"] == [
+        {"code": "uncited_stat", "count": 1}
+    ]
 
 
 def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None:

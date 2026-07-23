@@ -32,6 +32,10 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional
 
 Severity = Literal["block", "warn", "rewrite"]
+
+# Persisted with every evaluation so dashboard trends remain interpretable when
+# rules change. Bump only when rule semantics change, not for comments/tests.
+QUALITY_GUARD_VERSION = "2026-07-23.v1"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -394,6 +398,7 @@ def format_issues(issues: List[QualityIssue]) -> str:
 
 
 __all__ = [
+    "QUALITY_GUARD_VERSION",
     "QualityIssue",
     "check_quality",
     "has_blocking_issues",

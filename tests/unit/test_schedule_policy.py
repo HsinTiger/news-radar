@@ -5,6 +5,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from src.schedule_policy import decide_schedule, load_policy
 
 
@@ -54,3 +56,54 @@ def test_outside_slot_is_noop() -> None:
     )
     assert decision.dispatch is False
     assert decision.platforms == []
+
+
+def test_owner_approved_runtime_override_changes_threads_slot() -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        CREATE TABLE social_policy_overrides(
+          platform TEXT PRIMARY KEY,target_posts_per_day INTEGER,
+          minimum_interval_hours REAL,local_slots_json TEXT,
+          source_proposal_id TEXT,updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO social_policy_overrides VALUES(?,?,?,?,?,?)",
+        ("threads", 3, 6.0, "[8,14,20]", "proposal-123", "2026-07-22T00:00:00Z"),
+    )
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 23, 6, 10, tzinfo=timezone.utc),  # 14:10 Taipei
+    )
+    threads = next(item for item in decision.platform_decisions if item.platform == "threads")
+    assert decision.platforms == ["threads"]
+    assert threads.target_posts_per_day == 3
+    assert threads.minimum_interval_hours == 6.0
+    assert threads.local_slots == [8, 14, 20]
+    assert threads.policy_source == "proposal:proposal-123"
+
+
+def test_runtime_override_rejects_spacing_violation_across_midnight() -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        CREATE TABLE social_policy_overrides(
+          platform TEXT PRIMARY KEY,target_posts_per_day INTEGER,
+          minimum_interval_hours REAL,local_slots_json TEXT,
+          source_proposal_id TEXT,updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO social_policy_overrides VALUES(?,?,?,?,?,?)",
+        ("threads", 2, 8.0, "[0,20]", "bad-proposal", "2026-07-22T00:00:00Z"),
+    )
+    with pytest.raises(ValueError, match="minimum spacing"):
+        decide_schedule(
+            conn,
+            load_policy(POLICY),
+            datetime(2026, 7, 23, 12, 10, tzinfo=timezone.utc),
+        )

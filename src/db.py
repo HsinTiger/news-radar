@@ -4,6 +4,7 @@ News Radar · SQLite 初始化與 CRUD
 """
 from __future__ import annotations
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Optional, List
@@ -707,6 +708,80 @@ def get_platform_drafts(conn: sqlite3.Connection, draft_id: str) -> List[sqlite3
         "SELECT * FROM platform_drafts WHERE draft_id = ? ORDER BY platform",
         (draft_id,),
     ).fetchall()
+
+
+def record_quality_evaluation(
+    conn: sqlite3.Connection,
+    *,
+    draft_id: str,
+    news_id: Optional[str],
+    platform: str,
+    stage: str,
+    attempt: int,
+    full_text: str,
+    issues: list,
+    checked_at: Optional[str] = None,
+    commit: bool = True,
+) -> tuple[str, bool]:
+    """Persist one deterministic quality observation without storing content.
+
+    Evidence is append-only by text hash. Re-running a backfill over unchanged
+    text is idempotent. ``rewrite`` is intentionally distinct from ``block``:
+    the composer gets one retry, while historical rewrite findings remain
+    observations and never become retroactive publish failures.
+    """
+    from datetime import datetime, timezone
+    from .content_quality_guard import QUALITY_GUARD_VERSION
+
+    if platform not in {"facebook", "instagram", "threads"}:
+        raise ValueError(f"unsupported quality platform: {platform}")
+    if stage not in {"compose", "pre_publish", "backfill"}:
+        raise ValueError(f"unsupported quality stage: {stage}")
+    payload = [
+        {
+            "code": str(issue.code),
+            "severity": str(issue.severity),
+            "message": str(issue.message),
+        }
+        for issue in issues
+    ]
+    severities = [item["severity"] for item in payload]
+    if "block" in severities:
+        decision = "block"
+    elif "rewrite" in severities:
+        decision = "rewrite"
+    elif "warn" in severities:
+        decision = "warn"
+    else:
+        decision = "pass"
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO content_quality_evaluations(
+          draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+          text_sha256,decision,block_count,rewrite_count,warn_count,
+          issue_codes_json,issues_json
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            draft_id,
+            news_id,
+            platform,
+            stage,
+            int(attempt),
+            checked_at or datetime.now(timezone.utc).isoformat(),
+            QUALITY_GUARD_VERSION,
+            hashlib.sha256((full_text or "").encode("utf-8")).hexdigest(),
+            decision,
+            severities.count("block"),
+            severities.count("rewrite"),
+            severities.count("warn"),
+            json.dumps(sorted({item["code"] for item in payload}), ensure_ascii=False),
+            json.dumps(payload, ensure_ascii=False),
+        ),
+    )
+    if commit:
+        conn.commit()
+    return decision, cursor.rowcount == 1
 
 
 def update_platform_draft_final_text(

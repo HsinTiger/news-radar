@@ -24,6 +24,8 @@ import pytest
 
 import run_pipeline
 from src import db as dbmod
+from src.schema import MultiPlatformDraft, PlatformVariant
+from src.topic_classifier import TopicClassification
 
 
 def _seed_fetched_news(
@@ -82,6 +84,44 @@ async def _fake_make_passthrough_score(monkeypatch):
         )
 
     monkeypatch.setattr(run_pipeline, "score_news", _high_score)
+
+
+def _bundle(body: str) -> MultiPlatformDraft:
+    def variant(label: str) -> PlatformVariant:
+        return PlatformVariant(
+            title=f"{label} useful hook",
+            body=body,
+            hashtags=["#AI"],
+            primary_topic_tag="#AI",
+            char_count=len(body),
+        )
+
+    return MultiPlatformDraft(
+        fb=variant("Facebook"),
+        ig=variant("Instagram"),
+        threads=variant("Threads"),
+        image_url="https://images.example.net/cover.jpg",
+    )
+
+
+def _patch_composable_path(monkeypatch, bundles: list[MultiPlatformDraft]) -> list:
+    calls: list = []
+
+    async def _compose(*args, **kwargs):
+        calls.append((args, kwargs))
+        return bundles[min(len(calls) - 1, len(bundles) - 1)]
+
+    async def _topic(*_args, **_kwargs):
+        return TopicClassification("ai_application", 0.9, "test")
+
+    async def _accessible(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(run_pipeline, "compose_multi_platform", _compose)
+    monkeypatch.setattr(run_pipeline, "classify_topic", _topic)
+    monkeypatch.setattr(run_pipeline.image_manager, "check_media_accessibility", _accessible)
+    monkeypatch.setattr(run_pipeline, "save_md_draft", lambda *_args, **_kwargs: None)
+    return calls
 
 
 def test_scorer_fail_returns_skipped_no_llm(tmp_db, monkeypatch):
@@ -181,3 +221,47 @@ def test_scorer_fail_does_not_fabricate_confidence(tmp_db, monkeypatch):
             "偵測到 confidence_score >= 0.99 的 draft。"
             "Phase 8.19 已移除暴力發布偽造分數，若此測試 fail 表示 footgun 復活。"
         )
+
+
+def test_rewrite_issue_gets_one_retry_then_queues_clean_result(tmp_db, monkeypatch):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    calls = _patch_composable_path(
+        monkeypatch,
+        [
+            _bundle("完整分析先放一個虛構連結 https://example.com，這段必須被重寫。"),
+            _bundle("完整分析改成只保留來源能支持的判斷，並且清楚交代讀者能帶走什麼。"),
+        ],
+    )
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_rewrite_resolved")
+        result = asyncio.run(run_pipeline.process_item(conn, row, compose_only=True))
+        assert result == "queued"
+        assert len(calls) == 2
+        decisions = conn.execute(
+            """SELECT attempt,decision,COUNT(*) AS n
+                 FROM content_quality_evaluations
+                GROUP BY attempt,decision ORDER BY attempt"""
+        ).fetchall()
+        assert [tuple(item) for item in decisions] == [
+            (1, "rewrite", 3),
+            (2, "pass", 3),
+        ]
+        draft = conn.execute(
+            "SELECT status,queue_status FROM drafts WHERE news_id='n_rewrite_resolved'"
+        ).fetchone()
+        assert tuple(draft) == ("auto_approved", "queued")
+
+
+def test_unresolved_rewrite_is_held_out_of_automatic_queue(tmp_db, monkeypatch):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    bad = _bundle("完整分析仍引用虛構連結 https://example.com，所以不得進自動發布佇列。")
+    calls = _patch_composable_path(monkeypatch, [bad, bad])
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_rewrite_unresolved")
+        result = asyncio.run(run_pipeline.process_item(conn, row, compose_only=True))
+        assert result == "drafted"
+        assert len(calls) == 2
+        draft = conn.execute(
+            "SELECT status,queue_status FROM drafts WHERE news_id='n_rewrite_unresolved'"
+        ).fetchone()
+        assert tuple(draft) == ("pending_review", None)

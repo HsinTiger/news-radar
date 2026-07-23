@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 import sys
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,6 +139,102 @@ def build_engagement(conn: sqlite3.Connection, *, full: bool = False) -> list[di
                 "quotes": row["quotes"] or 0,
                 "metric_status": "degraded" if _has_error(raw) else "ok",
                 "raw_summary": _error_summary(raw),
+            }
+        )
+    return result
+
+
+def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[str, Any]]:
+    """Aggregate latest per-draft quality evidence without exporting content."""
+    now = datetime.now(timezone.utc).isoformat()
+    window_days = 0 if full else 45
+    tables = {
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "content_quality_evaluations" not in tables:
+        return [
+            {
+                "platform": platform,
+                "captured_at": now,
+                "window_days": window_days,
+                "candidates": 0,
+                "evaluated": 0,
+                "evidence_coverage": 0.0,
+                "pass_count": 0,
+                "warn_count": 0,
+                "rewrite_count": 0,
+                "block_count": 0,
+                "publish_ready_count": 0,
+                "top_issue_codes": [],
+                "guard_version": "unknown",
+            }
+            for platform in sorted(PLATFORMS)
+        ]
+
+    recent = "" if full else "AND datetime(COALESCE(d.generated_at,q.checked_at)) >= datetime('now','-45 day')"
+    rows = conn.execute(
+        f"""
+        SELECT q.*,d.generated_at
+          FROM content_quality_evaluations q
+          LEFT JOIN drafts d ON d.id=q.draft_id
+         WHERE q.platform IN ('facebook','instagram','threads') {recent}
+         ORDER BY q.checked_at,q.id
+        """
+    ).fetchall()
+    latest: dict[tuple[str, str], sqlite3.Row] = {}
+    for row in rows:
+        latest[(row["draft_id"], row["platform"])] = row
+
+    draft_recent = "" if full else "AND datetime(d.generated_at) >= datetime('now','-45 day')"
+    candidate_rows = conn.execute(
+        f"""
+        SELECT pd.draft_id,pd.platform
+          FROM platform_drafts pd JOIN drafts d ON d.id=pd.draft_id
+         WHERE pd.platform IN ('facebook','instagram','threads') {draft_recent}
+        """
+    ).fetchall()
+    candidates = {
+        platform: {
+            (row["draft_id"], row["platform"])
+            for row in candidate_rows if row["platform"] == platform
+        }
+        for platform in PLATFORMS
+    }
+    for key in latest:
+        candidates[key[1]].add(key)
+
+    result: list[dict[str, Any]] = []
+    for platform in sorted(PLATFORMS):
+        platform_rows = [row for (_draft, p), row in latest.items() if p == platform]
+        decisions = Counter(row["decision"] for row in platform_rows)
+        codes: Counter[str] = Counter()
+        versions: list[str] = []
+        for row in platform_rows:
+            codes.update(_json(row["issue_codes_json"], []))
+            if row["guard_version"]:
+                versions.append(row["guard_version"])
+        candidate_count = len(candidates[platform])
+        evaluated = len(platform_rows)
+        result.append(
+            {
+                "platform": platform,
+                "captured_at": now,
+                "window_days": window_days,
+                "candidates": candidate_count,
+                "evaluated": evaluated,
+                "evidence_coverage": round(evaluated / candidate_count, 6) if candidate_count else 0.0,
+                "pass_count": decisions["pass"],
+                "warn_count": decisions["warn"],
+                "rewrite_count": decisions["rewrite"],
+                "block_count": decisions["block"],
+                "publish_ready_count": decisions["pass"] + decisions["warn"],
+                "top_issue_codes": [
+                    {"code": code, "count": count}
+                    for code, count in codes.most_common(5)
+                ],
+                "guard_version": versions[-1] if versions else "unknown",
             }
         )
     return result
@@ -404,6 +501,7 @@ def main() -> int:
         groups = {
             "posts": build_posts(conn, full=args.full),
             "engagement": build_engagement(conn, full=args.full),
+            "quality": build_quality(conn, full=args.full),
             "knowledge": build_knowledge(conn, full=args.full, limit=args.knowledge_limit),
             "proposals": build_proposals(conn, proposals_dir=args.proposals_dir),
             "health": build_health(conn),
