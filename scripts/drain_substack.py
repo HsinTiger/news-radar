@@ -53,10 +53,17 @@ def _candidates(only_immediate: bool = False) -> list:
         return []
     conn = sqlite3.connect(str(DB))
     try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
+        remote_filter = (
+            " AND substack_drafted_at IS NULL "
+            if "substack_drafted_at" in columns
+            else " "
+        )
         rows = conn.execute(
             "SELECT id, title, word_count, url, clean_markdown, COALESCE(tags,'') FROM news_items "
             "WHERE feed_name='user_substack' "
-            "  AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 100 "
+            "  AND clean_markdown IS NOT NULL AND LENGTH(TRIM(clean_markdown)) > 0 "
+            + remote_filter +
             "ORDER BY fetched_at ASC"
         ).fetchall()
     finally:

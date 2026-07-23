@@ -163,7 +163,7 @@
         <button class="ghost" id="refresh" type="button">更新</button>
       </div>
       <div class="history" id="history"><div class="empty">解鎖後載入真實處理狀態。</div></div>
-      <p class="policy">狀態契約：queued → claimed → dispatched → content/source queued → published/draft created。任一步失敗會保留 failed 與 workflow 證據。</p>
+      <p class="policy">狀態契約：queued → claimed → dispatched → content/source queued → published/draft created。Meta 若只完成部分平台會顯示 partial；品質閘保留稿件時顯示 quality held，不會假報 published。</p>
     </aside>
   </section>
 </main>
@@ -191,6 +191,8 @@
     processing: "處理中",
     draft_created: "Substack 草稿已建立",
     published: "已由平台 API 確認發布",
+    partial: "部分 Meta 平台已發布；缺失平台等待重試",
+    quality_held: "品質閘保留；需要複核或重寫",
     failed: "處理失敗",
     rejected: "已拒絕"
   };

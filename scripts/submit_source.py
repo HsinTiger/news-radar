@@ -265,6 +265,12 @@ def process_url(
 
     # Try to pre-fetch article text
     article_text = _fetch_page_text(url)
+    if len((article_text or "").strip()) < 80:
+        conn.close()
+        return {
+            "status": "error",
+            "message": "URL yielded insufficient readable text; paste the full text instead",
+        }
     item = NewsItem(
         id=news_id,
         feed_name="user_submission",
@@ -542,7 +548,13 @@ def process_images(
     return {"status": "created", "id": news_id, "count": len(urls)}
 
 
-def main():
+def _result_exit_code(result: dict) -> int:
+    if "status" in result:
+        return 0 if result.get("status") in ("created", "already_exists") else 1
+    return 1 if result.get("errors") else 0
+
+
+def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Submit source for News Radar")
     parser.add_argument("--url", type=str, help="Article URL")
@@ -594,6 +606,7 @@ def main():
         result = process_pending()
     
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    return _result_exit_code(result)
 
 
 def process_pending() -> dict:
@@ -638,6 +651,10 @@ def process_pending() -> dict:
                 if r.get("status") in ("created", "already_exists"):
                     results["created"] += 1
                 else:
+                    results["errors"].append(
+                        f"{file_key}:{r.get('status', 'unknown')}:"
+                        f"{r.get('message', 'submission retained for retry')}"
+                    )
                     remaining.append(entry)
             except Exception as e:
                 results["errors"].append(str(e))
@@ -648,4 +665,4 @@ def process_pending() -> dict:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

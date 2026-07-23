@@ -342,3 +342,76 @@ def test_submission_platform_tags_cannot_be_broadened_by_scheduler(tmp_db, monke
         assert conn.execute(
             "SELECT COUNT(*) FROM drafts WHERE news_id='n_fb_only'"
         ).fetchone()[0] == 0
+
+
+def test_substack_sources_are_never_visible_to_meta_pending_query(tmp_db):
+    with dbmod.get_conn() as conn:
+        _seed_fetched_news(conn, "n_meta_source")
+        _seed_fetched_news(conn, "n_substack_source")
+        conn.execute(
+            """UPDATE news_items
+                  SET feed_name='user_substack',tags='["substack_source"]'
+                WHERE id='n_substack_source'"""
+        )
+        conn.commit()
+        pending_ids = {row["id"] for row in dbmod.get_pending_items(conn)}
+        assert "n_meta_source" in pending_ids
+        assert "n_substack_source" not in pending_ids
+        substack_row = conn.execute(
+            "SELECT * FROM news_items WHERE id='n_substack_source'"
+        ).fetchone()
+        result = asyncio.run(run_pipeline.process_item(conn, substack_row))
+        assert result == "skipped_target_scope"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM drafts WHERE news_id='n_substack_source'"
+        ).fetchone()[0] == 0
+
+
+def test_owner_meta_submission_bypasses_relevance_drop_but_enters_quality_path(
+    tmp_db, monkeypatch
+):
+    from src.scorer import NewsScore, ScoreBreakdown
+
+    async def _low_score(*_args, **_kwargs):
+        return NewsScore(
+            confidence_score=0.2,
+            editorial_note="owner-directed post",
+            score_breakdown=ScoreBreakdown(
+                data_density=0.2,
+                strategic_signal=0.2,
+                news_novelty=0.2,
+                persona_fit=0.2,
+            ),
+        )
+
+    monkeypatch.setattr(run_pipeline, "score_news", _low_score)
+    calls = _patch_composable_path(
+        monkeypatch,
+        [_bundle("Owner 明確指定處理；內容仍需通過 deterministic quality guard。")],
+    )
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_owner_low_score")
+        conn.execute(
+            """UPDATE news_items
+                  SET feed_name='user_submission',tags='["user_submission","platform:threads"]'
+                WHERE id='n_owner_low_score'"""
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM news_items WHERE id='n_owner_low_score'"
+        ).fetchone()
+        result = asyncio.run(
+            run_pipeline.process_item(
+                conn,
+                row,
+                compose_only=True,
+                requested_platforms={"threads"},
+            )
+        )
+        assert result == "queued"
+        assert calls and calls[0][1]["platforms"] == ["threads"]
+        draft = conn.execute(
+            "SELECT status,queue_status,confidence_score FROM drafts WHERE news_id='n_owner_low_score'"
+        ).fetchone()
+        assert tuple(draft[:2]) == ("auto_approved", "queued")
+        assert draft["confidence_score"] == 0.2

@@ -229,6 +229,118 @@ def test_meta_lineage_exports_submission_and_partial_then_published() -> None:
     ]
 
 
+def test_meta_quality_block_without_draft_becomes_quality_held() -> None:
+    conn = _db()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "n-held", "text", "manual://held", "Owner source", "ai_application",
+            "dropped", "2099-02-01T00:00:00Z", 100, 1.0, "user_submission",
+            '["user_submission","platform:threads",'
+            '"control_submission:meta-held-001",'
+            '"control_route:meta-held-001:threads"]',
+            None, None, None,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-held','n-held','threads','compose',1,
+             '2099-02-02T00:00:00Z','v1','sha','block',1,0,0,'[]','[]')"""
+    )
+    assert build_submission_updates(conn) == [
+        {
+            "submission_id": "meta-held-001",
+            "status": "quality_held",
+            "observed_at": "2099-02-02T00:00:00Z",
+        }
+    ]
+
+
+def test_quality_hold_is_platform_scoped_and_not_masked_by_later_pass() -> None:
+    conn = _db()
+    tags = json.dumps(
+        [
+            "user_submission",
+            "platform:fb",
+            "platform:threads",
+            "control_submission:meta-held-threads",
+            "control_route:meta-held-threads:threads",
+            "control_submission:meta-clean-fb",
+            "control_route:meta-clean-fb:fb",
+        ]
+    )
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "n-platform-held", "text", "manual://platform-held", "Owner source",
+            "ai_application", "dropped", "2099-02-01T00:00:00Z", 100, 1.0,
+            "user_submission", tags, None, None, None,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-platform-held','n-platform-held','threads','compose',1,
+             '2099-02-02T00:00:00Z','v1','sha-t','block',1,0,0,'[]','[]')"""
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-platform-held','n-platform-held','facebook','compose',1,
+             '2099-02-02T00:01:00Z','v1','sha-f','pass',0,0,0,'[]','[]')"""
+    )
+    assert build_submission_updates(conn) == [
+        {
+            "submission_id": "meta-held-threads",
+            "status": "quality_held",
+            "observed_at": "2099-02-02T00:00:00Z",
+        }
+    ]
+
+
+def test_successful_quality_rewrite_is_not_reported_as_held() -> None:
+    conn = _db()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "n-rewrite-resolved", "text", "manual://rewrite-resolved", "Owner source",
+            "ai_application", "queued", "2099-02-01T00:00:00Z", 100, 1.0,
+            "user_submission",
+            '["user_submission","platform:threads",'
+            '"control_submission:meta-rewrite-resolved",'
+            '"control_route:meta-rewrite-resolved:threads"]',
+            None, None, None,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO drafts VALUES('d-rewrite-resolved','n-rewrite-resolved','Draft','2099-02-02T00:00:00Z')"
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-rewrite-resolved','n-rewrite-resolved','threads','compose',1,
+             '2099-02-02T00:00:00Z','v1','sha-old','rewrite',0,1,0,'[]','[]')"""
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-rewrite-resolved','n-rewrite-resolved','threads','compose',2,
+             '2099-02-02T00:01:00Z','v1','sha-new','pass',0,0,0,'[]','[]')"""
+    )
+    assert build_submission_updates(conn) == []
+
+
 def test_proposal_sync_maps_legacy_decision_and_exports_exact_action(
     tmp_path: Path,
 ) -> None:
