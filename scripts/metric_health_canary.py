@@ -44,6 +44,7 @@ def classify_result(result: dict[str, Any]) -> tuple[str, str]:
     metric_names = (
         "views", "reach", "likes", "comments", "shares", "saves",
         "replies", "reposts", "quotes", "total_interactions",
+        "engaged_users", "clicks",
     )
     nonzero = [name for name in metric_names if int(result.get(name) or 0) > 0]
     if not result.get("ok"):

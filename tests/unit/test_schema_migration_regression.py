@@ -134,5 +134,9 @@ def test_fresh_db_schema_has_all_phase820_tables():
         for t in ("news_items", "drafts", "publish_log", "engagement_stats",
                   "platform_drafts", "reflection_events"):
             assert t in tables, f"missing table: {t}"
+        engagement_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(engagement_stats)")
+        }
+        assert {"engaged_users", "clicks"} <= engagement_columns
     finally:
         conn.close()
