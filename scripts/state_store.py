@@ -542,7 +542,10 @@ def _repo_from_env(value: str | None) -> str:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("pull", "push", "inspect", "bundle", "lock", "unlock"))
+    parser.add_argument(
+        "command",
+        choices=("pull", "push", "inspect", "bundle", "lock", "assert", "unlock"),
+    )
     parser.add_argument("--repo", help="GitHub OWNER/REPO")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--db", type=Path)
@@ -575,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
                     lease_seconds=args.lease_seconds,
                     wait_seconds=args.wait_seconds,
                 )
+            elif args.command == "assert":
+                result = store.assert_lock(lease_file)
             elif args.command == "unlock":
                 result = store.release_lock(lease_file)
             elif args.command == "pull":

@@ -58,6 +58,13 @@ The automation may collect data, generate reversible drafts, and propose
 changes without interruption. It may not silently enable live publishing,
 increase frequency, or apply learning proposals.
 
+Topic-weight learning is an exact-action loop: the reflector records
+`field/current_value/proposed_value`; the dashboard records the owner's
+decision; `learning-review.yml` applies only an approved action while holding
+the canonical Release lease. Identity, current-value drift, range, weekly
+delta, compare-and-swap, and post-write readback all fail closed. Approval
+authorizes that proposal only; it never grants publishing authority.
+
 ## Architecture
 
 ```mermaid
@@ -108,6 +115,7 @@ Cloudflare D1 stores:
 | `engagement-monitor.yml` | Polls post metrics every six hours | Read-only platform access |
 | `audience-monitor.yml` | Captures daily follower snapshots | Read-only platform access |
 | `operational-sync.yml` | Syncs runtime metadata and Substack terminal evidence to D1 | No publishing authority |
+| `learning-review.yml` | Mirrors owner decisions, applies exact approved topic weights, then creates the next proposals | Policy-write authority only; no publishing |
 | `full_pipeline.yml` | Harvest, compose, publish, verify, feedback, persist | Only dispatched by governed scheduler or owner |
 | `reels_publish.yml` | Generates or publishes one idempotent reel | No independent cron; live publish requires owner action |
 

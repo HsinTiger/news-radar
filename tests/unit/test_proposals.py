@@ -237,6 +237,7 @@ def test_update_decision_roundtrip(env):
         fire_id,
         decision="approve",
         comment="looks good",
+        decision_at="2026-04-28T01:02:03+00:00",
         db_path=db_path,
         base_dir=base_dir,
     )
@@ -245,7 +246,7 @@ def test_update_decision_roundtrip(env):
     rec = read_proposals(base_dir=base_dir)[0]
     assert rec["hsin_decision"] == "approve"
     assert rec["hsin_decision_comment"] == "looks good"
-    assert rec["hsin_decision_at"] is not None
+    assert rec["hsin_decision_at"] == "2026-04-28T01:02:03+00:00"
 
     # Lineage reflects.
     with sqlite3.connect(str(db_path)) as conn:
@@ -256,7 +257,7 @@ def test_update_decision_roundtrip(env):
             (fire_id,),
         ).fetchone()
     assert row["hsin_decision"] == "approve"
-    assert row["hsin_decision_at"] is not None
+    assert row["hsin_decision_at"] == "2026-04-28T01:02:03+00:00"
 
 
 def test_update_decision_rejects_invalid_decision(env):

@@ -20,11 +20,9 @@ All analyzers write through ``proposals.write_proposal``; no analyzer
 opens the jsonl file or the lineage table directly.
 
 The package-level helper ``mark_deployed`` (Item 2.5) is the deployment
-counterpart: once an analyzer auto-deploys a proposal (or once Hsin
-approves a pending one and the analyzer applies it), the analyzer calls
-``mark_deployed(fire_id)`` to record the deploy timestamp on both the
-jsonl record and the lineage row. Item 3's topic analyzer is the first
-caller (auto-deploy path for non-pinned + small-delta categories).
+counterpart. An approval-gated executor calls ``mark_deployed(fire_id)``
+only after the exact approved action passes drift/range checks and its DB
+write is verified. An analyzer never grants itself deployment authority.
 
 Spec  : PM_Radar/specs/phase_9_implementation_plan.md §3
 Canon : PM_Radar/roadmap/phase_9_unified_reflector.md

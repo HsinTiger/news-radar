@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-23.v2";
+const API_VERSION = "2026-07-23.v3";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -53,6 +53,13 @@ export default {
         await requireToken(request, env.OWNER_TOKEN, "owner");
         return await dashboard(env, cors);
       }
+      const proposalDecisionMatch = url.pathname.match(
+        /^\/api\/learning-proposals\/([A-Za-z0-9_-]{8,160})\/decision$/,
+      );
+      if (request.method === "POST" && proposalDecisionMatch) {
+        await requireToken(request, env.OWNER_TOKEN, "owner");
+        return await decideLearningProposal(request, env, proposalDecisionMatch[1], cors);
+      }
       if (
         request.method === "GET" &&
         url.pathname === "/api/service/submissions/next"
@@ -74,6 +81,13 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/service/events") {
         await requireToken(request, env.SERVICE_TOKEN, "service");
         return await recordServiceEvent(request, env, cors);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/service/learning-proposals/decisions"
+      ) {
+        await requireToken(request, env.SERVICE_TOKEN, "service");
+        return await listLearningDecisions(env, cors);
       }
       throw new HTTPError(404, "Not found", "not_found");
     } catch (error) {
@@ -166,6 +180,55 @@ async function enforceOwnerRateLimit(env) {
   if (Number(row?.count || 0) >= OWNER_RATE_LIMIT_PER_MINUTE) {
     throw new HTTPError(429, "Too many submissions; retry in one minute", "rate_limited");
   }
+}
+
+async function decideLearningProposal(request, env, proposalId, cors) {
+  const body = await bodyJson(request, 20_000);
+  const decision = cleanString(body.decision, "decision", 20, true);
+  if (!new Set(["approved", "rejected"]).has(decision)) {
+    throw new HTTPError(400, "decision must be approved or rejected", "invalid_input");
+  }
+  const comment = cleanString(body.comment, "comment", 1000);
+  const current = await env.DB.prepare(
+    "SELECT id,status,decided_at FROM learning_proposals WHERE id=?",
+  ).bind(proposalId).first();
+  if (!current) throw new HTTPError(404, "learning proposal not found", "not_found");
+  if (current.status === "applied" || current.status === "superseded") {
+    throw new HTTPError(409, "proposal is already terminal", "invalid_transition");
+  }
+  if (current.status !== "proposed" && current.status !== decision) {
+    throw new HTTPError(409, "proposal already has another owner decision", "invalid_transition");
+  }
+  const now = current.decided_at || new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE learning_proposals
+       SET status=?,decision_comment=?,decided_at=? WHERE id=?`,
+    ).bind(decision, comment || null, now, proposalId),
+    env.DB.prepare(
+      `INSERT INTO audit_events(actor,action,subject_id,status,metadata_json,created_at)
+       VALUES('owner','decide_learning_proposal',?,'accepted',?,?)`,
+    ).bind(proposalId, JSON.stringify({ decision, comment }), new Date().toISOString()),
+  ]);
+  return reply(
+    {
+      ok: true,
+      proposal: { id: proposalId, status: decision, decision_comment: comment || null, decided_at: now },
+      execution: decision === "approved" ? "next_learning_review" : "none",
+    },
+    200,
+    cors,
+  );
+}
+
+async function listLearningDecisions(env, cors) {
+  const { results } = await env.DB.prepare(
+    `SELECT id,status,decision_comment,decided_at
+     FROM learning_proposals
+     WHERE status IN ('approved','rejected')
+     ORDER BY decided_at,id`,
+  ).all();
+  return reply({ ok: true, decisions: results }, 200, cors);
 }
 
 async function createSubmission(request, env, cors) {
@@ -581,23 +644,64 @@ async function syncOperationalData(request, env, cors) {
     if (!new Set(["proposed", "approved", "rejected", "applied", "superseded"]).has(status)) {
       throw new HTTPError(400, "invalid proposal status", "invalid_input");
     }
+    const proposalId = cleanString(row.id, "proposal.id", 160, true);
+    const ownerDecision = cleanString(row.owner_decision, "owner_decision", 20);
+    if (ownerDecision && !new Set(["approved", "rejected"]).has(ownerDecision)) {
+      throw new HTTPError(400, "invalid owner decision", "invalid_input");
+    }
+    const existing = await env.DB.prepare(
+      "SELECT status FROM learning_proposals WHERE id=?",
+    ).bind(proposalId).first();
+    if (status === "applied" && existing?.status !== "applied" && ownerDecision !== "approved") {
+      throw new HTTPError(409, "applied proposal lacks owner approval", "invalid_transition");
+    }
+    if (status === "applied" && existing?.status === "proposed") {
+      throw new HTTPError(409, "proposal must be approved before applied", "invalid_transition");
+    }
+    if (
+      existing?.status === "rejected" && !new Set(["proposed", "rejected"]).has(status)
+    ) {
+      throw new HTTPError(409, "rejected proposal cannot transition", "invalid_transition");
+    }
+    if (existing?.status === "approved" && status === "rejected") {
+      throw new HTTPError(409, "approved proposal cannot be rejected by service sync", "invalid_transition");
+    }
+    if (
+      existing?.status === "superseded" && !new Set(["proposed", "superseded"]).has(status)
+    ) {
+      throw new HTTPError(409, "superseded proposal cannot transition", "invalid_transition");
+    }
     statements.push(
       env.DB.prepare(
         `INSERT INTO learning_proposals(
-          id,kind,status,summary,evidence_json,proposed_change_json,created_at,decided_at,applied_at
-        ) VALUES(?,?,?,?,?,?,?,?,?)
+          id,kind,status,summary,evidence_json,proposed_change_json,created_at,
+          decision_comment,decided_at,applied_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
-          kind=excluded.kind,status=excluded.status,summary=excluded.summary,
+          kind=excluded.kind,
+          status=CASE
+            WHEN learning_proposals.status='applied' THEN 'applied'
+            WHEN learning_proposals.status='rejected' THEN 'rejected'
+            WHEN learning_proposals.status='superseded' THEN 'superseded'
+            WHEN learning_proposals.status='approved' AND excluded.status='applied' THEN 'applied'
+            WHEN learning_proposals.status='approved' THEN 'approved'
+            WHEN excluded.status='applied' THEN 'applied'
+            ELSE excluded.status
+          END,
+          summary=excluded.summary,
           evidence_json=excluded.evidence_json,proposed_change_json=excluded.proposed_change_json,
-          decided_at=excluded.decided_at,applied_at=excluded.applied_at`,
+          decision_comment=COALESCE(learning_proposals.decision_comment,excluded.decision_comment),
+          decided_at=COALESCE(excluded.decided_at,learning_proposals.decided_at),
+          applied_at=COALESCE(excluded.applied_at,learning_proposals.applied_at)`,
       ).bind(
-        cleanString(row.id, "proposal.id", 160, true),
+        proposalId,
         cleanString(row.kind, "kind", 100, true),
         status,
         cleanString(row.summary, "summary", 2000, true),
         jsonValue(row.evidence),
         jsonValue(row.proposed_change),
         cleanString(row.created_at, "created_at", 60, true),
+        cleanString(row.decision_comment, "decision_comment", 1000) || null,
         cleanString(row.decided_at, "decided_at", 60) || null,
         cleanString(row.applied_at, "applied_at", 60) || null,
       ),
@@ -665,7 +769,9 @@ async function dashboard(env, cors) {
       SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
       FROM audience_snapshots
     ) SELECT platform,captured_at,followers,followers_delta_7d,metric_status FROM ranked WHERE rn=1`),
-    env.DB.prepare("SELECT id,kind,status,summary,evidence_json,created_at,decided_at,applied_at FROM learning_proposals ORDER BY created_at DESC LIMIT 20"),
+    env.DB.prepare(`SELECT id,kind,status,summary,evidence_json,proposed_change_json,
+      decision_comment,created_at,decided_at,applied_at
+      FROM learning_proposals ORDER BY created_at DESC LIMIT 20`),
     env.DB.prepare(`SELECT COALESCE(topic,'unclassified') AS topic,COUNT(*) AS items,
       MAX(last_used_at) AS last_used_at,SUM(use_count) AS uses
       FROM knowledge_items WHERE status='active' GROUP BY COALESCE(topic,'unclassified')
@@ -699,7 +805,13 @@ async function dashboard(env, cors) {
       engagement: engagement.results,
       engagement_trend: engagementTrend.results,
       audience: audience.results,
-      learning_proposals: proposals.results,
+      learning_proposals: proposals.results.map((row) => ({
+        ...row,
+        evidence: JSON.parse(row.evidence_json || "{}"),
+        proposed_change: JSON.parse(row.proposed_change_json || "{}"),
+        evidence_json: undefined,
+        proposed_change_json: undefined,
+      })),
       knowledge: {
         total: knowledgeTotal.results[0] || { items: 0, uses: 0, last_used_at: null },
         topics: knowledgeTopics.results,
