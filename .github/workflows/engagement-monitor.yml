@@ -1,0 +1,80 @@
+name: "Social Automation · Engagement Monitor"
+
+on:
+  schedule:
+    - cron: "11 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-radar-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -q
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+      - name: Poll platform engagement
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          python -m src.engagement 2>&1 | tee logs/engagement_monitor.log
+      - name: Persist verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "engagement_monitor:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+      - name: Sync engagement to Social Ops
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 100
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+      - name: Upload collector evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: engagement-monitor-${{ github.run_id }}
+          path: logs/engagement_monitor.log
+          retention-days: 14
+          if-no-files-found: warn

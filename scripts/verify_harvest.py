@@ -15,6 +15,7 @@ from src import db as dbmod
 
 def main():
     conn = dbmod.get_conn()
+    failures = []
     try:
         # 1. Count news_items
         total = conn.execute("SELECT COUNT(*) as c FROM news_items").fetchone()["c"]
@@ -29,10 +30,11 @@ def main():
 
         if total == 0:
             print("❌ [Verify:Harvest] Database has 0 items — harvest failed!")
-            print("⚠️ check failed (non-blocking)")
+            failures.append("empty_database")
 
         if fetched_today == 0 and total > 0:
-            print("⚠️ [Verify:Harvest] No new items in 24h (DB has historical data though)")
+            print("❌ [Verify:Harvest] No new items in 24h")
+            failures.append("no_fresh_items")
 
         # 2. Check feed diversity
         feed_count = conn.execute(
@@ -42,7 +44,7 @@ def main():
 
         if feed_count < 5:
             print(f"❌ [Verify:Harvest] Only {feed_count} distinct feeds (< 5) — possible config issue")
-            print("⚠️ check failed (non-blocking)")
+            failures.append("feed_diversity")
 
         # 3. Check for recent items with clean_markdown
         with_content = conn.execute(
@@ -52,11 +54,15 @@ def main():
 
         if with_content == 0:
             print("❌ [Verify:Harvest] No items have usable content (clean_markdown)")
-            print("⚠️ check failed (non-blocking)")
+            failures.append("no_usable_content")
 
+        if failures:
+            print(f"❌ [Verify:Harvest] FAIL reasons={failures}")
+            return 1
         print("✅ [Verify:Harvest] PASS")
+        return 0
     finally:
         conn.close()
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

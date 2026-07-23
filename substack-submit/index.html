@@ -1,257 +1,334 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-Hant">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📝 Substack 草稿提交 · News Radar</title>
-<link rel="manifest" href="manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="Substack 提交">
-<style>
-  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
-          --accent:#ff6719; --ok:#2ea043; --err:#f85149; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-         background:var(--bg); color:var(--fg); line-height:1.6; }
-  .wrap { max-width:560px; margin:0 auto; padding:20px 16px 60px; }
-  .badge { display:inline-block; background:var(--accent); color:#fff; font-weight:700;
-           font-size:13px; padding:3px 10px; border-radius:20px; margin-bottom:10px; }
-  h1 { font-size:22px; margin:6px 0 2px; }
-  h2 { font-size:16px; margin:24px 0 10px; }
-  .sub { color:var(--muted); font-size:14px; margin:0 0 20px; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
-  label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; font-weight:600; }
-  input[type=text], textarea { width:100%; background:#0d1117; border:1px solid var(--border); color:var(--fg);
-    border-radius:8px; padding:11px 12px; font-size:15px; font-family:inherit; }
-  textarea { min-height:120px; resize:vertical; }
-  .types { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
-  .type-btn { flex:1; min-width:70px; text-align:center; padding:10px; border:1px solid var(--border);
-    border-radius:8px; background:#0d1117; cursor:pointer; font-size:14px; user-select:none; }
-  .type-btn.active { border-color:var(--accent); background:rgba(255,103,25,.12); color:var(--accent); font-weight:700; }
-  .drop { border:2px dashed var(--border); border-radius:10px; padding:24px; text-align:center; color:var(--muted);
-    cursor:pointer; font-size:14px; }
-  .drop.over { border-color:var(--accent); background:rgba(255,103,25,.08); }
-  .thumbs { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-  .thumb { position:relative; width:72px; height:72px; border-radius:8px; overflow:hidden; border:1px solid var(--border); }
-  .thumb img { width:100%; height:100%; object-fit:cover; }
-  .thumb .x { position:absolute; top:2px; right:2px; background:rgba(0,0,0,.6); color:#fff; border-radius:50%;
-    width:18px; height:18px; line-height:18px; text-align:center; font-size:12px; cursor:pointer; }
-  button.go { width:100%; background:var(--accent); color:#fff; border:none; border-radius:8px;
-    padding:14px; font-size:16px; font-weight:700; cursor:pointer; margin-top:4px; }
-  button.go:disabled { opacity:.5; cursor:not-allowed; }
-  .status { margin-top:14px; padding:12px; border-radius:8px; font-size:14px; white-space:pre-wrap; display:none; }
-  .status.ok { background:rgba(46,160,67,.15); border:1px solid var(--ok); display:block; }
-  .status.err { background:rgba(248,81,73,.15); border:1px solid var(--err); display:block; }
-  .status.info { background:rgba(139,148,158,.12); border:1px solid var(--border); display:block; }
-  details { margin-bottom:16px; font-size:13px; color:var(--muted); }
-  summary { cursor:pointer; }
-  a { color:var(--accent); }
-  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-  .nav { font-size:13px; margin-bottom:14px; }
-  .nav a { margin-right:14px; }
-  .hist-item { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
-  .hist-item a { flex:1; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .hist-time { color:var(--muted); font-size:12px; white-space:nowrap; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0f1c">
+  <link rel="manifest" href="manifest.json">
+  <title>Social Ops · 一次性投稿</title>
+  <style>
+    :root{
+      --bg:#0a0f1c;--panel:#111827;--panel2:#172033;--line:#29344a;
+      --text:#eef3ff;--muted:#96a4bd;--accent:#67e8f9;--accent2:#8b5cf6;
+      --good:#34d399;--warn:#fbbf24;--bad:#fb7185;--radius:16px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:
+      radial-gradient(circle at 12% 0,rgba(103,232,249,.12),transparent 28rem),
+      radial-gradient(circle at 90% 18%,rgba(139,92,246,.14),transparent 30rem),var(--bg);
+      color:var(--text);font:15px/1.55 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    button,input,textarea{font:inherit}
+    button{cursor:pointer}
+    a{color:var(--accent)}
+    .shell{width:min(980px,100%);margin:auto;padding:24px 18px 64px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:24px}
+    .eyebrow{font-size:12px;letter-spacing:.14em;color:var(--accent);font-weight:800}
+    h1{font-size:clamp(27px,5vw,42px);line-height:1.12;margin:5px 0 8px}
+    .lede{color:var(--muted);max-width:680px;margin:0}
+    .topnav{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+    .link,.ghost{border:1px solid var(--line);background:rgba(17,24,39,.72);color:var(--text);border-radius:999px;padding:8px 12px;text-decoration:none}
+    .grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:18px}
+    .card{background:rgba(17,24,39,.88);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.2)}
+    .lock{display:flex;gap:10px;align-items:end;margin-bottom:18px}
+    .lock .field{flex:1;margin:0}
+    .lock-state{font-size:12px;color:var(--warn);margin:7px 0 0}
+    .lock-state.ok{color:var(--good)}
+    .segmented{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:var(--bg);padding:6px;border:1px solid var(--line);border-radius:14px;margin-bottom:18px}
+    .segmented button{border:0;background:transparent;color:var(--muted);border-radius:10px;padding:11px;font-weight:750}
+    .segmented button.active{background:linear-gradient(135deg,rgba(103,232,249,.18),rgba(139,92,246,.2));color:var(--text);box-shadow:inset 0 0 0 1px rgba(103,232,249,.25)}
+    .field{margin:0 0 15px}
+    label,.legend{display:block;color:var(--muted);font-size:12px;font-weight:750;letter-spacing:.03em;margin:0 0 6px}
+    input[type=text],input[type=password],textarea{width:100%;border:1px solid var(--line);background:#0c1322;color:var(--text);border-radius:11px;padding:11px 12px;outline:none}
+    input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(103,232,249,.1)}
+    textarea{min-height:160px;resize:vertical}
+    .source-types,.checks,.modes{display:flex;gap:8px;flex-wrap:wrap}
+    .chip{position:relative}
+    .chip input{position:absolute;opacity:0;pointer-events:none}
+    .chip span{display:block;border:1px solid var(--line);background:#0c1322;color:var(--muted);border-radius:999px;padding:7px 12px}
+    .chip input:checked+span{color:var(--text);border-color:var(--accent);background:rgba(103,232,249,.1)}
+    .chip input:disabled+span{opacity:.43;cursor:not-allowed}
+    .route-copy{border-left:3px solid var(--accent2);padding:9px 12px;background:rgba(139,92,246,.08);color:var(--muted);font-size:13px;margin-bottom:16px}
+    .notice{border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);color:#fde68a;border-radius:11px;padding:10px 12px;font-size:13px;margin-top:9px}
+    .submit{width:100%;border:0;border-radius:12px;padding:13px 16px;color:#06111b;font-weight:850;background:linear-gradient(135deg,var(--accent),#a7f3d0)}
+    .submit:disabled{opacity:.45;cursor:not-allowed}
+    .message{display:none;border-radius:11px;padding:11px 12px;margin-top:12px;font-size:13px;white-space:pre-wrap}
+    .message.show{display:block}.message.info{background:rgba(103,232,249,.08);border:1px solid rgba(103,232,249,.25)}
+    .message.good{background:rgba(52,211,153,.09);border:1px solid rgba(52,211,153,.3)}
+    .message.bad{background:rgba(251,113,133,.09);border:1px solid rgba(251,113,133,.3)}
+    .side-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+    h2{font-size:17px;margin:0}
+    .tiny{font-size:12px;color:var(--muted)}
+    .history{display:grid;gap:10px}
+    .history-item{border:1px solid var(--line);background:#0c1322;border-radius:12px;padding:12px}
+    .history-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .status-dot{width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none}
+    .status-dot.good{background:var(--good)}.status-dot.bad{background:var(--bad)}
+    .history-name{font-weight:750;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+    .history-meta,.history-state{font-size:12px;color:var(--muted)}
+    .history-state{margin-top:5px;color:#cbd5e1}
+    .empty{color:var(--muted);padding:20px 2px;text-align:center}
+    .policy{margin-top:18px;font-size:12px;color:var(--muted)}
+    @media(max-width:760px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.topnav{justify-content:flex-start}.lock{align-items:stretch;flex-direction:column}.shell{padding-top:18px}}
+  </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="nav">
-    <a href="../meta-submit/">📱 Meta 三平台</a>
-    <a href="./" style="font-weight:700;">📝 Substack 草稿</a>
-  </div>
-  <span class="badge">SUBSTACK 草稿</span>
-  <h1>提交來源 → Substack 草稿</h1>
-  <p class="sub">送出後在雲端寫入佇列，你的 Mac 用 Claude/Gemini CLI 免費寫稿，草稿出現在 Substack + 本機 + OneDrive。</p>
+<main class="shell">
+  <header class="top">
+    <div>
+      <div class="eyebrow">HSINTIGER SOCIAL OPS</div>
+      <h1>一次性投稿控制台</h1>
+      <p class="lede">同一入口把觀點送往 Meta 內容佇列，或送往 Substack 草稿流程。畫面只呈現可稽核的實際狀態，不把「已排入」說成「已發布」。</p>
+    </div>
+    <nav class="topnav">
+      <a class="link" href="../dashboard/">數據儀表板</a>
+      <button class="ghost" id="forget-token" type="button">鎖定</button>
+    </nav>
+  </header>
 
-  <p class="hint" style="margin-bottom:16px;">🔒 免輸入任何 token —— 提交經由雲端 Worker 安全代理（GitHub PAT 藏在伺服器端加密 secret）。直接填內容、送出即可。</p>
+  <section class="grid">
+    <div class="card">
+      <div class="lock">
+        <div class="field">
+          <label for="owner-token">Owner token（僅保存在本分頁 sessionStorage）</label>
+          <input id="owner-token" type="password" autocomplete="off" placeholder="貼上 owner token">
+          <p class="lock-state" id="lock-state">尚未驗證</p>
+        </div>
+        <button class="ghost" id="unlock" type="button">驗證並解鎖</button>
+      </div>
 
-  <div class="card">
-    <div class="types" id="types">
-      <div class="type-btn active" data-type="url">🔗 網址</div>
-      <div class="type-btn" data-type="text">📝 全文</div>
-      <div class="type-btn" data-type="youtube">▶️ YouTube</div>
-      <div class="type-btn" data-type="image">🖼️ 截圖</div>
+      <form id="submission-form">
+        <div class="legend">目的地</div>
+        <div class="segmented" aria-label="投稿目的地">
+          <button type="button" class="active" data-target="substack">Substack 草稿</button>
+          <button type="button" data-target="meta">Meta 三平台</button>
+        </div>
+
+        <div class="route-copy" id="route-copy">Substack 永遠只建立草稿；Mac 真正建立草稿後，狀態才會顯示「草稿已建立」。</div>
+
+        <div class="field">
+          <div class="legend">來源類型</div>
+          <div class="source-types">
+            <label class="chip"><input type="radio" name="source" value="url" checked><span>文章網址</span></label>
+            <label class="chip"><input type="radio" name="source" value="text"><span>完整文字</span></label>
+            <label class="chip"><input type="radio" name="source" value="youtube"><span>YouTube</span></label>
+          </div>
+        </div>
+
+        <div class="field" id="single-line-field">
+          <label for="content-line" id="content-line-label">文章網址</label>
+          <input id="content-line" type="text" placeholder="https://…">
+        </div>
+        <div class="field" id="text-field" hidden>
+          <label for="content-text">你的原文 / 完整素材</label>
+          <textarea id="content-text" placeholder="貼上完整內容；系統會保留你的觀點，再依目的地產生適合的稿件。"></textarea>
+        </div>
+        <div class="field">
+          <label for="note">編輯意圖 / 標題（建議填寫）</label>
+          <input id="note" type="text" maxlength="500" placeholder="希望讀者得到什麼？要採用什麼角度？">
+        </div>
+
+        <div id="substack-options">
+          <div class="legend">草稿優先級</div>
+          <div class="modes">
+            <label class="chip"><input type="radio" name="substack-mode" value="draft" checked><span>一般佇列</span></label>
+            <label class="chip"><input type="radio" name="substack-mode" value="draft_priority"><span>優先處理</span></label>
+          </div>
+        </div>
+
+        <div id="meta-options" hidden>
+          <div class="legend">目標平台</div>
+          <div class="checks">
+            <label class="chip"><input type="checkbox" name="platform" value="facebook" checked><span>Facebook</span></label>
+            <label class="chip"><input type="checkbox" name="platform" value="instagram" checked><span>Instagram</span></label>
+            <label class="chip"><input type="checkbox" name="platform" value="threads" checked><span>Threads</span></label>
+          </div>
+          <div class="legend" style="margin-top:14px">處理方式</div>
+          <div class="modes">
+            <label class="chip"><input type="radio" name="meta-mode" value="queue" checked><span>進內容佇列</span></label>
+            <label class="chip"><input type="radio" name="meta-mode" value="publish_now" disabled><span>立即發布（待 canary）</span></label>
+          </div>
+          <div class="notice">目前正式發布仍為 paused。投稿可以安全累積，owner canary 通過後才會解鎖「立即發布」。</div>
+        </div>
+
+        <div style="height:18px"></div>
+        <button class="submit" id="submit" type="submit" disabled>先驗證 owner token</button>
+        <div class="message" id="message" role="status"></div>
+      </form>
     </div>
 
-    <div id="field-url">
-      <label>文章網址</label>
-      <input type="text" id="in-url" placeholder="https://...">
-    </div>
-    <div id="field-text" style="display:none;">
-      <label>文章全文</label>
-      <textarea id="in-text" placeholder="貼上完整文章內容..."></textarea>
-    </div>
-    <div id="field-youtube" style="display:none;">
-      <label>YouTube 網址</label>
-      <input type="text" id="in-youtube" placeholder="https://youtube.com/watch?v=...">
-    </div>
-    <div id="field-image" style="display:none;">
-      <label>截圖（PNG / JPG，可多張）</label>
-      <div class="drop" id="drop">點此選擇，或把圖片拖進來 📎</div>
-      <input type="file" id="file" accept="image/png,image/jpeg" multiple style="display:none;">
-      <div class="thumbs" id="thumbs"></div>
-      <div class="hint">⚠️ 沒有 OCR，請務必在下方「備註/標題」寫清楚主題或角度，當成寫稿的依據。</div>
-    </div>
-
-    <label style="margin-top:14px;">備註 / 標題（截圖類必填）</label>
-    <input type="text" id="in-note" placeholder="給這篇一個主題或角度...">
-
-    <label style="display:flex;align-items:center;gap:8px;margin:16px 0 4px;cursor:pointer;font-weight:600;color:var(--fg);">
-      <input type="checkbox" id="immediate" style="width:auto;margin:0;"> ⚡ 立即寫稿（不等每小時排程）
-    </label>
-    <div id="sched" class="hint" style="margin:0 0 12px;">計算下次自動寫稿時段…</div>
-
-    <button class="go" id="submit">送出到 Substack 佇列</button>
-    <div class="status" id="status"></div>
-  </div>
-
-  <h2>🗂️ 我的提交紀錄</h2>
-  <div class="card" id="history"><div class="hint">設定 Token 後自動顯示最近的提交…</div></div>
-</div>
+    <aside class="card">
+      <div class="side-title">
+        <h2>最近投稿</h2>
+        <button class="ghost" id="refresh" type="button">更新</button>
+      </div>
+      <div class="history" id="history"><div class="empty">解鎖後載入真實處理狀態。</div></div>
+      <p class="policy">狀態契約：queued → claimed → dispatched → content/source queued → published/draft created。任一步失敗會保留 failed 與 workflow 證據。</p>
+    </aside>
+  </section>
+</main>
 
 <script>
-const REPO = "HsinTiger/news-radar";
-const WORKFLOW = "substack-submit.yml";
-const LABEL_RE = /^📝 Substack: |^📱 Meta: /;
-let curType = "url";
-let pickedFiles = [];
+(() => {
+  "use strict";
+  const API = "https://news-radar-submit.smartmmmoney.workers.dev";
+  const TOKEN_KEY = "hsintiger_social_ops_owner_token";
+  const form = document.getElementById("submission-form");
+  const tokenInput = document.getElementById("owner-token");
+  const lockState = document.getElementById("lock-state");
+  const submitButton = document.getElementById("submit");
+  const message = document.getElementById("message");
+  const history = document.getElementById("history");
+  let target = "substack";
+  let pollTimer = null;
 
-// 2026-06-23: 不再需要瀏覽器端 token。改打 Cloudflare Worker（PAT 藏在 Worker 加密 secret）。
-const WORKER = "https://news-radar-submit.smartmmmoney.workers.dev";
+  const STATUS_COPY = {
+    queued: "已受理，等待受治理 poller",
+    claimed: "處理器已領取",
+    dispatched: "GitHub workflow 已派送",
+    content_queued: "Meta 內容已進發布佇列（尚未發布）",
+    source_queued: "Substack 素材已入庫（尚未建立草稿）",
+    processing: "處理中",
+    draft_created: "Substack 草稿已建立",
+    published: "已由平台 API 確認發布",
+    failed: "處理失敗",
+    rejected: "已拒絕"
+  };
+  const TERMINAL_GOOD = new Set(["draft_created", "published"]);
+  const TERMINAL_BAD = new Set(["failed", "rejected"]);
 
-document.querySelectorAll(".type-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".type-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    curType = btn.dataset.type;
-    ["url","text","youtube","image"].forEach(t => {
-      document.getElementById("field-"+t).style.display = (t===curType) ? "" : "none";
-    });
-  });
-});
-
-// ---- image picking ----
-const drop = document.getElementById("drop");
-const fileInput = document.getElementById("file");
-drop.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", e => addFiles(e.target.files));
-["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
-function addFiles(files){
-  for(const f of files){ if(f.type.startsWith("image/") && pickedFiles.length < 6) pickedFiles.push(f); }
-  renderThumbs();
-}
-function renderThumbs(){
-  const box = document.getElementById("thumbs"); box.innerHTML = "";
-  pickedFiles.forEach((f,i) => {
-    const div = document.createElement("div"); div.className = "thumb";
-    const img = document.createElement("img"); img.src = URL.createObjectURL(f); div.appendChild(img);
-    const x = document.createElement("div"); x.className = "x"; x.textContent = "×";
-    x.onclick = () => { pickedFiles.splice(i,1); renderThumbs(); }; div.appendChild(x);
-    box.appendChild(div);
-  });
-}
-
-function downscale(file, max=1600, q=0.85){
-  return new Promise((resolve,reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let {width,height} = img;
-        if(width>max||height>max){ const s=Math.min(max/width,max/height); width=Math.round(width*s); height=Math.round(height*s); }
-        const c = document.createElement("canvas"); c.width=width; c.height=height;
-        c.getContext("2d").drawImage(img,0,0,width,height);
-        resolve(c.toDataURL("image/jpeg",q).split(",")[1]);
-      };
-      img.onerror = reject; img.src = reader.result;
-    };
-    reader.onerror = reject; reader.readAsDataURL(file);
-  });
-}
-
-async function uploadImages(){
-  const date = new Date().toISOString().slice(0,10);
-  const paths = [];
-  for(let i=0;i<pickedFiles.length;i++){
-    showStatus(`⏳ 上傳圖片 ${i+1}/${pickedFiles.length}…`, "info");
-    const b64 = await downscale(pickedFiles[i]);
-    const uuid = Math.random().toString(36).slice(2,10);
-    const path = `data/uploads/${date}/${uuid}_${i}.jpg`;
-    const r = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ action:"image", path, b64 }) });
-    const j = await r.json().catch(()=>({}));
-    if(!r.ok || !j.ok) throw new Error(`圖片上傳失敗 (HTTP ${j.status||r.status}) ${j.text||j.error||""}`);
-    paths.push(path);
-  }
-  return paths;
-}
-
-function showStatus(msg, kind){ const s=document.getElementById("status"); s.className="status "+kind; s.textContent=msg; }
-
-document.getElementById("submit").addEventListener("click", async () => {
-  const note = document.getElementById("in-note").value.trim();
-  const immediate = document.getElementById("immediate").checked;
-  let content;
-
-  if(curType === "image"){
-    if(pickedFiles.length === 0){ showStatus("⚠️ 請至少選一張圖片。", "err"); return; }
-    if(!note){ showStatus("⚠️ 截圖沒有 OCR，請在「備註/標題」寫主題。", "err"); return; }
-  } else {
-    content = document.getElementById("in-"+curType).value.trim();
-    if(!content){ showStatus("⚠️ 請填寫內容。", "err"); return; }
+  function token(){ return sessionStorage.getItem(TOKEN_KEY) || ""; }
+  function authHeaders(extra){ return Object.assign({Authorization: `Bearer ${token()}`}, extra || {}); }
+  function showMessage(text, kind){ message.textContent = text; message.className = `message show ${kind}`; }
+  function setUnlocked(ok){
+    lockState.textContent = ok ? "已驗證；token 只活在這個分頁" : "尚未驗證";
+    lockState.className = `lock-state${ok ? " ok" : ""}`;
+    submitButton.disabled = !ok;
+    submitButton.textContent = ok ? (target === "substack" ? "送到 Substack 草稿流程" : "送到 Meta 內容佇列") : "先驗證 owner token";
   }
 
-  const btn = document.getElementById("submit"); btn.disabled = true;
-  try {
-    if(curType === "image"){
-      const paths = await uploadImages();
-      content = paths.join(",");
-    }
-    showStatus("⏳ 送出中…", "info");
-    const resp = await fetch(WORKER, { method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ action:"submit", wf:"substack-submit.yml",
-        inputs:{ source_type:curType, content, note, immediate: immediate ? "true" : "false" } }) });
-    const j = await resp.json().catch(()=>({}));
-    if(resp.ok && j.ok){
-      showStatus(immediate
-        ? "✅ 已送出（標記立即）！Mac 每 5 分鐘檢查一次，約 5-10 分鐘出稿。"
-        : "✅ 已送出到 Substack 佇列！\nMac 下次同步後（約整點）會自動寫稿。", "ok");
-      ["url","text","youtube"].forEach(t => document.getElementById("in-"+t).value = "");
-      document.getElementById("in-note").value = ""; pickedFiles = []; renderThumbs();
-      setTimeout(loadHistory, 2500);
-    } else {
-      showStatus(`❌ 失敗 (HTTP ${j.status||resp.status})\n${j.text||j.error||""}`, "err");
-    }
-  } catch(e){ showStatus("❌ " + e.message, "err"); }
-  finally { btn.disabled = false; }
-});
+  async function api(path, options){
+    const response = await fetch(`${API}${path}`, Object.assign({}, options || {}, {
+      headers: authHeaders(options && options.headers)
+    }));
+    const data = await response.json().catch(() => ({}));
+    if(!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    return data;
+  }
 
-// 排程：Mac 每小時整點同步 state DB 後寫稿。顯示下一個整點當「不立即」的預計時段。
-(function(){ var now=new Date(), nxt=new Date(now); nxt.setHours(now.getHours()+1,0,0,0);
-  var el=document.getElementById("sched");
-  if(el) el.textContent="🗓️ 不立即的話，下次自動寫稿約：" + nxt.toLocaleString('zh-TW',{weekday:'short',hour:'2-digit',minute:'2-digit'}) + "（每小時一輪）"; })();
+  async function unlock(){
+    const value = tokenInput.value.trim() || token();
+    if(!value){ showMessage("請先貼上 owner token。", "bad"); return; }
+    sessionStorage.setItem(TOKEN_KEY, value);
+    try{
+      await api("/api/submissions?limit=1");
+      tokenInput.value = "";
+      setUnlocked(true);
+      showMessage("控制台已解鎖。", "good");
+      await loadHistory();
+    }catch(error){
+      sessionStorage.removeItem(TOKEN_KEY);
+      setUnlocked(false);
+      showMessage(`驗證失敗：${error.message}`, "bad");
+    }
+  }
 
-// ---- history ----
-const histEl = document.getElementById("history");
-async function loadHistory(){
-  try {
-    const r = await fetch(WORKER+"?action=history&wf=substack-submit.yml");
-    if(!r.ok){ histEl.innerHTML = `<div class="hint">無法載入紀錄 (HTTP ${r.status})</div>`; return; }
-    const data = await r.json();
-    const rows = (data.workflow_runs||[]).map(run => {
-      const t = new Date(run.created_at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-      const icon = run.conclusion==='success' ? '✅' : (run.conclusion===null ? '⏳' : '❌');
-      const title = (run.display_title||run.name||'').replace(LABEL_RE,'') || '(無標題)';
-      return `<div class="hist-item"><span>${icon}</span><a href="${run.html_url}" target="_blank">${title}</a><span class="hist-time">${t}</span></div>`;
+  function setTarget(next){
+    target = next;
+    document.querySelectorAll("[data-target]").forEach(button => button.classList.toggle("active", button.dataset.target === target));
+    document.getElementById("substack-options").hidden = target !== "substack";
+    document.getElementById("meta-options").hidden = target !== "meta";
+    document.getElementById("route-copy").textContent = target === "substack"
+      ? "Substack 永遠只建立草稿；Mac 真正建立草稿後，狀態才會顯示「草稿已建立」。"
+      : "Meta 會依平台各自生成內容。現在只允許進內容佇列，正式發布仍受 owner canary 控制。";
+    setUnlocked(Boolean(token()));
+  }
+
+  function setSource(type){
+    const text = type === "text";
+    document.getElementById("text-field").hidden = !text;
+    document.getElementById("single-line-field").hidden = text;
+    const label = document.getElementById("content-line-label");
+    const input = document.getElementById("content-line");
+    label.textContent = type === "youtube" ? "YouTube 網址" : "文章網址";
+    input.placeholder = type === "youtube" ? "https://youtube.com/watch?v=…" : "https://…";
+  }
+
+  function selected(name){ const input = document.querySelector(`input[name="${name}"]:checked`); return input ? input.value : ""; }
+  function makeIdempotencyKey(){ return `owner_${crypto.randomUUID()}`; }
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if(!token()){ showMessage("控制台尚未解鎖。", "bad"); return; }
+    const sourceType = selected("source");
+    const content = (sourceType === "text" ? document.getElementById("content-text").value : document.getElementById("content-line").value).trim();
+    const note = document.getElementById("note").value.trim();
+    if(!content){ showMessage("請填寫來源內容。", "bad"); return; }
+    const platforms = [...document.querySelectorAll("input[name=platform]:checked")].map(input => input.value);
+    if(target === "meta" && !platforms.length){ showMessage("Meta 至少選一個平台。", "bad"); return; }
+    const mode = target === "substack" ? selected("substack-mode") : selected("meta-mode");
+    submitButton.disabled = true;
+    showMessage("正在寫入受治理佇列…", "info");
+    try{
+      const result = await api("/api/submissions", {
+        method: "POST",
+        headers: {"Content-Type":"application/json", "Idempotency-Key":makeIdempotencyKey()},
+        body: JSON.stringify({target, source_type:sourceType, content, note, platforms, mode})
+      });
+      const row = result.submission || {};
+      showMessage(`已受理：${row.id || "unknown"}\n目前狀態：${STATUS_COPY[row.status] || row.status}\n這不代表已發布或已建立草稿。`, "good");
+      document.getElementById("content-line").value = "";
+      document.getElementById("content-text").value = "";
+      document.getElementById("note").value = "";
+      await loadHistory();
+      startPolling();
+    }catch(error){ showMessage(`投稿失敗：${error.message}`, "bad"); }
+    finally{ setUnlocked(Boolean(token())); }
+  });
+
+  function statusClass(status){ return TERMINAL_GOOD.has(status) ? "good" : (TERMINAL_BAD.has(status) ? "bad" : ""); }
+  function routeName(row){
+    if(row.target === "substack") return "Substack 草稿";
+    const names = {facebook:"FB", instagram:"IG", threads:"Threads"};
+    return `Meta · ${(row.platforms || []).map(value => names[value] || value).join(" / ")}`;
+  }
+  function renderHistory(rows){
+    history.replaceChildren();
+    if(!rows.length){ const empty = document.createElement("div"); empty.className="empty"; empty.textContent="尚無投稿。"; history.appendChild(empty); return; }
+    rows.forEach(row => {
+      const item = document.createElement("article"); item.className="history-item";
+      const head = document.createElement("div"); head.className="history-head";
+      const dot = document.createElement("span"); dot.className=`status-dot ${statusClass(row.status)}`;
+      const name = document.createElement("div"); name.className="history-name"; name.textContent=row.note || routeName(row);
+      const time = document.createElement("time"); time.className="tiny"; time.textContent=new Date(row.created_at).toLocaleString("zh-TW",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+      head.append(dot,name,time);
+      const meta = document.createElement("div"); meta.className="history-meta"; meta.textContent=`${routeName(row)} · ${row.source_type} · ${row.requested_mode}`;
+      const state = document.createElement("div"); state.className="history-state"; state.textContent=STATUS_COPY[row.status] || row.status;
+      item.append(head,meta,state);
+      if(row.workflow_run_url){ const link=document.createElement("a"); link.href=row.workflow_run_url; link.target="_blank"; link.rel="noreferrer"; link.className="tiny"; link.textContent="查看 workflow 證據 ↗"; item.appendChild(link); }
+      if(row.error){ const error=document.createElement("div"); error.className="history-state"; error.style.color="var(--bad)"; error.textContent=row.error; item.appendChild(error); }
+      history.appendChild(item);
     });
-    histEl.innerHTML = rows.join('') || '<div class="hint">還沒有提交紀錄。</div>';
-  } catch(e){ histEl.innerHTML = `<div class="hint">載入紀錄錯誤：${e.message}</div>`; }
-}
-loadHistory();
+  }
+  async function loadHistory(){
+    if(!token()){ renderHistory([]); return; }
+    try{ const data=await api("/api/submissions?limit=20"); renderHistory(data.submissions || []); }
+    catch(error){ history.textContent=`無法載入：${error.message}`; }
+  }
+  function startPolling(){ clearInterval(pollTimer); pollTimer=setInterval(loadHistory,15000); }
+
+  document.querySelectorAll("[data-target]").forEach(button => button.addEventListener("click", () => setTarget(button.dataset.target)));
+  document.querySelectorAll("input[name=source]").forEach(input => input.addEventListener("change", () => setSource(input.value)));
+  document.getElementById("unlock").addEventListener("click", unlock);
+  tokenInput.addEventListener("keydown", event => { if(event.key === "Enter") unlock(); });
+  document.getElementById("refresh").addEventListener("click", loadHistory);
+  document.getElementById("forget-token").addEventListener("click", () => {
+    sessionStorage.removeItem(TOKEN_KEY); tokenInput.value=""; clearInterval(pollTimer); setUnlocked(false); history.innerHTML='<div class="empty">解鎖後載入真實處理狀態。</div>'; showMessage("已從本分頁移除 token。", "info");
+  });
+
+  if(token()){ setUnlocked(true); loadHistory(); startPolling(); }
+  else setUnlocked(false);
+})();
 </script>
 </body>
 </html>

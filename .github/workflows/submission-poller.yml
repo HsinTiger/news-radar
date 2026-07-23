@@ -1,0 +1,33 @@
+name: "Social Automation · Submission Poller"
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-radar-submission-poller
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    if: vars.SUBMISSION_PROCESSOR_MODE == 'live' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install httpx==0.28.1
+      - name: Claim and dispatch one submission
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/submission_dispatch.py

@@ -27,6 +27,15 @@ on:
         description: "備註 / 標題（選填）"
         required: false
         type: string
+      submission_id:
+        description: "Control-plane submission ID"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: news-radar-production
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -41,12 +50,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/checkout@v5
-        continue-on-error: true
-        with:
-          ref: state
-          path: _state
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -55,15 +58,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -q
 
-      - name: Restore DB
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          mkdir -p data/01_harvest
-          if [ -f _state/data/01_harvest/news_radar.db ]; then
-            cp _state/data/01_harvest/news_radar.db data/01_harvest/news_radar.db
-            echo "[restore] DB: $(du -h data/01_harvest/news_radar.db | cut -f1)"
-          fi
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
 
       - name: Process submission
+        id: process
         env:
           PYTHONUNBUFFERED: "1"
         run: |
@@ -79,26 +91,36 @@ jobs:
             --platforms "${{ inputs.platforms }}" \
             --note "${{ inputs.note }}" 2>&1
 
-      - name: Persist DB to state branch
+      - name: Persist verified runtime state
+        id: persist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          if [ ! -f data/01_harvest/news_radar.db ]; then
-            echo "[skip] no DB to persist"
-            exit 0
-          fi
-          STATE_DIR="$(mktemp -d)"
-          cd "$STATE_DIR"
-          git init -q -b state
-          git config user.name "news-radar-bot"
-          git config user.email "noreply@github.com"
-          mkdir -p data/01_harvest
-          cp "$GITHUB_WORKSPACE/data/01_harvest/news_radar.db" data/01_harvest/news_radar.db
-          git add -A
-          if git diff --cached --quiet; then
-            echo "[persist] no change"
-            exit 0
-          fi
-          git commit -q -m "state: manual source submission"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" state
+          python scripts/state_store.py push \
+            --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "meta_submission:${{ inputs.submission_id || github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Report truthful submission state
+        if: always() && inputs.submission_id != ''
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          PROCESS_STATUS: ${{ steps.process.outcome }}
+          PERSIST_STATUS: ${{ steps.persist.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          STATUS="content_queued"
+          [ "$PROCESS_STATUS" = "success" ] && [ "$PERSIST_STATUS" = "success" ] || STATUS="failed"
+          python scripts/control_plane.py status "$SUBMISSION_ID" "$STATUS" --workflow-run-url "$RUN_URL"

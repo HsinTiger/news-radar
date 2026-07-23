@@ -33,9 +33,14 @@ on:
         required: false
         default: ""
         type: string
+      submission_id:
+        description: "Control-plane submission ID / idempotency key"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
-  group: news-radar-full-pipeline
+  group: news-radar-production
   cancel-in-progress: false
 
 permissions:
@@ -70,7 +75,23 @@ jobs:
               "${BASE_SERIF}/${f}.otf" 2>/dev/null || true
           done
 
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+
       - name: "🚀 Publish now"
+        id: publish
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -98,3 +119,43 @@ jobs:
             --text "${{ inputs.text }}" \
             --platforms "${{ inputs.platforms }}" \
             --note "${{ inputs.note }}" 2>&1 | tee logs/publish_now_last.log
+
+      - name: Persist verified runtime state
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push \
+            --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "publish_now:${{ inputs.submission_id || github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Sync governed operational metadata to Social Ops
+        if: always()
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 500
+
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Report truthful submission state
+        if: always() && inputs.submission_id != ''
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          PUBLISH_STATUS: ${{ steps.publish.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          STATUS="published"
+          [ "$PUBLISH_STATUS" = "success" ] || STATUS="failed"
+          python scripts/control_plane.py status "$SUBMISSION_ID" "$STATUS" --workflow-run-url "$RUN_URL"

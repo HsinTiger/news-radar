@@ -55,7 +55,7 @@ def _normalize_fb_post_id(post_id: str) -> str:
         return post_id  # 沒環境變數可拼 → 維持原狀（會失敗，但讓錯誤訊息誠實）
     return f"{FB_PAGE_ID}_{post_id}"
 
-FB_GRAPH = "https://graph.facebook.com/v20.0"
+FB_GRAPH = f"https://graph.facebook.com/{os.getenv('META_GRAPH_VERSION', 'v20.0')}"
 TH_GRAPH = "https://graph.threads.net/v1.0"
 
 
@@ -92,10 +92,9 @@ def _is_low_engagement_error(error_response: Dict) -> bool:
     code = error_obj.get("code")
     message = error_obj.get("message", "").lower()
 
-    # Check for known low-engagement error codes
-    if code in (10, 100):
-        return True
-    # Also check message patterns in case error code format varies
+    # Error code 100 is also used for invalid/deprecated metric names. Treating
+    # every #100 as zero engagement hides a broken collector as valid data.
+    # Require a low-signal message, never the numeric code alone.
     if "insights cannot be accessed" in message:
         return True
     if "insufficient data" in message:
@@ -104,6 +103,44 @@ def _is_low_engagement_error(error_response: Dict) -> bool:
         return True
 
     return False
+
+
+async def _fetch_insights_separately(
+    client: httpx.AsyncClient,
+    endpoint: str,
+    metrics: List[str],
+    access_token: Optional[str],
+) -> tuple[Dict, Dict, List[str]]:
+    """Probe metrics independently so one deprecated metric cannot poison all.
+
+    Returns ``(values, errors, successful_metrics)``. The raw error stays
+    attached to its metric, allowing the dashboard to report degraded data
+    instead of silently converting an API contract failure into a zero.
+    """
+    values: Dict = {}
+    errors: Dict = {}
+    successful: List[str] = []
+    for metric in metrics:
+        try:
+            response = await client.get(
+                endpoint,
+                params={"metric": metric, "access_token": access_token},
+                timeout=30.0,
+            )
+            payload = response.json()
+            if response.status_code != 200:
+                errors[metric] = payload
+                continue
+            successful.append(metric)
+            entries = payload.get("data", []) if isinstance(payload, dict) else []
+            for item in entries:
+                name = item.get("name") or metric
+                metric_values = item.get("values") or []
+                if metric_values:
+                    values[name] = metric_values[0].get("value")
+        except Exception as exc:
+            errors[metric] = {"exception": str(exc)}
+    return values, errors, successful
 
 
 
@@ -158,46 +195,39 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
 
     # ---- Step 2：insights — reach / views / reactions 細項 -----------------
     # 文件：https://developers.facebook.com/docs/graph-api/reference/v20.0/insights
-    insights_metrics = ",".join([
+    insights_metrics = [
         "post_impressions_unique",          # reach (去重曝光)
         "post_impressions",                 # views (含重複)
         "post_reactions_by_type_total",     # 各反應類型總計（like/love/wow/haha/sad/angry）
-    ])
+    ]
     reach = 0
     views_total = 0
     reactions_from_insights = 0
     step2_ok = False
-    insights_data: Dict = {}
-    try:
-        resp2 = await client.get(
-            f"{FB_GRAPH}/{nid}/insights",
-            params={"metric": insights_metrics, "access_token": FB_PAGE_ACCESS_TOKEN},
-            timeout=30.0,
-        )
-        insights_data = resp2.json()
-        if resp2.status_code == 200:
-            for item in insights_data.get("data", []):
-                name = item.get("name")
-                values = item.get("values") or []
-                if not values:
-                    continue
-                val = values[0].get("value")
-                if name == "post_impressions_unique":
-                    reach = int(val or 0)
-                elif name == "post_impressions":
-                    views_total = int(val or 0)
-                elif name == "post_reactions_by_type_total":
-                    # value 是 dict {"like": N, "love": N, ...} — 加總當 likes
-                    if isinstance(val, dict):
-                        reactions_from_insights = sum(int(v or 0) for v in val.values())
-            step2_ok = True
-    except Exception:
-        pass
+    values, metric_errors, successful_metrics = await _fetch_insights_separately(
+        client,
+        f"{FB_GRAPH}/{nid}/insights",
+        insights_metrics,
+        FB_PAGE_ACCESS_TOKEN,
+    )
+    reach = int(values.get("post_impressions_unique") or 0)
+    views_total = int(values.get("post_impressions") or 0)
+    reaction_value = values.get("post_reactions_by_type_total")
+    if isinstance(reaction_value, dict):
+        reactions_from_insights = sum(int(value or 0) for value in reaction_value.values())
+    step2_ok = bool(successful_metrics)
+    insights_data: Dict = {
+        "values": values,
+        "errors": metric_errors,
+        "successful_metrics": successful_metrics,
+    }
     # 兩個 step 都掛 → 檢查是否為低互動錯誤
     # 如果都是低互動錯誤（特定 error code），視為 OK_zero_engagement；
     # 否則才回 ok=False 讓上層記錯誤。
     step1_low_engagement = _is_low_engagement_error(data_basic)
-    step2_low_engagement = _is_low_engagement_error(insights_data)
+    step2_low_engagement = bool(metric_errors) and all(
+        _is_low_engagement_error(error) for error in metric_errors.values()
+    )
 
     if (not step1_ok or step1_low_engagement) and (not step2_ok or step2_low_engagement):
         if (step1_low_engagement or step2_low_engagement):
@@ -228,7 +258,7 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
 
     return {
         "ok": True,
-        "likes": likes,
+        "likes": likes or reactions_from_insights,
         "comments": comments,
         "shares": 0,        # FB API 不再單獨開放 shares metric；保留 0 不偽造
         "views": views_total,
@@ -293,36 +323,26 @@ async def fetch_ig_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
     # ---- Step 2：insights — reach / saved / views / total_interactions ---
     # 文件：https://developers.facebook.com/docs/instagram-api/reference/ig-media/insights
     # v22+ 移除 `impressions`，必須用 `views` 代替（否則 #100 deprecation error）。
-    insights_metrics = "reach,saved,views,total_interactions"
+    insights_metrics = ["reach", "saved", "views", "total_interactions"]
     reach = 0
     saved = 0
     views_total = 0
     total_interactions = 0
-    insights_data: Dict = {}
-    try:
-        resp2 = await client.get(
-            f"{FB_GRAPH}/{post_id}/insights",
-            params={"metric": insights_metrics, "access_token": IG_ACCESS_TOKEN},
-            timeout=30.0,
-        )
-        insights_data = resp2.json()
-        if resp2.status_code == 200:
-            for item in insights_data.get("data", []):
-                name = item.get("name")
-                values = item.get("values") or []
-                if not values:
-                    continue
-                v = int(values[0].get("value") or 0)
-                if name == "reach":
-                    reach = v
-                elif name == "saved":
-                    saved = v
-                elif name == "views":
-                    views_total = v
-                elif name == "total_interactions":
-                    total_interactions = v
-    except Exception:
-        pass  # 不污染基本互動回傳
+    values, metric_errors, successful_metrics = await _fetch_insights_separately(
+        client,
+        f"{FB_GRAPH}/{post_id}/insights",
+        insights_metrics,
+        IG_ACCESS_TOKEN,
+    )
+    reach = int(values.get("reach") or 0)
+    saved = int(values.get("saved") or 0)
+    views_total = int(values.get("views") or 0)
+    total_interactions = int(values.get("total_interactions") or 0)
+    insights_data: Dict = {
+        "values": values,
+        "errors": metric_errors,
+        "successful_metrics": successful_metrics,
+    }
 
     # IG「shares」在 v22+ insights 沒單獨的 metric（被併進 total_interactions）。
     # 若 total_interactions > likes+comments+saved，差額大致是 shares + sticker_taps，

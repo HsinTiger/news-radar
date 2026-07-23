@@ -139,6 +139,9 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
     monkeypatch.setattr(rpq, "publish_to_fb", _fake_ok)
     monkeypatch.setattr(rpq, "publish_to_ig", _fake_ok)
     monkeypatch.setattr(rpq, "publish_to_threads", _fake_ok)
+    async def _fake_prepare(**kwargs):
+        return {"image_url": kwargs.get("original_image_url")}
+    monkeypatch.setattr(rpq, "prepare_publish_image", _fake_prepare)
 
     row = conn.execute(
         """SELECT d.id, d.news_id, n.title AS news_title,
@@ -201,6 +204,9 @@ def test_publish_queue_all_platforms_fail_returns_all_failed_outcome(monkeypatch
     monkeypatch.setattr(rpq, "publish_to_fb", _fake_fail)
     monkeypatch.setattr(rpq, "publish_to_ig", _fake_fail)
     monkeypatch.setattr(rpq, "publish_to_threads", _fake_fail)
+    async def _fake_prepare(**kwargs):
+        return {"image_url": kwargs.get("original_image_url")}
+    monkeypatch.setattr(rpq, "prepare_publish_image", _fake_prepare)
 
     row = conn.execute(
         """SELECT d.id, d.news_id, n.title AS news_title,

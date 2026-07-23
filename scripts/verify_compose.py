@@ -15,6 +15,7 @@ from src.content_quality_guard import check_quality, has_blocking_issues
 
 def main():
     conn = dbmod.get_conn()
+    failures = []
     try:
         # 1. Count drafts in last 24h
         recent = conn.execute("""
@@ -28,7 +29,7 @@ def main():
 
         if len(recent) == 0:
             print("❌ [Verify:Compose] No drafts created in last 24h")
-            print("⚠️ check failed (non-blocking)")
+            failures.append("no_recent_draft")
 
         # 2. For each draft, check platform_drafts exist
         for draft in recent:
@@ -45,7 +46,8 @@ def main():
                     missing.append(expected)
 
             if missing:
-                print(f"⚠️ [Verify:Compose] draft={draft_id[:12]} missing platforms: {missing}")
+                print(f"❌ [Verify:Compose] draft={draft_id[:12]} missing platforms: {missing}")
+                failures.append(f"missing_platforms:{draft_id[:12]}")
 
             # 3. Quality guard check on each platform
             for plat, pd_data in found_platforms.items():
@@ -53,7 +55,7 @@ def main():
                 issues = check_quality(text, title=draft["title"] or "")
                 if has_blocking_issues(issues):
                     print(f"❌ [Verify:Compose] draft={draft_id[:12]} {plat}: quality BLOCKED")
-                    # Don't exit - this is the guard working as designed, but flag it
+                    failures.append(f"quality_blocked:{draft_id[:12]}:{plat}")
                 else:
                     char_count = pd_data["char_count"] or len(text)
                     print(f"  ✓ {plat}: {char_count} chars")
@@ -78,9 +80,13 @@ def main():
         ).fetchone()["c"]
         print(f"[Verify:Compose] total_drafts={total_drafts} pending_queue={pending}")
 
+        if failures:
+            print(f"❌ [Verify:Compose] FAIL reasons={failures}")
+            return 1
         print("✅ [Verify:Compose] PASS")
+        return 0
     finally:
         conn.close()
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "timezone": "Asia/Taipei",
+  "product_goal": "Publish helpful, evidence-backed content that earns qualified attention on each Meta platform.",
+  "automation_mode_default": "paused",
+  "platforms": {
+    "threads": {
+      "target_posts_per_day": 2,
+      "minimum_interval_hours": 8,
+      "local_slots": [8, 20],
+      "slot_tolerance_minutes": 50,
+      "primary_metrics": ["views", "replies", "reposts", "quotes"],
+      "metric_health": "usable"
+    },
+    "facebook": {
+      "target_posts_per_day": 1,
+      "minimum_interval_hours": 20,
+      "local_slots": [20],
+      "slot_tolerance_minutes": 50,
+      "primary_metrics": ["reach", "reactions", "comments", "shares"],
+      "metric_health": "degraded_invalid_insights_metric"
+    },
+    "instagram": {
+      "target_posts_per_day": 1,
+      "minimum_interval_hours": 20,
+      "local_slots": [20],
+      "slot_tolerance_minutes": 50,
+      "primary_metrics": ["reach", "views", "saves", "comments", "shares"],
+      "metric_health": "low_signal_requires_canary"
+    }
+  },
+  "reels": {
+    "independent_cron": false,
+    "publish_requires_unpublished_draft": true,
+    "initial_status": "paused_until_canary"
+  },
+  "adaptation": {
+    "evaluation_window_days": 14,
+    "minimum_posts_per_platform": 12,
+    "minimum_metric_coverage": 0.8,
+    "maximum_frequency_change_per_week": 1,
+    "frequency_floor_per_day": 0,
+    "frequency_ceiling_per_day": 4,
+    "degraded_metrics_are_proposal_only": true,
+    "owner_approval_required_for_frequency_increase": true
+  },
+  "initial_topic_weights": {
+    "earnings": 1.4,
+    "supply_chain": 1.4,
+    "us_stocks": 1.2,
+    "military_defense": 1.15,
+    "policy_geopolitics": 1.15,
+    "current_affairs": 1.1,
+    "tech_product_launch": 1.1,
+    "ai_application": 1.1,
+    "tw_stocks": 1.0,
+    "tw_politics": 1.0,
+    "ai_model": 0.9,
+    "ai_agent": 0.8,
+    "other": 0.7
+  },
+  "substack": {
+    "auto_publish": false,
+    "terminal_state": "draft_created",
+    "owner_review_required": true
+  }
+}

@@ -1,23 +1,24 @@
 name: "News Radar · Reels Maker"
 
+# Reels are dispatched by the governed scheduler after it decides that a reel
+# is useful.  This workflow deliberately has no independent cron: the former
+# six-runs-per-day cron repeatedly published the same draft.
 on:
-  schedule:
-    # 對齊 carousel：full_pipeline 在單數小時 :17 發 carousel（每2h）；reels 排在
-    # 同樣那些小時的 :47——等 carousel compose+發布跑完(~30min)，reels 的
-    # pick_latest_draft 就會抓到剛發那篇做影片 → carousel + reel 同一篇、一起出。
-    # 用明確時數（每4h，皆為 carousel 時段）比 "*/4" 穩；要每篇 carousel 都配 reel
-    # 就把小時改成 1,3,5,7,9,11,13,15,17,19,21,23（每2h、12支/天）。
-    - cron: "47 1,5,9,13,17,21 * * *"
   workflow_dispatch:
     inputs:
       publish_to:
-        description: "Publish target"
-        default: "ig"
+        description: "Publish target; use none for render/QC only"
+        default: "none"
         type: choice
-        options: [ig, fb, threads, none]
+        options: [none, ig, fb, threads]
+      draft_id:
+        description: "Optional exact draft ID; otherwise pick newest unpublished"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
-  group: news-radar-reels
+  group: news-radar-production
   cancel-in-progress: false
 
 permissions:
@@ -27,6 +28,8 @@ jobs:
   reels:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
       - uses: actions/checkout@v5
@@ -36,86 +39,111 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python -m pip install --upgrade pip -q
           pip install -r requirements.txt -q
 
-      - name: Fonts
+      - name: Download fonts
         run: |
           mkdir -p assets/fonts
           SANS="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
           SERIF="https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/TraditionalChinese"
-          curl -sSL -o assets/fonts/SourceHanSansTC-Bold.otf "$SANS/SourceHanSansTC-Bold.otf" 2>/dev/null || true
-          # 品牌 hero 用 serif；之前漏下載它 → reels 畫面變空白（2026-06-14 修）
-          curl -sSL -o assets/fonts/SourceHanSerifTC-Light.otf "$SERIF/SourceHanSerifTC-Light.otf" 2>/dev/null || true
-          ls -la assets/fonts/
+          curl -sSL --fail-with-body -o assets/fonts/SourceHanSansTC-Bold.otf "$SANS/SourceHanSansTC-Bold.otf"
+          curl -sSL --fail-with-body -o assets/fonts/SourceHanSerifTC-Light.otf "$SERIF/SourceHanSerifTC-Light.otf"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
-      - name: HTML reel engine (Node + Chrome)
+      - name: Install HTML reel engine
         run: |
-          cd reels_html && npm i puppeteer-core@latest --no-audit --no-fund -s
+          cd reels_html
+          npm ci --no-audit --no-fund -s
           CH=$(which google-chrome || which google-chrome-stable || which chromium-browser || true)
-          echo "CHROME_PATH=$CH" >> $GITHUB_ENV
-          echo "using chrome: $CH"; "$CH" --version || true
+          test -n "$CH"
+          echo "CHROME_PATH=$CH" >> "$GITHUB_ENV"
+          "$CH" --version
 
-      - name: Restore DB
+      - name: Acquire canonical state write lease
+        if: inputs.publish_to != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           mkdir -p data/01_harvest data/reels logs
-          git fetch origin state --depth=1 2>/dev/null || true
-          git show origin/state:data/01_harvest/news_radar.db > data/01_harvest/news_radar.db 2>/dev/null || true
+          python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
 
-      - name: Generate Reel
-        id: gen
+      - name: Select unpublished draft
+        id: select
+        env:
+          REQUESTED_DRAFT: ${{ inputs.draft_id }}
+          TARGET: ${{ inputs.publish_to }}
+        run: |
+          PLATFORM="$TARGET"
+          [ "$PLATFORM" = "none" ] && PLATFORM="ig"
+          if [ -n "$REQUESTED_DRAFT" ]; then
+            DRAFT_ID="$REQUESTED_DRAFT"
+          else
+            DRAFT_ID=$(python scripts/pick_latest_draft.py --platform "$PLATFORM") || RC=$?
+            if [ "${RC:-0}" = "2" ]; then
+              echo "NO_CANDIDATE: every eligible draft already has a ${PLATFORM} reel"
+              echo "draft_id=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            [ "${RC:-0}" = "0" ] || exit "${RC:-1}"
+          fi
+          python - "$DRAFT_ID" <<'PY'
+          import sqlite3, sys
+          db = sqlite3.connect("data/01_harvest/news_radar.db")
+          row = db.execute("SELECT id FROM drafts WHERE id = ?", (sys.argv[1],)).fetchone()
+          db.close()
+          if row is None:
+              raise SystemExit(f"unknown draft_id: {sys.argv[1]}")
+          PY
+          echo "draft_id=$DRAFT_ID" >> "$GITHUB_OUTPUT"
+          echo "Selected draft: $DRAFT_ID"
+
+      - name: Generate reel
+        if: steps.select.outputs.draft_id != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: "1"
+          DRAFT_ID: ${{ steps.select.outputs.draft_id }}
         run: |
-          cd $GITHUB_WORKSPACE
-          DRAFT_ID=$(python3 scripts/pick_latest_draft.py 2>/dev/null || echo "")
-          if [ -n "$DRAFT_ID" ]; then
-            echo "Using draft: $DRAFT_ID"
-            python scripts/reels_maker.py --draft-id "$DRAFT_ID" --publish none 2>&1 | tee logs/reels_last.log
-          else
-            python scripts/reels_maker.py --title "Market" --content "News" --publish none 2>&1 | tee logs/reels_last.log
-          fi
+          set -o pipefail
+          python scripts/reels_maker.py --draft-id "$DRAFT_ID" --publish none 2>&1 | tee logs/reels_last.log
           LATEST=$(ls -t data/reels/*.mp4 2>/dev/null | head -1)
-          if [ -n "$LATEST" ]; then
-            cp "$LATEST" data/reels/publish.mp4
-            echo "Copied to data/reels/publish.mp4"
-            ls -la data/reels/publish.mp4
-          else
-            echo "ERROR: no mp4 generated"
-            ls -la data/reels/
-            exit 1
-          fi
+          test -n "$LATEST"
+          cp "$LATEST" data/reels/publish.mp4
 
-      - name: QC
-        id: qc
+      - name: Verify reel media
+        if: steps.select.outputs.draft_id != ''
         run: |
-          cd $GITHUB_WORKSPACE
           FP="data/reels/publish.mp4"
-          if [ -f "$FP" ] && [ -s "$FP" ]; then
-            SIZE=$(stat -c%s "$FP" 2>/dev/null || stat -f%z "$FP" 2>/dev/null || echo "0")
-            DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$FP" 2>/dev/null || echo "0")
-            echo "QC: size=${SIZE} duration=${DUR}"
-            if [ "$SIZE" -gt 100000 ] && [ "$(echo "$DUR > 3" | bc 2>/dev/null || echo 0)" = "1" ]; then
-              echo "QC_PASS=true" >> $GITHUB_OUTPUT
-            else
-              echo "QC failed: size or duration too low"
-              echo "skip=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No video found"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          fi
+          test -s "$FP"
+          SIZE=$(stat -c%s "$FP")
+          DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$FP")
+          echo "QC: size=${SIZE} duration=${DUR}"
+          test "$SIZE" -gt 100000
+          python - "$DUR" <<'PY'
+          import sys
+          if float(sys.argv[1]) <= 3:
+              raise SystemExit("reel duration must exceed 3 seconds")
+          PY
 
-      - name: Publish
-        if: steps.qc.outputs.QC_PASS == 'true'
+      - name: Publish verified reel
+        if: steps.select.outputs.draft_id != '' && inputs.publish_to != 'none'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
@@ -128,19 +156,38 @@ jobs:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
+          DRAFT_ID: ${{ steps.select.outputs.draft_id }}
         run: |
-          cd $GITHUB_WORKSPACE
-          P="${{ inputs.publish_to || 'ig' }}"
-          [ "$P" = "none" ] && exit 0
-          python scripts/publish_reel.py data/reels/publish.mp4 "$P" "Carousel Reel" 2>&1 | tee logs/reels_publish.log
+          set -o pipefail
+          python scripts/publish_reel.py data/reels/publish.mp4 "${{ inputs.publish_to }}" \
+            --draft-id "$DRAFT_ID" 2>&1 | tee logs/reels_publish.log
 
-      - name: Upload artifact
+      - name: Persist reel publication state
+        if: steps.select.outputs.draft_id != '' && inputs.publish_to != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "reel:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Release canonical state write lease
+        if: always() && inputs.publish_to != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Upload evidence artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: reels-${{ github.run_id }}
           path: |
             logs/
             data/reels/publish.mp4
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: warn
