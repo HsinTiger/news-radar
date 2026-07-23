@@ -41,7 +41,7 @@ Must stop:
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
 | Runtime state transported by Release | PROVEN | Revision 10 from engagement run `30014862699`; SQLite `quick_check=ok`; 29,219 news / 239 drafts / 808 publish rows / 384 engagement rows / 717 quality evaluations |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit/integration behavior is regression-clean | PROVEN | `python -X utf8 -m pytest -q` -> 485 passed |
+| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `696b373`: `python -X utf8 -m pytest -q` -> 513 passed |
 | Worker API v4 is remotely deployed | PROVEN | Version `fe42ae43-e2cf-4988-9ba9-7360d3842b7d`; `/health` reports `2026-07-23.v4`; unauthenticated dashboard/submissions return 401 and legacy proxy returns 410 |
 | D1 operational baseline is current | PROVEN | Migration `0005_content_quality.sql`; 384 engagement snapshots after run `30014862699`; latest quality summaries cover 177/177 recent candidates per platform |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
@@ -97,6 +97,19 @@ Must stop:
 | Scheduled publishing stayed paused after deploy | PROVEN | Scheduler run `30019137215` skipped on merge `9dff7df`; manual poller smoke `30019167635` returned `NO_SUBMISSION` |
 | Updated Mac LaunchAgents create a real Substack draft | UNKNOWN | Code and fail-closed preflight are deployed, but Windows cannot prove the Mac environment, cookie, launchd load state, or a new remote draft id |
 | Live Meta partial-retry behavior is duplicate-free | BLOCKED | Unit/integration evidence is complete; a real Threads-only canary remains intentionally unrun until separate owner canary approval |
+
+## Owner-submission routing addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| Meta and Substack owner submissions cannot enter each other's automatic source pools | PROVEN | PR #17 / merge `696b373`; focused routing/lineage gate `28 passed`; full regression `513 passed` |
+| Owner-directed Meta material may bypass news relevance dropping but cannot bypass the deterministic quality guard | PROVEN | `process_item` route tests cover low relevance -> quality path, compose block, unresolved rewrite hold, and requested-platform isolation |
+| Unreadable URL submissions fail closed instead of being reported as queued content | PROVEN | Both submitters reject insufficient readable text; CLI/workflow failure propagation and retained-pending tests pass |
+| Duplicate owner submissions preserve every control-plane lineage and priority tag | PROVEN | Meta and Substack duplicate-lineage tests pass; no duplicate content row is created |
+| Submission status is platform-aware and does not let a later PASS on one platform mask a quality hold on another | PROVEN | Per-platform latest quality evidence plus per-submission route tests; `partial` and `quality_held` are deployed in the owner UI |
+| Updated owner UI is live | PROVEN | Pages run `30021866231`; cache-busted HTTP readback returned 200 and contained `partial`, `quality_held`, and the no-false-published policy |
+| Production metadata sync remains healthy after the routing change | PROVEN | Operational sync `30021928175`: Release DB `quick_check=ok`; sent 480 posts / 325 engagement / 3 quality summaries / 500 knowledge / 17 proposals / 6 health rows / 0 submission updates |
+| External publishing remains locked | PROVEN | GitHub variables read back `AUTOMATION_MODE=paused` and `SUBMISSION_PROCESSOR_MODE=paused`; Full Cloud Pipeline and Reels workflows remain `disabled_manually` |
 
 Resumable next action: keep all publishing switches paused. On the Mac, update
 the clone/LaunchAgents and run one non-sensitive Substack control submission;
