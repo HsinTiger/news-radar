@@ -39,10 +39,10 @@ Must stop:
 | Claim | State | Evidence |
 |---|---|---|
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
-| Runtime state transported by Release | PROVEN | Revision 7; producer run `30008220682`; SQLite `quick_check=ok`; 29,219 news items / 239 drafts / 808 publish rows / 381 engagement rows |
+| Runtime state transported by Release | PROVEN | Revision 8; SQLite `quick_check=ok`; versioned bundle plus manifest readback |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit/integration behavior is regression-clean | PROVEN | `python -X utf8 -m pytest -q` -> 464 passed |
-| Worker API v2 is remotely reachable | PROVEN | health/auth/create/idempotency/service-sync/canary-lock remote smoke |
+| Unit/integration behavior is regression-clean | PROVEN | `python -X utf8 -m pytest -q` -> 485 passed |
+| Worker API v3 is remotely reachable | PROVEN | health/auth/create/idempotency/service-sync/canary-lock remote smoke; v4 quality API is local-smoke proven and pending deploy |
 | D1 legacy baseline imported | PROVEN | 807 posts, 381 engagement snapshots, 29,219 knowledge metadata, 1 proposal |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
 | Substack never auto-publishes | PROVEN | Worker returns `substack_auto_publish=false`; UI and policy are draft-only |
@@ -66,6 +66,21 @@ Must stop:
 - Browser storage is `sessionStorage`; the GitHub credential proxy was removed.
 - Worker legacy `GITHUB_PAT` was deleted after authenticated remote smoke.
 - Knowledge sync exports metadata and evidence summaries, not article bodies.
+- Content-quality evidence stores rule metadata and SHA-256 only. New rewrite
+  findings receive one retry and then hold for review; historical backfill is
+  observation-only.
+- Platform cadence is independent and proposal-only. Runtime overrides require
+  an exact owner-approved proposal with drift, sample, coverage, ratio, bounds,
+  compare-and-swap, and readback gates.
+
+## Completion audit addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| Historic per-platform quality can be measured without status mutation | PROVEN | Local dry-run evaluated 717 variants; copy backfill inserted 717 evidence rows, `status_mutations=0`, SQLite `quick_check=ok` |
+| Current metric coverage is sufficient for automatic cadence changes | BLOCKED | Latest Release-copy dry-run: Facebook current/baseline 0%; Instagram and Threads current 23/34 (67.6%), baseline 14/35 (40.0%); all below the 80% gate |
+| Hourly collector prevents future bucket-alignment misses | ASSUMED | Deterministic minute-coverage tests pass with ±45 minutes; future scheduled production rows still require observation |
+| Content-quality and cadence changes are deployed in production | UNKNOWN | Requires merged commit, D1 migration 0005, Worker/Pages deploy, and a production learning-review readback |
 
 ## Owner canary packet
 

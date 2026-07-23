@@ -37,6 +37,15 @@ The Pages UI is authenticated with an owner token stored only in browser
 - Engagement and audience collectors continue while publishing is paused.
 - Frequency or topic changes are proposals. Frequency increases require owner
   approval and sufficient platform-specific evidence.
+- Cadence is evaluated independently for Facebook, Instagram, and Threads over
+  adjacent 14-day windows. Both windows must meet the minimum post count, 80%
+  metric coverage, and non-zero-signal gates before a change can be proposed.
+- A cadence proposal can move only one post/day at a time. The scheduler reads
+  only the exact owner-approved runtime override and preserves proposal lineage.
+- Deterministic content quality runs per platform. A `rewrite` finding gets one
+  composer retry; if it remains, the draft is held for review and cannot enter
+  the automatic Meta queue. Historical backfill is evidence-only and never
+  retroactively fails or publishes a draft.
 - A successful workflow is not automatically a successful post. `published`
   means the platform publish path returned success and the result was recorded.
 
@@ -58,7 +67,7 @@ The automation may collect data, generate reversible drafts, and propose
 changes without interruption. It may not silently enable live publishing,
 increase frequency, or apply learning proposals.
 
-Topic-weight learning is an exact-action loop: the reflector records
+Topic-weight and per-platform cadence learning are exact-action loops: the reflector records
 `field/current_value/proposed_value`; the dashboard records the owner's
 decision; `learning-review.yml` applies only an approved action while holding
 the canonical Release lease. Identity, current-value drift, range, weekly
@@ -101,6 +110,7 @@ Cloudflare D1 stores:
 
 - submissions and truthful state transitions;
 - per-platform posts and engagement snapshots;
+- per-platform content-quality summaries without post bodies;
 - follower/audience snapshots;
 - data-health snapshots;
 - knowledge metadata and use counts (not article bodies);
@@ -112,10 +122,10 @@ Cloudflare D1 stores:
 |---|---|---|
 | `adaptive-scheduler.yml` | Evaluates platform cadence and dispatches the main pipeline | Disabled while `AUTOMATION_MODE=paused` |
 | `submission-poller.yml` | Claims D1 one-off submissions and dispatches an allowlisted workflow | Disabled while `SUBMISSION_PROCESSOR_MODE=paused` |
-| `engagement-monitor.yml` | Polls post metrics every six hours | Read-only platform access |
+| `engagement-monitor.yml` | Polls 1h/24h/168h post-age buckets hourly (±45-minute capture window) | Read-only platform access |
 | `audience-monitor.yml` | Captures daily follower snapshots | Read-only platform access |
 | `operational-sync.yml` | Syncs runtime metadata and Substack terminal evidence to D1 | No publishing authority |
-| `learning-review.yml` | Mirrors owner decisions, applies exact approved topic weights, then creates the next proposals | Policy-write authority only; no publishing |
+| `learning-review.yml` | Mirrors owner decisions, applies exact approved topic/cadence actions, backfills quality evidence, then creates the next proposals | Policy-write authority only; no publishing |
 | `full_pipeline.yml` | Harvest, compose, publish, verify, feedback, persist | Only dispatched by governed scheduler or owner |
 | `reels_publish.yml` | Generates or publishes one idempotent reel | No independent cron; live publish requires owner action |
 

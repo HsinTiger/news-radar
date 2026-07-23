@@ -77,11 +77,14 @@ from .. import db as _db_mod  # for default DB_PATH; tests can override
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROPOSALS_DIR = _PROJECT_ROOT / "data" / "05_reflect" / "proposals"
 
-VALID_ANALYZERS = frozenset({"harvest", "topic", "scorer", "composer", "gate"})
+VALID_ANALYZERS = frozenset({
+    "harvest", "topic", "platform_policy", "scorer", "composer", "gate"
+})
 VALID_PLATFORMS = frozenset({"facebook", "instagram", "threads", "all"})
 VALID_PROPOSAL_TYPES = frozenset({
     "sunset_feed",
     "adjust_weight",
+    "adjust_cadence",
     "tune_threshold",
     "add_rule",
     "relax_gate",
@@ -89,6 +92,7 @@ VALID_PROPOSAL_TYPES = frozenset({
 VALID_TARGET_CONFIGS = frozenset({
     "feeds.yml",
     "topic_weights",
+    "social_schedule",
     "thresholds.yml",
     "composer_rules.yml",
     "gate.yaml",

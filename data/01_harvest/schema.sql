@@ -161,6 +161,34 @@ CREATE INDEX IF NOT EXISTS idx_platform_drafts_draft ON platform_drafts(draft_id
 CREATE INDEX IF NOT EXISTS idx_platform_drafts_platform ON platform_drafts(platform);
 
 
+-- ============ 5.2 內容品質證據（不保存全文）============
+-- 每次 compose / pre-publish / historical backfill 都只留下規則命中、
+-- severity 與文字雜湊。rewrite 是「需再寫或人工看」；只有 block 是拒發。
+CREATE TABLE IF NOT EXISTS content_quality_evaluations (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id          TEXT NOT NULL,
+    news_id           TEXT,
+    platform          TEXT NOT NULL CHECK(platform IN ('facebook','instagram','threads')),
+    stage             TEXT NOT NULL CHECK(stage IN ('compose','pre_publish','backfill')),
+    attempt           INTEGER NOT NULL DEFAULT 1 CHECK(attempt BETWEEN 1 AND 9),
+    checked_at        TEXT NOT NULL,
+    guard_version     TEXT NOT NULL,
+    text_sha256       TEXT NOT NULL,
+    decision          TEXT NOT NULL CHECK(decision IN ('pass','warn','rewrite','block')),
+    block_count       INTEGER NOT NULL DEFAULT 0,
+    rewrite_count     INTEGER NOT NULL DEFAULT 0,
+    warn_count        INTEGER NOT NULL DEFAULT 0,
+    issue_codes_json  TEXT NOT NULL DEFAULT '[]',
+    issues_json       TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(draft_id, platform, stage, attempt, text_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_platform_checked
+    ON content_quality_evaluations(platform, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quality_draft_platform
+    ON content_quality_evaluations(draft_id, platform, checked_at DESC);
+
+
 -- ============ 6. 反思紀錄（Reflector 每次執行留痕）============
 CREATE TABLE IF NOT EXISTS reflection_events (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,6 +242,32 @@ CREATE TABLE IF NOT EXISTS topic_weight_history (
 
 CREATE INDEX IF NOT EXISTS idx_topic_weight_history_category
     ON topic_weight_history(category_id, recorded_at);
+
+
+-- ============ 8.5 分平台發文策略 override（owner-governed）============
+-- Git 內的 social_automation_policy.json 是 bootstrap/default；owner 核准的
+-- exact cadence proposal 會寫入這張 runtime table。scheduler 只讀已部署值。
+CREATE TABLE IF NOT EXISTS social_policy_overrides (
+    platform                 TEXT PRIMARY KEY CHECK(platform IN ('facebook','instagram','threads')),
+    target_posts_per_day     INTEGER NOT NULL CHECK(target_posts_per_day BETWEEN 0 AND 4),
+    minimum_interval_hours   REAL NOT NULL CHECK(minimum_interval_hours BETWEEN 4 AND 48),
+    local_slots_json         TEXT NOT NULL,
+    source_proposal_id       TEXT NOT NULL,
+    updated_at               TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS social_policy_history (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform                 TEXT NOT NULL,
+    recorded_at              TEXT NOT NULL,
+    cadence_before_json      TEXT NOT NULL,
+    cadence_after_json       TEXT NOT NULL,
+    source_proposal_id       TEXT NOT NULL,
+    rationale                TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_policy_history_platform
+    ON social_policy_history(platform, recorded_at);
 
 
 -- ============ 9. Phase 9 Item 2 · Reflector proposal lineage ============

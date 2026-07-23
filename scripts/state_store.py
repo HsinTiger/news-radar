@@ -77,7 +77,16 @@ def validate_database(path: Path) -> dict[str, Any]:
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-            for table in ("news_items", "drafts", "publish_log", "engagement_stats"):
+            for table in (
+                "news_items",
+                "drafts",
+                "publish_log",
+                "engagement_stats",
+                "content_quality_evaluations",
+                "reflector_proposal_lineage",
+                "social_policy_overrides",
+                "social_policy_history",
+            ):
                 if table in existing:
                     counts[table] = int(
                         conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]

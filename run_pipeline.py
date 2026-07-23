@@ -32,6 +32,7 @@ from src.content_quality_guard import (
     check_quality,
     format_issues,
     has_blocking_issues,
+    should_request_rewrite,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.publisher import (
@@ -661,26 +662,101 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         tag = "✅" if ok else "⚠️"
         print(f"   ↳ {dbmod.PLATFORM_LABEL[platform_key]}: {variant.char_count} 字 {tag}")
 
-    # 3.5 Phase 8.20：品質守門員（第一道防線：compose 後立即檢查）
-    # 只要有任一平台觸發 block 級規則，整篇 draft 不入 DB、不入 queue。
-    # 這是對『LLM 生成端』的雙重保險——即便 composer 未來又回歸到某種
-    # fallback template，也會在這裡被當場擋下。
-    compose_block: list[str] = []
-    for platform_key, (_variant, ftext, _ok) in finalized.items():
-        issues = check_quality(ftext, title=title)
-        if has_blocking_issues(issues):
-            compose_block.append(f"{platform_key}: {format_issues(issues)}")
+    # 3.5 品質證據 + 一次受限重寫。
+    # block 仍 fail-closed；rewrite 只給 composer 一次修正機會。第二次仍命中
+    # rewrite 時保留草稿供人工看，但絕不進自動發布 queue。每次判定只保存規則
+    # 與文字 hash，不保存另一份全文。
+    draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
+
+    def evaluate_quality(attempt: int) -> dict[str, list]:
+        findings: dict[str, list] = {}
+        for platform_key, (_variant, ftext, _ok) in finalized.items():
+            issues = check_quality(ftext, title=title)
+            findings[platform_key] = issues
+            dbmod.record_quality_evaluation(
+                conn,
+                draft_id=draft_id,
+                news_id=news_id,
+                platform=dbmod.PLATFORM_DB_NAME[platform_key],
+                stage="compose",
+                attempt=attempt,
+                full_text=ftext,
+                issues=issues,
+            )
+        return findings
+
+    quality_findings = evaluate_quality(1)
+    compose_block = [
+        f"{platform}: {format_issues(issues)}"
+        for platform, issues in quality_findings.items()
+        if has_blocking_issues(issues)
+    ]
     if compose_block:
         print(
-            f" 🛑 [QualityGuard·compose] 偵測到代班假文指紋，skip 本篇不寫 draft："
+            f" 🛑 [QualityGuard·compose] 偵測到拒發指紋，skip 本篇不寫 draft："
             f" {' || '.join(compose_block)}"
         )
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped_quality_block"
 
+    rewrite_requests = [
+        f"{platform}: {format_issues(issues)}"
+        for platform, issues in quality_findings.items()
+        if should_request_rewrite(issues)
+    ]
+    rewrite_unresolved = False
+    if rewrite_requests:
+        print(
+            "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行唯一一次重寫："
+            + " || ".join(rewrite_requests)
+        )
+        rewrite_note = (
+            f"{score_data.editorial_note}\n\n"
+            "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
+            "variant. Preserve source-backed facts and the core insight. Remove or "
+            "attribute unsupported numeric claims; do not invent citations. Fix these "
+            f"deterministic findings: {' || '.join(rewrite_requests)}"
+        )
+        retry_bundle = await compose_multi_platform(
+            title,
+            content,
+            final_img_url,
+            editorial_note=rewrite_note,
+            platforms=active_platforms,
+        )
+        if retry_bundle:
+            retry_finalized = dict(finalized)
+            for platform_key in active_platforms:
+                raw_variant = getattr(retry_bundle, platform_key)
+                if raw_variant:
+                    retry_finalized[platform_key] = finalize_variant(
+                        raw_variant, platform_key
+                    )
+            finalized = retry_finalized
+            bundle = retry_bundle
+            quality_findings = evaluate_quality(2)
+            retry_blocks = [
+                f"{platform}: {format_issues(issues)}"
+                for platform, issues in quality_findings.items()
+                if has_blocking_issues(issues)
+            ]
+            if retry_blocks:
+                print(
+                    " 🛑 [QualityGuard·rewrite] 重寫後出現 block，skip 本篇："
+                    + " || ".join(retry_blocks)
+                )
+                dbmod.update_status(conn, news_id, "dropped")
+                return "dropped_quality_block"
+            rewrite_unresolved = any(
+                should_request_rewrite(issues)
+                for issues in quality_findings.values()
+            )
+        else:
+            rewrite_unresolved = True
+            print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
+
     # 4. 建立 Draft（舊表相容 / 以 FB 變體為 canonical）
     fb_variant, fb_full_text, _ = finalized["fb"]
-    draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
     legacy_content = _build_legacy_content(fb_variant, bundle.image_url)
 
     draft = Draft(
@@ -697,10 +773,15 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         status="pending_review",
     )
 
-    auto_publish = score >= publish_threshold
+    auto_publish = score >= publish_threshold and not rewrite_unresolved
     if auto_publish:
         draft.status = "auto_approved"
         print(f" ↳ [Auto-Publish] 分數 ≥ {publish_threshold}，啟動三平台發布")
+    elif rewrite_unresolved:
+        print(
+            " ↳ [Quality Hold] 重寫後仍有 rewrite issue；保留 pending_review，"
+            "不進自動發布 queue"
+        )
     else:
         print(f" ↳ [Drafted] 分數 {score:.2f} < {publish_threshold}，存入草稿等待人工複核")
 

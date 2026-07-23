@@ -454,7 +454,7 @@ PLATFORM_FETCHERS = {
 # 詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql。
 
 CANONICAL_BUCKETS = (1, 24, 168)  # hours since first successful publish
-TOLERANCE_HOURS = 0.25            # ±15 min — wider than cron interval prevents miss
+TOLERANCE_HOURS = 0.75            # ±45 min — hourly cron cannot miss any publish minute
 
 
 @dataclass(frozen=True)
@@ -565,7 +565,7 @@ def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
 
 async def sync_bucket_polls(conn) -> Dict:
     """Hourly cron entry: dispatch bucket polls for (draft, platform) tuples
-    falling within ±15min tolerance of canonical buckets [1, 24, 168] h.
+    falling within ±45min tolerance of canonical buckets [1, 24, 168] h.
 
     Replaces `sync_all_posts` (uniform 4h polling). Most cron ticks will have
     0 tasks (no bucket alignment) — that's expected and cheap.

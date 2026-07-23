@@ -18,6 +18,10 @@ class PlatformDecision:
     reason: str
     posts_today: int
     last_success: str | None
+    target_posts_per_day: int
+    minimum_interval_hours: float
+    local_slots: list[int]
+    policy_source: str
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,54 @@ def _inside_slot(now_local: datetime, hours: list[int], tolerance: int) -> bool:
     return any(abs(minute_of_day - hour * 60) <= tolerance for hour in hours)
 
 
+def _effective_platform_config(
+    conn: sqlite3.Connection,
+    platform: str,
+    base: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    config = dict(base)
+    try:
+        row = conn.execute(
+            """
+            SELECT target_posts_per_day,minimum_interval_hours,local_slots_json,
+                   source_proposal_id
+              FROM social_policy_overrides WHERE platform=?
+            """,
+            (platform,),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return config, "bootstrap_policy"
+        raise
+    if row is None:
+        return config, "bootstrap_policy"
+    slots = json.loads(row["local_slots_json"])
+    target = int(row["target_posts_per_day"])
+    interval = float(row["minimum_interval_hours"])
+    if target < 0 or target > 4 or interval < 4 or interval > 48:
+        raise ValueError(f"invalid runtime cadence bounds for {platform}")
+    if not isinstance(slots, list) or any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 23
+        for value in slots
+    ):
+        raise ValueError(f"invalid runtime slots for {platform}")
+    if len(slots) != target or slots != sorted(set(slots)):
+        raise ValueError(f"runtime slot count does not match target for {platform}")
+    gaps = [right - left for left, right in zip(slots, slots[1:])]
+    if slots:
+        gaps.append(24 - slots[-1] + slots[0])
+    if any(gap < interval for gap in gaps):
+        raise ValueError(f"runtime slots violate minimum spacing for {platform}")
+    config.update(
+        {
+            "target_posts_per_day": target,
+            "minimum_interval_hours": interval,
+            "local_slots": slots,
+        }
+    )
+    return config, f"proposal:{row['source_proposal_id']}"
+
+
 def decide_schedule(
     conn: sqlite3.Connection,
     policy: dict[str, Any],
@@ -74,7 +126,10 @@ def decide_schedule(
     end_utc = (start_local + timedelta(days=1)).astimezone(timezone.utc).isoformat()
     decisions: list[PlatformDecision] = []
 
-    for platform, config in policy["platforms"].items():
+    for platform, base_config in policy["platforms"].items():
+        config, policy_source = _effective_platform_config(
+            conn, platform, base_config
+        )
         row = conn.execute(
             """
             SELECT MAX(CASE WHEN success=1 THEN posted_at END) AS last_success,
@@ -112,6 +167,10 @@ def decide_schedule(
                 reason=",".join(reasons),
                 posts_today=posts_today,
                 last_success=last_value,
+                target_posts_per_day=int(config["target_posts_per_day"]),
+                minimum_interval_hours=float(config["minimum_interval_hours"]),
+                local_slots=[int(value) for value in config["local_slots"]],
+                policy_source=policy_source,
             )
         )
 

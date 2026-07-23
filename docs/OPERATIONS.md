@@ -82,6 +82,8 @@ npx wrangler d1 execute hsintiger-social-ops --remote --command \
   "SELECT platform,MAX(captured_at) latest,COUNT(*) samples FROM audience_snapshots GROUP BY platform;"
 npx wrangler d1 execute hsintiger-social-ops --remote --command \
   "SELECT platform,metric,status,detail,captured_at FROM data_health_snapshots ORDER BY captured_at DESC LIMIT 20;"
+npx wrangler d1 execute hsintiger-social-ops --remote --command \
+  "SELECT platform,evaluated,evidence_coverage,rewrite_count,block_count,captured_at FROM content_quality_snapshots ORDER BY captured_at DESC LIMIT 9;"
 ```
 
 Follower health is owned by `audience-monitor.yml`. Engagement sync must not
@@ -103,6 +105,17 @@ Do not convert those failures into zero reach or healthy data. The initial
 proposal score uses `likes + 2*comments + 3*shares + 0.25*clicks`; the click
 coefficient is an assumption to recalibrate only after sufficient samples.
 
+The engagement workflow runs hourly at minute 11. Bucket selection is
+idempotent and accepts the nearest tick within ±45 minutes of post age 1h, 24h,
+or 168h. A successful workflow with zero due buckets is healthy; a six-hour
+schedule is not, because it silently misses most publish minutes.
+
+Content-quality evidence is a separate signal. `block` fails closed. `rewrite`
+gets one new-composition retry and, if unresolved, holds the new draft outside
+the automatic queue. `warn` remains publishable but visible in the dashboard.
+Historical backfill stores issue codes and a text hash only; it must report
+`status_mutations=0` and must not rewrite old queue/status fields.
+
 ## Governed learning review
 
 The weekly learning writer has no publishing credentials or publishing step.
@@ -110,8 +123,9 @@ Its required order is:
 
 ```text
 Release lock -> verified pull -> remote lease assert
--> mirror D1 owner decisions -> apply exact approved topic-weight actions
--> generate new proposals -> verified Release push -> D1 sync -> unlock
+-> mirror D1 owner decisions -> apply exact approved topic/cadence actions
+-> backfill quality evidence -> generate topic and per-platform cadence proposals
+-> verified Release push -> D1 sync -> unlock
 ```
 
 An approved proposal executes only when its JSONL and SQLite lineage identity
@@ -119,6 +133,13 @@ match, the current weight has not drifted, the values remain in `0.3..2.0`,
 the absolute delta is at most `0.30`, and compare-and-swap plus readback pass.
 A rejected proposal is mirrored but never executed. Stale operational sync
 cannot downgrade `approved`, `rejected`, `applied`, or `superseded` status.
+
+Cadence actions additionally require the same platform and exact current
+cadence, both adjacent windows to retain their original sample/coverage/signal
+evidence, a ratio that still crosses the proposal gate, a change of at most one
+post/day, bounded slots/spacing, compare-and-swap, and readback. Until both
+14-day windows reach 80% metric coverage, `insufficient_metric_coverage` is the
+correct result and no frequency proposal should exist.
 
 If any gate fails, keep the proposal in its current D1 state, preserve the
 Release evidence, and inspect the `learning-review-<run_id>` artifact. Do not
