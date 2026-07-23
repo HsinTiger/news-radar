@@ -3,7 +3,7 @@ name: 🌐 Pages · Deploy dashboard + submit frontends
 # Single Pages deploy. GitHub Pages replaces the ENTIRE site on every deploy,
 # so ALL pages MUST be assembled in one workflow — otherwise whichever ran last
 # clobbers the others (which is exactly what happened before).
-#   dashboard       → https://hsintiger.github.io/news-radar/
+#   dashboard       → https://hsintiger.github.io/news-radar/ and /dashboard/
 #   Meta 三平台      → https://hsintiger.github.io/news-radar/meta-submit/
 #   Substack 草稿    → https://hsintiger.github.io/news-radar/substack-submit/
 #   manual-submit   → https://hsintiger.github.io/news-radar/manual-submit/  (本機 server 版,保留)
@@ -41,8 +41,9 @@ jobs:
 
       - name: Assemble site (dashboard at root, submit pages in subdirs)
         run: |
-          mkdir -p _site/manual-submit _site/meta-submit _site/substack-submit _site/wiki
+          mkdir -p _site/dashboard _site/manual-submit _site/meta-submit _site/substack-submit _site/wiki
           cp -r dashboard/*       _site/
+          cp -r dashboard/*       _site/dashboard/
           cp -r manual-submit/*   _site/manual-submit/
           cp -r meta-submit/*     _site/meta-submit/
           cp -r substack-submit/* _site/substack-submit/
