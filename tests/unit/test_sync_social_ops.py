@@ -75,6 +75,7 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     knowledge = build_knowledge(conn, full=True, limit=0)
     quality = build_quality(conn, full=True)
     assert posts[0]["status"] == "published"
+    assert posts[0]["id"] == "post_d1_threads_feed"
     assert posts[0]["topic"] == "ai_application"
     assert engagement[0]["metric_status"] == "ok"
     assert engagement[0]["replies"] == 2
