@@ -194,6 +194,11 @@ Expected workers:
 Both use `~/news_radar`, the Release-backed lease, and a local directory lock.
 They do not read or push a `state` branch.
 
+Enable them in two stages. Load `substack-fast` first and require
+`mac_worker_doctor.py --require-remote-proof` after one immediate canary. Do not
+load the hourly worker first when a backlog exists; that can create many drafts
+before the cookie/API path has one current proof.
+
 ## Canary ladder
 
 ### Substack

@@ -53,4 +53,20 @@ fi
   --producer "mac_substack_fast:$(hostname -s):$(date -u +%Y%m%dT%H%M%SZ)" \
   --lease-file "$LEASE_FILE" || exit 5
 
+# Keep the local runtime readback aligned with the just-verified Release state.
+# This runs under both the remote lease and the local writer lock.  The doctor
+# can therefore require a real remote draft id before the hourly backlog lane
+# is enabled, without another network mutation.
+LOCAL_DB="$LOCAL_REPO/data/01_harvest/news_radar.db"
+LOCAL_DB_TMP="$LOCAL_DB.tmp.$$"
+mkdir -p "$(dirname "$LOCAL_DB")"
+cp "$DB_PATH" "$LOCAL_DB_TMP" || exit 6
+mv "$LOCAL_DB_TMP" "$LOCAL_DB" || exit 6
+LOCAL_SHA=$(shasum -a 256 "$LOCAL_DB" | awk '{print $1}')
+if [ "$LOCAL_SHA" != "$AFTER_SHA" ]; then
+  echo "[fast-drain] local canonical DB readback hash mismatch"
+  exit 6
+fi
+echo "[fast-drain] local canonical DB readback verified: $LOCAL_SHA"
+
 exit "$DRAIN_EXIT"
