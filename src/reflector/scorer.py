@@ -158,6 +158,7 @@ class DraftEngagementRow:
     fb_comments: Optional[float] = None
     fb_shares: Optional[float] = None
     fb_reach: Optional[float] = None
+    fb_clicks: Optional[float] = None
     ig_likes: Optional[float] = None
     ig_comments: Optional[float] = None
     ig_shares: Optional[float] = None
@@ -178,6 +179,7 @@ class DraftEngagementRow:
         return {
             "fb_likes": self.fb_likes, "fb_comments": self.fb_comments,
             "fb_shares": self.fb_shares, "fb_reach": self.fb_reach,
+            "fb_clicks": self.fb_clicks,
             "ig_likes": self.ig_likes, "ig_comments": self.ig_comments,
             "ig_shares": self.ig_shares, "ig_saves": self.ig_saves,
             "ig_reach": self.ig_reach,
@@ -416,7 +418,7 @@ def fetch_recent_published_rows(
     """
     sql = f"""
         SELECT draft_id, weighted_score, published_at,
-               fb_likes, fb_comments, fb_shares, fb_reach,
+               fb_likes, fb_comments, fb_shares, fb_reach, fb_clicks,
                ig_likes, ig_comments, ig_shares, ig_saves, ig_reach,
                th_likes, th_replies, th_reposts, th_quotes, th_views
           FROM v_post_engagement_aggregated
@@ -446,16 +448,17 @@ def fetch_recent_published_rows(
             fb_comments=_g("fb_comments", 4),
             fb_shares=_g("fb_shares", 5),
             fb_reach=_g("fb_reach", 6),
-            ig_likes=_g("ig_likes", 7),
-            ig_comments=_g("ig_comments", 8),
-            ig_shares=_g("ig_shares", 9),
-            ig_saves=_g("ig_saves", 10),
-            ig_reach=_g("ig_reach", 11),
-            th_likes=_g("th_likes", 12),
-            th_replies=_g("th_replies", 13),
-            th_reposts=_g("th_reposts", 14),
-            th_quotes=_g("th_quotes", 15),
-            th_views=_g("th_views", 16),
+            fb_clicks=_g("fb_clicks", 7),
+            ig_likes=_g("ig_likes", 8),
+            ig_comments=_g("ig_comments", 9),
+            ig_shares=_g("ig_shares", 10),
+            ig_saves=_g("ig_saves", 11),
+            ig_reach=_g("ig_reach", 12),
+            th_likes=_g("th_likes", 13),
+            th_replies=_g("th_replies", 14),
+            th_reposts=_g("th_reposts", 15),
+            th_quotes=_g("th_quotes", 16),
+            th_views=_g("th_views", 17),
         ))
     return out
 

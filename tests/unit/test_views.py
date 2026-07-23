@@ -200,14 +200,14 @@ def _insert_extras_fixture(conn: sqlite3.Connection) -> None:
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         ("dx", "nx", "v1", now, "published", "published", 0.9),
     )
-    # Facebook: likes=5, comments=13, shares=17, views=23, reach=29
+    # Facebook: likes=5, comments=13, shares=17, views=23, reach=29, clicks=61
     conn.execute(
         """INSERT INTO engagement_stats
            (draft_id, platform, platform_post_id, fetched_at,
             likes, comments, shares, saves, reposts, quotes, replies,
-            views, reach)
+            views, reach, clicks)
            VALUES (?, 'facebook', 'pp_fb_x', ?, 5, 13, 17, 0, 0, 0, 0,
-                   23, 29)""",
+                   23, 29, 61)""",
         ("dx", recent),
     )
     # Instagram: likes=7, comments=19, shares=31, saves=37, reach=41
@@ -250,6 +250,7 @@ def test_v_post_engagement_aggregated_per_platform_extras(view_db):
     assert row["fb_comments"] == 13
     assert row["fb_shares"] == 17
     assert row["fb_reach"] == 29
+    assert row["fb_clicks"] == 61
     # Instagram
     assert row["ig_likes"] == 7
     assert row["ig_comments"] == 19
@@ -284,6 +285,7 @@ def test_v_topic_engagement_x_platform_per_platform_extras(view_db):
     # Item 1.6 new AVG columns.
     assert row["fb_avg_shares_30d"] == pytest.approx(17.0)
     assert row["fb_avg_reach_30d"] == pytest.approx(29.0)
+    assert row["fb_avg_clicks_30d"] == pytest.approx(61.0)
     assert row["ig_avg_shares_30d"] == pytest.approx(31.0)
     assert row["ig_avg_saves_30d"] == pytest.approx(37.0)
     assert row["ig_avg_reach_30d"] == pytest.approx(41.0)

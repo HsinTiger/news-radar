@@ -108,7 +108,7 @@ def build_engagement(conn: sqlite3.Connection, *, full: bool = False) -> list[di
     rows = conn.execute(
         f"""
         SELECT platform,platform_post_id,fetched_at,post_age_bucket,views,reach,
-               engaged_users,clicks,likes,comments,shares,saves,replies,reposts,
+               clicks,likes,comments,shares,saves,replies,reposts,
                quotes,raw_json
         FROM engagement_stats
         WHERE platform IN ('facebook','instagram','threads')
@@ -127,7 +127,6 @@ def build_engagement(conn: sqlite3.Connection, *, full: bool = False) -> list[di
                 "post_age_hours": row["post_age_bucket"],
                 "views": row["views"] or 0,
                 "reach": row["reach"] or 0,
-                "engaged_users": row["engaged_users"] or 0,
                 "clicks": row["clicks"] or 0,
                 "likes": row["likes"] or 0,
                 "comments": row["comments"] or 0,
@@ -222,7 +221,7 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         SELECT platform,COUNT(*) AS samples,MAX(fetched_at) AS latest,
                SUM(CASE WHEN raw_json LIKE '%\"error\"%' THEN 1 ELSE 0 END) AS error_samples,
                SUM(CASE WHEN COALESCE(views,0)+COALESCE(reach,0)+
-                 COALESCE(engaged_users,0)+COALESCE(clicks,0)+COALESCE(likes,0)+
+                 COALESCE(clicks,0)+COALESCE(likes,0)+
                  COALESCE(comments,0)+COALESCE(shares,0)+COALESCE(saves,0)+
                  COALESCE(replies,0)+COALESCE(reposts,0)+COALESCE(quotes,0) > 0
                  THEN 1 ELSE 0 END) AS nonzero_samples

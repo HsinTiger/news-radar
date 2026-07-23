@@ -36,9 +36,18 @@ LEASE_FILE="$TMPROOT/.runtime-state-lease.json"
 LEASED=1
 "$PY" scripts/state_store.py pull --repo "$REPO" --root "$TMPROOT" || exit 4
 
-NEWS_RADAR_DB="$TMPROOT/data/01_harvest/news_radar.db" \
+DB_PATH="$TMPROOT/data/01_harvest/news_radar.db"
+BEFORE_SHA=$(shasum -a 256 "$DB_PATH" | awk '{print $1}')
+
+NEWS_RADAR_DB="$DB_PATH" \
   "$PY" -u scripts/drain_substack.py --only-immediate
 DRAIN_EXIT=$?
+
+AFTER_SHA=$(shasum -a 256 "$DB_PATH" | awk '{print $1}')
+if [ "$BEFORE_SHA" = "$AFTER_SHA" ]; then
+  echo "[fast-drain] no canonical DB change; skip Release upload"
+  exit "$DRAIN_EXIT"
+fi
 
 "$PY" scripts/state_store.py push --repo "$REPO" --root "$TMPROOT" \
   --producer "mac_substack_fast:$(hostname -s):$(date -u +%Y%m%dT%H%M%SZ)" \

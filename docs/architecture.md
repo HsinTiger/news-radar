@@ -1,5 +1,9 @@
 # News Radar 系統架構圖 (System Architecture)
 
+> **2026-07-23 note:** this is a historical April diagram. The current system
+> uses Release-backed runtime state, D1, a governed scheduler, and paused Meta
+> publishing. See [`../README.md`](../README.md) and [`OPERATIONS.md`](OPERATIONS.md).
+
 > 2026-04-19 由 Claude Opus 4.7 對 Gemini 原版 (見文末「歷史版本錯誤對照」) 全面校對重繪。
 > 本圖為「程式碼 ground-truth」版本，所有箭頭與節點名稱皆與 `src/` 實際實作對齊。
 

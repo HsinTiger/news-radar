@@ -137,6 +137,6 @@ def test_fresh_db_schema_has_all_phase820_tables():
         engagement_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(engagement_stats)")
         }
-        assert {"engaged_users", "clicks"} <= engagement_columns
+        assert "clicks" in engagement_columns
     finally:
         conn.close()

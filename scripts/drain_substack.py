@@ -2,8 +2,8 @@
 """Drain user-submitted Substack sources into drafts (local, token-free).
 
 The Substack manual-submit frontend (GitHub Pages) → substack-submit.yml (cloud)
-writes a row into the state-branch DB with feed_name='user_substack'. The Mac's
-hourly news_radar_compose.sh pulls that state DB into the local DB. THIS script
+writes a row into the Release-state DB with feed_name='user_substack'. The Mac's
+worker pulls that verified state into the local DB. THIS script
 is the final link: it finds those submissions and composes a Substack draft for
 each via substack_radar/compose.py (Claude/Gemini CLI — free, high quality).
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 # NEWS_RADAR_DB 覆寫：讓「立即」快速通道（drain_substack_fast.sh）能指向一份剛從
-# state branch 拉下來的暫存 DB，完全不碰主 DB，避免和每小時的 compose_hourly.sh 互踩。
+# canonical Release 拉下來的暫存 DB，完全不碰主 DB，避免和每小時的 compose_hourly.sh 互踩。
 DB = Path(os.environ.get("NEWS_RADAR_DB") or (REPO / "data" / "01_harvest" / "news_radar.db"))
 DONE_FILE = REPO / "data" / "substack_drafts" / ".substack_submissions.json"
 COMPOSE = REPO / "substack_radar" / "compose.py"

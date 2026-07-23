@@ -151,8 +151,8 @@
       const metrics=node("div","platform-main");
       const nativeMetrics = platform === "facebook"
         ? [
-          metric("平均 engaged users",eng.avg_engaged_users===null||eng.avg_engaged_users===undefined?"UNKNOWN":fmt(eng.avg_engaged_users),`${fmt(eng.posts)} posts sampled`),
-          metric("平均 clicks",eng.avg_clicks===null||eng.avg_clicks===undefined?"UNKNOWN":fmt(eng.avg_clicks),"Facebook native"),
+          metric("平均 clicks",eng.avg_clicks===null||eng.avg_clicks===undefined?"UNKNOWN":fmt(eng.avg_clicks),`${fmt(eng.posts)} posts sampled`),
+          metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Facebook native"),
         ]
         : platform === "instagram"
           ? [

@@ -128,7 +128,6 @@ CREATE TABLE IF NOT EXISTS engagement_stats (
     replies          INTEGER DEFAULT 0,        -- Threads replies
     views            INTEGER DEFAULT 0,        -- Threads / IG native views
     reach            INTEGER DEFAULT 0,        -- IG native reach
-    engaged_users    INTEGER DEFAULT 0,        -- FB post_engaged_users
     clicks           INTEGER DEFAULT 0,        -- FB post_clicks
     raw_json         TEXT,                      -- 原始 API 回傳
     FOREIGN KEY (draft_id) REFERENCES drafts(id)

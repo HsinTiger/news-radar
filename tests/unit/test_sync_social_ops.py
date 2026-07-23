@@ -28,7 +28,7 @@ def _db() -> sqlite3.Connection:
           platform TEXT,platform_post_id TEXT,fetched_at TEXT,post_age_bucket INTEGER,
           views INTEGER,reach INTEGER,likes INTEGER,comments INTEGER,shares INTEGER,
           saves INTEGER,replies INTEGER,reposts INTEGER,quotes INTEGER,raw_json TEXT,
-          engaged_users INTEGER,clicks INTEGER
+          clicks INTEGER
         );
         CREATE TABLE reflector_proposal_lineage(
           fire_id TEXT,fire_at TEXT,proposal_type TEXT,target_config TEXT,
@@ -43,7 +43,7 @@ def _db() -> sqlite3.Connection:
           1,'d1','threads','t-post','2099-01-03T00:00:00Z',1,NULL
         );
         INSERT INTO engagement_stats VALUES(
-          'threads','t-post','2099-01-04T00:00:00Z',24,100,0,5,0,0,0,2,1,0,'{}',0,0
+          'threads','t-post','2099-01-04T00:00:00Z',24,100,0,5,0,0,0,2,1,0,'{}',0
         );
         """
     )
@@ -59,7 +59,6 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert posts[0]["topic"] == "ai_application"
     assert engagement[0]["metric_status"] == "ok"
     assert engagement[0]["replies"] == 2
-    assert engagement[0]["engaged_users"] == 0
     assert engagement[0]["clicks"] == 0
     assert knowledge[0]["use_count"] == 1
     assert "clean_markdown" not in knowledge[0]
@@ -68,11 +67,11 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
 def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None:
     conn = _db()
     conn.execute(
-        "INSERT INTO engagement_stats VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO engagement_stats VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "facebook", "f-post", "2099-01-04T00:00:00Z", 24,
             0, 0, 0, 0, 0, 0, 0, 0, 0,
-            '{"insights":{"error":{"code":100}}}', 0, 0,
+            '{"insights":{"error":{"code":100}}}', 0,
         ),
     )
     rows = build_health(conn)

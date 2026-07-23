@@ -471,15 +471,15 @@ async function syncOperationalData(request, env, cors) {
       env.DB.prepare(
         `INSERT INTO engagement_snapshots(
           platform,platform_post_id,captured_at,post_age_hours,views,reach,likes,
-          comments,shares,saves,replies,reposts,quotes,engaged_users,clicks,
+          comments,shares,saves,replies,reposts,quotes,clicks,
           metric_status,raw_summary_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(platform,platform_post_id,captured_at) DO UPDATE SET
           post_age_hours=excluded.post_age_hours,views=excluded.views,reach=excluded.reach,
           likes=excluded.likes,comments=excluded.comments,shares=excluded.shares,
           saves=excluded.saves,replies=excluded.replies,reposts=excluded.reposts,
-          quotes=excluded.quotes,engaged_users=excluded.engaged_users,
-          clicks=excluded.clicks,metric_status=excluded.metric_status,
+          quotes=excluded.quotes,clicks=excluded.clicks,
+          metric_status=excluded.metric_status,
           raw_summary_json=excluded.raw_summary_json`,
       ).bind(
         platform,
@@ -489,7 +489,7 @@ async function syncOperationalData(request, env, cors) {
         integer(row.views), integer(row.reach), integer(row.likes), integer(row.comments),
         integer(row.shares), integer(row.saves), integer(row.replies),
         integer(row.reposts), integer(row.quotes),
-        integer(row.engaged_users), integer(row.clicks),
+        integer(row.clicks),
         cleanString(row.metric_status, "metric_status", 60) || "unknown",
         jsonValue(row.raw_summary),
       ),
@@ -644,7 +644,6 @@ async function dashboard(env, cors) {
     )
     SELECT platform,COUNT(*) AS posts,MAX(captured_at) AS last_captured_at,
       ROUND(AVG(views),1) AS avg_views,ROUND(AVG(reach),1) AS avg_reach,
-      ROUND(AVG(engaged_users),1) AS avg_engaged_users,
       ROUND(AVG(clicks),1) AS avg_clicks,
       ROUND(AVG(likes+comments+shares+saves+replies+reposts+quotes+clicks),1) AS avg_actions,
       SUM(likes+comments+shares+saves+replies+reposts+quotes+clicks) AS actions,
@@ -657,7 +656,7 @@ async function dashboard(env, cors) {
       GROUP BY platform,platform_post_id,substr(captured_at,1,10)
     )
     SELECT e.platform,d.day,SUM(e.views) AS views,SUM(e.reach) AS reach,
-      SUM(e.engaged_users) AS engaged_users,SUM(e.clicks) AS clicks,
+      SUM(e.clicks) AS clicks,
       SUM(e.likes+e.comments+e.shares+e.saves+e.replies+e.reposts+e.quotes+e.clicks) AS actions
     FROM daily_post d JOIN engagement_snapshots e
       ON e.platform=d.platform AND e.platform_post_id=d.platform_post_id AND e.captured_at=d.captured_at

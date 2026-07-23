@@ -20,7 +20,7 @@ load_dotenv(ENV_PATH)
 # ---------- 平台權重的定義 (根據使用者策略調整) ----------
 PLATFORM_WEIGHTS = {
     "facebook": {
-        "reach": 0.5,       # 權威陣地，看重廣度 (post_impressions_unique)
+        "clicks": 0.5,      # 已由 live canary 證明可用的注意力行為
         "comments": 0.3,
         "shares": 0.2
     },
@@ -66,16 +66,16 @@ async def fetch_real_world_metrics(platform: str, post_id: str) -> Dict:
                 # FB Insights: 觸及與互動
                 url = f"https://graph.facebook.com/v20.0/{post_id}/insights"
                 params = {
-                    "metric": "post_impressions_unique,post_engaged_users",
+                    "metric": "post_clicks",
                     "access_token": FB_PAGE_ACCESS_TOKEN
                 }
                 resp = await client.get(url, params=params)
                 data = resp.json()
                 
-                metrics = {"reach": 0, "comments": 0, "shares": 0}
+                metrics = {"clicks": 0, "comments": 0, "shares": 0}
                 for item in data.get("data", []):
-                    if item["name"] == "post_impressions_unique":
-                        metrics["reach"] = item["values"][0]["value"]
+                    if item["name"] == "post_clicks":
+                        metrics["clicks"] = item["values"][0]["value"]
                 # FB Shares 需從 object 自身抓取
                 obj_url = f"https://graph.facebook.com/v20.0/{post_id}"
                 obj_resp = await client.get(obj_url, params={"fields": "shares,comments.summary(true)", "access_token": FB_PAGE_ACCESS_TOKEN})
@@ -201,7 +201,8 @@ async def run_analysis_cycle():
             "metrics": {
                 "likes": s["likes"], "comments": s["comments"],
                 "shares": s["shares"], "saves": s["saves"],
-                "quotes": s["quotes"], "views": s["views"]
+                "quotes": s["quotes"], "views": s["views"],
+                "clicks": s["clicks"]
             }
         })
     

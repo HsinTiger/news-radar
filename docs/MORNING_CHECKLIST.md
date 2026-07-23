@@ -1,4 +1,9 @@
-# Morning Checklist · 2026-04-20（夜班交接）
+# Morning Checklist · 2026-04-20（歷史交接，請勿當現行操作手冊）
+
+> 現行架構已改用 `runtime-state-v1` GitHub Release 與跨 writer lease。
+> 請改讀 [`OPERATIONS.md`](OPERATIONS.md) 與
+> [`INSTALL_COMPOSE_LAUNCHAGENT.md`](../scripts/INSTALL_COMPOSE_LAUNCHAGENT.md)。
+> 下文保留作歷史證據，其中 `state` branch、自動 Meta 發布與舊安裝命令均已過時。
 
 早安！你睡覺期間我完成了 Phase 8.18 + 8.19 的所有程式碼修改、測試驗證、以及本地 commit。
 **唯一沒完成的是 `git push`**——沙箱環境的 proxy 擋 GitHub，你自己推一下就完成部署。

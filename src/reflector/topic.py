@@ -40,7 +40,7 @@ landed. **Math is byte-identical to the legacy module.** What changed:
   - guard rails 完全對齊 Hsin 2026-04-21 拍板 spec（math constants below）
 
 **engagement 公式**（Hsin 拍板，未動）：
-  FB：      likes + 2*comments + 3*shares + 0.01*reach
+  FB：      likes + 2*comments + 3*shares + 0.25*clicks
   IG：      likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach
   Threads： likes + 2*replies + 3*reposts + 1.5*quotes + 0.005*views
 
@@ -117,6 +117,7 @@ class EngagementRow:
     replies: int = 0
     views: int = 0
     reach: int = 0
+    clicks: int = 0
 
 
 @dataclass
@@ -183,7 +184,7 @@ def compute_engagement_score(row: EngagementRow) -> float:
         return (row.likes
                 + 2 * row.comments
                 + 3 * row.shares
-                + 0.01 * row.reach)
+                + 0.25 * row.clicks)
     if p == "instagram":
         return (row.likes
                 + 2 * row.comments
@@ -353,7 +354,8 @@ def _fetch_engagement_rows(
                COALESCE(es.quotes, 0)   AS quotes,
                COALESCE(es.replies, 0)  AS replies,
                COALESCE(es.views, 0)    AS views,
-               COALESCE(es.reach, 0)    AS reach
+               COALESCE(es.reach, 0)    AS reach,
+               COALESCE(es.clicks, 0)   AS clicks
           FROM engagement_stats es
           JOIN latest l ON l.draft_id = es.draft_id
                        AND l.platform = es.platform
@@ -380,6 +382,7 @@ def _fetch_engagement_rows(
             replies=r["replies"] if hasattr(r, "keys") else r[10],
             views=r["views"] if hasattr(r, "keys") else r[11],
             reach=r["reach"] if hasattr(r, "keys") else r[12],
+            clicks=r["clicks"] if hasattr(r, "keys") else r[13],
         ))
     return rows
 

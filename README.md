@@ -136,7 +136,8 @@ cp scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
 
 The installed launchd copies must be updated on the Mac before Substack draft
 status can be considered end-to-end verified. The repository scripts no longer
-read or force-push the legacy `state` branch.
+read or force-push the legacy `state` branch. Install both LaunchAgents with
+[`scripts/INSTALL_COMPOSE_LAUNCHAGENT.md`](scripts/INSTALL_COMPOSE_LAUNCHAGENT.md).
 
 ## Verification
 

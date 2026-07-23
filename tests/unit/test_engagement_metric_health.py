@@ -52,7 +52,6 @@ def test_facebook_probes_metrics_individually(monkeypatch) -> None:
                     "comments": {"summary": {"total_count": 2}},
                 },
             ),
-            "post_engaged_users": metric("post_engaged_users", 91),
             "post_clicks": metric("post_clicks", 14),
             "post_reactions_by_type_total": metric(
                 "post_reactions_by_type_total", {"like": 3, "love": 1}
@@ -63,13 +62,11 @@ def test_facebook_probes_metrics_individually(monkeypatch) -> None:
     assert result["ok"] is True
     assert result["reach"] == 0
     assert result["views"] == 0
-    assert result["engaged_users"] == 91
     assert result["clicks"] == 14
     assert result["likes"] == 3
     assert result["raw"]["insights"]["errors"] == {}
     assert client.calls == [
         "basic",
-        "post_engaged_users",
         "post_clicks",
         "post_reactions_by_type_total",
     ]
@@ -79,8 +76,7 @@ def test_facebook_reports_new_metric_contract_failure_without_faking_reach() -> 
     client = Client(
         {
             "basic": Response(200, {"reactions": {"summary": {"total_count": 1}}}),
-            "post_engaged_users": invalid_metric(),
-            "post_clicks": metric("post_clicks", 7),
+            "post_clicks": invalid_metric(),
             "post_reactions_by_type_total": metric(
                 "post_reactions_by_type_total", {"like": 1}
             ),
@@ -90,8 +86,8 @@ def test_facebook_reports_new_metric_contract_failure_without_faking_reach() -> 
     assert result["ok"] is True
     assert result["reach"] == 0
     assert result["views"] == 0
-    assert result["clicks"] == 7
-    assert "post_engaged_users" in result["raw"]["insights"]["errors"]
+    assert result["clicks"] == 0
+    assert "post_clicks" in result["raw"]["insights"]["errors"]
 
 
 def test_instagram_keeps_valid_metrics_when_one_is_invalid() -> None:

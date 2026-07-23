@@ -34,7 +34,8 @@
 -- Per-platform columns are correlated subqueries on engagement_stats —
 -- if a platform has no row for a draft they return NULL (not an error).
 -- ======================================================================
-CREATE VIEW IF NOT EXISTS v_post_engagement_aggregated AS
+DROP VIEW IF EXISTS v_post_engagement_aggregated;
+CREATE VIEW v_post_engagement_aggregated AS
 SELECT
     d.id              AS draft_id,
     d.news_id         AS news_id,
@@ -65,6 +66,9 @@ SELECT
     (SELECT reach    FROM engagement_stats e
        WHERE e.draft_id = d.id AND e.platform = 'facebook'
        ORDER BY e.fetched_at DESC LIMIT 1) AS fb_reach,
+    (SELECT clicks   FROM engagement_stats e
+       WHERE e.draft_id = d.id AND e.platform = 'facebook'
+       ORDER BY e.fetched_at DESC LIMIT 1) AS fb_clicks,
 
     -- instagram latest snapshot
     (SELECT likes    FROM engagement_stats e
@@ -196,6 +200,7 @@ SELECT
     -- Item 1.6: facebook full per-platform set
     AVG(base.fb_shares)   AS fb_avg_shares_30d,
     AVG(base.fb_reach)    AS fb_avg_reach_30d,
+    AVG(base.fb_clicks)   AS fb_avg_clicks_30d,
     -- Item 1.6: instagram full per-platform set
     AVG(base.ig_shares)   AS ig_avg_shares_30d,
     AVG(base.ig_saves)    AS ig_avg_saves_30d,

@@ -164,7 +164,7 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
     Step 設計（任一 step 失敗都不影響另一 step 的數字）：
       Step 1: `/{normalized_id}?fields=reactions.summary,comments.summary`
               → likes + comments（如果 post_id 格式對的話）
-      Step 2: `/{normalized_id}/insights?metric=...` → engaged users + clicks + 反應細項
+      Step 2: `/{normalized_id}/insights?metric=...` → clicks + 反應細項
               → 不再把已失效的 impressions 指標偽裝成 reach / views
               → 用 post_reactions_by_type_total 當 likes 的 backup（萬一 Step 1
                 的 reactions field 不可用，也至少有 insights 端的反應總計）
@@ -193,14 +193,12 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
     except Exception as e:
         data_basic = {"exception": str(e)}
 
-    # ---- Step 2：insights — engaged users / clicks / reactions 細項 -------
+    # ---- Step 2：insights — clicks / reactions 細項 -----------------------
     # 文件：https://developers.facebook.com/docs/graph-api/reference/v20.0/insights
     insights_metrics = [
-        "post_engaged_users",               # unique people who engaged
         "post_clicks",                      # total post clicks
         "post_reactions_by_type_total",     # 各反應類型總計（like/love/wow/haha/sad/angry）
     ]
-    engaged_users = 0
     clicks = 0
     reactions_from_insights = 0
     step2_ok = False
@@ -210,7 +208,6 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
         insights_metrics,
         FB_PAGE_ACCESS_TOKEN,
     )
-    engaged_users = int(values.get("post_engaged_users") or 0)
     clicks = int(values.get("post_clicks") or 0)
     reaction_value = values.get("post_reactions_by_type_total")
     if isinstance(reaction_value, dict):
@@ -239,7 +236,6 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
                 "shares": 0,
                 "views": 0,
                 "reach": 0,
-                "engaged_users": 0,
                 "clicks": 0,
                 "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
             }
@@ -263,9 +259,8 @@ async def fetch_fb_insights(client: httpx.AsyncClient, post_id: str) -> Dict:
         "likes": likes or reactions_from_insights,
         "comments": comments,
         "shares": 0,        # FB API 不再單獨開放 shares metric；保留 0 不偽造
-        "views": 0,         # post_impressions 已失效；未知不能偽裝成曝光 0
-        "reach": 0,         # post_impressions_unique 已失效；同上
-        "engaged_users": engaged_users,
+        "views": 0,         # compatibility-only column; never shown as FB evidence
+        "reach": 0,         # compatibility-only column; never used for FB learning
         "clicks": clicks,
         "raw": {"basic": data_basic, "insights": insights_data, "normalized_id": nid},
     }
@@ -640,7 +635,6 @@ async def sync_bucket_polls(conn) -> Dict:
                     replies=result.get("replies", 0),
                     views=result.get("views", 0),
                     reach=result.get("reach", 0),
-                    engaged_users=result.get("engaged_users", 0),
                     clicks=result.get("clicks", 0),
                     raw_json=json.dumps(result.get("raw"), ensure_ascii=False),
                     post_age_bucket=task.bucket,
@@ -650,7 +644,6 @@ async def sync_bucket_polls(conn) -> Dict:
                       f"{task.platform_post_id[:14]}… "
                       f"likes={result.get('likes')} views={result.get('views')} "
                       f"reach={result.get('reach', 0)} "
-                      f"engaged_users={result.get('engaged_users', 0)} "
                       f"clicks={result.get('clicks', 0)}")
             else:
                 err = result.get("error")
@@ -726,7 +719,6 @@ async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
                     replies=result.get("replies", 0),   # Threads native (post-2026-04-25)
                     views=result.get("views", 0),
                     reach=result.get("reach", 0),
-                    engaged_users=result.get("engaged_users", 0),
                     clicks=result.get("clicks", 0),
                     raw_json=json.dumps(result.get("raw"), ensure_ascii=False),
                 )
@@ -744,8 +736,6 @@ async def sync_all_posts(conn, max_posts: int = 50) -> Dict:
                     extra_bits.append(f"reposts={result['reposts']}")
                 if result.get("quotes"):
                     extra_bits.append(f"quotes={result['quotes']}")
-                if result.get("engaged_users"):
-                    extra_bits.append(f"engaged_users={result['engaged_users']}")
                 if result.get("clicks"):
                     extra_bits.append(f"clicks={result['clicks']}")
                 extra = (" " + " ".join(extra_bits)) if extra_bits else ""
