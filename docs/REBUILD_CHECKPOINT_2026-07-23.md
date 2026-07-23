@@ -83,6 +83,26 @@ Must stop:
 | Content-quality and cadence gates are deployed | PROVEN | PR #12 / merge `b9d0461`; Pages run `30014546469`; Worker v4; learning run `30014620742` returned `insufficient_metric_coverage` and `proposal_id=null` for all platforms; D1 cadence proposal count remains 0 |
 | One-off UI routing is deployed but processing is intentionally paused | PROVEN | Live page renders Meta/Substack plus FB/IG/Threads choices; `SUBMISSION_PROCESSOR_MODE=paused`; latest scheduled poller run was skipped |
 
+## Platform-atomic publishing addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| Compose, buffer, cadence, selection, and retry are platform-scoped | PROVEN | PR #14 / merge `9dff7df`; regression suite `501 passed`; tests cover Threads-only compose, cross-platform buffer isolation, platform cadence, partial retry, and success-tuple idempotency |
+| `published` requires all intended platform variants to have success evidence | PROVEN | `pending_publish_platforms()` drives queue/direct terminal state; partial/all-failed workflows remain red and queued; failure-injection tests retry only missing tuples |
+| Publish-now has durable lineage and truthful terminal state | PROVEN | Deterministic `submission -> news -> draft -> platform_drafts -> publish_log`; workflow reads result JSON; Worker/Dashboard v5 support `partial` and `quality_held` |
+| Queue submissions preserve per-submission platform intent | PROVEN | `control_submission` plus `control_route` tags; operational sync independently derives each submission's requested-platform completion |
+| Local Substack output is no longer mistaken for a remote draft | PROVEN | `substack_written_at` is local evidence; only `post_draft` id writes `substack_draft_id` + `substack_drafted_at`; control submissions use `--require-substack-draft` |
+| Worker v5 is deployed with all publish switches locked | PROVEN | Version `561ed2b7-81de-4c28-b1db-1af8ad7c4bb9`; cache-busted `/health`=`2026-07-23.v5`; deploy bindings show `AUTOMATION_MODE=paused`, `SUBMISSION_PROCESSOR_MODE=paused`, `ENABLE_META_PUBLISH_NOW=false` |
+| Owner surfaces and metadata sync are current | PROVEN | Pages run `30018723051`; dashboard and submit page HTTP 200; operational sync `30018941803` restored Release `quick_check=ok` and sent 480 posts / 325 engagement / 500 knowledge / 17 proposals |
+| Scheduled publishing stayed paused after deploy | PROVEN | Scheduler run `30019137215` skipped on merge `9dff7df`; manual poller smoke `30019167635` returned `NO_SUBMISSION` |
+| Updated Mac LaunchAgents create a real Substack draft | UNKNOWN | Code and fail-closed preflight are deployed, but Windows cannot prove the Mac environment, cookie, launchd load state, or a new remote draft id |
+| Live Meta partial-retry behavior is duplicate-free | BLOCKED | Unit/integration evidence is complete; a real Threads-only canary remains intentionally unrun until separate owner canary approval |
+
+Resumable next action: keep all publishing switches paused. On the Mac, update
+the clone/LaunchAgents and run one non-sensitive Substack control submission;
+require a visible draft id plus canonical `substack_drafted_at` readback. Only
+after that evidence should the owner consider the Threads-only Meta canary.
+
 ## Owner canary packet
 
 Recommended first canary after observability workflows and Mac scripts pass:
