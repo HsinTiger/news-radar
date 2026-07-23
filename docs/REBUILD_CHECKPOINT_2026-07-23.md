@@ -41,7 +41,7 @@ Must stop:
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
 | Runtime state transported by Release | PROVEN | Revision 10 from engagement run `30014862699`; SQLite `quick_check=ok`; 29,219 news / 239 drafts / 808 publish rows / 384 engagement rows / 717 quality evaluations |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `4eba2a8`: `python -X utf8 -m pytest -q` -> 521 passed |
+| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `f0817da`: `python -X utf8 -m pytest -q` -> 525 passed |
 | Worker API v4 is remotely deployed | PROVEN | Version `fe42ae43-e2cf-4988-9ba9-7360d3842b7d`; `/health` reports `2026-07-23.v4`; unauthenticated dashboard/submissions return 401 and legacy proxy returns 410 |
 | D1 operational baseline is current | PROVEN | Migration `0005_content_quality.sql`; 384 engagement snapshots after run `30014862699`; latest quality summaries cover 177/177 recent candidates per platform |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
@@ -128,6 +128,17 @@ Must stop:
 | Production currently has an unprocessed Substack backlog | PROVEN | Operational sync `30023873370` PASS with Release `quick_check=ok`; D1 readback: `degraded`, submissions=23, pending_remote=23, local_written=0, remote_proven=0, oldest_pending=`2026-06-07T17:06:39.955036+00:00` |
 | Health sync exports metadata only | PROVEN | The D1 row contains counts, timestamps, schema/evidence status, and no owner article body; operational sync sent 7 health rows |
 | The Mac draft worker is currently healthy | BLOCKED | Production evidence is degraded and no current LaunchAgent/cookie/visible-draft canary exists; do not infer health from scripts or unit tests |
+
+## Mac staged-rollout addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| Mac bootstrap can no longer accidentally drain the existing backlog | PROVEN | PR #23 / merge `f0817da`; `compose_hourly.sh --setup-only` exits before state pull, compose, draft creation, or publishing |
+| Hourly enablement is gated behind one real immediate Substack draft | PROVEN | Current runbooks load only `substack-fast`; `mac_worker_doctor.py --require-remote-proof` requires canonical `substack_draft_id` evidence before hourly bootstrap |
+| Fast-lane evidence is available to the doctor without another mutation | PROVEN | After a verified Release push, the fast worker atomically installs and SHA-256 verifies the same canonical DB into the local runtime clone |
+| The doctor protects owner attention and secrets | PROVEN | It reports key presence, launchd state, script hash, receipt validity, and evidence counts; tests prove no cookie value is emitted and preloaded hourly state blocks the canary |
+| Mac artefacts are structurally valid | PROVEN | `525 passed`; Python compile, Bash syntax for both workers, two plist parses, YAML/JS, diff, and secret-literal gates PASS |
+| A remote Mac execution surface is available to Codex | BLOCKED | GitHub Actions runner readback returned `total_count=0`; this Windows session cannot inspect launchd, the cookie, or the visible Substack draft box |
 
 Resumable next action: keep all publishing switches paused. On the Mac, update
 the clone/LaunchAgents and run one non-sensitive Substack control submission;
