@@ -21,7 +21,8 @@ def _db() -> sqlite3.Connection:
         CREATE TABLE news_items(
           id TEXT PRIMARY KEY,source_type TEXT,url TEXT,title TEXT,topic_category TEXT,
           status TEXT,fetched_at TEXT,word_count INTEGER,weighted_score REAL,
-          feed_name TEXT,tags TEXT,substack_written_at TEXT
+          feed_name TEXT,tags TEXT,substack_written_at TEXT,
+          substack_draft_id TEXT,substack_drafted_at TEXT
         );
         CREATE TABLE drafts(id TEXT PRIMARY KEY,news_id TEXT,title TEXT,generated_at TEXT);
         CREATE TABLE platform_drafts(draft_id TEXT,platform TEXT,full_text TEXT,final_text TEXT);
@@ -48,7 +49,7 @@ def _db() -> sqlite3.Connection:
         );
         INSERT INTO news_items VALUES(
           'n1','rss','https://example.com','Useful source','ai_application','scored',
-          '2099-01-01T00:00:00Z',800,0.9,'rss','[]',NULL
+          '2099-01-01T00:00:00Z',800,0.9,'rss','[]',NULL,NULL,NULL
         );
         INSERT INTO drafts VALUES('d1','n1','Useful draft','2099-01-02T00:00:00Z');
         INSERT INTO platform_drafts VALUES('d1','threads','Useful post',NULL);
@@ -109,23 +110,121 @@ def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None
     assert not any(row["metric"] == "audience" for row in rows)
 
 
-def test_substack_written_marker_becomes_truthful_terminal_update() -> None:
+def test_engagement_sync_degrades_legacy_schema_without_clicks_to_zero() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE engagement_stats(
+          platform TEXT,platform_post_id TEXT,fetched_at TEXT,post_age_bucket INTEGER,
+          views INTEGER,reach INTEGER,likes INTEGER,comments INTEGER,shares INTEGER,
+          saves INTEGER,replies INTEGER,reposts INTEGER,quotes INTEGER,raw_json TEXT
+        );
+        INSERT INTO engagement_stats VALUES(
+          'facebook','fb-old','2099-01-01T00:00:00Z',24,
+          10,9,1,2,3,4,5,6,7,'{}'
+        );
+        """
+    )
+    rows = build_engagement(conn, full=True)
+    assert rows[0]["clicks"] == 0
+    assert rows[0]["metric_status"] == "ok"
+    health = {
+        (row["platform"], row["metric"]): row["status"]
+        for row in build_health(conn)
+    }
+    assert health[("facebook", "engagement_api")] == "healthy"
+
+
+def test_only_remote_substack_draft_evidence_becomes_terminal_update() -> None:
     conn = _db()
     conn.execute(
-        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "sub1", "text", "manual://1", "Owner source", "ai_application",
             "fetched", "2099-01-01T00:00:00Z", 100, 1.0, "user_substack",
             '["substack_source","control_submission:12345678-abcd"]',
-            "2099-01-02T00:00:00Z",
+            "2099-01-02T00:00:00Z", "draft-123", "2099-01-03T00:00:00Z",
         ),
     )
     assert build_submission_updates(conn) == [
         {
             "submission_id": "12345678-abcd",
             "status": "draft_created",
-            "observed_at": "2099-01-02T00:00:00Z",
+            "observed_at": "2099-01-03T00:00:00Z",
         }
+    ]
+
+
+def test_local_substack_article_alone_is_not_reported_as_remote_draft() -> None:
+    conn = _db()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "sub-local", "text", "manual://local", "Local only", "ai_application",
+            "fetched", "2099-01-01T00:00:00Z", 100, 1.0, "user_substack",
+            '["substack_source","control_submission:local-only-001"]',
+            "2099-01-02T00:00:00Z", None, None,
+        ),
+    )
+    assert build_submission_updates(conn) == []
+
+
+def test_meta_lineage_exports_submission_and_partial_then_published() -> None:
+    conn = _db()
+    tags = json.dumps(
+        [
+            "user_submission",
+            "platform:fb",
+            "platform:ig",
+            "platform:threads",
+            "control_submission:meta-submit-001",
+            "control_route:meta-submit-001:fb,ig,threads",
+            "control_submission:meta-submit-fb-001",
+            "control_route:meta-submit-fb-001:fb",
+            "control_source_url:https://source.example/item",
+        ]
+    )
+    conn.execute(
+        "UPDATE news_items SET feed_name='user_submission',tags=? WHERE id='n1'",
+        (tags,),
+    )
+    conn.execute(
+        "INSERT INTO publish_log VALUES(2,'d1','facebook','fb-post','2099-01-03T01:00:00Z',1,NULL)"
+    )
+    conn.execute(
+        "INSERT INTO publish_log VALUES(3,'d1','instagram','ig-post','2099-01-03T02:00:00Z',1,NULL)"
+    )
+
+    posts = build_posts(conn, full=True)
+    threads = next(row for row in posts if row["platform"] == "threads")
+    assert threads["submission_id"] == "meta-submit-001"
+    assert threads["source_url"] == "https://source.example/item"
+    assert build_submission_updates(conn) == [
+        {
+            "submission_id": "meta-submit-001",
+            "status": "published",
+            "observed_at": "2099-01-03T02:00:00Z",
+        },
+        {
+            "submission_id": "meta-submit-fb-001",
+            "status": "published",
+            "observed_at": "2099-01-03T01:00:00Z",
+        },
+    ]
+
+    conn.execute("DELETE FROM publish_log WHERE platform='threads'")
+    assert build_submission_updates(conn) == [
+        {
+            "submission_id": "meta-submit-001",
+            "status": "partial",
+            "observed_at": "2099-01-03T02:00:00Z",
+        },
+        {
+            "submission_id": "meta-submit-fb-001",
+            "status": "published",
+            "observed_at": "2099-01-03T01:00:00Z",
+        },
     ]
 
 

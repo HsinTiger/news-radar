@@ -12,14 +12,15 @@
   const STATUS_COPY = {
     queued: "等待 poller", claimed: "已領取", dispatched: "已派送",
     processing: "處理中", content_queued: "內容已入佇列", source_queued: "素材已入庫",
-    draft_created: "草稿已建立", published: "已發布", failed: "失敗", rejected: "拒絕",
+    draft_created: "草稿已建立", published: "已發布", partial: "部分平台已發布",
+    quality_held: "品質待複核", failed: "失敗", rejected: "拒絕",
     planned: "規劃中", deleted: "已刪除", unknown: "未知",
     proposed: "待 owner 決策", approved: "已批准", applied: "已套用",
     superseded: "已取代",
   };
   const GOOD = new Set(["published", "draft_created", "healthy", "approved", "applied"]);
   const BAD = new Set(["failed", "rejected", "error"]);
-  const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued"]);
+  const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
   let chart = null;
   let refreshTimer = null;
 

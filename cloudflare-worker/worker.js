@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-23.v4";
+const API_VERSION = "2026-07-23.v5";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -389,6 +389,8 @@ async function updateSubmissionStatus(request, env, id, cors) {
     "source_queued",
     "draft_created",
     "published",
+    "partial",
+    "quality_held",
     "failed",
     "rejected",
   ]);
@@ -406,13 +408,18 @@ async function updateSubmissionStatus(request, env, id, cors) {
   if (status === "published" && existing.target !== "meta") {
     throw new HTTPError(409, "published is only valid for Meta", "invalid_transition");
   }
+  if (new Set(["partial", "quality_held"]).has(status) && existing.target !== "meta") {
+    throw new HTTPError(409, `${status} is only valid for Meta`, "invalid_transition");
+  }
   const transitions = {
     queued: new Set(["claimed", "rejected", "failed"]),
     claimed: new Set(["dispatched", "processing", "rejected", "failed"]),
-    dispatched: new Set(["processing", "content_queued", "source_queued", "published", "draft_created", "failed"]),
-    processing: new Set(["content_queued", "source_queued", "published", "draft_created", "failed"]),
-    content_queued: new Set(["processing", "published", "failed"]),
+    dispatched: new Set(["processing", "content_queued", "source_queued", "published", "partial", "quality_held", "draft_created", "failed"]),
+    processing: new Set(["content_queued", "source_queued", "published", "partial", "quality_held", "draft_created", "failed"]),
+    content_queued: new Set(["processing", "published", "partial", "quality_held", "failed"]),
     source_queued: new Set(["processing", "draft_created", "failed"]),
+    partial: new Set(["processing", "published", "quality_held", "failed"]),
+    quality_held: new Set(["processing", "published", "partial", "failed"]),
   };
   if (!transitions[existing.status]?.has(status)) {
     throw new HTTPError(

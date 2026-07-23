@@ -34,6 +34,13 @@ PROCESSED_FILE = SUBMISSIONS_DIR / "processed.json"
 YT_VIDEO_ID_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|embed/|v/|shorts/)|youtu\.be/)([A-Za-z0-9_-]{11})"
 )
+PLATFORM_ALIASES = {
+    "fb": "fb",
+    "facebook": "fb",
+    "ig": "ig",
+    "instagram": "ig",
+    "threads": "threads",
+}
 
 
 def _ensure_dirs():
@@ -65,6 +72,56 @@ def _append_processed(entry: dict, status: str):
 
 def _make_news_id(url_or_text: str) -> str:
     return hashlib.sha1(url_or_text.encode()).hexdigest()
+
+
+def _normalize_platforms(platforms: Optional[list]) -> list[str]:
+    values = platforms or ["fb", "ig", "threads"]
+    normalized: list[str] = []
+    invalid: list[str] = []
+    for raw in values:
+        value = PLATFORM_ALIASES.get(str(raw).strip().lower())
+        if value is None:
+            invalid.append(str(raw))
+        elif value not in normalized:
+            normalized.append(value)
+    if invalid:
+        raise ValueError(f"unknown platforms: {','.join(invalid)}")
+    if not normalized:
+        raise ValueError("at least one Meta platform is required")
+    return normalized
+
+
+def _submission_tags(
+    platforms: list,
+    *extra: str,
+    submission_id: str = "",
+) -> list[str]:
+    """Build governed routing/lineage tags for one owner submission."""
+    tags = ["user_submission", *extra]
+    tags.extend(f"platform:{platform}" for platform in platforms)
+    if submission_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", submission_id):
+            raise ValueError("invalid submission_id")
+        tags.append(f"control_submission:{submission_id}")
+        tags.append(f"control_route:{submission_id}:{','.join(platforms)}")
+    return tags
+
+
+def _merge_existing_tags(conn, news_id: str, tags: list[str]) -> None:
+    """Attach a new control submission to a deduplicated source row."""
+    row = conn.execute("SELECT tags FROM news_items WHERE id=?", (news_id,)).fetchone()
+    if row is None:
+        return
+    try:
+        existing = json.loads(row["tags"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        existing = []
+    merged = list(dict.fromkeys([*existing, *tags]))
+    conn.execute(
+        "UPDATE news_items SET tags=? WHERE id=?",
+        (json.dumps(merged, ensure_ascii=False), news_id),
+    )
+    conn.commit()
 
 
 def _resolve_google_news(url: str) -> str:
@@ -186,13 +243,23 @@ def _extract_yt_transcript(url: str) -> Optional[Dict]:
         return None
 
 
-def process_url(url: str, note: str = "", platforms: list = None) -> dict:
+def process_url(
+    url: str,
+    note: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """Save a URL for pipeline to process."""
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     news_id = _make_news_id(url)
 
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(
+            conn,
+            news_id,
+            _submission_tags(platforms, submission_id=submission_id),
+        )
         conn.close()
         return {"status": "already_exists", "id": news_id}
 
@@ -210,7 +277,7 @@ def process_url(url: str, note: str = "", platforms: list = None) -> dict:
         clean_markdown=article_text or "",
         word_count=len(article_text or ""),
         og_image_url=None,
-        tags=["user_submission"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(platforms, submission_id=submission_id),
         status="fetched",
     )
     dbmod.upsert_news(conn, item)
@@ -219,9 +286,14 @@ def process_url(url: str, note: str = "", platforms: list = None) -> dict:
     return {"status": "created", "id": news_id, "title": item.title, "word_count": item.word_count}
 
 
-def process_text(text: str, note: str = "", platforms: list = None) -> dict:
+def process_text(
+    text: str,
+    note: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """Save user-pasted text body as a news item."""
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     content_hash = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"user_text_{content_hash}")
 
@@ -237,11 +309,12 @@ def process_text(text: str, note: str = "", platforms: list = None) -> dict:
         fetched_at=datetime.now(timezone.utc).isoformat(),
         clean_markdown=text,
         word_count=len(text.split()),
-        tags=["user_submission", "user_text"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(platforms, "user_text", submission_id=submission_id),
         status="fetched",
     )
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(conn, news_id, item.tags)
         conn.close()
         return {"status": "already_exists", "id": news_id}
     dbmod.upsert_news(conn, item)
@@ -250,13 +323,23 @@ def process_text(text: str, note: str = "", platforms: list = None) -> dict:
     return {"status": "created", "id": news_id, "title": title, "word_count": item.word_count}
 
 
-def process_youtube(url: str, note: str = "", platforms: list = None) -> dict:
+def process_youtube(
+    url: str,
+    note: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """Extract YouTube transcript and save as news item."""
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     result = _extract_yt_transcript(url)
     if not result:
         # Fallback: save URL only, let pipeline handle
-        return process_url(url, note=f"YouTube: {note}" if note else "YouTube video", platforms=platforms)
+        return process_url(
+            url,
+            note=f"YouTube: {note}" if note else "YouTube video",
+            platforms=platforms,
+            submission_id=submission_id,
+        )
 
     news_id = _make_news_id(url)
     title = result["title"]
@@ -274,11 +357,14 @@ def process_youtube(url: str, note: str = "", platforms: list = None) -> dict:
         fetched_at=datetime.now(timezone.utc).isoformat(),
         clean_markdown=f"YouTube Transcript: {title}\n\n{transcript}",
         word_count=len(transcript.split()),
-        tags=["user_submission", "youtube", "video"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(
+            platforms, "youtube", "video", submission_id=submission_id
+        ),
         status="fetched",
     )
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(conn, news_id, item.tags)
         conn.close()
         return {"status": "already_exists", "id": news_id}
     dbmod.upsert_news(conn, item)
@@ -287,9 +373,14 @@ def process_youtube(url: str, note: str = "", platforms: list = None) -> dict:
     return {"status": "created", "id": news_id, "title": title, "word_count": item.word_count}
 
 
-def process_image(image_url: str, note: str = "", platforms: list = None) -> dict:
+def process_image(
+    image_url: str,
+    note: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """Save an image URL for analysis + posting."""
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     news_id = _make_news_id(image_url)
     title = note or "Image submission"
     item = NewsItem(
@@ -304,11 +395,14 @@ def process_image(image_url: str, note: str = "", platforms: list = None) -> dic
         clean_markdown=f"User submitted image: {image_url}\n\nNote: {note}" if note else f"User submitted image: {image_url}",
         word_count=len(note or "") + 20,
         og_image_url=image_url,
-        tags=["user_submission", "user_image"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(
+            platforms, "user_image", submission_id=submission_id
+        ),
         status="fetched",
     )
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(conn, news_id, item.tags)
         conn.close()
         return {"status": "already_exists", "id": news_id}
     dbmod.upsert_news(conn, item)
@@ -319,10 +413,16 @@ def process_image(image_url: str, note: str = "", platforms: list = None) -> dic
 
 _IMAGE_DIR = SUBMISSIONS_DIR / "uploaded_images"
 
-def process_image_base64(base64_data: str, filename: str = "upload.jpg", caption: str = "", platforms: list = None) -> dict:
+def process_image_base64(
+    base64_data: str,
+    filename: str = "upload.jpg",
+    caption: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """Save base64 image data as file + news_item."""
     import base64
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     
     # Parse base64 data URL (e.g. data:image/jpeg;base64,/9j...)
     if "," in base64_data:
@@ -366,11 +466,17 @@ def process_image_base64(base64_data: str, filename: str = "upload.jpg", caption
         clean_markdown=f"User submitted image: {filename}\n\nCaption: {caption}" if caption else f"User submitted image: {filename}",
         word_count=len(caption or "") + 5,
         og_image_url=str(img_path),
-        tags=["user_submission", "user_image", "base64_upload"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(
+            platforms,
+            "user_image",
+            "base64_upload",
+            submission_id=submission_id,
+        ),
         status="fetched",
     )
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(conn, news_id, item.tags)
         conn.close()
         return {"status": "already_exists", "id": news_id, "path": str(img_path)}
     dbmod.upsert_news(conn, item)
@@ -385,9 +491,14 @@ def process_image_base64(base64_data: str, filename: str = "upload.jpg", caption
 _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
 
 
-def process_images(paths: list, note: str = "", platforms: list = None) -> dict:
+def process_images(
+    paths: list,
+    note: str = "",
+    platforms: list = None,
+    submission_id: str = "",
+) -> dict:
     """One or more uploaded screenshots → ONE Meta source (carousel images)."""
-    platforms = platforms or ["fb", "ig", "threads"]
+    platforms = _normalize_platforms(platforms)
     paths = [p.strip() for p in paths if p.strip()]
     if not paths:
         return {"status": "error", "message": "no image paths"}
@@ -396,6 +507,16 @@ def process_images(paths: list, note: str = "", platforms: list = None) -> dict:
     news_id = _make_news_id("meta_img_" + hashlib.md5(key.encode()).hexdigest())
     conn = dbmod.get_conn()
     if dbmod.news_exists(conn, news_id):
+        _merge_existing_tags(
+            conn,
+            news_id,
+            _submission_tags(
+                platforms,
+                "user_image",
+                f"images:{len(urls)}",
+                submission_id=submission_id,
+            ),
+        )
         conn.close()
         return {"status": "already_exists", "id": news_id}
     refs = "\n".join(f"![screenshot]({u})" for u in urls)
@@ -407,7 +528,12 @@ def process_images(paths: list, note: str = "", platforms: list = None) -> dict:
         fetched_at=datetime.now(timezone.utc).isoformat(),
         clean_markdown=(f"User submitted {len(urls)} image(s). Note: {note}\n\n{refs}"),
         word_count=len(note or "") + 20, og_image_url=urls[0],
-        tags=["user_submission", "user_image", f"images:{len(urls)}"] + [f"platform:{p}" for p in platforms],
+        tags=_submission_tags(
+            platforms,
+            "user_image",
+            f"images:{len(urls)}",
+            submission_id=submission_id,
+        ),
         status="fetched",
     )
     dbmod.upsert_news(conn, item)
@@ -431,6 +557,12 @@ def main():
     parser.add_argument("--note", type=str, default="", help="Editorial note")
     parser.add_argument("--platforms", type=str, default="fb,ig,threads",
                        help="Comma-separated platforms")
+    parser.add_argument(
+        "--submission-id",
+        type=str,
+        default="",
+        help="Control-plane submission ID used for end-to-end lineage",
+    )
 
     args = parser.parse_args()
     platforms = [p.strip() for p in args.platforms.split(",")]
@@ -439,17 +571,25 @@ def main():
     conn.close()
 
     if args.url:
-        result = process_url(args.url, args.note, platforms)
+        result = process_url(args.url, args.note, platforms, args.submission_id)
     elif args.text:
-        result = process_text(args.text, args.note, platforms)
+        result = process_text(args.text, args.note, platforms, args.submission_id)
     elif args.yt:
-        result = process_youtube(args.yt, args.note, platforms)
+        result = process_youtube(args.yt, args.note, platforms, args.submission_id)
     elif args.images:
-        result = process_images(args.images.split(","), args.note, platforms)
+        result = process_images(
+            args.images.split(","), args.note, platforms, args.submission_id
+        )
     elif args.image:
-        result = process_image(args.image, args.note, platforms)
+        result = process_image(args.image, args.note, platforms, args.submission_id)
     elif args.image_base64:
-        result = process_image_base64(args.image_base64, args.image_filename, args.image_caption, platforms)
+        result = process_image_base64(
+            args.image_base64,
+            args.image_filename,
+            args.image_caption,
+            platforms,
+            args.submission_id,
+        )
     else:
         result = process_pending()
     
@@ -460,10 +600,34 @@ def process_pending() -> dict:
     """Read all pending files from data/submissions/ and process them."""
     results = {"total": 0, "created": 0, "errors": []}
     for file_key, file_path, processor in [
-        ("urls", URLS_FILE, lambda e: process_url(e["url"], e.get("note", ""), e.get("platforms"))),
-        ("texts", TEXTS_FILE, lambda e: process_text(e["text"], e.get("note", ""), e.get("platforms"))),
-        ("youtube", YTS_FILE, lambda e: process_youtube(e["url"], e.get("note", ""), e.get("platforms"))),
-        ("images", IMAGES_FILE, lambda e: process_image(e["url"], e.get("note", ""), e.get("platforms"))),
+        (
+            "urls",
+            URLS_FILE,
+            lambda e: process_url(
+                e["url"], e.get("note", ""), e.get("platforms"), e.get("submission_id", "")
+            ),
+        ),
+        (
+            "texts",
+            TEXTS_FILE,
+            lambda e: process_text(
+                e["text"], e.get("note", ""), e.get("platforms"), e.get("submission_id", "")
+            ),
+        ),
+        (
+            "youtube",
+            YTS_FILE,
+            lambda e: process_youtube(
+                e["url"], e.get("note", ""), e.get("platforms"), e.get("submission_id", "")
+            ),
+        ),
+        (
+            "images",
+            IMAGES_FILE,
+            lambda e: process_image(
+                e["url"], e.get("note", ""), e.get("platforms"), e.get("submission_id", "")
+            ),
+        ),
     ]:
         entries = _load_json(file_path)
         results["total"] += len(entries)

@@ -24,6 +24,8 @@ import httpx
 
 PLATFORMS = {"facebook", "instagram", "threads"}
 CONTROL_SUBMISSION_PREFIX = "control_submission:"
+CONTROL_ROUTE_PREFIX = "control_route:"
+CONTROL_SOURCE_URL_PREFIX = "control_source_url:"
 DEFAULT_PROPOSALS_DIR = Path("data/05_reflect/proposals")
 
 
@@ -63,19 +65,43 @@ def _stable_id(prefix: str, *values: object) -> str:
     return f"{prefix}_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]}"
 
 
+def _tag_values(raw_tags: str | None, prefix: str) -> list[str]:
+    tags = _json(raw_tags, [])
+    if not isinstance(tags, list):
+        return []
+    return [
+        tag[len(prefix) :]
+        for tag in tags
+        if isinstance(tag, str) and tag.startswith(prefix) and tag[len(prefix) :]
+    ]
+
+
+def _submission_for_platform(raw_tags: str | None, platform: str) -> str | None:
+    aliases = {"facebook": "fb", "instagram": "ig", "threads": "threads"}
+    short = aliases.get(platform, platform)
+    for route in _tag_values(raw_tags, CONTROL_ROUTE_PREFIX):
+        if ":" not in route:
+            continue
+        submission_id, raw_platforms = route.split(":", 1)
+        if short in raw_platforms.split(","):
+            return submission_id
+    ids = _tag_values(raw_tags, CONTROL_SUBMISSION_PREFIX)
+    return ids[0] if ids else None
+
+
 def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[str, Any]]:
     where = "" if full else "WHERE COALESCE(p.posted_at,'') >= datetime('now','-45 day')"
     rows = conn.execute(
         f"""
         WITH ranked AS (
           SELECT p.*,ROW_NUMBER() OVER(
-            PARTITION BY p.platform,COALESCE(NULLIF(p.platform_post_id,''),p.draft_id)
+            PARTITION BY p.platform,p.draft_id
             ORDER BY p.id DESC
           ) AS rn
           FROM publish_log p {where}
         )
         SELECT p.id,p.draft_id,p.platform,p.platform_post_id,p.posted_at,p.success,
-               p.error_message,d.title,n.topic_category,n.url,d.generated_at
+               p.error_message,d.title,n.topic_category,n.url,n.tags,d.generated_at
         FROM ranked p
         LEFT JOIN drafts d ON d.id=p.draft_id
         LEFT JOIN news_items n ON n.id=d.news_id
@@ -85,18 +111,21 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
     ).fetchall()
     result = []
     for row in rows:
+        source_urls = _tag_values(row["tags"], CONTROL_SOURCE_URL_PREFIX)
         result.append(
             {
                 "id": _stable_id("post", row["platform"], row["platform_post_id"] or row["draft_id"]),
                 "draft_id": row["draft_id"],
-                "submission_id": None,
+                "submission_id": _submission_for_platform(
+                    row["tags"], row["platform"]
+                ),
                 "platform": row["platform"],
                 "format": "feed",
                 "platform_post_id": row["platform_post_id"] or None,
                 "status": "published" if row["success"] else "failed",
                 "title": row["title"] or None,
                 "topic": row["topic_category"] or None,
-                "source_url": row["url"] or None,
+                "source_url": source_urls[0] if source_urls else (row["url"] or None),
                 "posted_at": row["posted_at"] or None,
                 "created_at": row["generated_at"] or row["posted_at"] or datetime.now(timezone.utc).isoformat(),
                 "updated_at": row["posted_at"] or row["generated_at"] or datetime.now(timezone.utc).isoformat(),
@@ -107,10 +136,14 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
 
 def build_engagement(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[str, Any]]:
     where = "" if full else "AND COALESCE(fetched_at,'') >= datetime('now','-45 day')"
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(engagement_stats)")}
+    # Old Release-state snapshots predate the Facebook clicks migration.  Zero
+    # is the only truthful degraded value; never fail the entire metadata sync.
+    clicks_sql = "clicks" if "clicks" in columns else "0 AS clicks"
     rows = conn.execute(
         f"""
         SELECT platform,platform_post_id,fetched_at,post_age_bucket,views,reach,
-               clicks,likes,comments,shares,saves,replies,reposts,
+               {clicks_sql},likes,comments,shares,saves,replies,reposts,
                quotes,raw_json
         FROM engagement_stats
         WHERE platform IN ('facebook','instagram','threads')
@@ -356,12 +389,16 @@ def build_proposals(
 
 def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc).isoformat()
+    engagement_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(engagement_stats)")
+    }
+    clicks_term = "COALESCE(clicks,0)+" if "clicks" in engagement_columns else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT platform,COUNT(*) AS samples,MAX(fetched_at) AS latest,
                SUM(CASE WHEN raw_json LIKE '%\"error\"%' THEN 1 ELSE 0 END) AS error_samples,
                SUM(CASE WHEN COALESCE(views,0)+COALESCE(reach,0)+
-                 COALESCE(clicks,0)+COALESCE(likes,0)+
+                 {clicks_term}COALESCE(likes,0)+
                  COALESCE(comments,0)+COALESCE(shares,0)+COALESCE(saves,0)+
                  COALESCE(replies,0)+COALESCE(reposts,0)+COALESCE(quotes,0) > 0
                  THEN 1 ELSE 0 END) AS nonzero_samples
@@ -410,30 +447,105 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def build_submission_updates(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    """Find Substack sources that the Mac has proven were turned into drafts."""
+    """Derive truthful terminal/progress states from canonical runtime evidence."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
-    if "substack_written_at" not in columns:
-        return []
-    rows = conn.execute(
+    updates: dict[str, dict[str, str]] = {}
+    if {"substack_draft_id", "substack_drafted_at"} <= columns:
+        rows = conn.execute(
+            """
+            SELECT tags,substack_drafted_at FROM news_items
+            WHERE feed_name='user_substack' AND substack_draft_id IS NOT NULL
+              AND substack_drafted_at IS NOT NULL
+              AND tags LIKE '%control_submission:%'
+            """
+        ).fetchall()
+        for row in rows:
+            for submission_id in _tag_values(
+                row["tags"], CONTROL_SUBMISSION_PREFIX
+            ):
+                updates[submission_id] = {
+                    "status": "draft_created",
+                    "observed_at": row["substack_drafted_at"],
+                }
+
+    meta_rows = conn.execute(
         """
-        SELECT tags,substack_written_at FROM news_items
-        WHERE feed_name='user_substack' AND substack_written_at IS NOT NULL
-          AND tags LIKE '%control_submission:%'
+        SELECT n.tags,d.id AS draft_id,d.generated_at
+          FROM news_items n
+          JOIN drafts d ON d.news_id=n.id
+         WHERE n.feed_name='user_submission'
+           AND n.tags LIKE '%control_submission:%'
         """
     ).fetchall()
-    updates: dict[str, str] = {}
-    for row in rows:
-        tags = _json(row["tags"], [])
-        if not isinstance(tags, list):
+    rank = {"partial": 1, "published": 2}
+    aliases = {
+        "fb": "facebook",
+        "facebook": "facebook",
+        "ig": "instagram",
+        "instagram": "instagram",
+        "threads": "threads",
+    }
+    for row in meta_rows:
+        legacy_requested = {
+            aliases[value]
+            for value in _tag_values(row["tags"], "platform:")
+            if value in aliases
+        }
+        routes: dict[str, set[str]] = {}
+        for route in _tag_values(row["tags"], CONTROL_ROUTE_PREFIX):
+            if ":" not in route:
+                continue
+            submission_id, raw_platforms = route.split(":", 1)
+            requested = {
+                aliases[value]
+                for value in raw_platforms.split(",")
+                if value in aliases
+            }
+            if submission_id and requested:
+                routes[submission_id] = requested
+        if not routes:
+            routes = {
+                submission_id: legacy_requested
+                for submission_id in _tag_values(
+                    row["tags"], CONTROL_SUBMISSION_PREFIX
+                )
+                if legacy_requested
+            }
+        if not routes:
             continue
-        for tag in tags:
-            if isinstance(tag, str) and tag.startswith(CONTROL_SUBMISSION_PREFIX):
-                submission_id = tag[len(CONTROL_SUBMISSION_PREFIX) :]
-                if submission_id:
-                    updates[submission_id] = row["substack_written_at"]
+        success_rows = conn.execute(
+            """
+            SELECT platform,MAX(posted_at) AS posted_at
+              FROM publish_log
+             WHERE draft_id=? AND success=1
+             GROUP BY platform
+            """,
+            (row["draft_id"],),
+        ).fetchall()
+        all_successes = {item["platform"] for item in success_rows}
+        for submission_id, requested in routes.items():
+            successes = all_successes & requested
+            if not successes:
+                continue
+            status = "published" if successes == requested else "partial"
+            observed_at = max(
+                [
+                    item["posted_at"]
+                    for item in success_rows
+                    if item["platform"] in requested and item["posted_at"]
+                ]
+                or [row["generated_at"]]
+            )
+            previous = updates.get(submission_id)
+            if previous and rank.get(previous["status"], 99) >= rank[status]:
+                continue
+            updates[submission_id] = {
+                "status": status,
+                "observed_at": observed_at,
+            }
     return [
-        {"submission_id": submission_id, "status": "draft_created", "observed_at": observed_at}
-        for submission_id, observed_at in sorted(updates.items())
+        {"submission_id": submission_id, **payload}
+        for submission_id, payload in sorted(updates.items())
     ]
 
 

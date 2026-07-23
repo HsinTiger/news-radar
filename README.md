@@ -14,7 +14,7 @@
 | Meta scheduled publishing | **PAUSED** | Requires an owner-approved canary before `AUTOMATION_MODE=live` |
 | Submission processor | **PAUSED** | Submissions may be stored, but the poller will not claim them automatically |
 | Meta publish-now | **LOCKED** | Worker returns `409 canary_required` |
-| Substack | **DRAFT ONLY** | Never auto-publishes; `draft_created` is reported only after the Mac writes a real draft |
+| Substack | **DRAFT ONLY** | Never auto-publishes; `draft_created` requires a remote Substack draft id |
 | Social Ops API | **DEPLOYED** | Cloudflare Worker + authenticated D1 |
 | Runtime SQLite | **CANONICAL RELEASE STATE** | Versioned GitHub Release bundle, SHA-256 + `PRAGMA quick_check` + readback |
 | Dashboard data | **SEEDED** | 29,219 knowledge metadata rows, 807 post records, 381 engagement snapshots |
@@ -52,9 +52,11 @@ The Pages UI is authenticated with an owner token stored only in browser
 ### Substack: high-quality drafts, never auto-publish
 
 - Submitted URLs, text, and YouTube sources enter the canonical runtime DB.
-- The Mac worker creates the long-form draft and marks
+- The Mac worker records local/OneDrive completion in
   `news_items.substack_written_at`.
-- Operational sync converts that evidence to `draft_created` in D1.
+- Only a successful Substack `post_draft` response writes
+  `substack_draft_id` + `substack_drafted_at`; operational sync converts that
+  remote evidence to `draft_created` in D1.
 - The owner reviews and publishes in Substack.
 
 ### Governed learning loop

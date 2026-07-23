@@ -70,6 +70,18 @@ HEARTBEAT_SECONDS = 30 * 60                   # 30 分鐘心跳，讓 cadence �
 
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
+CANONICAL_TO_COMPOSER_PLATFORM = {
+    "facebook": "fb",
+    "instagram": "ig",
+    "threads": "threads",
+}
+PLATFORM_ALIASES = {
+    "facebook": "fb",
+    "fb": "fb",
+    "instagram": "ig",
+    "ig": "ig",
+    "threads": "threads",
+}
 
 
 # ---------- Draft 組裝輔助 ----------
@@ -506,14 +518,22 @@ async def _publish_platform(
 
 # ---------- 單篇新聞處理 ----------
 
-async def process_item(conn, row, publish_threshold: Optional[float] = None,
-                        compose_only: bool = False) -> str:
+async def process_item(
+    conn,
+    row,
+    publish_threshold: Optional[float] = None,
+    compose_only: bool = False,
+    requested_platforms: Optional[set[str]] = None,
+) -> str:
     """單篇新聞處理。回傳狀態字串：
-    - "published"     ：達標且至少一個平台成功發布（Hunter 獵殺成功）
+    - "published"     ：所有實際目標平台皆有 success evidence
+    - "partial"       ：部分平台成功，其餘保留 queued 等待重試
+    - "publish_failed"：本次所有平台失敗，仍保留 queued 等待重試
     - "drafted"       ：未達 publish_threshold，僅落草稿
     - "dropped"       ：低於 MIN_SCORE_THRESHOLD 或無可發平台
     - "queued"        ：compose_only 模式下達門檻、入佇列等待 Cloud publisher
     - "skipped_no_llm"：（Phase 8.19）Gemini + Claude CLI 兩條路都失敗，主動 skip
+    - "skipped_platform_scope"：素材指定平台與本次 scheduler scope 無交集
 
     publish_threshold: 自動發布門檻，預設用全域 AUTO_PUBLISH_THRESHOLD。
     main loop 會依 cadence 動態傳入（例：Rescue Mode 傳 0.8）。
@@ -608,12 +628,31 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     if tags_raw:
         try:
             tags_list = json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
-            plat_tags = [t.replace("platform:", "") for t in tags_list if str(t).startswith("platform:")]
+            plat_tags = [
+                PLATFORM_ALIASES.get(str(t).replace("platform:", "").strip())
+                for t in tags_list
+                if str(t).startswith("platform:")
+            ]
+            plat_tags = [value for value in plat_tags if value]
             if plat_tags:
-                active_platforms = plat_tags
+                active_platforms = list(dict.fromkeys(plat_tags))
                 print(f"   \u21b7 [UserSubmission] \u4f7f\u7528\u8005\u6307\u5b9a\u5e73\u53f0: {active_platforms}")
         except (json.JSONDecodeError, TypeError):
             pass
+    if requested_platforms is not None:
+        requested_keys = {
+            CANONICAL_TO_COMPOSER_PLATFORM[value]
+            for value in requested_platforms
+        }
+        active_platforms = [
+            value for value in active_platforms if value in requested_keys
+        ]
+        if not active_platforms:
+            print(
+                "   ↳ [PlatformScope] 素材指定平台與本次 scheduler scope 無交集，"
+                "保留素材供其他平台 cycle 使用"
+            )
+            return "skipped_platform_scope"
     if not is_accessible:
         print(
             "   ↳ [Note] 原圖不可存取，IG/Threads 將使用 cover_pipeline 的 "
@@ -661,6 +700,15 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         finalized[platform_key] = (variant, full_text, ok)
         tag = "✅" if ok else "⚠️"
         print(f"   ↳ {dbmod.PLATFORM_LABEL[platform_key]}: {variant.char_count} 字 {tag}")
+    missing_variants = [
+        platform for platform in active_platforms if platform not in finalized
+    ]
+    if missing_variants:
+        print(
+            " ⚠️  [Pipeline] Composer 未回傳所有 requested variants → skip 本篇："
+            + ",".join(missing_variants)
+        )
+        return "skipped_no_llm"
 
     # 3.5 品質證據 + 一次受限重寫。
     # block 仍 fail-closed；rewrite 只給 composer 一次修正機會。第二次仍命中
@@ -755,16 +803,17 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
             rewrite_unresolved = True
             print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
 
-    # 4. 建立 Draft（舊表相容 / 以 FB 變體為 canonical）
-    fb_variant, fb_full_text, _ = finalized["fb"]
-    legacy_content = _build_legacy_content(fb_variant, bundle.image_url)
+    # 4. 建立 Draft（舊表相容；若本輪沒有 FB，就用第一個實際目標作 canonical）
+    canonical_key = "fb" if "fb" in finalized else active_platforms[0]
+    canonical_variant, canonical_full_text, _ = finalized[canonical_key]
+    legacy_content = _build_legacy_content(canonical_variant, bundle.image_url)
 
     draft = Draft(
         id=draft_id,
         news_id=news_id,
         persona_version="1.1",  # Milestone 3.1
         content=legacy_content,
-        full_text=fb_full_text,
+        full_text=canonical_full_text,
         confidence_score=score,
         score_breakdown=ScoreBreakdown(**score_data.score_breakdown.model_dump()),
         llm_provider="google",
@@ -836,6 +885,10 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
         save_md_draft(draft, finalized, bundle.image_url, news_url)
         return "drafted"
     elif auto_publish:
+        # Direct mode also enters the canonical queue before touching Meta.
+        # A partial/all-failed API attempt therefore remains recoverable and the
+        # platform-aware publisher can retry only tuples lacking success evidence.
+        dbmod.enqueue_draft(conn, draft_id, publish_at=datetime.now(timezone.utc).isoformat())
         for platform_key in ("fb", "threads", "ig"):
             if platform_key not in finalized:
                 continue
@@ -848,7 +901,13 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
             publish_results[platform_key] = success
             if success:
                 any_success = True
-        dbmod.update_status(conn, news_id, "published" if any_success else "publish_failed")
+        pending_platforms = dbmod.pending_publish_platforms(conn, draft_id)
+        if not pending_platforms:
+            dbmod.mark_queue_published(conn, draft_id)
+        elif any_success:
+            dbmod.update_status(conn, news_id, "publish_partial")
+        else:
+            dbmod.update_status(conn, news_id, "publish_failed")
     else:
         dbmod.update_status(conn, news_id, "drafted")
 
@@ -858,12 +917,15 @@ async def process_item(conn, row, publish_threshold: Optional[float] = None,
     # 9. 本地檔案室存檔（archive/，僅在實際發布成功時寫入）
     if auto_publish and any_success:
         save_archive_md(draft, finalized, bundle.image_url, news_url, publish_results)
-        print(" ↳ [Done] 端到端流程完成")
+        if dbmod.pending_publish_platforms(conn, draft_id):
+            print(" ↳ [Partial] 部分平台成功；保留 queued，只重試缺失平台")
+            return "partial"
+        print(" ↳ [Done] 所有指定平台皆有 success evidence")
         return "published"
 
     if auto_publish and not any_success:
         print(" ↳ [Publish-Failed] 已達門檻但所有平台都發布失敗")
-        return "drafted"
+        return "publish_failed"
 
     return "drafted"
 
@@ -891,7 +953,18 @@ async def main():
         default=2,
         help="Phase 8.18：compose-only 模式下，queue buffer 目標筆數（預設 2）"
     )
+    parser.add_argument(
+        "--platforms",
+        default="facebook,instagram,threads",
+        help="Canonical comma list restricting compose scope: facebook,instagram,threads",
+    )
     args = parser.parse_args()
+    requested_platforms = {
+        value.strip() for value in args.platforms.split(",") if value.strip()
+    }
+    allowed_platforms = set(CANONICAL_TO_COMPOSER_PLATFORM)
+    if not requested_platforms or not requested_platforms <= allowed_platforms:
+        parser.error("--platforms must contain only facebook,instagram,threads")
 
     dbmod.init_db()
 
@@ -931,14 +1004,19 @@ async def main():
 
             if args.compose_only:
                 # Phase 8.18：compose-only 模式的 buffer 上限檢查
-                queue_counts = dbmod.count_queue_status(conn)
-                queued_n = queue_counts.get("queued", 0)
+                queued_n = dbmod.count_queued_pending_for_platforms(
+                    conn, requested_platforms
+                )
                 # EDITORIAL_MODE 時段 buffer：只看「這個 slot 桶」有沒有料；桶空就 compose 一筆，
                 # 即使總 buffer 已被別桶（Mac 端非 slot-aware 填充）塞滿——否則晚間政治稿永遠擠不進。
                 from src.slot_routing import editorial_mode, current_slot, bucket_categories
                 _slot = current_slot() if editorial_mode() else None
                 if _slot:
-                    slot_n = dbmod.count_queued_in_categories(conn, bucket_categories(_slot))
+                    slot_n = dbmod.count_queued_in_categories(
+                        conn,
+                        bucket_categories(_slot),
+                        platforms=requested_platforms,
+                    )
                     should_publish = slot_n < 1
                     threshold = AUTO_PUBLISH_THRESHOLD
                     reason = (f"slot={_slot} 桶已有料 ({slot_n})，跳過 compose" if slot_n >= 1
@@ -997,6 +1075,7 @@ async def main():
                         conn, row,
                         publish_threshold=threshold,
                         compose_only=args.compose_only,
+                        requested_platforms=requested_platforms,
                     )
                     if outcome in ("published", "queued"):
                         published_count += 1
