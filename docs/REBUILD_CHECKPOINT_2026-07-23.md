@@ -39,18 +39,18 @@ Must stop:
 | Claim | State | Evidence |
 |---|---|---|
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
-| Runtime state transported by Release | PROVEN | Revision 8; SQLite `quick_check=ok`; versioned bundle plus manifest readback |
+| Runtime state transported by Release | PROVEN | Revision 10 from engagement run `30014862699`; SQLite `quick_check=ok`; 29,219 news / 239 drafts / 808 publish rows / 384 engagement rows / 717 quality evaluations |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
 | Unit/integration behavior is regression-clean | PROVEN | `python -X utf8 -m pytest -q` -> 485 passed |
-| Worker API v3 is remotely reachable | PROVEN | health/auth/create/idempotency/service-sync/canary-lock remote smoke; v4 quality API is local-smoke proven and pending deploy |
-| D1 legacy baseline imported | PROVEN | 807 posts, 381 engagement snapshots, 29,219 knowledge metadata, 1 proposal |
+| Worker API v4 is remotely deployed | PROVEN | Version `fe42ae43-e2cf-4988-9ba9-7360d3842b7d`; `/health` reports `2026-07-23.v4`; unauthenticated dashboard/submissions return 401 and legacy proxy returns 410 |
+| D1 operational baseline is current | PROVEN | Migration `0005_content_quality.sql`; 384 engagement snapshots after run `30014862699`; latest quality summaries cover 177/177 recent candidates per platform |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
 | Substack never auto-publishes | PROVEN | Worker returns `substack_auto_publish=false`; UI and policy are draft-only |
 | Audience snapshots exist for all platforms | PROVEN | Audience run `30008413852` + D1 readback: Facebook 28, Instagram 9, Threads 3,748; all health=`healthy` at 2026-07-23T12:47:30Z |
 | Updated Mac scripts and both LaunchAgents execute on macOS | UNKNOWN | Windows host cannot prove launchd or Substack session behavior; first Mac smoke remains required |
 | A fresh Substack submission reaches a real draft | UNKNOWN | Requires updated Mac launchd scripts and a controlled submission canary |
 | Facebook `post_clicks` is accepted | PROVEN | Engagement canary run `30006637331`; `post_clicks` produced no contract error |
-| Current three-platform metric contract is healthy | PROVEN | Main engagement run `30008220682`: Facebook and Instagram contract healthy (zero latest signal); Threads healthy with nonzero views |
+| Current three-platform metric contract is healthy | PROVEN | Run `30014862699` captured one 168h bucket per platform, `OK=3/3`; D1 readback: FB zero response, IG views=2/reach=1, Threads views=235/likes=2, all `metric_status=ok` |
 | Facebook impressions / engaged-users metrics are usable | BLOCKED | Live canaries rejected `post_impressions`, `post_impressions_unique`, and `post_engaged_users`; they are excluded from current truth |
 | Legacy repos no longer compete for ownership | PROVEN | GitHub readback reports `news-radar-pm` and `news-radar-dashboard` archived; canonical repo metadata points to the in-repo dashboard |
 | Instagram low values are real audience response | UNKNOWN | API contract may be healthy, but signal coverage requires canary evidence |
@@ -77,10 +77,11 @@ Must stop:
 
 | Claim | State | Evidence |
 |---|---|---|
-| Historic per-platform quality can be measured without status mutation | PROVEN | Local dry-run evaluated 717 variants; copy backfill inserted 717 evidence rows, `status_mutations=0`, SQLite `quick_check=ok` |
+| Historic per-platform quality can be measured without status mutation | PROVEN | Production learning run `30014620742` inserted 717 evidence rows with `status_mutations=0`; Release revision 9 readback reported all 717 rows |
 | Current metric coverage is sufficient for automatic cadence changes | BLOCKED | Latest Release-copy dry-run: Facebook current/baseline 0%; Instagram and Threads current 23/34 (67.6%), baseline 14/35 (40.0%); all below the 80% gate |
-| Hourly collector prevents future bucket-alignment misses | ASSUMED | Deterministic minute-coverage tests pass with ±45 minutes; future scheduled production rows still require observation |
-| Content-quality and cadence changes are deployed in production | UNKNOWN | Requires merged commit, D1 migration 0005, Worker/Pages deploy, and a production learning-review readback |
+| Hourly bucket collector works in production | PROVEN | Workflow cron is `11 * * * *`; run `30014862699` selected three 168h tasks, committed `OK=3/3`, pushed Release revision 10, and synced all three rows to D1 |
+| Content-quality and cadence gates are deployed | PROVEN | PR #12 / merge `b9d0461`; Pages run `30014546469`; Worker v4; learning run `30014620742` returned `insufficient_metric_coverage` and `proposal_id=null` for all platforms; D1 cadence proposal count remains 0 |
+| One-off UI routing is deployed but processing is intentionally paused | PROVEN | Live page renders Meta/Substack plus FB/IG/Threads choices; `SUBMISSION_PROCESSOR_MODE=paused`; latest scheduled poller run was skipped |
 
 ## Owner canary packet
 
