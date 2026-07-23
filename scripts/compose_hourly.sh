@@ -3,6 +3,14 @@
 
 set -uo pipefail
 
+SETUP_ONLY=0
+if [ "${1:-}" = "--setup-only" ]; then
+  SETUP_ONLY=1
+elif [ "$#" -gt 0 ]; then
+  echo "ERROR: unknown argument: $1"
+  exit 2
+fi
+
 REPO="${REPO:-HsinTiger/news-radar}"
 LOCAL_REPO="${LOCAL_REPO:-$HOME/news_radar}"
 BUFFER_TARGET="${BUFFER_TARGET:-2}"
@@ -51,9 +59,17 @@ if git fetch --quiet origin main; then
   if ! git merge --ff-only origin/main >/dev/null 2>&1; then
     echo "WARN: local clone cannot fast-forward; using current code"
     git status --short
+    if [ "$SETUP_ONLY" = "1" ]; then
+      echo "ERROR: setup-only requires an exact fast-forward to current main"
+      exit 3
+    fi
   fi
 else
   echo "WARN: main fetch failed; using current code"
+  if [ "$SETUP_ONLY" = "1" ]; then
+    echo "ERROR: setup-only requires a successful origin/main fetch"
+    exit 3
+  fi
 fi
 
 if [ ! -d .venv ]; then
@@ -67,6 +83,11 @@ if [ "$REQ_HASH" != "$INSTALLED_HASH" ]; then
   python -m pip install --quiet --upgrade pip || exit 5
   python -m pip install --quiet -r requirements.txt -r requirements-mac.txt || exit 5
   printf '%s\n' "$REQ_HASH" > .venv/.requirements.sha256
+fi
+
+if [ "$SETUP_ONLY" = "1" ]; then
+  echo "===== Setup complete; no state pull, compose, draft, or publish attempted ====="
+  exit 0
 fi
 
 python scripts/state_store.py lock --repo "$REPO" \

@@ -64,7 +64,10 @@ git push origin main
 
 **驗證**：去 https://github.com/HsinTiger/news-radar/commits/main 確認三個新 commit 都在。
 
-### 2. 安裝 Mac launchd compose agent（5 分鐘）
+### 2. 安裝 Mac launchd worker（staged rollout）
+
+> 2026-07-24 更新：不可先執行 hourly compose。Production 已有 Substack
+> backlog；必須先用 immediate lane 證明一筆真實 remote draft，再解鎖 hourly。
 
 照 `scripts/INSTALL_COMPOSE_LAUNCHAGENT.md` 裡的「一鍵安裝」三步做：
 
@@ -72,23 +75,26 @@ git push origin main
 # 到 repo 根
 cd ~/Library/CloudStorage/OneDrive-*/*/*/科技商業國際新聞自動化流程研究/news_radar
 
-# (a) 放 script 到 ~/bin/
+# (a) 放 scripts 到 ~/bin/
 mkdir -p ~/bin
 cp scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
-chmod +x ~/bin/news_radar_compose.sh
+cp scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
+chmod +x ~/bin/news_radar_compose.sh ~/bin/news_radar_substack_fast.sh
 
 # (b) 展開 plist 放到 LaunchAgents/
 sed "s|HOME_DIR|$HOME|g" scripts/com.hsin.news-radar.compose.plist \
   > ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
+sed "s|HOME_DIR|$HOME|g" scripts/com.hsin.news-radar.substack-fast.plist \
+  > ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist
 
-# (c) 首次手動跑（會 clone 一份到 ~/news_radar/，後續 compose 都在這裡跑）
-bash ~/bin/news_radar_compose.sh
+# (c) 只建立 runtime/venv；不 pull state、不 compose、不產生草稿
+bash ~/bin/news_radar_compose.sh --setup-only
 ```
 
 **期望看到**：
 - `📥 本機尚無 ~/news_radar → 首次 clone...`
 - `✅ Clone 完成`
-- python 報錯說「.env 不存在 / GEMINI_API_KEY missing」——**正常，下一步補**
+- `Setup complete; no state pull, compose, draft, or publish attempted`
 
 ### 3. 放 .env 到 `~/news_radar/`（1 分鐘）
 
@@ -99,15 +105,23 @@ cp ~/Library/CloudStorage/OneDrive-*/*/*/科技商業國際新聞自動化流程
 
 **重要**：日後如果你輪換 token / 換 Gemini key，**兩邊都要更新**（OneDrive 跟 `~/news_radar/` 不自動同步）。
 
-### 4. 再跑一次 compose（驗證整條鏈）
+### 4. 只載入 immediate lane 並驗證一筆 Substack canary
 
 ```bash
-bash ~/bin/news_radar_compose.sh
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist
+~/news_radar/.venv/bin/python ~/news_radar/scripts/mac_worker_doctor.py
 ```
 
-**期望看到**：
-- 有新聞 harvest → score → compose（走 Gemini）→ 入 queue
-- 結尾 `✅ Queue 中現有 N 筆 queued`
+在投稿頁送一筆勾選 immediate 的非敏感 Substack 素材，再執行：
+
+```bash
+bash ~/bin/news_radar_substack_fast.sh
+~/news_radar/.venv/bin/python ~/news_radar/scripts/mac_worker_doctor.py --require-remote-proof
+```
+
+只有看到真實 Substack draft ID 且 doctor PASS，才依
+`scripts/INSTALL_COMPOSE_LAUNCHAGENT.md` 載入 hourly worker。
 
 **若 Gemini 429**（你有 Pro 應該不容易遇到，但以防萬一）：
 - 會看到 `⚠️  Gemini 失敗: ... → 嘗試 Claude CLI`
@@ -115,13 +129,13 @@ bash ~/bin/news_radar_compose.sh
 - **確認 Claude CLI 真的能跑**：`which claude` 應該回 `/opt/homebrew/bin/claude` 或你裝的路徑
 - 如果 Claude CLI 也掛：`⚠️  寫作 LLM 雙路徑皆失敗 → skip 本篇（不入 queue）` → 這是正確行為，不是 bug
 
-### 5. 載入 launchd 排程
+### 5. Canary PASS 後才載入 hourly 排程
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 2>/dev/null
-launchctl load   ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
-launchctl list | grep news-radar-compose
-# 應看到：-   0   com.hsin.news-radar.compose
+~/news_radar/.venv/bin/python ~/news_radar/scripts/mac_worker_doctor.py --require-remote-proof
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
+launchctl print gui/$(id -u)/com.hsin.news-radar.compose
 ```
 
 之後每 3600s 會自動跑一次（閉蓋充電時 OK，深睡時跳過直到醒來）。

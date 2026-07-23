@@ -47,11 +47,11 @@ plutil -lint ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
 plutil -lint ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist
 ```
 
-Run the hourly worker once. It creates `~/news_radar`, the Python environment,
-pulls and verifies canonical state, composes, then performs a verified push.
+Bootstrap the runtime clone and Python environment without pulling state or
+composing any backlog item:
 
 ```bash
-bash ~/bin/news_radar_compose.sh
+bash ~/bin/news_radar_compose.sh --setup-only
 ```
 
 Place runtime-only credentials in `~/news_radar/.env`. At minimum, Substack
@@ -59,22 +59,46 @@ draft creation needs the existing Substack session configuration and
 `SUBSTACK_AUTO_DRAFT=1`. That flag means create a draft through `post_draft`;
 there is no auto-publish path.
 
-Test the fast lane without creating a source:
+## Stage 1: immediate canary only
+
+Do not load the hourly worker yet. Production currently has an existing
+Substack backlog; enabling hourly first could create many drafts before the
+cookie/API path has one proven success.
+
+Load only the five-minute immediate lane:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 2>/dev/null || true
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist
+
+~/news_radar/.venv/bin/python ~/news_radar/scripts/mac_worker_doctor.py
+```
+
+The doctor prints only key presence and evidence counts; it never prints the
+cookie or other secret values. It must report `READY` before the canary.
+
+Submit one non-sensitive Substack source with `immediate` enabled, then run the
+fast lane once rather than waiting five minutes:
 
 ```bash
 bash ~/bin/news_radar_substack_fast.sh
 ```
 
-Expected safe no-op: `[fast-drain]` exits 0 when there is no immediate source.
-
-## Load the schedules
+Require all six canary evidence items in the verification section below. After
+the Release push, this command must PASS before hourly enablement:
 
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist 2>/dev/null || true
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist 2>/dev/null || true
+~/news_radar/.venv/bin/python ~/news_radar/scripts/mac_worker_doctor.py --require-remote-proof
+```
 
+## Stage 2: owner-approved hourly enablement
+
+Only after the immediate canary has a visible Substack draft ID and the doctor
+passes `--require-remote-proof`, load the hourly backlog worker:
+
+```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hsin.news-radar.substack-fast.plist
 
 launchctl print gui/$(id -u)/com.hsin.news-radar.compose
 launchctl print gui/$(id -u)/com.hsin.news-radar.substack-fast
