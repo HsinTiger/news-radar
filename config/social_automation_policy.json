@@ -17,8 +17,8 @@
       "minimum_interval_hours": 20,
       "local_slots": [20],
       "slot_tolerance_minutes": 50,
-      "primary_metrics": ["reach", "reactions", "comments", "shares"],
-      "metric_health": "degraded_invalid_insights_metric"
+      "primary_metrics": ["clicks", "reactions", "comments"],
+      "metric_health": "contract_healthy_low_signal"
     },
     "instagram": {
       "target_posts_per_day": 1,
@@ -26,7 +26,7 @@
       "local_slots": [20],
       "slot_tolerance_minutes": 50,
       "primary_metrics": ["reach", "views", "saves", "comments", "shares"],
-      "metric_health": "low_signal_requires_canary"
+      "metric_health": "contract_healthy_low_signal"
     }
   },
   "reels": {
