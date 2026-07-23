@@ -114,7 +114,10 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
         source_urls = _tag_values(row["tags"], CONTROL_SOURCE_URL_PREFIX)
         result.append(
             {
-                "id": _stable_id("post", row["platform"], row["platform_post_id"] or row["draft_id"]),
+                # Stable across failed -> published retries.  Using post_id on
+                # success and draft_id on failure created two D1 rows for one
+                # logical platform publication and polluted dashboard counts.
+                "id": f"post_{row['draft_id']}_{row['platform']}_feed",
                 "draft_id": row["draft_id"],
                 "submission_id": _submission_for_platform(
                     row["tags"], row["platform"]
