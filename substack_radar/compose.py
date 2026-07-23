@@ -369,6 +369,7 @@ def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str
             FROM news_items
             WHERE published_at >= datetime('now', '-{int(window_days)} days')
               AND status NOT IN ('dropped', 'filtered')
+              AND COALESCE(feed_name,'') NOT IN ('user_submission','user_substack')
               AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 300
             ORDER BY published_at DESC
             LIMIT 300

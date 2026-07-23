@@ -648,6 +648,8 @@ def get_pending_items(conn: sqlite3.Connection) -> List[sqlite3.Row]:
         """
         SELECT * FROM news_items
          WHERE status='fetched'
+           AND COALESCE(feed_name,'') <> 'user_substack'
+           AND COALESCE(tags,'') NOT LIKE '%"substack_source"%'
          ORDER BY COALESCE(weighted_score, 0) DESC,
                   published_at DESC
         """

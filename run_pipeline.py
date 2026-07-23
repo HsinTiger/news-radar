@@ -534,6 +534,7 @@ async def process_item(
     - "queued"        ：compose_only 模式下達門檻、入佇列等待 Cloud publisher
     - "skipped_no_llm"：（Phase 8.19）Gemini + Claude CLI 兩條路都失敗，主動 skip
     - "skipped_platform_scope"：素材指定平台與本次 scheduler scope 無交集
+    - "skipped_target_scope"：Substack-only 素材不可進 Meta pipeline
 
     publish_threshold: 自動發布門檻，預設用全域 AUTO_PUBLISH_THRESHOLD。
     main loop 會依 cadence 動態傳入（例：Rescue Mode 傳 0.8）。
@@ -550,6 +551,17 @@ async def process_item(
     og_image = row["og_image_url"]
     news_url = row["url"]
     tags_raw = row["tags"] if "tags" in row.keys() else None
+    owner_submitted = (
+        ("feed_name" in row.keys() and row["feed_name"] == "user_submission")
+        or (tags_raw and "user_submission" in str(tags_raw))
+    )
+
+    if (
+        ("feed_name" in row.keys() and row["feed_name"] == "user_substack")
+        or (tags_raw and "substack_source" in str(tags_raw))
+    ):
+        print("   ↳ [TargetScope] Substack-only source，Meta pipeline fail-closed skip")
+        return "skipped_target_scope"
 
     print(f"\n[Pipeline] 處理新聞: {title[:40]}...")
 
@@ -572,10 +584,15 @@ async def process_item(
     score = score_data.confidence_score
     print(f" ↳ AI 評分: {score:.2f} | 主編指令: {score_data.editorial_note[:60]}")
 
-    if score < MIN_SCORE_THRESHOLD:
+    if score < MIN_SCORE_THRESHOLD and not owner_submitted:
         print(f" ↳ [Dropped] 分數低於門檻 ({MIN_SCORE_THRESHOLD})")
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped"
+    if score < MIN_SCORE_THRESHOLD and owner_submitted:
+        print(
+            f" ↳ [OwnerDirective] relevance score {score:.2f} 低於新聞門檻，"
+            "但 owner 投稿保留處理；後續品質閘仍 fail-closed"
+        )
 
     # --- Phase 8.20：主題分類 + 加權分數 ---
     # 這步跑在 media gating 前是刻意的：就算沒圖發不成 IG/Threads，我們依然
@@ -822,10 +839,14 @@ async def process_item(
         status="pending_review",
     )
 
-    auto_publish = score >= publish_threshold and not rewrite_unresolved
+    auto_publish = (
+        (owner_submitted or score >= publish_threshold)
+        and not rewrite_unresolved
+    )
     if auto_publish:
         draft.status = "auto_approved"
-        print(f" ↳ [Auto-Publish] 分數 ≥ {publish_threshold}，啟動三平台發布")
+        reason = "owner submission" if owner_submitted else f"分數 ≥ {publish_threshold}"
+        print(f" ↳ [Auto-Publish] {reason}，啟動指定平台發布")
     elif rewrite_unresolved:
         print(
             " ↳ [Quality Hold] 重寫後仍有 rewrite issue；保留 pending_review，"

@@ -452,6 +452,11 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def build_submission_updates(conn: sqlite3.Connection) -> list[dict[str, str]]:
     """Derive truthful terminal/progress states from canonical runtime evidence."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    has_quality = "content_quality_evaluations" in tables
     updates: dict[str, dict[str, str]] = {}
     if {"substack_draft_id", "substack_drafted_at"} <= columns:
         rows = conn.execute(
@@ -473,14 +478,15 @@ def build_submission_updates(conn: sqlite3.Connection) -> list[dict[str, str]]:
 
     meta_rows = conn.execute(
         """
-        SELECT n.tags,d.id AS draft_id,d.generated_at
+        SELECT n.id AS news_id,n.tags,n.status AS news_status,
+               d.id AS draft_id,d.generated_at
           FROM news_items n
-          JOIN drafts d ON d.news_id=n.id
+          LEFT JOIN drafts d ON d.news_id=n.id
          WHERE n.feed_name='user_submission'
            AND n.tags LIKE '%control_submission:%'
         """
     ).fetchall()
-    rank = {"partial": 1, "published": 2}
+    rank = {"quality_held": 0, "partial": 1, "published": 2}
     aliases = {
         "fb": "facebook",
         "facebook": "facebook",
@@ -516,19 +522,50 @@ def build_submission_updates(conn: sqlite3.Connection) -> list[dict[str, str]]:
             }
         if not routes:
             continue
-        success_rows = conn.execute(
-            """
-            SELECT platform,MAX(posted_at) AS posted_at
-              FROM publish_log
-             WHERE draft_id=? AND success=1
-             GROUP BY platform
-            """,
-            (row["draft_id"],),
-        ).fetchall()
+        success_rows = []
+        if row["draft_id"]:
+            success_rows = conn.execute(
+                """
+                SELECT platform,MAX(posted_at) AS posted_at
+                  FROM publish_log
+                 WHERE draft_id=? AND success=1
+                 GROUP BY platform
+                """,
+                (row["draft_id"],),
+            ).fetchall()
         all_successes = {item["platform"] for item in success_rows}
+        latest_quality: dict[str, sqlite3.Row] = {}
+        if not all_successes and has_quality:
+            quality_rows = conn.execute(
+                """
+                SELECT platform,decision,checked_at
+                  FROM content_quality_evaluations
+                 WHERE id IN (
+                   SELECT MAX(id)
+                     FROM content_quality_evaluations
+                    WHERE news_id=? AND stage='compose'
+                    GROUP BY platform
+                 )
+                """,
+                (row["news_id"],),
+            ).fetchall()
+            latest_quality = {item["platform"]: item for item in quality_rows}
         for submission_id, requested in routes.items():
             successes = all_successes & requested
             if not successes:
+                held = [
+                    latest_quality[platform]
+                    for platform in requested
+                    if platform in latest_quality
+                    and latest_quality[platform]["decision"] in {"block", "rewrite"}
+                ]
+                if held:
+                    previous = updates.get(submission_id)
+                    if not previous or rank.get(previous["status"], 99) < rank["quality_held"]:
+                        updates[submission_id] = {
+                            "status": "quality_held",
+                            "observed_at": max(item["checked_at"] for item in held),
+                        }
                 continue
             status = "published" if successes == requested else "partial"
             observed_at = max(

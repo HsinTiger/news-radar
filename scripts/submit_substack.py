@@ -52,24 +52,29 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
     if submission_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", submission_id):
         conn.close()
         raise ValueError("invalid control-plane submission id")
+    desired_tags = [
+        SUBSTACK_TAG,
+        "user_submission_substack",
+        *extra_tags,
+        *([f"control_submission:{submission_id}"] if submission_id else []),
+        *(["immediate"] if immediate else []),
+    ]
     if dbmod.news_exists(conn, news_id):
-        if submission_id:
-            row = conn.execute(
-                "SELECT COALESCE(tags,'[]') AS tags FROM news_items WHERE id=?",
-                (news_id,),
-            ).fetchone()
-            try:
-                tags = json.loads(row["tags"] or "[]") if row else []
-            except (json.JSONDecodeError, TypeError):
-                tags = []
-            control_tag = f"control_submission:{submission_id}"
-            if control_tag not in tags:
-                tags.append(control_tag)
-                conn.execute(
-                    "UPDATE news_items SET tags=? WHERE id=?",
-                    (json.dumps(tags, ensure_ascii=False), news_id),
-                )
-                conn.commit()
+        row = conn.execute(
+            "SELECT COALESCE(tags,'[]') AS tags FROM news_items WHERE id=?",
+            (news_id,),
+        ).fetchone()
+        try:
+            tags = json.loads(row["tags"] or "[]") if row else []
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        merged_tags = list(dict.fromkeys([*tags, *desired_tags]))
+        if merged_tags != tags:
+            conn.execute(
+                "UPDATE news_items SET tags=? WHERE id=?",
+                (json.dumps(merged_tags, ensure_ascii=False), news_id),
+            )
+            conn.commit()
         conn.close()
         return {"status": "already_exists", "id": news_id}
     now = datetime.now(timezone.utc).isoformat()
@@ -87,9 +92,7 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
         og_image_url=None,
         # `immediate` 標籤讓 Mac 端的快速 drain（每 5 分鐘）優先挑出這篇立刻寫稿，
         # 不必等每小時的常規 drain。見 scripts/drain_substack.py --only-immediate。
-        tags=[SUBSTACK_TAG, "user_submission_substack", *extra_tags,
-              *([f"control_submission:{submission_id}"] if submission_id else []),
-              *(["immediate"] if immediate else [])],
+        tags=desired_tags,
         status="fetched",
     )
     dbmod.upsert_news(conn, item)
@@ -102,6 +105,11 @@ def process_url(url: str, note: str = "", immediate: bool = False,
                 submission_id: str = "") -> dict:
     news_id = _make_news_id("substack_" + url)
     body = _fetch_page_text(url) or ""
+    if len(body.strip()) < 80:
+        return {
+            "status": "error",
+            "error": "URL yielded insufficient readable text; paste the full text instead",
+        }
     title = note or (url.split("/")[-1][:80] or "Substack submission")
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="article", extra_tags=[], immediate=immediate,

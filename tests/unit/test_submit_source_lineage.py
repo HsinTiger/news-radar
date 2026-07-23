@@ -52,3 +52,30 @@ def test_invalid_platform_fails_closed_without_creating_source(monkeypatch, tmp_
         assert conn.execute("SELECT COUNT(*) FROM news_items").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_cli_exit_code_never_reports_error_as_queued_success() -> None:
+    assert submit_source._result_exit_code({"status": "created"}) == 0
+    assert submit_source._result_exit_code({"status": "already_exists"}) == 0
+    assert submit_source._result_exit_code({"status": "error"}) == 1
+    assert submit_source._result_exit_code({"total": 1, "errors": ["retained"]}) == 1
+
+
+def test_unreadable_meta_url_fails_before_false_content_queue(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(submit_source.dbmod, "DB_PATH", tmp_path / "news_radar.db")
+    submit_source.dbmod.init_db()
+    monkeypatch.setattr(submit_source, "_fetch_page_text", lambda _url: None)
+    result = submit_source.process_url(
+        "https://example.com/paywalled",
+        platforms=["threads"],
+        submission_id="submission-queue-003",
+    )
+    assert result["status"] == "error"
+    assert submit_source._result_exit_code(result) == 1
+    conn = submit_source.dbmod.get_conn()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM news_items").fetchone()[0] == 0
+    finally:
+        conn.close()
