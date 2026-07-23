@@ -158,10 +158,12 @@ Meta publish or a Mac-created Substack draft. Those remain canary gates.
 ## Repository boundaries
 
 - `HsinTiger/news-radar` — canonical, active automation and owner surfaces.
-- `HsinTiger/news-radar-pm` — legacy planning repository; archive after final
-  link/dependency audit.
-- `HsinTiger/news-radar-dashboard` — legacy dashboard repository; archive after
-  the in-repo dashboard is deployed and verified.
+- `HsinTiger/news-radar-pm` — **archived** legacy planning/audit history.
+- `HsinTiger/news-radar-dashboard` — **archived** legacy state-branch dashboard.
+
+The canonical repository slug intentionally remains `news-radar` to preserve
+the live Pages URLs. Its GitHub description and homepage identify it as
+**HsinTiger Social Automation**.
 
 See [the rebuild checkpoint](docs/REBUILD_CHECKPOINT_2026-07-23.md) for evidence,
 known unknowns, and the owner canary packet.
