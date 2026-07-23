@@ -41,7 +41,7 @@ Must stop:
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
 | Runtime state transported by Release | PROVEN | Revision 10 from engagement run `30014862699`; SQLite `quick_check=ok`; 29,219 news / 239 drafts / 808 publish rows / 384 engagement rows / 717 quality evaluations |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `696b373`: `python -X utf8 -m pytest -q` -> 513 passed |
+| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `c028791`: `python -X utf8 -m pytest -q` -> 519 passed |
 | Worker API v4 is remotely deployed | PROVEN | Version `fe42ae43-e2cf-4988-9ba9-7360d3842b7d`; `/health` reports `2026-07-23.v4`; unauthenticated dashboard/submissions return 401 and legacy proxy returns 410 |
 | D1 operational baseline is current | PROVEN | Migration `0005_content_quality.sql`; 384 engagement snapshots after run `30014862699`; latest quality summaries cover 177/177 recent candidates per platform |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
@@ -110,6 +110,15 @@ Must stop:
 | Updated owner UI is live | PROVEN | Pages run `30021866231`; cache-busted HTTP readback returned 200 and contained `partial`, `quality_held`, and the no-false-published policy |
 | Production metadata sync remains healthy after the routing change | PROVEN | Operational sync `30021928175`: Release DB `quick_check=ok`; sent 480 posts / 325 engagement / 3 quality summaries / 500 knowledge / 17 proposals / 6 health rows / 0 submission updates |
 | External publishing remains locked | PROVEN | GitHub variables read back `AUTOMATION_MODE=paused` and `SUBMISSION_PROCESSOR_MODE=paused`; Full Cloud Pipeline and Reels workflows remain `disabled_manually` |
+
+## Substack draft recovery addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| A worker crash between remote `post_draft` success and SQLite evidence cannot silently lose the draft ID or re-compose the same source | PROVEN | PR #19 / merge `c028791`; the API result is saved as a durable local receipt before DB evidence, and the next drain reconciles it without another API call |
+| Missing, malformed, or conflicting receipt state fails closed | PROVEN | Receipt tests cover a missing source row, malformed payload, canonical-ID conflict, idempotent reconcile, and evidence-pending exit behavior |
+| The complete repository remains regression-clean after receipt recovery | PROVEN | `519 passed`; Python compile and `git diff --check` PASS; staged secret-literal scan PASS |
+| A current Mac session can still create a real Substack draft | UNKNOWN | Receipt recovery proves crash semantics only; current cookie, unofficial API compatibility, LaunchAgent installation, and a visible draft ID still require the controlled Mac canary |
 
 Resumable next action: keep all publishing switches paused. On the Mac, update
 the clone/LaunchAgents and run one non-sensitive Substack control submission;
