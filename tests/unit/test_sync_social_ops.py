@@ -1,10 +1,13 @@
+import json
 import sqlite3
+from pathlib import Path
 
 from scripts.sync_social_ops import (
     build_engagement,
     build_health,
     build_knowledge,
     build_posts,
+    build_proposals,
     build_submission_updates,
 )
 
@@ -100,5 +103,62 @@ def test_substack_written_marker_becomes_truthful_terminal_update() -> None:
             "submission_id": "12345678-abcd",
             "status": "draft_created",
             "observed_at": "2099-01-02T00:00:00Z",
+        }
+    ]
+
+
+def test_proposal_sync_maps_legacy_decision_and_exports_exact_action(
+    tmp_path: Path,
+) -> None:
+    conn = _db()
+    fire_id = "proposal-owner-gate-01"
+    evidence = {"sample_ids": [], "metrics": {"total_samples": 12}, "confidence": "HIGH"}
+    conn.execute(
+        "INSERT INTO reflector_proposal_lineage VALUES(?,?,?,?,?,?,?,?)",
+        (
+            fire_id,
+            "2099-01-01T00:00:00Z",
+            "adjust_weight",
+            "topic_weights",
+            "approve",
+            "2099-01-02T00:00:00Z",
+            None,
+            json.dumps(evidence),
+        ),
+    )
+    proposals_dir = tmp_path / "proposals"
+    proposals_dir.mkdir()
+    action = {
+        "target_config": "topic_weights",
+        "field": "ai_model",
+        "current_value": 1.0,
+        "proposed_value": 1.1,
+    }
+    (proposals_dir / "2099-W01.jsonl").write_text(
+        json.dumps(
+            {
+                "fire_id": fire_id,
+                "action": action,
+                "hsin_decision_comment": "owner approved",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = build_proposals(conn, proposals_dir=proposals_dir)
+    assert rows == [
+        {
+            "id": fire_id,
+            "kind": "adjust_weight",
+            "status": "approved",
+            "owner_decision": "approved",
+            "summary": "adjust_weight → topic_weights.ai_model",
+            "evidence": evidence,
+            "proposed_change": action,
+            "created_at": "2099-01-01T00:00:00Z",
+            "decision_comment": "owner approved",
+            "decided_at": "2099-01-02T00:00:00Z",
+            "applied_at": None,
         }
     ]

@@ -392,6 +392,7 @@ def update_decision(
     decision: str,
     comment: Optional[str] = None,
     *,
+    decision_at: Optional[str] = None,
     db_path: Optional[Path] = None,
     base_dir: Optional[Path] = None,
 ) -> None:
@@ -413,7 +414,7 @@ def update_decision(
         )
 
     proposals_dir = _resolve_proposals_dir(base_dir)
-    decision_at = _utcnow_iso()
+    decision_at = decision_at or _utcnow_iso()
 
     # 1. Locate the jsonl line. Scan all week-files until found.
     target_file: Optional[Path] = None
@@ -431,7 +432,8 @@ def update_decision(
             f"{proposals_dir}"
         )
 
-    # 2. Mutate the matching record.
+    # 2. Snapshot + mutate the matching record.
+    pre_snapshot = target_file.read_bytes()
     for r in target_records:
         if r.get("fire_id") == fire_id:
             r["hsin_decision"] = decision
@@ -447,22 +449,28 @@ def update_decision(
         os.fsync(f.fileno())
     os.replace(tmp_path, target_file)
 
-    # 4. Lineage UPDATE.
+    # 4. Lineage UPDATE. Restore JSONL if the DB write does not commit.
     resolved_db = _resolve_db_path(db_path)
-    with sqlite3.connect(str(resolved_db)) as conn:
-        cur = conn.execute(
-            """
-            UPDATE reflector_proposal_lineage
-               SET hsin_decision = ?,
-                   hsin_decision_at = ?
-             WHERE fire_id = ?
-            """,
-            (decision, decision_at, fire_id),
-        )
-        if cur.rowcount == 0:
-            # JSONL had the row but lineage didn't — data drift.
-            raise LookupError(
-                f"fire_id {fire_id!r} found in jsonl but not in "
-                "reflector_proposal_lineage; refusing to half-commit"
+    try:
+        with sqlite3.connect(str(resolved_db)) as conn:
+            cur = conn.execute(
+                """
+                UPDATE reflector_proposal_lineage
+                   SET hsin_decision = ?,
+                       hsin_decision_at = ?
+                 WHERE fire_id = ?
+                """,
+                (decision, decision_at, fire_id),
             )
-        conn.commit()
+            if cur.rowcount == 0:
+                raise LookupError(
+                    f"fire_id {fire_id!r} found in jsonl but not in "
+                    "reflector_proposal_lineage; refusing to half-commit"
+                )
+            conn.commit()
+    except Exception:
+        try:
+            target_file.write_bytes(pre_snapshot)
+        except OSError:
+            pass
+        raise

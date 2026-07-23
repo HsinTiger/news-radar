@@ -1,15 +1,14 @@
 """Phase 9 Item 3 (originally Phase 8.20 Step 4):
-驗證 src/reflector/topic.py 的 math + DB IO + auto-deploy / proposal-only branching.
+驗證 src/reflector/topic.py 的 math + DB IO + owner-gated proposal branching.
 
 三類測試：
   A. Pure 函式（無 DB 依賴）— engagement 公式、中位數、normalized_delta、
      apply_weight_update guard rails、detect_trend、_classify_branch、
      _confidence_level。
-  B. End-to-end (legacy / write_proposals=False)：synthetic engagement_stats
-     餵進 in-memory SQLite，跑 run_backprop，驗 topic_weights /
-     topic_weight_history / reflection_events 三張表寫入正確。Math regression.
-  C. Phase 9 Item 3 — auto-deploy + proposal-only paths against jsonl +
-     reflector_proposal_lineage table.
+  B. End-to-end dry-run：synthetic engagement_stats 餵進 in-memory SQLite，
+     驗證 math 與 owner-gate 不會被 write_proposals=False 繞過。
+  C. Phase 9 Item 3 — proposal-only paths against jsonl +
+     reflector_proposal_lineage table. No analyzer may auto-deploy.
 """
 from __future__ import annotations
 
@@ -385,15 +384,8 @@ def test_e2e_dryrun_no_db_writes():
     assert ai.total_samples == 12  # 4 posts × 3 platforms
 
 
-def test_e2e_real_run_legacy_path_updates_db():
-    """Legacy fallback path: write_proposals=False → direct UPDATE on
-    topic_weights via _write_updates (pre-Phase-9 behavior).
-
-    Validates math regression: even with the new dispatch wrapper, when
-    legacy semantics are explicitly requested, the topic_weights table
-    receives the same update it always did, history gets one row per
-    category, and a single reflection_events row is written.
-    """
+def test_write_proposals_false_cannot_bypass_owner_gate():
+    """A non-dry analyzer run cannot recover the historical direct-write lane."""
     conn = _make_conn_with_schema()
     # ai_model 超強
     for i in range(4):
@@ -414,29 +406,21 @@ def test_e2e_real_run_legacy_path_updates_db():
         "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
     ).fetchone()[0]
 
-    run_backprop(conn, lookback_days=30, dry_run=False, write_proposals=False)
+    import pytest
+
+    with pytest.raises(ValueError, match="not an execution mode"):
+        run_backprop(conn, lookback_days=30, dry_run=False, write_proposals=False)
 
     after_w = conn.execute(
         "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
     ).fetchone()[0]
-    assert after_w > before_w, f"expected ai_model weight to rise, {before_w} → {after_w}"
-
-    # history 應至少有 4 筆（4 個類別都被觀察，不論是否有 update）
-    hist_count = conn.execute(
-        "SELECT COUNT(*) FROM topic_weight_history"
-    ).fetchone()[0]
-    assert hist_count == 4
-
-    # reflection_events 應有一筆
-    ev_count = conn.execute(
-        "SELECT COUNT(*) FROM reflection_events"
-    ).fetchone()[0]
-    assert ev_count == 1
+    assert after_w == before_w
+    assert conn.execute("SELECT COUNT(*) FROM topic_weight_history").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM reflection_events").fetchone()[0] == 0
 
 
-def test_e2e_skips_categories_without_samples_legacy_path():
-    """沒發文的類別（ai_agent / supply_chain）應 skip，不該被 UPDATE。
-    Legacy fallback path."""
+def test_e2e_dry_run_skips_categories_without_samples():
+    """沒發文的類別（ai_agent / supply_chain）在 dry-run 應維持原值。"""
     conn = _make_conn_with_schema()
     # 只有 ai_model 有樣本，其它類別零樣本
     for i in range(4):
@@ -449,12 +433,14 @@ def test_e2e_skips_categories_without_samples_legacy_path():
         "SELECT weight FROM topic_weights WHERE category_id='ai_agent'"
     ).fetchone()[0]
 
-    run_backprop(conn, lookback_days=30, dry_run=False, write_proposals=False)
+    result = run_backprop(conn, lookback_days=30, dry_run=True)
 
     after_agent = conn.execute(
         "SELECT weight FROM topic_weights WHERE category_id='ai_agent'"
     ).fetchone()[0]
     assert before_agent == after_agent
+    agent = next(u for u in result.updates if u.category_id == "ai_agent")
+    assert agent.skipped_reason == "low_samples"
 
 
 def test_format_markdown_report_contains_expected_sections():
@@ -477,15 +463,14 @@ def test_format_markdown_report_contains_expected_sections():
 
 
 # ======================================================================
-# C. Phase 9 Item 3 — auto-deploy + proposal-only branching
+# C. Phase 9 Item 3 — proposal-only branching
 # ======================================================================
 
 def test_classify_branch_pure():
     """Pure-function gate logic. No DB."""
-    # Non-pinned, small delta → auto_deploy
-    assert _classify_branch(False, 0.05) == "auto_deploy"
-    assert _classify_branch(False, -0.05) == "auto_deploy"
-    # Non-pinned, large delta → proposal_only
+    # Delta magnitude never grants deployment authority.
+    assert _classify_branch(False, 0.05) == "proposal_only"
+    assert _classify_branch(False, -0.05) == "proposal_only"
     assert _classify_branch(False, AUTO_DEPLOY_DELTA_THRESHOLD) == "proposal_only"
     assert _classify_branch(False, AUTO_DEPLOY_DELTA_THRESHOLD + 0.01) == "proposal_only"
     assert _classify_branch(False, -0.15) == "proposal_only"
@@ -531,7 +516,7 @@ def test_is_boss_pinned_returns_true_when_column_present_and_set():
 
 def _seed_high_engagement_category(conn):
     """Seed ai_model + other so ai_model produces a SMALL +Δ that lands
-    inside the auto-deploy band (|Δ| < AUTO_DEPLOY_DELTA_THRESHOLD).
+    below the historical auto-deploy threshold.
 
     Tuning rationale (recorded so future tweaks remain calibrated):
       - ai_model raw scores per platform ≈ 150 (post = likes 150)
@@ -552,11 +537,11 @@ def _seed_high_engagement_category(conn):
     conn.commit()
 
 
-def test_auto_deploy_path_writes_proposal_updates_weight_marks_deployed(tmp_path):
-    """Phase 9 Item 3 auto-deploy lane:
-    non-pinned category + |delta| < 0.10 → topic_weights UPDATEd AND
-    proposal jsonl entry written AND lineage row's deployed_at populated
-    AND jsonl entry's deployed_at populated.
+def test_small_delta_is_proposal_only_and_does_not_mutate_weight(tmp_path):
+    """A small delta still requires an owner decision.
+
+    The analyzer writes a full proposal, leaves topic_weights unchanged, and
+    leaves deployed_at empty on both durable records.
 
     Uses an on-disk tmp DB rather than :memory: because write_proposal
     opens its own sqlite3.connect for the lineage INSERT — :memory: DBs
@@ -604,34 +589,31 @@ def test_auto_deploy_path_writes_proposal_updates_weight_marks_deployed(tmp_path
         proposals_base_dir=proposals_dir,
     )
 
-    # 1. ai_model UPDATEd (auto-deploy lane fires).
+    # 1. Analyzer computes a small change but does not execute it.
     after_w = on_disk.execute(
         "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
     ).fetchone()[0]
     ai = next(u for u in result.updates if u.category_id == "ai_model")
     assert abs(ai.applied_delta) < AUTO_DEPLOY_DELTA_THRESHOLD, (
-        f"test fixture must produce a small delta to exercise auto-deploy; "
+        f"test fixture must produce a small delta; "
         f"got {ai.applied_delta}"
     )
-    assert after_w > before_w, (
-        f"auto-deploy must raise topic_weights.weight; "
+    assert after_w == before_w, (
+        f"proposal generation must not change topic_weights.weight; "
         f"{before_w} → {after_w}"
     )
 
-    # 2. lineage row exists with deployed_at populated for ai_model fire_id.
+    # 2. Lineage exists but nothing is marked deployed.
     lineage_rows = on_disk.execute(
         "SELECT fire_id, deployed_at FROM reflector_proposal_lineage "
         "WHERE analyzer = 'topic'"
     ).fetchall()
     assert len(lineage_rows) >= 1
-    ai_lineage = [r for r in lineage_rows if r["deployed_at"] is not None]
-    assert len(ai_lineage) >= 1, (
-        "auto-deploy lane must populate deployed_at on at least one lineage row"
-    )
+    assert all(r["deployed_at"] is None for r in lineage_rows)
 
-    # 3. proposals jsonl exists with matching fire_id and deployed_at populated.
+    # 3. JSONL contains full owner-gated proposals with no deployment marker.
     week_files = list(proposals_dir.glob("*.jsonl"))
-    assert week_files, "auto-deploy must write at least one proposals jsonl line"
+    assert week_files, "analyzer must write at least one proposals jsonl line"
     # Build fire_id → record map
     fire_to_record: dict = {}
     for wf in week_files:
@@ -640,17 +622,10 @@ def test_auto_deploy_path_writes_proposal_updates_weight_marks_deployed(tmp_path
                 continue
             rec = json.loads(line)
             fire_to_record[rec["fire_id"]] = rec
-    deployed_jsonl = [r for r in fire_to_record.values()
-                      if r.get("deployed_at") is not None]
-    assert deployed_jsonl, (
-        "auto-deploy must populate deployed_at on at least one jsonl record"
-    )
-    # The auto-deployed jsonl record must NOT have boss_attention_required.
-    for rec in deployed_jsonl:
-        assert rec["boss_attention_required"] is False, (
-            f"auto-deploy lane must set boss_attention_required=False; "
-            f"got record {rec['fire_id']}"
-        )
+    assert fire_to_record
+    for rec in fire_to_record.values():
+        assert rec["deployed_at"] is None
+        assert rec["boss_attention_required"] is True
         assert rec["analyzer"] == "topic"
         assert rec["proposal_type"] == "adjust_weight"
         assert rec["action"]["target_config"] == "topic_weights"
@@ -750,8 +725,7 @@ def test_proposal_only_path_large_delta_does_not_update_weight(tmp_path):
         assert r["evidence"]["confidence"] in {"HIGH", "MED"}
 
     # Lineage row for the ai_model fire_id has deployed_at NULL.
-    # (Other categories may legitimately auto-deploy; we only assert
-    # the specific proposal-only lane's lineage shape.)
+    # Every category is proposal-only; verify this proposal's lineage shape.
     ai_fire_ids = [r["fire_id"] for r in ai_records]
     placeholders = ",".join("?" for _ in ai_fire_ids)
     lineage = on_disk.execute(
@@ -954,7 +928,7 @@ def test_view_aggregates_picked_up_when_view_present(tmp_path):
         for line in wf.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 records.append(json.loads(line))
-    assert records, "auto-deploy must write at least one proposal"
+    assert records, "analyzer must write at least one proposal"
     ai = next((r for r in records
                if r["action"]["field"] == "ai_model"), None)
     assert ai is not None
@@ -1023,7 +997,7 @@ def test_boss_pinned_column_with_actual_migration(tmp_path):
     assert _is_boss_pinned(on_disk, "other") is False
 
 
-def test_boss_pinned_column_with_actual_db_prevents_auto_deploy(tmp_path):
+def test_boss_pinned_column_keeps_distinct_owner_review_label(tmp_path):
     """Phase 9 Item 8: end-to-end test verifying that a boss_pinned=1
     category takes the proposal-only path even with a small delta.
 
@@ -1031,7 +1005,7 @@ def test_boss_pinned_column_with_actual_db_prevents_auto_deploy(tmp_path):
     Produces a small positive delta on policy_regulate and verifies:
       1. topic_weights.weight is NOT updated
       2. A proposal jsonl entry is written with boss_attention_required=True
-      3. lineage.deployed_at remains NULL (not auto-deployed)
+      3. lineage.deployed_at remains NULL
     """
     db_file = tmp_path / "test.db"
     proposals_dir = tmp_path / "proposals"
@@ -1104,19 +1078,18 @@ def test_boss_pinned_column_with_actual_db_prevents_auto_deploy(tmp_path):
         proposals_base_dir=proposals_dir,
     )
 
-    # Verify policy_regulate has a small delta (would auto-deploy if not pinned)
+    # Verify policy_regulate has a small delta; magnitude is not authority.
     pol = next(u for u in result.updates if u.category_id == "policy_regulate")
     assert abs(pol.applied_delta) < AUTO_DEPLOY_DELTA_THRESHOLD, (
-        f"test fixture must produce a small delta to verify pinned path "
-        f"prevents auto-deploy; got {pol.applied_delta}"
+        f"test fixture must produce a small delta; got {pol.applied_delta}"
     )
 
-    # Weight UNCHANGED (pinned → proposal-only, no auto-deploy)
+    # Weight UNCHANGED (pinned → proposal-only)
     after_w = on_disk.execute(
         "SELECT weight FROM topic_weights WHERE category_id='policy_regulate'"
     ).fetchone()[0]
     assert after_w == before_w, (
-        f"boss_pinned=1 category must not auto-deploy even with small delta; "
+        f"boss_pinned=1 proposal must not execute without owner approval; "
         f"{before_w} → {after_w}"
     )
 

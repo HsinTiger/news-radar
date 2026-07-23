@@ -47,6 +47,7 @@ gh run list --repo HsinTiger/news-radar --limit 20
 gh workflow view engagement-monitor.yml --repo HsinTiger/news-radar
 gh workflow view audience-monitor.yml --repo HsinTiger/news-radar
 gh workflow view operational-sync.yml --repo HsinTiger/news-radar
+gh workflow view learning-review.yml --repo HsinTiger/news-radar
 ```
 
 Healthy means the latest expected run completed and its exact collector output
@@ -101,6 +102,27 @@ current account/API contract. `post_engaged_users` also failed the live canary.
 Do not convert those failures into zero reach or healthy data. The initial
 proposal score uses `likes + 2*comments + 3*shares + 0.25*clicks`; the click
 coefficient is an assumption to recalibrate only after sufficient samples.
+
+## Governed learning review
+
+The weekly learning writer has no publishing credentials or publishing step.
+Its required order is:
+
+```text
+Release lock -> verified pull -> remote lease assert
+-> mirror D1 owner decisions -> apply exact approved topic-weight actions
+-> generate new proposals -> verified Release push -> D1 sync -> unlock
+```
+
+An approved proposal executes only when its JSONL and SQLite lineage identity
+match, the current weight has not drifted, the values remain in `0.3..2.0`,
+the absolute delta is at most `0.30`, and compare-and-swap plus readback pass.
+A rejected proposal is mirrored but never executed. Stale operational sync
+cannot downgrade `approved`, `rejected`, `applied`, or `superseded` status.
+
+If any gate fails, keep the proposal in its current D1 state, preserve the
+Release evidence, and inspect the `learning-review-<run_id>` artifact. Do not
+edit `topic_weights` manually to make the workflow green.
 
 ## Deploy Worker and D1
 

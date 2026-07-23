@@ -1,0 +1,105 @@
+name: "Social Automation · Governed Learning Review"
+
+on:
+  schedule:
+    # Monday 06:15 Asia/Taipei (Sunday 22:15 UTC).
+    - cron: "15 22 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: news-radar-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -q
+
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json \
+            --lease-seconds 3600
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+
+      - name: Revalidate durable lease before learning writes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py assert --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Mirror and execute exact owner-approved decisions
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          python scripts/sync_learning_decisions.py \
+            --lease-file .runtime-state-lease.json \
+            | tee logs/learning-decisions.json
+
+      - name: Observe engagement and create next proposals
+        run: |
+          set -o pipefail
+          python -m src.reflector.topic --no-report-file \
+            | tee logs/learning-review.md
+
+      - name: Persist verified learning state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "learning_review:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Sync applied states and new proposals to Social Ops
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 500
+
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Upload learning evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: learning-review-${{ github.run_id }}
+          path: |
+            logs/learning-decisions.json
+            logs/learning-review.md
+          retention-days: 30
+          if-no-files-found: warn

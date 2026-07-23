@@ -23,6 +23,7 @@ import httpx
 
 PLATFORMS = {"facebook", "instagram", "threads"}
 CONTROL_SUBMISSION_PREFIX = "control_submission:"
+DEFAULT_PROPOSALS_DIR = Path("data/05_reflect/proposals")
 
 
 def _json(value: str | None, fallback: Any) -> Any:
@@ -182,7 +183,33 @@ def build_knowledge(
     ]
 
 
-def build_proposals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _proposal_records(proposals_dir: Path) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    if not proposals_dir.is_dir():
+        return records
+    for path in sorted(proposals_dir.glob("*.jsonl")):
+        for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid proposal JSON at {path}:{line_number}: {exc}") from exc
+            fire_id = row.get("fire_id") if isinstance(row, dict) else None
+            if not isinstance(fire_id, str) or not fire_id:
+                raise ValueError(f"proposal without fire_id at {path}:{line_number}")
+            if fire_id in records:
+                raise ValueError(f"duplicate proposal fire_id in JSONL: {fire_id}")
+            records[fire_id] = row
+    return records
+
+
+def build_proposals(
+    conn: sqlite3.Connection,
+    *,
+    proposals_dir: Path = DEFAULT_PROPOSALS_DIR,
+) -> list[dict[str, Any]]:
+    records = _proposal_records(proposals_dir)
     rows = conn.execute(
         """
         SELECT fire_id,fire_at,proposal_type,target_config,hsin_decision,
@@ -192,21 +219,37 @@ def build_proposals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ).fetchall()
     result = []
     for row in rows:
+        record = records.get(row["fire_id"], {})
+        action = record.get("action") if isinstance(record.get("action"), dict) else {}
+        if row["hsin_decision"] in {"approve", "approved"}:
+            owner_decision = "approved"
+        elif row["hsin_decision"] in {"reject", "rejected"}:
+            owner_decision = "rejected"
+        else:
+            owner_decision = None
         if row["deployed_at"]:
             status = "applied"
-        elif row["hsin_decision"] in {"approved", "rejected"}:
-            status = row["hsin_decision"]
+        elif owner_decision == "approved":
+            status = "approved"
+        elif owner_decision == "rejected":
+            status = "rejected"
+        elif row["hsin_decision"] == "amend":
+            status = "superseded"
         else:
             status = "proposed"
+        target = action.get("target_config") or row["target_config"] or "unknown target"
+        field = action.get("field")
         result.append(
             {
                 "id": row["fire_id"],
                 "kind": row["proposal_type"] or "unknown",
                 "status": status,
-                "summary": f"{row['proposal_type'] or 'proposal'} → {row['target_config'] or 'unknown target'}",
+                "owner_decision": owner_decision,
+                "summary": f"{row['proposal_type'] or 'proposal'} → {target}{'.' + field if field else ''}",
                 "evidence": _json(row["evidence_json"], {}),
-                "proposed_change": {"target_config": row["target_config"]},
+                "proposed_change": action or {"target_config": target},
                 "created_at": row["fire_at"] or datetime.now(timezone.utc).isoformat(),
+                "decision_comment": record.get("hsin_decision_comment"),
                 "decided_at": row["hsin_decision_at"] or None,
                 "applied_at": row["deployed_at"] or None,
             }
@@ -347,6 +390,7 @@ def report_submission_updates(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=Path("data/01_harvest/news_radar.db"))
+    parser.add_argument("--proposals-dir", type=Path, default=DEFAULT_PROPOSALS_DIR)
     parser.add_argument("--api-url", default=os.environ.get("SOCIAL_OPS_API_URL", ""))
     parser.add_argument("--token", default=os.environ.get("SOCIAL_OPS_SERVICE_TOKEN", ""))
     parser.add_argument("--full", action="store_true")
@@ -361,7 +405,7 @@ def main() -> int:
             "posts": build_posts(conn, full=args.full),
             "engagement": build_engagement(conn, full=args.full),
             "knowledge": build_knowledge(conn, full=args.full, limit=args.knowledge_limit),
-            "proposals": build_proposals(conn),
+            "proposals": build_proposals(conn, proposals_dir=args.proposals_dir),
             "health": build_health(conn),
         }
         submission_updates = build_submission_updates(conn)

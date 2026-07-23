@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from scripts.sync_learning_decisions import (
+    DecisionSyncError,
+    process_decisions,
+    validate_local_lease,
+)
+from src.reflector.proposals import read_proposals, write_proposal
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCHEMA = ROOT / "data/01_harvest/schema.sql"
+
+
+def _environment(
+    tmp_path: Path,
+    *,
+    current: float = 1.0,
+    proposed: float = 1.1,
+    fire_id: str = "topic-proposal-0001",
+) -> tuple[Path, Path, str]:
+    db_path = tmp_path / "state.db"
+    proposals_dir = tmp_path / "proposals"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+        conn.execute(
+            """
+            INSERT INTO topic_weights(
+              category_id,display_name,weight,last_updated_at,update_reason,sample_count
+            ) VALUES('ai_model','AI Models',?,'2026-07-01T00:00:00+00:00','seed',10)
+            """,
+            (current,),
+        )
+        conn.commit()
+    write_proposal(
+        {
+            "fire_id": fire_id,
+            "fire_at": "2026-07-23T00:00:00+00:00",
+            "analyzer": "topic",
+            "platform": "all",
+            "proposal_type": "adjust_weight",
+            "evidence": {
+                "sample_ids": [],
+                "metrics": {
+                    "old_weight": current,
+                    "new_weight": proposed,
+                    "applied_delta": proposed - current,
+                    "total_samples": 12,
+                },
+                "confidence": "HIGH",
+            },
+            "action": {
+                "target_config": "topic_weights",
+                "field": "ai_model",
+                "current_value": current,
+                "proposed_value": proposed,
+            },
+            "boss_attention_required": True,
+        },
+        db_path=db_path,
+        base_dir=proposals_dir,
+    )
+    return db_path, proposals_dir, fire_id
+
+
+def _decision(fire_id: str, status: str) -> dict[str, str]:
+    return {
+        "id": fire_id,
+        "status": status,
+        "decision_comment": "owner decision",
+        "decided_at": "2026-07-23T01:02:03+00:00",
+    }
+
+
+def test_approved_topic_weight_is_applied_once_with_readback(tmp_path: Path) -> None:
+    db_path, proposals_dir, fire_id = _environment(tmp_path)
+
+    first = process_decisions(
+        db_path,
+        proposals_dir,
+        [_decision(fire_id, "approved")],
+    )
+    assert first["counts"] == {"applied": 1}
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        weight = conn.execute(
+            "SELECT weight,sample_count,update_reason FROM topic_weights WHERE category_id='ai_model'"
+        ).fetchone()
+        lineage = conn.execute(
+            "SELECT hsin_decision,hsin_decision_at,deployed_at FROM reflector_proposal_lineage"
+        ).fetchone()
+        history_count = conn.execute(
+            "SELECT COUNT(*) FROM topic_weight_history WHERE update_reason='owner_approved_proposal'"
+        ).fetchone()[0]
+    assert weight["weight"] == pytest.approx(1.1)
+    assert weight["sample_count"] == 22
+    assert weight["update_reason"] == f"owner_approved:{fire_id}"
+    assert lineage["hsin_decision"] == "approve"
+    assert lineage["hsin_decision_at"] == "2026-07-23T01:02:03+00:00"
+    assert lineage["deployed_at"]
+    assert history_count == 1
+
+    record = read_proposals(base_dir=proposals_dir)[0]
+    assert record["hsin_decision"] == "approve"
+    assert record["deployed_at"] == lineage["deployed_at"]
+
+    second = process_decisions(
+        db_path,
+        proposals_dir,
+        [_decision(fire_id, "approved")],
+    )
+    assert second["counts"] == {"already_applied": 1}
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM topic_weight_history WHERE update_reason='owner_approved_proposal'"
+        ).fetchone()[0] == 1
+
+
+def test_rejected_proposal_is_mirrored_without_execution(tmp_path: Path) -> None:
+    db_path, proposals_dir, fire_id = _environment(tmp_path)
+    result = process_decisions(
+        db_path,
+        proposals_dir,
+        [_decision(fire_id, "rejected")],
+    )
+    assert result["counts"] == {"rejected_mirrored": 1}
+    with sqlite3.connect(db_path) as conn:
+        weight = conn.execute(
+            "SELECT weight FROM topic_weights WHERE category_id='ai_model'"
+        ).fetchone()[0]
+        decision, deployed_at = conn.execute(
+            "SELECT hsin_decision,deployed_at FROM reflector_proposal_lineage"
+        ).fetchone()
+    assert weight == pytest.approx(1.0)
+    assert decision == "reject"
+    assert deployed_at is None
+    assert read_proposals(base_dir=proposals_dir)[0]["hsin_decision"] == "reject"
+
+
+def test_current_value_drift_fails_before_mirroring_decision(tmp_path: Path) -> None:
+    db_path, proposals_dir, fire_id = _environment(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE topic_weights SET weight=1.05 WHERE category_id='ai_model'")
+        conn.commit()
+
+    with pytest.raises(DecisionSyncError, match="drift gate failed"):
+        process_decisions(
+            db_path,
+            proposals_dir,
+            [_decision(fire_id, "approved")],
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT hsin_decision FROM reflector_proposal_lineage"
+        ).fetchone()[0] is None
+    assert read_proposals(base_dir=proposals_dir)[0]["hsin_decision"] is None
+
+
+def test_two_approved_proposals_for_same_topic_fail_closed(tmp_path: Path) -> None:
+    db_path, proposals_dir, first_id = _environment(tmp_path)
+    second_id = "topic-proposal-0002"
+    first = read_proposals(base_dir=proposals_dir)[0]
+    second = dict(first)
+    second["fire_id"] = second_id
+    second["fire_at"] = "2026-07-23T00:01:00+00:00"
+    second.pop("hsin_decision", None)
+    second.pop("hsin_decision_at", None)
+    second.pop("hsin_decision_comment", None)
+    second.pop("deployed_at", None)
+    write_proposal(second, db_path=db_path, base_dir=proposals_dir)
+
+    with pytest.raises(DecisionSyncError, match="target the same topic"):
+        process_decisions(
+            db_path,
+            proposals_dir,
+            [_decision(first_id, "approved"), _decision(second_id, "approved")],
+        )
+
+
+def test_out_of_range_or_large_delta_is_rejected(tmp_path: Path) -> None:
+    db_path, proposals_dir, fire_id = _environment(
+        tmp_path,
+        current=1.0,
+        proposed=1.31,
+    )
+    with pytest.raises(DecisionSyncError, match="weekly delta"):
+        process_decisions(
+            db_path,
+            proposals_dir,
+            [_decision(fire_id, "approved")],
+        )
+
+
+def test_local_lease_must_be_well_formed_and_unexpired(tmp_path: Path) -> None:
+    lease = tmp_path / "lease.json"
+    now = datetime.now(timezone.utc)
+    lease.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "owner": "github:test",
+                "token": "a" * 32,
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert validate_local_lease(lease, now=now)["owner"] == "github:test"
+
+    expired = json.loads(lease.read_text(encoding="utf-8"))
+    expired["expires_at"] = (now - timedelta(seconds=1)).isoformat()
+    lease.write_text(json.dumps(expired), encoding="utf-8")
+    with pytest.raises(DecisionSyncError, match="expired"):
+        validate_local_lease(lease, now=now)

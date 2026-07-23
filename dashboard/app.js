@@ -45,8 +45,10 @@
   }
   function showError(message) { const box=$("error"); box.hidden=!message; box.textContent=message || ""; }
 
-  async function request(path) {
-    const response = await fetch(`${API}${path}`, { headers:{ Authorization:`Bearer ${token()}` }, cache:"no-store" });
+  async function request(path, options = {}) {
+    const headers = { Authorization:`Bearer ${token()}`, ...(options.headers || {}) };
+    if (options.body) headers["Content-Type"] = "application/json";
+    const response = await fetch(`${API}${path}`, { ...options, headers, cache:"no-store" });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     return data;
@@ -244,9 +246,43 @@
     if(!rows.length){empty(host,"尚無學習提案");return;}
     rows.slice(0,12).forEach(item=>{
       const row=node("div","row"); const main=node("div","row-main");
-      main.append(node("div","row-title",item.summary||item.kind),node("div","row-meta",`${item.kind} · ${when(item.created_at)}`));
-      row.append(main,badge(item.status)); host.appendChild(row);
+      const change=item.proposed_change||{};
+      const changeText=change.field
+        ? `${change.field}: ${text(change.current_value)} → ${text(change.proposed_value)}`
+        : "尚無具體 change payload";
+      main.append(
+        node("div","row-title",item.summary||item.kind),
+        node("div","row-detail",changeText),
+        node("div","row-meta",`${item.kind} · ${when(item.created_at)}`),
+      );
+      const side=node("div","proposal-side"); side.appendChild(badge(item.status));
+      if(item.status==="proposed"){
+        const actions=node("div","proposal-actions");
+        const approve=node("button","proposal-approve","批准下輪套用");
+        const reject=node("button","proposal-reject","拒絕");
+        approve.addEventListener("click",()=>decideProposal(item,"approved",approve,reject));
+        reject.addEventListener("click",()=>decideProposal(item,"rejected",approve,reject));
+        actions.append(approve,reject); side.appendChild(actions);
+      } else if(item.decision_comment) {
+        side.appendChild(node("small","muted",item.decision_comment));
+      }
+      row.append(main,side); host.appendChild(row);
     });
+  }
+
+  async function decideProposal(item,decision,...buttons){
+    const verb=decision==="approved"?"批准並於下一次 learning review 套用":"拒絕";
+    if(!window.confirm(`確定${verb}這筆提案？\n${item.summary||item.id}`)) return;
+    buttons.forEach(button=>button.disabled=true);
+    try{
+      await request(`/api/learning-proposals/${encodeURIComponent(item.id)}/decision`,{
+        method:"POST",body:JSON.stringify({decision}),
+      });
+      showError(""); await load();
+    }catch(error){
+      showError(`提案決策失敗：${error.message}`);
+      buttons.forEach(button=>button.disabled=false);
+    }
   }
 
   function renderEvents(rows) {
