@@ -41,7 +41,7 @@ Must stop:
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
 | Runtime state transported by Release | PROVEN | Revision 10 from engagement run `30014862699`; SQLite `quick_check=ok`; 29,219 news / 239 drafts / 808 publish rows / 384 engagement rows / 717 quality evaluations |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `c028791`: `python -X utf8 -m pytest -q` -> 519 passed |
+| Unit/integration behavior is regression-clean | PROVEN | Latest local gate on merge `4eba2a8`: `python -X utf8 -m pytest -q` -> 521 passed |
 | Worker API v4 is remotely deployed | PROVEN | Version `fe42ae43-e2cf-4988-9ba9-7360d3842b7d`; `/health` reports `2026-07-23.v4`; unauthenticated dashboard/submissions return 401 and legacy proxy returns 410 |
 | D1 operational baseline is current | PROVEN | Migration `0005_content_quality.sql`; 384 engagement snapshots after run `30014862699`; latest quality summaries cover 177/177 recent candidates per platform |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
@@ -119,6 +119,15 @@ Must stop:
 | Missing, malformed, or conflicting receipt state fails closed | PROVEN | Receipt tests cover a missing source row, malformed payload, canonical-ID conflict, idempotent reconcile, and evidence-pending exit behavior |
 | The complete repository remains regression-clean after receipt recovery | PROVEN | `519 passed`; Python compile and `git diff --check` PASS; staged secret-literal scan PASS |
 | A current Mac session can still create a real Substack draft | UNKNOWN | Receipt recovery proves crash semantics only; current cookie, unofficial API compatibility, LaunchAgent installation, and a visible draft ID still require the controlled Mac canary |
+
+## Substack worker-health addendum
+
+| Claim | State | Evidence |
+|---|---|---|
+| The owner dashboard now exposes the Substack draft worker as a first-class health signal | PROVEN | PR #21 / merge `4eba2a8`; Pages run `30023810953`; cache-busted `dashboard/app.js` HTTP 200 contained the localized worker label |
+| Production currently has an unprocessed Substack backlog | PROVEN | Operational sync `30023873370` PASS with Release `quick_check=ok`; D1 readback: `degraded`, submissions=23, pending_remote=23, local_written=0, remote_proven=0, oldest_pending=`2026-06-07T17:06:39.955036+00:00` |
+| Health sync exports metadata only | PROVEN | The D1 row contains counts, timestamps, schema/evidence status, and no owner article body; operational sync sent 7 health rows |
+| The Mac draft worker is currently healthy | BLOCKED | Production evidence is degraded and no current LaunchAgent/cookie/visible-draft canary exists; do not infer health from scripts or unit tests |
 
 Resumable next action: keep all publishing switches paused. On the Mac, update
 the clone/LaunchAgents and run one non-sensitive Substack control submission;
