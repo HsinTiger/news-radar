@@ -104,16 +104,29 @@ def _iter_extra_files(root: Path) -> Iterable[tuple[Path, str]]:
                 yield path, path.relative_to(root).as_posix()
 
 
+def _write_deterministic_member(
+    bundle: zipfile.ZipFile,
+    source: Path,
+    arcname: str,
+) -> None:
+    """Write one ZIP member without host timestamps or platform attributes."""
+    info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o100644 << 16
+    with source.open("rb") as input_file, bundle.open(info, "w") as output_file:
+        shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+
+
 def build_bundle(root: Path, db_path: Path, output: Path) -> dict[str, Any]:
     db_meta = validate_database(db_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
         output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as bundle:
-        bundle.write(db_path, DB_ARCNAME)
+        _write_deterministic_member(bundle, db_path, DB_ARCNAME)
         extra_names: list[str] = []
         for source, arcname in _iter_extra_files(root):
-            bundle.write(source, arcname)
+            _write_deterministic_member(bundle, source, arcname)
             extra_names.append(arcname)
     return {
         "database": db_meta,
@@ -448,7 +461,10 @@ class GitHubReleaseStore:
             temp = Path(tmp)
             bundle_path = temp / "state.zip"
             meta = build_bundle(root, db_path, bundle_path)
-            bundle_name = f"news-radar-state-{meta['database']['sha256'][:16]}.zip"
+            bundle_name = (
+                f"news-radar-state-{meta['database']['sha256'][:12]}-"
+                f"{meta['bundle_sha256'][:12]}.zip"
+            )
             if bundle_name not in assets:
                 self.upload_asset(release, bundle_path, bundle_name, "application/zip")
                 release = self.release(create=False)

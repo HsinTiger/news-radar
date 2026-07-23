@@ -63,6 +63,19 @@ def test_bundle_roundtrip_is_hash_and_sqlite_verified(tmp_path: Path) -> None:
     assert (destination / "data/05_reflect/proposals/2026-W30.jsonl").is_file()
 
 
+def test_bundle_is_byte_deterministic(tmp_path: Path) -> None:
+    root = tmp_path / "source"
+    db = root / DB_ARCNAME
+    _database(db)
+    first = tmp_path / "first.zip"
+    second = tmp_path / "second.zip"
+    first_meta = build_bundle(root, db, first)
+    db.touch()  # host mtime must not change the bundle identity
+    second_meta = build_bundle(root, db, second)
+    assert first_meta["bundle_sha256"] == second_meta["bundle_sha256"]
+    assert first.read_bytes() == second.read_bytes()
+
+
 def test_bundle_rejects_unexpected_paths(tmp_path: Path) -> None:
     bundle = tmp_path / "bad.zip"
     with zipfile.ZipFile(bundle, "w") as archive:
