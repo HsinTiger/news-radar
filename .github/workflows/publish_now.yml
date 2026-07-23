@@ -111,14 +111,23 @@ jobs:
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
         run: |
-          set -o pipefail   # propagate python's exit code through the `| tee` (so success/fail is truthful)
+          set -o pipefail
           mkdir -p logs
+          set +e
           python scripts/publish_now.py \
             --url "${{ inputs.url }}" \
             --title "${{ inputs.title }}" \
             --text "${{ inputs.text }}" \
             --platforms "${{ inputs.platforms }}" \
+            --submission-id "${{ inputs.submission_id }}" \
+            --result-json logs/publish_now_result.json \
             --note "${{ inputs.note }}" 2>&1 | tee logs/publish_now_last.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          RESULT_STATUS=$(python -c "import json; print(json.load(open('logs/publish_now_result.json', encoding='utf-8')).get('status','failed'))" 2>/dev/null || echo failed)
+          echo "result_status=$RESULT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          exit "$EXIT_CODE"
 
       - name: Persist verified runtime state
         if: always()
@@ -153,9 +162,12 @@ jobs:
           SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
           SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
           SUBMISSION_ID: ${{ inputs.submission_id }}
-          PUBLISH_STATUS: ${{ steps.publish.outcome }}
+          RESULT_STATUS: ${{ steps.publish.outputs.result_status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          STATUS="published"
-          [ "$PUBLISH_STATUS" = "success" ] || STATUS="failed"
+          STATUS="${RESULT_STATUS:-failed}"
+          case "$STATUS" in
+            published|partial|quality_held|failed) ;;
+            *) STATUS="failed" ;;
+          esac
           python scripts/control_plane.py status "$SUBMISSION_ID" "$STATUS" --workflow-run-url "$RUN_URL"

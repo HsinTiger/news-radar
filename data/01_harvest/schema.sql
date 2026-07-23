@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS news_items (
     tags            TEXT,                     -- JSON array
     status          TEXT DEFAULT 'fetched',   -- fetched / scored / drafted / published / dropped
     drop_reason     TEXT,
+    substack_written_at TEXT,                  -- local/OneDrive article artifact exists
+    substack_draft_id TEXT,                    -- Substack API returned draft id (never publish id)
+    substack_drafted_at TEXT,                  -- truthful remote draft-created evidence
     -- Phase 8.20：主題分類 + 加權分數
     topic_category     TEXT,                  -- 見 src/topic_taxonomy.py 的 category_id（snake_case）
     topic_confidence   REAL,                  -- 0..1，classifier 回傳的信心

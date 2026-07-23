@@ -134,7 +134,15 @@ def main():
     composed = 0
     for rid, title, wc, url, body in pending:
         print(f"[drain] composing {rid[:12]} …")
-        cmd = [str(PY), "-u", str(COMPOSE), "morning", "--news-id", rid]
+        cmd = [
+            str(PY),
+            "-u",
+            str(COMPOSE),
+            "morning",
+            "--news-id",
+            rid,
+            "--require-substack-draft",
+        ]
         if not args.no_enrich:
             seeds = _yt_seeds(url, body)
             if seeds:

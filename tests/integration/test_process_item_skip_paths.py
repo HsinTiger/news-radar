@@ -265,3 +265,80 @@ def test_unresolved_rewrite_is_held_out_of_automatic_queue(tmp_db, monkeypatch):
             "SELECT status,queue_status FROM drafts WHERE news_id='n_rewrite_unresolved'"
         ).fetchone()
         assert tuple(draft) == ("pending_review", None)
+
+
+def test_threads_only_scope_composes_only_threads_and_queues(tmp_db, monkeypatch):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    calls = _patch_composable_path(
+        monkeypatch,
+        [_bundle("完整分析只需要產出 Threads 版本，並保留具體可驗證的判斷與限制。")],
+    )
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_threads_scope")
+        result = asyncio.run(
+            run_pipeline.process_item(
+                conn,
+                row,
+                compose_only=True,
+                requested_platforms={"threads"},
+            )
+        )
+        assert result == "queued"
+        assert calls[0][1]["platforms"] == ["threads"]
+        platforms = conn.execute(
+            "SELECT platform FROM platform_drafts WHERE draft_id=(SELECT id FROM drafts WHERE news_id=?)",
+            ("n_threads_scope",),
+        ).fetchall()
+        assert [item[0] for item in platforms] == ["threads"]
+
+
+def test_missing_requested_variant_fails_closed_without_draft(tmp_db, monkeypatch):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    fb_only = _bundle("Composer 意外只回傳 Facebook 版本。")
+    fb_only.threads = None
+    calls = _patch_composable_path(monkeypatch, [fb_only])
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_missing_threads")
+        result = asyncio.run(
+            run_pipeline.process_item(
+                conn,
+                row,
+                compose_only=True,
+                requested_platforms={"threads"},
+            )
+        )
+        assert result == "skipped_no_llm"
+        assert calls[0][1]["platforms"] == ["threads"]
+        assert conn.execute(
+            "SELECT COUNT(*) FROM drafts WHERE news_id='n_missing_threads'"
+        ).fetchone()[0] == 0
+
+
+def test_submission_platform_tags_cannot_be_broadened_by_scheduler(tmp_db, monkeypatch):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    calls = _patch_composable_path(
+        monkeypatch,
+        [_bundle("這份內容只允許 Facebook，不應在 Threads cycle 被偷偷擴張。")],
+    )
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_fb_only")
+        conn.execute(
+            "UPDATE news_items SET tags='[\"platform:fb\"]' WHERE id='n_fb_only'"
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM news_items WHERE id='n_fb_only'"
+        ).fetchone()
+        result = asyncio.run(
+            run_pipeline.process_item(
+                conn,
+                row,
+                compose_only=True,
+                requested_platforms={"threads"},
+            )
+        )
+        assert result == "skipped_platform_scope"
+        assert calls == []
+        assert conn.execute(
+            "SELECT COUNT(*) FROM drafts WHERE news_id='n_fb_only'"
+        ).fetchone()[0] == 0

@@ -219,9 +219,98 @@ def test_publish_queue_all_platforms_fail_returns_all_failed_outcome(monkeypatch
     assert outcome == rpq.OUTCOME_ALL_PLATFORMS_FAILED, \
         f"expected all_platforms_failed, got {outcome!r}"
 
-    # 標 failed 讓 queue 前進，不會無限 retry 同一則
+    # 保留 queued，讓下一個同平台 cycle 自動 retry；workflow 本身仍 red。
     qs = conn.execute("SELECT queue_status FROM drafts WHERE id='d3'").fetchone()[0]
-    assert qs == "failed", f"expected queue_status=failed, got {qs}"
+    assert qs == "queued", f"expected queue_status=queued, got {qs}"
+
+
+def test_partial_failure_retries_only_missing_platforms(monkeypatch):
+    """FB 成功、IG/Threads 失敗時不可把整個 draft 假標 published。"""
+    import run_publish_queue as rpq
+
+    conn = _fresh_memory_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    healthy = (
+        "新產品將推論延遲降到原本的一半，官方文件同時揭露功耗限制與部署條件。"
+        "這次更新真正值得追蹤的是量產後的總持有成本。\n\n#AI"
+    )
+    conn.execute(
+        """INSERT INTO news_items
+             (id,feed_name,feed_tier,url,title,published_at,fetched_at,og_image_url)
+           VALUES('n-part','test','primary','https://a.example/part','Partial retry',?,?,?)""",
+        (now, now, "https://example.com/part.jpg"),
+    )
+    conn.execute(
+        """INSERT INTO drafts
+             (id,news_id,persona_version,generated_at,status,confidence_score,
+              queue_status,publish_at)
+           VALUES('d-part','n-part','1.1',?,'auto_approved',1.0,'queued',?)""",
+        (now, now),
+    )
+    for platform in ("facebook", "instagram", "threads"):
+        conn.execute(
+            """INSERT INTO platform_drafts(draft_id,platform,full_text,created_at)
+               VALUES('d-part',?,?,?)""",
+            (platform, healthy, now),
+        )
+    conn.commit()
+
+    async def _prepare(**kwargs):
+        return {"image_url": kwargs.get("original_image_url")}
+
+    async def _fb_ok(*_args, **_kwargs):
+        return {"success": True, "id": "fb-ok"}
+
+    async def _fail(*_args, **_kwargs):
+        return {"success": False, "error": {"code": 500}}
+
+    monkeypatch.setattr(rpq, "prepare_publish_image", _prepare)
+    monkeypatch.setattr(rpq, "publish_to_fb", _fb_ok)
+    monkeypatch.setattr(rpq, "publish_to_ig", _fail)
+    monkeypatch.setattr(rpq, "publish_to_threads", _fail)
+    row = conn.execute(
+        """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
+                  n.og_image_url,n.topic_category
+             FROM drafts d JOIN news_items n ON n.id=d.news_id
+            WHERE d.id='d-part'"""
+    ).fetchone()
+
+    first = asyncio.run(
+        rpq._publish_one(
+            conn,
+            row,
+            platforms={"facebook", "instagram", "threads"},
+        )
+    )
+    assert first == rpq.OUTCOME_PARTIAL_FAILURE
+    assert conn.execute(
+        "SELECT queue_status FROM drafts WHERE id='d-part'"
+    ).fetchone()[0] == "queued"
+    assert rpq.dbmod.pending_publish_platforms(conn, "d-part") == {
+        "instagram", "threads"
+    }
+
+    async def _fb_must_not_repeat(*_args, **_kwargs):
+        raise AssertionError("successful Facebook tuple must be idempotently skipped")
+
+    async def _ok(*_args, **_kwargs):
+        return {"success": True, "id": "retry-ok"}
+
+    monkeypatch.setattr(rpq, "publish_to_fb", _fb_must_not_repeat)
+    monkeypatch.setattr(rpq, "publish_to_ig", _ok)
+    monkeypatch.setattr(rpq, "publish_to_threads", _ok)
+    second = asyncio.run(
+        rpq._publish_one(
+            conn,
+            row,
+            platforms={"facebook", "instagram", "threads"},
+        )
+    )
+    assert second == rpq.OUTCOME_PUBLISHED
+    assert conn.execute(
+        "SELECT queue_status FROM drafts WHERE id='d-part'"
+    ).fetchone()[0] == "published"
+    assert rpq.dbmod.pending_publish_platforms(conn, "d-part") == set()
 
 
 def test_publish_queue_no_platform_drafts_returns_no_platform_outcome():
@@ -262,12 +351,13 @@ def test_publish_queue_no_platform_drafts_returns_no_platform_outcome():
 
 
 def test_outcome_constants_are_distinct():
-    """四個 OUTCOME_* 常數不可撞名，否則 exit code 映射會崩。"""
+    """OUTCOME_* 常數不可撞名，否則 exit code 映射會崩。"""
     import run_publish_queue as rpq
     outcomes = {
         rpq.OUTCOME_PUBLISHED,
         rpq.OUTCOME_QUALITY_BLOCKED,
         rpq.OUTCOME_NO_PLATFORM_DRAFTS,
+        rpq.OUTCOME_PARTIAL_FAILURE,
         rpq.OUTCOME_ALL_PLATFORMS_FAILED,
     }
-    assert len(outcomes) == 4, f"expected 4 distinct outcomes, got {outcomes}"
+    assert len(outcomes) == 5, f"expected 5 distinct outcomes, got {outcomes}"

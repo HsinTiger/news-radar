@@ -97,8 +97,9 @@ also show all of these:
 1. GitHub submission reaches `source_queued`.
 2. Mac log records one source as composed.
 3. A real draft is visible in the Substack draft box.
-4. `news_items.substack_written_at` is non-null in canonical state.
-5. D1 submission status becomes `draft_created` after operational sync.
+4. `news_items.substack_written_at` is non-null for the local/OneDrive artifact.
+5. `substack_draft_id` and `substack_drafted_at` are non-null after Substack accepts the remote draft.
+6. D1 submission status becomes `draft_created` only after operational sync sees that remote evidence.
 
 ## Pause or rollback
 

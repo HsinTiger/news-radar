@@ -135,7 +135,9 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -o pipefail
-          python run_pipeline.py --compose-only 2>&1 | tee logs/pipeline_last.log
+          python run_pipeline.py --compose-only \
+            --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" \
+            2>&1 | tee logs/pipeline_last.log
 
       - name: "🔍 [VERIFY] Compose — independent verifier script"
         if: always()

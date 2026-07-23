@@ -60,13 +60,13 @@ MAX_INTERVAL_SECONDS = 2 * 60 * 60       # 2h lower bound（頻率下限 = 至�
 
 
 # ---------- _publish_one outcome codes（Phase 8.20 追加）----------
-# exit code 映射寫在 main()；任何非 ALL_PLATFORMS_FAILED 都算「pipeline 正常運作」
-# 設計原則：workflow red 只保留給『真的出事』的情境。預期內的操作（queue 空、
-# guard 主動攔、資料缺損已 mark_failed）都 exit 0。
-OUTCOME_PUBLISHED = "published"               # ≥1 平台成功 → exit 0
+# exit code 映射寫在 main()。Partial / all-failed 都讓 workflow red，避免把
+# 平台缺口誤報成功；queue 空、guard 主動攔與已治理的資料缺損仍 exit 0。
+OUTCOME_PUBLISHED = "published"               # 所有實際 platform_drafts 皆有 success evidence → exit 0
 OUTCOME_QUALITY_BLOCKED = "quality_blocked"   # guard 主動拒發 → exit 0（guard 正常工作）
 OUTCOME_EDITOR_KILLED = "editor_killed"       # 總編輯閘殺/退稿 → exit 0（編輯正常工作，非系統壞）
 OUTCOME_NO_PLATFORM_DRAFTS = "no_platform_drafts"  # 資料異常、已 mark_failed → exit 0
+OUTCOME_PARTIAL_FAILURE = "partial_failure"   # 部分平台成功、部分失敗 → 保留 queued + exit 1
 OUTCOME_ALL_PLATFORMS_FAILED = "all_platforms_failed"  # Meta API 三平台全敗 → exit 1
 
 
@@ -87,22 +87,29 @@ def _parse_iso(s: str) -> Optional[datetime]:
         return None
 
 
-def _seconds_since_last_publish(conn) -> Optional[float]:
-    iso = dbmod.last_successful_publish_at(conn)
+def _seconds_since_last_publish(
+    conn,
+    platforms: set[str] | None = None,
+) -> Optional[float]:
+    iso = dbmod.last_successful_publish_at(conn, platforms=platforms)
     dt = _parse_iso(iso)
     if dt is None:
         return None
     return (datetime.now(timezone.utc) - dt).total_seconds()
 
 
-def _decide_cadence(conn, force: bool) -> tuple[bool, str, bool]:
+def _decide_cadence(
+    conn,
+    force: bool,
+    platforms: set[str] | None = None,
+) -> tuple[bool, str, bool]:
     """回傳 (should_publish, reason, allow_fallback)
     - allow_fallback=True 表示走 2h lower bound 路徑（可挑 stale）。
     """
     if force:
         return True, "force=True，略過 cadence 檢查", True
 
-    elapsed = _seconds_since_last_publish(conn)
+    elapsed = _seconds_since_last_publish(conn, platforms=platforms)
     if elapsed is None:
         return True, "無歷史發文紀錄，允許首發", False
 
@@ -116,16 +123,20 @@ def _decide_cadence(conn, force: bool) -> tuple[bool, str, bool]:
 
 # ---------- 選稿 ----------
 
-def _pick_draft(conn, allow_fallback: bool):
+def _pick_draft(conn, allow_fallback: bool, platforms: set[str] | None = None):
     """回傳 (row, mode) 或 (None, "empty")。mode ∈ {"fresh", "fallback"}."""
     # EDITORIAL_MODE 時段路由：晚優先發政治桶、早午優先發市場桶（soft——桶空自動退回最新）。
     from src.slot_routing import editorial_mode, current_slot, bucket_categories
     prefer = bucket_categories(current_slot()) if editorial_mode() else None
-    row = dbmod.pick_freshest_queued(conn, prefer_categories=(prefer or None))
+    row = dbmod.pick_freshest_queued(
+        conn,
+        prefer_categories=(prefer or None),
+        platforms=platforms,
+    )
     if row is not None:
         return row, "fresh"
     if allow_fallback:
-        row = dbmod.pick_fallback_any_approved(conn)
+        row = dbmod.pick_fallback_any_approved(conn, platforms=platforms)
         if row is not None:
             return row, "fallback"
     return None, "empty"
@@ -157,8 +168,8 @@ async def _publish_one(
             if platform_draft["platform"] in platforms
         ]
     if not platform_drafts:
-        print(f"   ⚠️ 找不到 platform_drafts → 無法發布，標 failed")
-        if not dry_run:
+        print(f"   ⚠️ 找不到本次 requested platform_drafts → 無法發布")
+        if not dry_run and platforms is None:
             dbmod.mark_queue_failed(conn, draft_id, reason="no_platform_drafts")
         return OUTCOME_NO_PLATFORM_DRAFTS
 
@@ -374,16 +385,24 @@ async def _publish_one(
     if dry_run:
         return OUTCOME_PUBLISHED  # dry-run 不改 DB、也不記失敗——視為正常走完
 
-    if any_success:
+    pending = dbmod.pending_publish_platforms(conn, draft_id)
+    if not pending:
         dbmod.mark_queue_published(conn, draft_id)
-        stale_count = dbmod.mark_queue_stale_except(conn, draft_id)
-        if stale_count:
-            print(f"   ↳ freshness-first: 把 {stale_count} 筆比它舊的 queued 標 stale")
         return OUTCOME_PUBLISHED
 
-    # 三平台全軍覆沒 → 避免無限輪迴，標 failed（人工可改回 queued 重試）。
-    # 這是少數會讓 workflow red 的情境——代表 Meta API 側真的有問題，應該要收到通知。
-    dbmod.mark_queue_failed(conn, draft_id)
+    if any_success:
+        print(
+            "   ⚠️ [Partial] 已有平台成功，但仍缺 "
+            f"{','.join(sorted(pending))}；draft 保持 queued 等待平台別重試"
+        )
+        return OUTCOME_PARTIAL_FAILURE
+
+    # 本次 requested platforms 全敗：保持 queued，下一個同平台 cycle 可自動重試。
+    # Workflow red 讓 owner 看得到平台/API 問題，但不犧牲其他平台待發狀態。
+    print(
+        "   ❌ [RetryQueued] 本次 requested platforms 全敗；"
+        f"仍缺 {','.join(sorted(pending))}，保留 queued"
+    )
     return OUTCOME_ALL_PLATFORMS_FAILED
 
 
@@ -417,7 +436,11 @@ async def main() -> int:
     conn = dbmod.get_conn()
     try:
         # 1. Cadence 決策
-        should_publish, reason, allow_fallback = _decide_cadence(conn, force=args.force)
+        should_publish, reason, allow_fallback = _decide_cadence(
+            conn,
+            force=args.force,
+            platforms=platforms,
+        )
         if args.no_fallback:
             allow_fallback = False
             reason += "；no-fallback=true，只允許 fresh queued draft"
@@ -429,7 +452,11 @@ async def main() -> int:
             return 0
 
         # 2. 選稿
-        row, mode = _pick_draft(conn, allow_fallback=allow_fallback)
+        row, mode = _pick_draft(
+            conn,
+            allow_fallback=allow_fallback,
+            platforms=platforms,
+        )
         if row is None:
             print(f"[PublishQueue] queue 空（mode={mode}），無稿可發。")
             print(f"[Queue] 狀態分佈: {dbmod.count_queue_status(conn)}")
@@ -449,7 +476,7 @@ async def main() -> int:
         # dry-run 永遠 0。
         if args.dry_run:
             return 0
-        if outcome == OUTCOME_ALL_PLATFORMS_FAILED:
+        if outcome in {OUTCOME_PARTIAL_FAILURE, OUTCOME_ALL_PLATFORMS_FAILED}:
             return 1
         return 0
     finally:

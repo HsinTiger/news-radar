@@ -143,6 +143,17 @@ def init_db() -> None:
         _migrate_add_column_if_missing(
             conn, "news_items", "weighted_score", "REAL"
         )
+        # Substack evidence split: a local article is not proof that the remote
+        # draft inbox accepted it.  Only substack_drafted_at + draft_id prove that.
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_written_at", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_draft_id", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_drafted_at", "TEXT"
+        )
         try:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_topic ON news_items(topic_category)"
@@ -510,13 +521,38 @@ def bump_topic_sample_count(
 def insert_draft(conn: sqlite3.Connection, draft: Draft) -> None:
     conn.execute(
         """
-        INSERT OR REPLACE INTO drafts (
+        INSERT INTO drafts (
             id, news_id, persona_version, title, hook, framework,
             validation, macro_insight, ending_question, hashtags,
             image_url, full_text, confidence_score, score_breakdown,
             llm_provider, llm_model, input_tokens, output_tokens,
             cached_tokens, cost_usd, generated_at, status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            news_id = excluded.news_id,
+            persona_version = excluded.persona_version,
+            title = excluded.title,
+            hook = excluded.hook,
+            framework = excluded.framework,
+            validation = excluded.validation,
+            macro_insight = excluded.macro_insight,
+            ending_question = excluded.ending_question,
+            hashtags = excluded.hashtags,
+            image_url = excluded.image_url,
+            full_text = excluded.full_text,
+            confidence_score = excluded.confidence_score,
+            score_breakdown = excluded.score_breakdown,
+            llm_provider = excluded.llm_provider,
+            llm_model = excluded.llm_model,
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cached_tokens = excluded.cached_tokens,
+            cost_usd = excluded.cost_usd,
+            generated_at = excluded.generated_at,
+            status = CASE
+                WHEN drafts.status = 'published' THEN drafts.status
+                ELSE excluded.status
+            END
         """,
         (
             draft.id,
@@ -852,13 +888,38 @@ def enqueue_draft(
     conn.commit()
 
 
-def pick_freshest_queued(conn: sqlite3.Connection, prefer_categories=None) -> Optional[sqlite3.Row]:
+def _pending_platform_clause(platforms) -> tuple[str, list[str]]:
+    targets = sorted({str(value) for value in (platforms or []) if value})
+    if not targets:
+        return "", []
+    placeholders = ",".join("?" * len(targets))
+    return (
+        f"""
+          AND EXISTS (
+            SELECT 1 FROM platform_drafts pd
+             WHERE pd.draft_id=d.id
+               AND pd.platform IN ({placeholders})
+               AND NOT EXISTS (
+                 SELECT 1 FROM publish_log p
+                  WHERE p.draft_id=d.id AND p.platform=pd.platform AND p.success=1
+               )
+          )
+        """,
+        targets,
+    )
+
+
+def pick_freshest_queued(
+    conn: sqlite3.Connection,
+    prefer_categories=None,
+    platforms=None,
+) -> Optional[sqlite3.Row]:
     """Cloud publisher 的主選稿邏輯：挑 news_items.published_at 最新的那筆 queued draft。
 
     回傳單一 Row（包含 drafts + news_items 所有欄位）或 None。
     只回「可直接發」的——要求 queue_status='queued' 且人類審核已過（approved / auto_approved）。
 
-    Phase 8.18 契約（刻意凍結，不是沒想到 schedule）
+    Phase 8.18 freshness order + platform-aware pending filter
     ------------------------------------------------
     這個 picker 的排序鍵是 `news_items.published_at`，不是 `drafts.publish_at`。
     意思是：被 enqueue 當下寫到 drafts.publish_at 的「預計時間」對發稿順序完全
@@ -874,9 +935,9 @@ def pick_freshest_queued(conn: sqlite3.Connection, prefer_categories=None) -> Op
         2. 改 picker 為 `ORDER BY scheduled_at ASC`（然後新鮮度變排程的輸入）
         3. 同步砍掉 dashboard 的 freshness-first 說明
 
-    所以：如果你正想動這個 ORDER BY，請先確認是不是要一起做上面 3 件事；
-    只改這裡會讓 dashboard 的文案、queue 的 UI 預期、以及 back-prop 的
-    reflector rules 全部跟實際行為對不起來。
+    ``platforms`` 不改 freshness 排序，只排除本次不該發或已成功的平台：
+    Threads cycle 不會拿到 FB-only draft；同一 draft 已成功的 Threads 也不會
+    阻止尚未成功的 Facebook / Instagram 之後重試。
     """
     _base = """
         SELECT d.*,
@@ -892,6 +953,7 @@ def pick_freshest_queued(conn: sqlite3.Connection, prefer_categories=None) -> Op
         WHERE d.queue_status = 'queued'
           AND d.status IN ('approved', 'auto_approved')
     """
+    platform_sql, platform_params = _pending_platform_clause(platforms)
     # EDITORIAL_MODE 時段路由：先試「該 slot 桶」裡最新的 queued draft；桶內沒料就
     # 落到下面原本的 freshness-first（Phase 8.18 契約，預設 prefer_categories=None 完全不變）。
     if prefer_categories:
@@ -899,15 +961,38 @@ def pick_freshest_queued(conn: sqlite3.Connection, prefer_categories=None) -> Op
         if cats:
             ph = ",".join("?" * len(cats))
             row = conn.execute(
-                _base + f" AND n.topic_category IN ({ph}) ORDER BY n.published_at DESC LIMIT 1",
-                tuple(cats),
+                _base + platform_sql
+                + f" AND n.topic_category IN ({ph}) ORDER BY n.published_at DESC LIMIT 1",
+                tuple(platform_params + cats),
             ).fetchone()
             if row is not None:
                 return row
-    return conn.execute(_base + " ORDER BY n.published_at DESC LIMIT 1").fetchone()
+    return conn.execute(
+        _base + platform_sql + " ORDER BY n.published_at DESC LIMIT 1",
+        tuple(platform_params),
+    ).fetchone()
 
 
-def count_queued_in_categories(conn: sqlite3.Connection, categories) -> int:
+def count_queued_pending_for_platforms(conn: sqlite3.Connection, platforms) -> int:
+    """Count queued drafts that still owe at least one requested platform."""
+    platform_sql, platform_params = _pending_platform_clause(platforms)
+    row = conn.execute(
+        """SELECT COUNT(DISTINCT d.id)
+             FROM drafts d
+            WHERE d.queue_status='queued'
+              AND d.status IN ('approved','auto_approved')
+        """
+        + platform_sql,
+        tuple(platform_params),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def count_queued_in_categories(
+    conn: sqlite3.Connection,
+    categories,
+    platforms=None,
+) -> int:
     """數 queued（可直接發）draft 中、topic_category 落在 categories 的筆數。
     給 EDITORIAL_MODE 的時段 buffer 用：某 slot 桶還沒料就該 compose，即使總 buffer 已被
     別桶（Mac 端非 slot-aware 的填充）塞滿。"""
@@ -915,16 +1000,21 @@ def count_queued_in_categories(conn: sqlite3.Connection, categories) -> int:
     if not cats:
         return 0
     ph = ",".join("?" * len(cats))
+    platform_sql, platform_params = _pending_platform_clause(platforms)
     row = conn.execute(
         f"""SELECT COUNT(*) FROM drafts d JOIN news_items n ON d.news_id = n.id
             WHERE d.queue_status = 'queued' AND d.status IN ('approved','auto_approved')
+              {platform_sql}
               AND n.topic_category IN ({ph})""",
-        tuple(cats),
+        tuple(platform_params + cats),
     ).fetchone()
     return int(row[0]) if row else 0
 
 
-def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+def pick_fallback_any_approved(
+    conn: sqlite3.Connection,
+    platforms=None,
+) -> Optional[sqlite3.Row]:
     """2h lower bound degradation：過了兩小時還沒發，queue 又空，
     放寬條件挑 status='approved' 的（含 queue_status='stale' 的）硬發一則，
     避免頻道沉默超過 2h。
@@ -934,6 +1024,7 @@ def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row
     `pick_freshest_queued` 維持純 published_at DESC，不動（Phase 8.18 契約）——
     只有在『queue 空、走 fallback』的情境才讓 topic weight 發聲。
     """
+    platform_sql, platform_params = _pending_platform_clause(platforms)
     return conn.execute(
         """
         SELECT d.*,
@@ -949,10 +1040,12 @@ def pick_fallback_any_approved(conn: sqlite3.Connection) -> Optional[sqlite3.Row
         JOIN news_items n ON d.news_id = n.id
         WHERE d.status IN ('approved', 'auto_approved')
           AND (d.queue_status IS NULL OR d.queue_status IN ('queued', 'stale'))
+        """ + platform_sql + """
         ORDER BY COALESCE(n.weighted_score, 0) DESC,
                  n.published_at DESC
         LIMIT 1
-        """
+        """,
+        tuple(platform_params),
     ).fetchone()
 
 
@@ -1012,6 +1105,28 @@ def has_successful_publish(
         (draft_id, platform),
     ).fetchone()
     return row is not None
+
+
+def pending_publish_platforms(
+    conn: sqlite3.Connection,
+    draft_id: str,
+) -> set[str]:
+    """Return intended platform variants that still lack success evidence."""
+    rows = conn.execute(
+        """
+        SELECT pd.platform
+          FROM platform_drafts pd
+         WHERE pd.draft_id=?
+           AND NOT EXISTS (
+             SELECT 1 FROM publish_log p
+              WHERE p.draft_id=pd.draft_id
+                AND p.platform=pd.platform
+                AND p.success=1
+           )
+        """,
+        (draft_id,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def mark_queue_published(conn: sqlite3.Connection, draft_id: str) -> None:
@@ -1096,17 +1211,26 @@ def mark_queue_stale_except(
     return cur.rowcount or 0
 
 
-def last_successful_publish_at(conn: sqlite3.Connection) -> Optional[str]:
-    """查 publish_log 最後一筆 success 的 posted_at（ISO8601）。
-    Cadence 計算用：若距今 < 1h 跳過；若距今 > 2h 就算 queue 空也要發。"""
+def last_successful_publish_at(
+    conn: sqlite3.Connection,
+    platforms=None,
+) -> Optional[str]:
+    """查指定平台最後一筆 success 的 posted_at（未指定則查全域）。
+
+    Cadence 必須跟 scheduler 的 platform scope 一致，避免剛發 FB 就錯誤
+    壓掉已到期的 Threads cycle。
+    """
+    targets = sorted({str(value) for value in (platforms or []) if value})
+    platform_sql = ""
+    params: tuple[str, ...] = ()
+    if targets:
+        platform_sql = f" AND platform IN ({','.join('?' * len(targets))})"
+        params = tuple(targets)
     row = conn.execute(
-        """
-        SELECT posted_at
-          FROM publish_log
-         WHERE success = 1
-         ORDER BY posted_at DESC
-         LIMIT 1
-        """
+        "SELECT posted_at FROM publish_log WHERE success=1"
+        + platform_sql
+        + " ORDER BY posted_at DESC LIMIT 1",
+        params,
     ).fetchone()
     return row["posted_at"] if row else None
 

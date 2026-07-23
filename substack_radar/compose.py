@@ -217,6 +217,12 @@ def _release_lock(lock: Path) -> None:
 
 
 def _mark_used(news_id: str, limit: int = 300) -> None:
+    """Reserve a source in the local selection history.
+
+    This is deliberately not remote-draft evidence.  Selection may happen
+    before composition, so writing ``substack_written_at`` here created false
+    completion claims when the LLM or Substack API failed later.
+    """
     lock = _lock_path()
     if not _acquire_lock(lock):
         print(f"[_mark_used] ⚠️ 無法取得檔案鎖（30s timeout），跳過標記 {news_id}")
@@ -231,26 +237,50 @@ def _mark_used(news_id: str, limit: int = 300) -> None:
         SUBSTACK_USED_PATH.write_text(
             json.dumps({"used": used}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        # DB 單一真相：標 substack_written_at（欄不存在就先建，idempotent）。
-        try:
-            from datetime import datetime, timezone
-            conn = sqlite3.connect(str(NEWS_DB_PATH))
-            try:
-                try:
-                    conn.execute("ALTER TABLE news_items ADD COLUMN substack_written_at TEXT")
-                except Exception:
-                    pass  # 欄已存在
-                conn.execute(
-                    "UPDATE news_items SET substack_written_at=? WHERE id=?",
-                    (datetime.now(timezone.utc).isoformat(), news_id),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        except Exception as e:
-            print(f"[_mark_used] ⚠️ DB 標記略過：{e}")
     finally:
         _release_lock(lock)
+
+
+def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> None:
+    """Persist local-written and remote-draft evidence as distinct facts."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn = sqlite3.connect(str(NEWS_DB_PATH))
+        try:
+            for column in (
+                "substack_written_at TEXT",
+                "substack_draft_id TEXT",
+                "substack_drafted_at TEXT",
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute(
+                """
+                UPDATE news_items
+                   SET substack_written_at=COALESCE(substack_written_at,?)
+                 WHERE id=?
+                """,
+                (now, news_id),
+            )
+            if draft_id is not None:
+                conn.execute(
+                    """
+                    UPDATE news_items
+                       SET substack_draft_id=?,
+                           substack_drafted_at=COALESCE(substack_drafted_at,?)
+                     WHERE id=?
+                    """,
+                    (str(draft_id), now, news_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"[_record_substack_evidence] ⚠️ DB evidence write failed: {exc}")
 
 
 def _signal_density(text: str) -> float:
@@ -936,10 +966,10 @@ def push_to_substack_draft(
     title: str,
     subtitle: str,
     cover_path: Optional[Path] = None,
-) -> bool:
-    """Create a Substack draft via python-substack. Returns True iff draft created.
+) -> Optional[int]:
+    """Create a Substack draft and return its id; never publishes it.
 
-    Skipped (returns False) when:
+    Skipped (returns ``None``) when:
       - SUBSTACK_AUTO_DRAFT is not "1"
       - python-substack not installed
       - Required env vars not set
@@ -959,7 +989,7 @@ def push_to_substack_draft(
             "[Substack] ℹ️ SUBSTACK_AUTO_DRAFT != '1'; skipping draft push. "
             "Open Article_Substack.md and paste manually."
         )
-        return False
+        return None
 
     cookies = os.getenv("SUBSTACK_COOKIES_STRING")
     pub_url = os.getenv("SUBSTACK_PUBLICATION_URL")
@@ -968,7 +998,7 @@ def push_to_substack_draft(
             "[Substack] ⚠️ SUBSTACK_AUTO_DRAFT=1 but SUBSTACK_COOKIES_STRING or "
             "SUBSTACK_PUBLICATION_URL missing; skipping. Article on disk."
         )
-        return False
+        return None
 
     try:
         from substack import Api  # type: ignore
@@ -978,7 +1008,7 @@ def push_to_substack_draft(
             f"[Substack] ⚠️ python-substack not installed ({exc}); "
             "run `pip install python-substack`. Skipping draft push."
         )
-        return False
+        return None
 
     audience = os.getenv("SUBSTACK_AUDIENCE", "everyone")
     body_md = article_md_path.read_text(encoding="utf-8")
@@ -1014,6 +1044,9 @@ def push_to_substack_draft(
 
         draft = api.post_draft(post.get_draft())
         draft_id = draft.get("id") if isinstance(draft, dict) else None
+        if draft_id is None:
+            print("[Substack] ❌ post_draft returned no draft id; remote creation is unproven")
+            return None
         print(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
             f"audience={audience} cover={'yes' if cover_path else 'no'}"
@@ -1373,6 +1406,23 @@ async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
 
+    if getattr(args, "require_substack_draft", False):
+        missing = []
+        if args.no_draft:
+            missing.append("--no-draft conflicts with --require-substack-draft")
+        if os.getenv("SUBSTACK_AUTO_DRAFT") != "1":
+            missing.append("SUBSTACK_AUTO_DRAFT=1")
+        if not os.getenv("SUBSTACK_COOKIES_STRING"):
+            missing.append("SUBSTACK_COOKIES_STRING")
+        if not os.getenv("SUBSTACK_PUBLICATION_URL"):
+            missing.append("SUBSTACK_PUBLICATION_URL")
+        if missing:
+            print(
+                "[Substack] ❌ remote draft is required but preflight failed: "
+                + ", ".join(missing)
+            )
+            return 5
+
     # Import notify lazily so missing src/notify.py (unlikely) doesn't break the
     # pipeline. Wrap every notify call in try/except inside the helper itself.
     try:
@@ -1683,6 +1733,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
             subtitle=draft.subtitle,
             cover_path=cover_path,
         )
+    source_id = source.get("id")
+    if source_id:
+        _mark_used(source_id)
+        _record_substack_evidence(source_id, draft_id=draft_id)
+    if getattr(args, "require_substack_draft", False) and draft_id is None:
+        print("[Substack] ❌ local article exists but remote draft creation is unproven")
+        return 5
 
     # 8) Update metaphor history — best-effort; draft is already pushed, so a
     # housekeeping failure must not flip the run to exit 1.
@@ -1768,6 +1825,14 @@ def parse_args() -> argparse.Namespace:
         "--no-draft",
         action="store_true",
         help="Skip python-substack draft push (still writes files to disk + OneDrive)",
+    )
+    p.add_argument(
+        "--require-substack-draft",
+        action="store_true",
+        help=(
+            "Fail unless Substack returns a remote draft id. Used by governed "
+            "control-plane submissions; never publishes the draft."
+        ),
     )
     p.add_argument(
         "--harvest",

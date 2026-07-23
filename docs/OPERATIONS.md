@@ -202,8 +202,10 @@ They do not read or push a `state` branch.
 2. Submit one small, non-sensitive source to Substack with immediate mode.
 3. Confirm `source_queued` and the workflow URL.
 4. Confirm Mac composition log and a real Substack draft.
-5. Confirm `substack_written_at` in Release state.
-6. Run operational sync and confirm D1 `draft_created`.
+5. Confirm local output via `substack_written_at`, then confirm remote evidence via
+   `substack_draft_id` and `substack_drafted_at` in Release state.
+6. Run operational sync and confirm D1 `draft_created`; local output alone must
+   leave the submission at `source_queued`.
 
 ### Meta
 

@@ -89,6 +89,7 @@ jobs:
           python scripts/submit_source.py \
             "$FLAG" "${{ inputs.content }}" \
             --platforms "${{ inputs.platforms }}" \
+            --submission-id "${{ inputs.submission_id }}" \
             --note "${{ inputs.note }}" 2>&1
 
       - name: Persist verified runtime state

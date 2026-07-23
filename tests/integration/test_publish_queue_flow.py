@@ -17,6 +17,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+import run_publish_queue
 from src import db as dbmod
 
 
@@ -96,6 +97,77 @@ def test_pick_freshest_queued_prefers_newest_news(tmp_db):
         row = dbmod.pick_freshest_queued(conn)
         assert row is not None
         assert row["id"] == "d_new"  # 最新 news 對應的 draft
+
+
+def test_platform_aware_picker_skips_other_or_already_published_platforms(tmp_db):
+    with dbmod.get_conn() as conn:
+        _seed_news(conn, "older_threads", _now_minus_hours(2))
+        _seed_news(conn, "newer_fb", _now_minus_hours(1))
+        _seed_approved_draft(conn, "d_threads", "older_threads")
+        _seed_approved_draft(conn, "d_fb", "newer_fb")
+        for draft_id in ("d_threads", "d_fb"):
+            dbmod.enqueue_draft(conn, draft_id)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO platform_drafts(draft_id,platform,full_text,created_at)
+               VALUES('d_threads','threads','threads body',?)""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO platform_drafts(draft_id,platform,full_text,created_at)
+               VALUES('d_fb','facebook','facebook body',?)""",
+            (now,),
+        )
+        conn.commit()
+
+        row = dbmod.pick_freshest_queued(conn, platforms={"threads"})
+        assert row is not None and row["id"] == "d_threads"
+        conn.execute(
+            """INSERT INTO publish_log(
+                 draft_id,platform,platform_post_id,posted_at,success
+               ) VALUES('d_threads','threads','thread-ok',?,1)""",
+            (now,),
+        )
+        conn.commit()
+        assert dbmod.pick_freshest_queued(
+            conn, platforms={"threads"}
+        ) is None
+        assert dbmod.pick_freshest_queued(
+            conn, platforms={"facebook"}
+        )["id"] == "d_fb"
+        assert dbmod.count_queued_pending_for_platforms(
+            conn, {"threads"}
+        ) == 0
+        assert dbmod.count_queued_pending_for_platforms(
+            conn, {"facebook"}
+        ) == 1
+
+
+def test_cadence_is_scoped_to_requested_platforms(tmp_db):
+    with dbmod.get_conn() as conn:
+        _seed_news(conn, "cadence", _now_minus_hours(4))
+        _seed_approved_draft(conn, "d_cadence", "cadence")
+        now = datetime.now(timezone.utc)
+        conn.execute(
+            """INSERT INTO publish_log(draft_id,platform,platform_post_id,posted_at,success)
+               VALUES('d_cadence','facebook','fb-new',?,1)""",
+            ((now - timedelta(minutes=10)).isoformat(),),
+        )
+        conn.execute(
+            """INSERT INTO publish_log(draft_id,platform,platform_post_id,posted_at,success)
+               VALUES('d_cadence','threads','th-old',?,1)""",
+            ((now - timedelta(hours=3)).isoformat(),),
+        )
+        conn.commit()
+
+        fb = run_publish_queue._decide_cadence(
+            conn, force=False, platforms={"facebook"}
+        )
+        threads = run_publish_queue._decide_cadence(
+            conn, force=False, platforms={"threads"}
+        )
+        assert fb[0] is False
+        assert threads[0] is True and threads[2] is True
 
 
 def test_mark_queue_published_transitions_status(tmp_db):
