@@ -241,18 +241,38 @@
     });
   }
 
+  function proposalChangeText(item) {
+    const change=item.proposed_change||{};
+    return change.field
+      ? `${change.field}: ${text(change.current_value)} → ${text(change.proposed_value)}`
+      : "尚無具體 change payload";
+  }
+
+  function proposalEvidenceText(item) {
+    const evidence=item.evidence||{}; const metrics=evidence.metrics||{};
+    const parts=[`信心 ${text(evidence.confidence,"UNKNOWN")}`];
+    if(metrics.total_samples!==undefined) parts.push(`學習樣本 ${fmt(metrics.total_samples)}`);
+    if(metrics.raw_delta!==undefined) parts.push(`raw Δ ${n(metrics.raw_delta).toFixed(3)}`);
+    const platformLikes=[
+      ["FB",metrics.view_fb_avg_likes_30d],
+      ["IG",metrics.view_ig_avg_likes_30d],
+      ["TH",metrics.view_th_avg_likes_30d],
+    ];
+    if(platformLikes.some(([,value])=>value!==undefined&&value!==null)){
+      parts.push(`30d avg likes ${platformLikes.map(([label,value])=>`${label} ${text(value)}`).join(" / ")}`);
+    }
+    return parts.join(" · ");
+  }
+
   function renderProposals(rows) {
     const host=$("proposal-list"); clear(host);
     if(!rows.length){empty(host,"尚無學習提案");return;}
     rows.slice(0,12).forEach(item=>{
       const row=node("div","row"); const main=node("div","row-main");
-      const change=item.proposed_change||{};
-      const changeText=change.field
-        ? `${change.field}: ${text(change.current_value)} → ${text(change.proposed_value)}`
-        : "尚無具體 change payload";
       main.append(
         node("div","row-title",item.summary||item.kind),
-        node("div","row-detail",changeText),
+        node("div","row-detail",proposalChangeText(item)),
+        node("div","row-detail",proposalEvidenceText(item)),
         node("div","row-meta",`${item.kind} · ${when(item.created_at)}`),
       );
       const side=node("div","proposal-side"); side.appendChild(badge(item.status));
@@ -272,7 +292,9 @@
 
   async function decideProposal(item,decision,...buttons){
     const verb=decision==="approved"?"批准並於下一次 learning review 套用":"拒絕";
-    if(!window.confirm(`確定${verb}這筆提案？\n${item.summary||item.id}`)) return;
+    if(!window.confirm(
+      `確定${verb}這筆提案？\n${item.summary||item.id}\n${proposalChangeText(item)}\n${proposalEvidenceText(item)}`
+    )) return;
     buttons.forEach(button=>button.disabled=true);
     try{
       await request(`/api/learning-proposals/${encodeURIComponent(item.id)}/decision`,{
