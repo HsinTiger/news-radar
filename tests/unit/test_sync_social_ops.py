@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.sync_social_ops import (
@@ -109,6 +110,49 @@ def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None
     assert status[("instagram", "signal_coverage")] == "unknown"
     assert status[("threads", "signal_coverage")] == "healthy"
     assert not any(row["metric"] == "audience" for row in rows)
+
+
+def test_substack_worker_health_is_degraded_for_stale_pending_source() -> None:
+    conn = _db()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "sub-stale", "text", "manual://stale", "Owner source", "ai_application",
+            "fetched", "2020-01-01T00:00:00Z", 100, 1.0, "user_substack",
+            '["substack_source"]', None, None, None,
+        ),
+    )
+    row = next(
+        item
+        for item in build_health(conn)
+        if item["platform"] == "system"
+        and item["metric"] == "substack_draft_worker"
+    )
+    assert row["status"] == "degraded"
+    assert "pending_remote=1" in row["detail"]
+    assert "remote_proven=0" in row["detail"]
+
+
+def test_substack_worker_health_is_healthy_only_with_recent_remote_evidence() -> None:
+    conn = _db()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "sub-recent", "text", "manual://recent", "Owner source", "ai_application",
+            "fetched", now, 100, 1.0, "user_substack", '["substack_source"]',
+            now, "draft-123", now,
+        ),
+    )
+    row = next(
+        item
+        for item in build_health(conn)
+        if item["platform"] == "system"
+        and item["metric"] == "substack_draft_worker"
+    )
+    assert row["status"] == "healthy"
+    assert "pending_remote=0" in row["detail"]
+    assert "remote_proven=1" in row["detail"]
 
 
 def test_engagement_sync_degrades_legacy_schema_without_clicks_to_zero() -> None:
