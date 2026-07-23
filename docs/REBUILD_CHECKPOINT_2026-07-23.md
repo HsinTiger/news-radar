@@ -39,16 +39,18 @@ Must stop:
 | Claim | State | Evidence |
 |---|---|---|
 | Old full-pipeline and Reels cron stopped | PROVEN | GitHub workflow readback reported `disabled_manually` before reconstruction |
-| Runtime state transported by Release | PROVEN | Revision 2 bundle readback; DB SHA `2ee7605426f37bdaf04094f903d4c8fbb2ac2de739132c2e7537ea1bc3c9829a` |
+| Runtime state transported by Release | PROVEN | Revision 6; producer run `30006637331`; SQLite `quick_check=ok`; 29,219 news items / 239 drafts / 808 publish rows / 381 engagement rows |
 | Cross-writer lease works | PROVEN | Remote lock acquisition/readback/release smoke on `runtime-state-v1` |
-| Unit behavior is regression-clean | PROVEN | `python -X utf8 -m pytest tests/unit -q` -> 446 passed |
+| Unit/integration behavior is regression-clean | PROVEN | `python -X utf8 -m pytest -q` -> 464 passed |
 | Worker API v2 is remotely reachable | PROVEN | health/auth/create/idempotency/service-sync/canary-lock remote smoke |
 | D1 legacy baseline imported | PROVEN | 807 posts, 381 engagement snapshots, 29,219 knowledge metadata, 1 proposal |
 | Meta publishing is paused | PROVEN | GitHub variable and Worker dashboard both report `paused` |
 | Substack never auto-publishes | PROVEN | Worker returns `substack_auto_publish=false`; UI and policy are draft-only |
-| Updated Mac scripts execute on macOS | UNKNOWN | Windows host has no Bash/WSL; scripts require first Mac smoke |
+| Audience snapshots exist for all platforms | PROVEN | D1 readback: Facebook 28, Instagram 9, Threads 3,748; captured 2026-07-23T11:52:58Z |
+| Updated Mac scripts and both LaunchAgents execute on macOS | UNKNOWN | Windows host cannot prove launchd or Substack session behavior; first Mac smoke remains required |
 | A fresh Substack submission reaches a real draft | UNKNOWN | Requires updated Mac launchd scripts and a controlled submission canary |
-| Facebook insights metrics are healthy | UNKNOWN | Collector now probes metrics independently; requires cloud engagement run |
+| Facebook `post_clicks` is accepted | PROVEN | Engagement canary run `30006637331`; `post_clicks` produced no contract error |
+| Facebook impressions / engaged-users metrics are usable | BLOCKED | Live canaries rejected `post_impressions`, `post_impressions_unique`, and `post_engaged_users`; they are excluded from current truth |
 | Instagram low values are real audience response | UNKNOWN | API contract may be healthy, but signal coverage requires canary evidence |
 | Live Meta publish works without duplicates | BLOCKED | Intentionally held until owner canary approval |
 

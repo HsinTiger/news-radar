@@ -142,16 +142,30 @@
       const lastPosted = rows.map(row=>row.last_posted_at).filter(Boolean).sort().at(-1);
       const eng = engagement.find(row=>row.platform===platform) || {};
       const aud = audience.find(row=>row.platform===platform) || {};
-      const h = health.find(row=>row.platform===platform && row.metric==="engagement_api");
+      const h = health.find(row=>row.platform===platform && row.metric==="latest_post_canary") ||
+        health.find(row=>row.platform===platform && row.metric==="engagement_api");
       const card = node("article", "platform"); card.style.setProperty("--platform-color", meta.color);
       const head=node("div","platform-head"); const name=node("div","platform-name");
       name.append(node("span","platform-icon",meta.short),node("span","",meta.label));
       head.append(name,node("span","metric-state",h ? `${h.status.toUpperCase()} data` : "UNKNOWN data"));
       const metrics=node("div","platform-main");
+      const nativeMetrics = platform === "facebook"
+        ? [
+          metric("平均 clicks",eng.avg_clicks===null||eng.avg_clicks===undefined?"UNKNOWN":fmt(eng.avg_clicks),`${fmt(eng.posts)} posts sampled`),
+          metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Facebook native"),
+        ]
+        : platform === "instagram"
+          ? [
+            metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
+            metric("平均 reach",eng.avg_reach===null||eng.avg_reach===undefined?"UNKNOWN":fmt(eng.avg_reach),"Instagram native"),
+          ]
+          : [
+            metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
+            metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Threads native"),
+          ];
       metrics.append(
         metric("已發布",fmt(published),`${fmt(total)} total records`),
-        metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
-        metric("平均 reach",eng.avg_reach===null||eng.avg_reach===undefined?"UNKNOWN":fmt(eng.avg_reach),"platform native"),
+        ...nativeMetrics,
         metric("Followers",aud.followers===null||aud.followers===undefined?"UNKNOWN":fmt(aud.followers),aud.followers_delta_7d===null||aud.followers_delta_7d===undefined?"no 7d evidence":`${aud.followers_delta_7d>=0?"+":""}${fmt(aud.followers_delta_7d)} / 7d`)
       );
       const foot=node("div","platform-foot"); foot.append(node("span","",`最後發布 ${when(lastPosted)}`),node("span","",`資料 ${when(eng.last_captured_at)}`));

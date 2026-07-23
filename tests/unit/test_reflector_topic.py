@@ -53,12 +53,12 @@ from src.reflector.topic import (  # noqa: E402
 # ======================================================================
 
 def test_engagement_score_facebook():
-    # Hsin 拍板：likes + 2*comments + 3*shares + 0.01*reach
+    # Current live contract: likes + 2*comments + 3*shares + 0.25*clicks
     row = EngagementRow(
         draft_id="d", news_id="n", topic_category="ai_model", platform="facebook",
-        likes=100, comments=20, shares=5, reach=1000,
+        likes=100, comments=20, shares=5, reach=1000, clicks=40,
     )
-    expected = 100 + 2 * 20 + 3 * 5 + 0.01 * 1000  # = 165
+    expected = 100 + 2 * 20 + 3 * 5 + 0.25 * 40  # = 165
     assert compute_engagement_score(row) == expected
 
 

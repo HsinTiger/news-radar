@@ -2,9 +2,9 @@ name: 📝 Substack Submit (手動提交 → Substack 草稿)
 run-name: "📝 Substack: ${{ inputs.note || inputs.content }}"
 
 # Substack counterpart to submit-source.yml (which is Meta fb/ig/threads).
-# This writes the submitted source into the state-branch DB tagged
+# This writes the submitted source into the canonical Release-state DB tagged
 # `substack_source` (feed_name=user_substack). The Mac's hourly sync pulls the
-# state DB; then the local launchd job composes the draft token-free via
+# Release state; then the local launchd job composes the draft via
 # substack_radar/compose.py (Claude/Gemini CLI). Drafts land on the Mac +
 # OneDrive + Substack — composition is NOT done in the cloud (no CLI there).
 

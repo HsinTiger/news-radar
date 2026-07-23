@@ -4,7 +4,7 @@ Hsin-pinned engagement formulas (Phase 8.20 design, verbatim — these are
 NOT a parameter, they encode Hsin's product judgment about how to weight
 attention signals across platforms):
 
-  FB:      likes + 2*comments + 3*shares + 0.01*reach
+  FB:      likes + 2*comments + 3*shares + 0.25*clicks
   IG:      likes + 2*comments + 3*shares + 1.5*saves + 0.01*reach
   Threads: likes + 2*replies  + 3*reposts + 1.5*quotes + 0.005*views
 
@@ -22,7 +22,7 @@ import engagement_weight`` without paying that cost.
 Per-row column-name conventions match
 ``v_post_engagement_aggregated`` (Phase 9 Item 1):
 
-  fb_likes / fb_comments / fb_shares / fb_reach
+  fb_likes / fb_comments / fb_shares / fb_clicks
   ig_likes / ig_comments / ig_shares / ig_saves / ig_reach
   th_likes / th_replies  / th_reposts / th_quotes / th_views
 
@@ -75,7 +75,7 @@ def engagement_weight(row: Mapping[str, Any], platform: str) -> float:
             _g(row, "fb_likes")
             + 2.0 * _g(row, "fb_comments")
             + 3.0 * _g(row, "fb_shares")
-            + 0.01 * _g(row, "fb_reach")
+            + 0.25 * _g(row, "fb_clicks")
         )
     if p == "instagram" or p == "ig":
         return (
@@ -108,7 +108,7 @@ def has_any_engagement(row: Mapping[str, Any], platform: str) -> bool:
     """
     p = platform.lower()
     if p in ("facebook", "fb"):
-        keys = ("fb_likes", "fb_comments", "fb_shares", "fb_reach")
+        keys = ("fb_likes", "fb_comments", "fb_shares", "fb_clicks")
     elif p in ("instagram", "ig"):
         keys = ("ig_likes", "ig_comments", "ig_shares", "ig_saves", "ig_reach")
     elif p in ("threads", "th"):

@@ -60,9 +60,9 @@ _VIEWS_PATH = _ROOT / "data" / "01_harvest" / "views.sql"
 # ======================================================================
 
 def test_engagement_formula_facebook():
-    """FB: likes + 2*comments + 3*shares + 0.01*reach."""
-    row = {"fb_likes": 10, "fb_comments": 4, "fb_shares": 2, "fb_reach": 1000}
-    expected = 10 + 2 * 4 + 3 * 2 + 0.01 * 1000  # 10 + 8 + 6 + 10 = 34
+    """FB: likes + 2*comments + 3*shares + 0.25*clicks."""
+    row = {"fb_likes": 10, "fb_comments": 4, "fb_shares": 2, "fb_clicks": 40}
+    expected = 10 + 2 * 4 + 3 * 2 + 0.25 * 40  # 10 + 8 + 6 + 10 = 34
     assert engagement_weight(row, "facebook") == pytest.approx(expected)
 
 
@@ -146,7 +146,7 @@ def _row(score: float, platform: str, weight_target: float, idx: int) -> DraftEn
     if platform == "fb":
         base.update({
             "fb_likes": weight_target, "fb_comments": 0, "fb_shares": 0,
-            "fb_reach": 0,
+            "fb_reach": 0, "fb_clicks": 0,
         })
     elif platform == "ig":
         base.update({

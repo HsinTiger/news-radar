@@ -88,6 +88,7 @@ class EngagementSample:
     th_reposts: Optional[int]
     th_quotes: Optional[int]
     th_views: Optional[int]
+    fb_clicks: Optional[int] = None
     # Draft content (from platform_drafts or drafts table)
     hook: str = ""
     char_count: int = 0
@@ -174,7 +175,7 @@ def engagement_weight(row: Any, platform: str) -> float:
     p = platform.lower()
     if p == "facebook" or p == "fb":
         return (_g(row, "fb_likes") + 2.0 * _g(row, "fb_comments")
-                + 3.0 * _g(row, "fb_shares") + 0.01 * _g(row, "fb_reach"))
+                + 3.0 * _g(row, "fb_shares") + 0.25 * _g(row, "fb_clicks"))
     if p == "instagram" or p == "ig":
         return (_g(row, "ig_likes") + 2.0 * _g(row, "ig_comments")
                 + 3.0 * _g(row, "ig_shares") + 1.5 * _g(row, "ig_saves")
@@ -189,7 +190,7 @@ def engagement_weight(row: Any, platform: str) -> float:
 def has_platform_engagement(row: Any, platform: str) -> bool:
     """True if at least one engagement column for this platform is non-NULL."""
     if platform in ("facebook", "fb"):
-        keys = ("fb_likes", "fb_comments", "fb_shares", "fb_reach")
+        keys = ("fb_likes", "fb_comments", "fb_shares", "fb_clicks")
     elif platform in ("instagram", "ig"):
         keys = ("ig_likes", "ig_comments", "ig_shares", "ig_saves", "ig_reach")
     elif platform in ("threads", "th"):
@@ -286,7 +287,7 @@ def _fetch_engagement_samples(
     view_sql = """
         SELECT draft_id, news_id, title, topic_category, weighted_score,
                published_at, confidence_score,
-               fb_likes, fb_comments, fb_shares, fb_reach,
+               fb_likes, fb_comments, fb_shares, fb_reach, fb_clicks,
                ig_likes, ig_comments, ig_shares, ig_saves, ig_reach,
                th_likes, th_replies, th_reposts, th_quotes, th_views
           FROM v_post_engagement_aggregated
@@ -336,6 +337,7 @@ def _fetch_engagement_samples(
             fb_comments=r["fb_comments"],
             fb_shares=r["fb_shares"],
             fb_reach=r["fb_reach"],
+            fb_clicks=r["fb_clicks"],
             ig_likes=r["ig_likes"],
             ig_comments=r["ig_comments"],
             ig_shares=r["ig_shares"],
@@ -418,6 +420,8 @@ def _fetch_from_base_tables(
             grouped[did][pl + "_quotes"] = r.get("quotes", 0)
         grouped[did][pl + "_views"] = r.get("views", 0)
         grouped[did][pl + "_reach"] = r.get("reach", 0)
+        if pl == "facebook":
+            grouped[did][pl + "_clicks"] = r.get("clicks", 0)
         grouped[did]["raw_hashtags"] = r["hashtags"]
         grouped[did]["published_at"] = r.get("fetched_at", "")
 
@@ -469,6 +473,7 @@ def _fetch_from_base_tables(
             fb_comments=data.get("fb_comments"),
             fb_shares=data.get("fb_shares"),
             fb_reach=data.get("fb_reach"),
+            fb_clicks=data.get("fb_clicks"),
             ig_likes=data.get("ig_likes"),
             ig_comments=data.get("ig_comments"),
             ig_shares=data.get("ig_shares"),

@@ -1,0 +1,1 @@
+ALTER TABLE engagement_snapshots ADD COLUMN clicks INTEGER NOT NULL DEFAULT 0;

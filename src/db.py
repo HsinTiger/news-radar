@@ -244,6 +244,7 @@ def _migrate_log_scale_engagement(conn: sqlite3.Connection) -> None:
 
     Adds:
       - engagement_stats.post_age_bucket (INTEGER, NULL OK; canonical 1/24/168)
+      - engagement_stats.clicks for the current Facebook metric contract
       - CHECK trigger restricting bucket to NULL or {1, 24, 168}
       - Partial UNIQUE INDEX on (draft_id, platform, post_age_bucket)
         WHERE post_age_bucket IS NOT NULL — prevents double-polling same bucket
@@ -259,6 +260,9 @@ def _migrate_log_scale_engagement(conn: sqlite3.Connection) -> None:
     # 1. ADD COLUMN (only if missing)
     _migrate_add_column_if_missing(
         conn, "engagement_stats", "post_age_bucket", "INTEGER"
+    )
+    _migrate_add_column_if_missing(
+        conn, "engagement_stats", "clicks", "INTEGER DEFAULT 0"
     )
 
     # 2. CHECK trigger — SQLite can't add CHECK to existing column via ALTER,
@@ -1078,6 +1082,7 @@ def insert_engagement(
     replies: int = 0,
     views: int = 0,
     reach: int = 0,
+    clicks: int = 0,
     raw_json: Optional[str] = None,
     post_age_bucket: Optional[int] = None,
 ) -> None:
@@ -1094,8 +1099,8 @@ def insert_engagement(
         INSERT INTO engagement_stats
           (draft_id, platform, platform_post_id, fetched_at,
            likes, comments, shares, saves, reposts, quotes, replies,
-           views, reach, raw_json, post_age_bucket)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           views, reach, clicks, raw_json, post_age_bucket)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             draft_id,
@@ -1111,6 +1116,7 @@ def insert_engagement(
             int(replies or 0),
             int(views or 0),
             int(reach or 0),
+            int(clicks or 0),
             raw_json,
             post_age_bucket if post_age_bucket is None else int(post_age_bucket),
         ),

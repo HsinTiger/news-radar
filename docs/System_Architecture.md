@@ -1,4 +1,10 @@
-# System Architecture — News Radar SSOT (v1)
+# System Architecture — legacy v1 reference
+
+> **Superseded 2026-07-23.** This file preserves the April architecture and is
+> not the current SSOT. In particular, the `state` branch and automatic Meta
+> publisher described below are retired/paused. Current truth is
+> [`README.md`](../README.md), [`OPERATIONS.md`](OPERATIONS.md), and
+> [`REBUILD_CHECKPOINT_2026-07-23.md`](REBUILD_CHECKPOINT_2026-07-23.md).
 
 > **Scope of this doc.** `docs/architecture.md` is the canonical data-flow picture
 > (Mermaid graph, Opus 4.7 pass on 2026-04-19). This doc is the **operational-reality

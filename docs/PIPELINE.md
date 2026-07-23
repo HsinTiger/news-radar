@@ -1,5 +1,11 @@
 # News Radar · Pipeline Contract
 
+> **2026-07-23 governance boundary:** this document contains historical
+> auto-publish contracts. Current runtime authority, pause state, Release-state
+> transport, and canary ladder are defined in [`../README.md`](../README.md),
+> [`OPERATIONS.md`](OPERATIONS.md), and
+> [`REBUILD_CHECKPOINT_2026-07-23.md`](REBUILD_CHECKPOINT_2026-07-23.md).
+
 > 每個階段的輸入 / 輸出 / 失敗模式合約。修改任何一層時，
 > 先對照本檔確認**自己打算改變的 contract**，再動程式碼。
 
