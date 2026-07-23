@@ -20,6 +20,14 @@ import argparse, json, os, re, sqlite3, subprocess, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from substack_radar.draft_receipts import (
+    DEFAULT_RECEIPTS_PATH,
+    reconcile_remote_receipts,
+)
+
 # NEWS_RADAR_DB 覆寫：讓「立即」快速通道（drain_substack_fast.sh）能指向一份剛從
 # canonical Release 拉下來的暫存 DB，完全不碰主 DB，避免和每小時的 compose_hourly.sh 互踩。
 DB = Path(os.environ.get("NEWS_RADAR_DB") or (REPO / "data" / "01_harvest" / "news_radar.db"))
@@ -28,6 +36,8 @@ COMPOSE = REPO / "substack_radar" / "compose.py"
 ENRICH = REPO / "scripts" / "enrich_youtube_sources.py"
 BUNDLE_DIR = REPO / "data" / "source_bundles"
 PY = REPO / ".venv" / "bin" / "python"
+RECEIPTS_FILE = DEFAULT_RECEIPTS_PATH
+REMOTE_DRAFT_EVIDENCE_PENDING = 6
 
 # YouTube 種子偵測：submit 進來的 url 欄位 + 內文裡的 youtube 連結都算。
 _YT_RE = re.compile(r"https?://(?:www\.)?(?:youtube\.com/[^\s)\]]+|youtu\.be/[^\s)\]]+)", re.I)
@@ -124,8 +134,23 @@ def main():
         print(f"[drain] marked done: {args.mark}")
         return 0
 
+    try:
+        receipt_ids, reconciled = reconcile_remote_receipts(
+            DB,
+            path=RECEIPTS_FILE,
+        )
+    except Exception as exc:
+        print(f"[drain] 🛑 remote-draft receipt reconciliation failed: {exc}")
+        return 2
+    if reconciled:
+        print(f"[drain] reconciled {reconciled} remote-draft receipt(s) into SQLite")
+    if receipt_ids:
+        print(
+            f"[drain] protecting {len(receipt_ids)} source(s) with pending remote receipts"
+        )
+
     rows = _candidates(only_immediate=args.only_immediate)
-    pending = [r for r in rows if r[0] not in done]
+    pending = [r for r in rows if r[0] not in done and r[0] not in receipt_ids]
     scope = " (immediate only)" if args.only_immediate else ""
     print(f"[drain] {len(rows)} user_substack item(s){scope}, {len(pending)} pending compose")
     if args.only_immediate and not pending:
@@ -139,6 +164,7 @@ def main():
         return 0
 
     composed = 0
+    evidence_pending = 0
     for rid, title, wc, url, body in pending:
         print(f"[drain] composing {rid[:12]} …")
         cmd = [
@@ -157,13 +183,23 @@ def main():
                 if bundle:
                     cmd += ["--bundle", str(bundle)]
         r = subprocess.run(cmd, cwd=str(REPO))
-        if r.returncode == 0:
+        if r.returncode in (0, REMOTE_DRAFT_EVIDENCE_PENDING):
             done.add(rid)
             _save_done(done)          # persist after each success (crash-safe)
-            composed += 1
+            if r.returncode == 0:
+                composed += 1
+            else:
+                evidence_pending += 1
+                print(
+                    f"[drain] ⚠️ remote draft exists for {rid[:12]}; "
+                    "receipt will reconcile canonical evidence next run"
+                )
         else:
             print(f"[drain] ⚠️ compose failed for {rid[:12]} (rc={r.returncode}); will retry next run")
-    print(f"[drain] done. composed {composed}/{len(pending)}.")
+    print(
+        f"[drain] done. composed {composed}/{len(pending)}; "
+        f"evidence_pending={evidence_pending}."
+    )
     return 0 if composed == len(pending) else 1
 
 

@@ -11,6 +11,9 @@ legacy `state` branch is not used.
   remains paused until the owner approves a live canary.
 - Both workers use the same remote lease and a local lock, so they do not write
   runtime state concurrently.
+- A remote Substack draft ID is written to a durable local receipt before the
+  SQLite evidence update. The next worker reconciles that receipt without
+  calling `post_draft` again, closing the API-success/DB-crash duplicate window.
 
 ## Prerequisites
 
@@ -100,6 +103,12 @@ also show all of these:
 4. `news_items.substack_written_at` is non-null for the local/OneDrive artifact.
 5. `substack_draft_id` and `substack_drafted_at` are non-null after Substack accepts the remote draft.
 6. D1 submission status becomes `draft_created` only after operational sync sees that remote evidence.
+
+Normally `data/substack_drafts/.substack_remote_receipts.json` is absent because
+the receipt is cleared immediately after the SQLite update. If it exists, do
+not manually re-run composition for that source: the next worker tick will
+reconcile the saved draft ID into SQLite. A malformed or conflicting receipt
+stops the drain fail-closed and must be inspected before retrying.
 
 ## Pause or rollback
 

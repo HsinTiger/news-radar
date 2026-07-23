@@ -99,6 +99,10 @@ from substack_radar.composer import (  # noqa: E402
     autofix_traditional,
     compose_substack_article,
 )
+from substack_radar.draft_receipts import (  # noqa: E402
+    clear_remote_receipt,
+    store_remote_receipt,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +245,7 @@ def _mark_used(news_id: str, limit: int = 300) -> None:
         _release_lock(lock)
 
 
-def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> None:
+def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> bool:
     """Persist local-written and remote-draft evidence as distinct facts."""
     from datetime import datetime, timezone
 
@@ -258,7 +262,7 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> N
                     conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
                 except sqlite3.OperationalError:
                     pass
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE news_items
                    SET substack_written_at=COALESCE(substack_written_at,?)
@@ -266,6 +270,8 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> N
                 """,
                 (now, news_id),
             )
+            if cursor.rowcount != 1:
+                raise LookupError(f"source row not found: {news_id}")
             if draft_id is not None:
                 conn.execute(
                     """
@@ -277,10 +283,12 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> N
                     (str(draft_id), now, news_id),
                 )
             conn.commit()
+            return True
         finally:
             conn.close()
     except Exception as exc:
         print(f"[_record_substack_evidence] ⚠️ DB evidence write failed: {exc}")
+        return False
 
 
 def _signal_density(text: str) -> float:
@@ -967,6 +975,7 @@ def push_to_substack_draft(
     title: str,
     subtitle: str,
     cover_path: Optional[Path] = None,
+    source_id: Optional[str] = None,
 ) -> Optional[int]:
     """Create a Substack draft and return its id; never publishes it.
 
@@ -1048,6 +1057,14 @@ def push_to_substack_draft(
         if draft_id is None:
             print("[Substack] ❌ post_draft returned no draft id; remote creation is unproven")
             return None
+        if source_id:
+            try:
+                store_remote_receipt(source_id, draft_id)
+            except Exception as exc:
+                print(
+                    "[Substack] 🛑 remote draft exists but durable receipt write failed: "
+                    f"source={source_id} draft_id={draft_id} error={exc}"
+                )
         print(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
             f"audience={audience} cover={'yes' if cover_path else 'no'}"
@@ -1726,6 +1743,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     mirror_to_onedrive(local_dir, mirror_dir)
 
     # 7) Optional Substack draft push (opt-in via SUBSTACK_AUTO_DRAFT=1)
+    source_id = source.get("id")
     draft_id: Optional[int] = None
     if not args.no_draft:
         draft_id = push_to_substack_draft(
@@ -1733,14 +1751,30 @@ async def _run_inner(args: argparse.Namespace) -> int:
             title=draft.title,
             subtitle=draft.subtitle,
             cover_path=cover_path,
+            source_id=source_id,
         )
-    source_id = source.get("id")
+    evidence_recorded = True
     if source_id:
         _mark_used(source_id)
-        _record_substack_evidence(source_id, draft_id=draft_id)
+        evidence_recorded = _record_substack_evidence(source_id, draft_id=draft_id)
+        if draft_id is not None and evidence_recorded:
+            try:
+                clear_remote_receipt(source_id, draft_id)
+            except Exception as exc:
+                print(f"[Substack] ⚠️ receipt cleanup deferred: {exc}")
     if getattr(args, "require_substack_draft", False) and draft_id is None:
         print("[Substack] ❌ local article exists but remote draft creation is unproven")
         return 5
+    if (
+        getattr(args, "require_substack_draft", False)
+        and draft_id is not None
+        and not evidence_recorded
+    ):
+        print(
+            "[Substack] ⚠️ remote draft exists but canonical evidence is pending "
+            "receipt reconciliation; do not call post_draft again"
+        )
+        return 6
 
     # 8) Update metaphor history — best-effort; draft is already pushed, so a
     # housekeeping failure must not flip the run to exit 1.
