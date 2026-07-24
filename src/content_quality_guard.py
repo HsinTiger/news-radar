@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v11"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v29"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -228,8 +228,12 @@ _GENERIC_RECOVERY_SOURCE_PATTERN = re.compile(
     r"|(?<![A-Za-z0-9\u4e00-\u9fff])(?:媒體|新聞|官方|相關人士)"
     r"\s*(?:報導|指出|表示|公告|資料|數據)",
 )
+_RECOVERY_SOURCE_CARRY_BREAK_PATTERN = re.compile(
+    r"市場傳聞|據傳|傳聞|消息人士|未經證實|另有|另一份|其他來源"
+)
 _RECOVERY_READER = (
     r"一般人|民眾|居民|住戶|消費者|使用者|讀者|上班族|投資人|股民|"
+    r"股東|持有人|持股人|市場參與者|"
     r"家長|學生|通勤族|一般通勤者|通勤者|駕駛|旅客|家庭|企業|業者|"
     r"出口商|製造業|產業|產業界|供應鏈業者|店家|商家|勞工|農民|你"
 )
@@ -239,15 +243,24 @@ _RECOVERY_IMPACT_PATTERN = re.compile(
     rf"|對[^。！？\n]{{0,36}}(?:{_RECOVERY_READER})[^。！？\n]{{0,80}}"
     r"(?:可自行檢視|可以自行檢視|警訊)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,60}}"
-    r"(?:會|可能|將|得|面臨|增加|減少|多花|少拿|延誤|損失|受益)"
-    r"|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
+    r"(?:會|可能|將|得|面臨|增加|減少|多花|少拿|延誤|損失|受益|跑輸|跑贏)"
+    r"|(?:這|此).{0,20}(?:對你意味著|會直接影響)"
+    rf"|(?:這|此次|此舉)[^。！？\n]{{0,20}}(?:意味|代表)"
+    rf"[^。！？\n]{{0,20}}(?:{_RECOVERY_READER})[^。！？\n]{{0,40}}"
+    r"(?:可|可以|能|能夠))",
 )
 _RECOVERY_ACTION_PATTERN = re.compile(
     rf"(?:(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
     r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切)?"
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
-    r"關注|採取|納入)"
+    r"關注|採取|納入|參考|觀察)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
+    r"(?:可以|可|應該|應)(?:依|依據|根據)[^。！？\n]{1,24}"
+    r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
+    r"(?:可以|可|應該|應)[^。！？\n]{0,20}"
+    r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整|觀察)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}可將[^。！？\n]{{0,20}}"
     r"(?:納入|列入|通報|備妥|改用|避開)"
     r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
@@ -278,7 +291,7 @@ _RECOVERY_TRUST_ERODING_FRAMES = (
 )
 _RECOVERY_FORMULAIC_FRAMES = (
     "市場以為", "大家以為", "真正的賽局", "護城河", "底層邏輯",
-    "神話破滅", "信任崩塌",
+    "神話破滅", "信任崩塌", "需關注市場變化", "需注意市場變化",
 )
 _RECOVERY_TEMPLATE_SCAFFOLDING = (
     "已知事實是",
@@ -368,21 +381,37 @@ def _has_citation_nearby(text: str, stat_pos: int, radius: int = 40) -> bool:
 
 
 def _uncited_stat(full_text: str, _title: str) -> Optional[str]:
-    """Reject numbers lacking either a nearby marker or a named paragraph source."""
-    for m in _STAT_PATTERN.finditer(full_text):
-        if _has_citation_nearby(full_text, m.start()):
-            continue
-        paragraph_start = full_text.rfind("\n\n", 0, m.start()) + 2
-        paragraph_end = full_text.find("\n\n", m.end())
-        if paragraph_end < 0:
-            paragraph_end = len(full_text)
-        paragraph = full_text[paragraph_start:paragraph_end].strip()
-        if (
+    """Require a named source in this or the immediately preceding paragraph."""
+
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", full_text)
+        if paragraph.strip()
+    ]
+    previous_named = False
+    for index, paragraph in enumerate(paragraphs):
+        named = (
             _has_recovery_named_source(paragraph)
             and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
-        ):
-            continue
-        return "stat_no_citation:" + m.group(0)
+        )
+        for match in _STAT_PATTERN.finditer(paragraph):
+            if (
+                index == 0
+                and len(paragraph) <= 120
+                and "\n" not in paragraph
+                and len(paragraphs) > 1
+                and _has_recovery_named_source(paragraphs[1])
+            ):
+                continue
+            if _has_citation_nearby(paragraph, match.start()):
+                continue
+            if named or (
+                previous_named
+                and not _RECOVERY_SOURCE_CARRY_BREAK_PATTERN.search(paragraph)
+            ):
+                continue
+            return "stat_no_citation:" + match.group(0)
+        previous_named = bool(named)
     return None
 
 
@@ -448,7 +477,13 @@ def _recovery_fact_without_local_source(
             continue
         named = _has_recovery_named_source(paragraph)
         generic = _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
-        if factual and (not named or generic):
+        previous_named = (
+            index > 0
+            and _has_recovery_named_source(paragraphs[index - 1])
+            and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraphs[index - 1])
+            and not _RECOVERY_SOURCE_CARRY_BREAK_PATTERN.search(paragraph)
+        )
+        if factual and (not named or generic) and not previous_named:
             return "fact_paragraph_without_named_source:" + paragraph[:80]
     return None
 
@@ -665,6 +700,46 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
 _NUMERIC_CLAIM_PATTERN = re.compile(
     r"(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>[%％]?)"
 )
+_MATERIAL_QUANTITY_PATTERN = re.compile(
+    r"\d[\d,]*(?:\.\d+)?"
+    r"(?:兆\d[\d,]*(?:\.\d+)?億|兆|億|萬)?"
+    r"(?:%|％|元|點|年|月|日|件|人|家|批|項|公里|公尺|噸|股|檔|倍|"
+    r"條|期|天|小時|分鐘|秒|GB|TB|MW|GW)",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_AUDIENCE_EXTENSIONS = (
+    "退休基金",
+    "企業資產配置",
+    "所有投資人",
+    "全體投資人",
+)
+_UNSUPPORTED_MARKET_INFERENCES = (
+    "流動性將回歸正常",
+    "交易流動性將回歸正常",
+    "交易流動性提升",
+    "成交量將回升",
+    "市場活躍度的提升",
+    "市場情緒有所回暖",
+    "市場情緒回暖",
+    "吸引更多資金",
+    "資金進入市場",
+    "正面的信號",
+    "多頭訊號",
+    "漲勢是否能持續",
+    "漲幅是否能持續",
+    "市場整體表現回暖",
+    "市場的活躍程度",
+    "重新評估投資組合的好時機",
+    "市場情況正在改善",
+    "意味著市場",
+    "市場的活躍度",
+    "把握市場動向",
+    "明智的投資選擇",
+    "這波漲幅中受益",
+    "適應市場變化",
+    "跟上市場的步伐",
+    "可能影響到投資決策",
+)
 
 
 def _normalized_numeric_claims(text: str) -> set[str]:
@@ -689,16 +764,101 @@ def _normalized_numeric_claims(text: str) -> set[str]:
     return claims
 
 
+def _normalize_quantity(raw: str) -> str:
+    def normalize_number(match: re.Match[str]) -> str:
+        try:
+            return format(Decimal(match.group(0)).normalize(), "f")
+        except InvalidOperation:
+            return match.group(0)
+
+    value = raw.replace(",", "").replace("％", "%")
+    return re.sub(r"\d+(?:\.\d+)?", normalize_number, value)
+
+
+def _normalized_quantity_claims(text: str) -> set[str]:
+    """Extract exact number-plus-unit spans, including compound Taiwan amounts."""
+
+    claims: set[str] = set()
+    for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
+        claims.add(_normalize_quantity(match.group(0)))
+    return claims
+
+
+def _statistical_quantity_claims(text: str) -> set[str]:
+    """Return market/statistical figures, excluding dates and legal citations."""
+
+    return {
+        value
+        for value in _normalized_quantity_claims(text)
+        if not value.endswith(("年", "月", "日", "條", "期", "天"))
+    }
+
+
+def statistical_quantity_allowlist(
+    text: str, *, limit: int | None = None
+) -> list[str]:
+    """Return statistical quantities in source order, excluding dates/law refs."""
+
+    result: list[str] = []
+    for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
+        value = _normalize_quantity(match.group(0))
+        if value.endswith(("年", "月", "日", "條", "期", "天")):
+            continue
+        if value not in result:
+            result.append(value)
+        if limit is not None and len(result) >= limit:
+            break
+    return result
+
+
 def _unsupported_numeric_claims(full_text: str, source_text: str) -> Optional[str]:
     source_claims = _normalized_numeric_claims(source_text)
-    missing = sorted(_normalized_numeric_claims(full_text) - source_claims)
+    missing_numbers = sorted(_normalized_numeric_claims(full_text) - source_claims)
+    source_quantities = _normalized_quantity_claims(source_text)
+    missing_quantities = sorted(
+        _normalized_quantity_claims(full_text) - source_quantities
+    )
+    missing = missing_numbers + [
+        f"quantity:{value}" for value in missing_quantities
+    ]
     return ",".join(missing[:8]) if missing else None
+
+
+def _unsupported_audience_extensions(
+    full_text: str, source_text: str
+) -> Optional[str]:
+    missing = [
+        term
+        for term in _UNSUPPORTED_AUDIENCE_EXTENSIONS
+        if term in full_text and term not in source_text
+    ]
+    return ",".join(missing) if missing else None
+
+
+def unsupported_market_inference_terms(
+    full_text: str, source_text: str
+) -> list[str]:
+    return [
+        term
+        for term in _UNSUPPORTED_MARKET_INFERENCES
+        if term in full_text and term not in source_text
+    ]
+
+
+def _unsupported_market_inferences(
+    full_text: str, source_text: str
+) -> Optional[str]:
+    missing = unsupported_market_inference_terms(full_text, source_text)
+    return ",".join(missing) if missing else None
 
 
 def numeric_claim_allowlist(source_text: str) -> list[str]:
     """Return the material numeric values a Recovery rewrite may reuse."""
 
-    return sorted(_normalized_numeric_claims(source_text))
+    return sorted(
+        _normalized_numeric_claims(source_text)
+        | _normalized_quantity_claims(source_text)
+    )
 
 
 def combine_visible_text(full_text: str, carousel: Any = None) -> str:
@@ -787,6 +947,24 @@ def check_quality(
                 ),
                 evidence=evidence[:120],
             ))
+        evidence = _unsupported_audience_extensions(ft, source_text)
+        if evidence is not None:
+            issues.append(QualityIssue(
+                code="unsupported_audience_extension",
+                severity="rewrite",
+                message=(
+                    "Recovery 貼文不得把來源未提及的基金、機構或全體投資人擴寫成受影響對象"
+                ),
+                evidence=evidence[:120],
+            ))
+        evidence = _unsupported_market_inferences(ft, source_text)
+        if evidence is not None:
+            issues.append(QualityIssue(
+                code="unsupported_market_inference",
+                severity="rewrite",
+                message="Recovery 貼文不得把交易方式變更推論成流動性或成交量必然改善",
+                evidence=evidence[:120],
+            ))
     return issues
 
 
@@ -837,8 +1015,8 @@ def check_platform_style(
     }.get(str(platform).strip().lower(), str(platform).strip().lower())
     limits = {
         "threads": {
-            "max_chars": 320,
-            "max_paragraph": 180,
+            "max_chars": 260,
+            "max_paragraph": 120,
             "min_paragraphs": 2,
             "hashtags": 1,
         },
@@ -896,6 +1074,14 @@ def check_platform_style(
                 f"max={config['max_chars']}"
             ),
         ))
+    quantity_count = len(_statistical_quantity_claims(text))
+    if canonical == "threads" and quantity_count > 3:
+        issues.append(QualityIssue(
+            code="platform_stat_overload",
+            severity="rewrite",
+            message="Threads 最多保留三個具單位數字，避免把貼文寫成統計公報",
+            evidence=f"platform=threads;quantity_count={quantity_count};max=3",
+        ))
     if len(content_paragraphs) < config["min_paragraphs"]:
         issues.append(QualityIssue(
             code="platform_wall_of_text",
@@ -921,23 +1107,55 @@ def check_platform_style(
             ),
         ))
     closing = content_paragraphs[-1] if content_paragraphs else ""
-    if not (closing.rstrip().endswith("？") or closing.rstrip().endswith("?")):
+    question_count = len(re.findall(r"[？?]", closing))
+    if question_count == 0 or not (
+        closing.rstrip().endswith("？") or closing.rstrip().endswith("?")
+    ):
         issues.append(QualityIssue(
             code="missing_answerable_question",
             severity="rewrite",
             message="Recovery 文案須以一個可具體回答的問題收尾",
             evidence=f"platform={canonical};closing={closing[-80:]}",
         ))
+    elif question_count > 1:
+        issues.append(QualityIssue(
+            code="multiple_closing_questions",
+            severity="rewrite",
+            message="結尾只能保留一個可回答的問題，不得連問兩題",
+            evidence=f"platform={canonical};count={question_count};closing={closing[-80:]}",
+        ))
     elif any(
         generic in closing
-        for generic in ("你怎麼看", "大家怎麼看", "你認為呢")
-    ):
+        for generic in (
+            "你怎麼看",
+            "大家怎麼看",
+            "你認為呢",
+            "是否跟上",
+            "是否延續",
+            "會否延續",
+            "哪些族群會受益或受損",
+        )
+    ) or not re.search(r"你|您|你家|你們|自己|自身", closing):
         issues.append(QualityIssue(
             code="generic_engagement_bait",
             severity="rewrite",
-            message="結尾問題必須可具體回答，不得使用泛用互動誘餌",
+            message="結尾問題必須直接問讀者可具體回答的經驗、數字或取捨",
             evidence=closing[-80:],
         ))
+    stock_context = re.search(
+        r"台股|臺股|加權指數|上市股票|持股|股票|基金",
+        f"{title}\n{text}",
+    )
+    if stock_context and not re.search(
+        r"\d|哪一|哪個|多少|跑贏|跑輸|報酬|比例|權重", closing
+    ):
+        if not any(issue.code == "generic_engagement_bait" for issue in issues):
+            issues.append(QualityIssue(
+                code="generic_engagement_bait",
+                severity="rewrite",
+                message="台股結尾必須讓讀者回答報酬、持股、產業或明確數字",
+                evidence=closing[-80:],
+            ))
     return issues
 
 
@@ -968,6 +1186,8 @@ __all__ = [
     "combine_visible_text",
     "has_blocking_issues",
     "numeric_claim_allowlist",
+    "statistical_quantity_allowlist",
     "should_request_rewrite",
+    "unsupported_market_inference_terms",
     "format_issues",
 ]

@@ -255,16 +255,46 @@ def test_rewrite_issue_gets_one_retry_then_queues_clean_result(tmp_db, monkeypat
 def test_unresolved_rewrite_is_held_out_of_automatic_queue(tmp_db, monkeypatch):
     asyncio.run(_fake_make_passthrough_score(monkeypatch))
     bad = _bundle("完整分析仍引用虛構連結 https://example.com，所以不得進自動發布佇列。")
-    calls = _patch_composable_path(monkeypatch, [bad, bad])
+    calls = _patch_composable_path(monkeypatch, [bad, bad, bad])
     with dbmod.get_conn() as conn:
         row = _seed_fetched_news(conn, "n_rewrite_unresolved")
         result = asyncio.run(run_pipeline.process_item(conn, row, compose_only=True))
         assert result == "drafted"
-        assert len(calls) == 2
+        assert len(calls) == 3
         draft = conn.execute(
             "SELECT status,queue_status FROM drafts WHERE news_id='n_rewrite_unresolved'"
         ).fetchone()
         assert tuple(draft) == ("pending_review", None)
+
+
+def test_second_bounded_rewrite_can_fix_a_newly_introduced_issue(
+    tmp_db, monkeypatch
+):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    calls = _patch_composable_path(
+        monkeypatch,
+        [
+            _bundle("完整分析先放虛構連結 https://example.com，必須重寫。"),
+            _bundle("在 AI 的浪潮中，第二稿又出現一個新的模板問題，需要再修一次。"),
+            _bundle("第三稿只保留來源能支持的判斷，文字清楚，而且沒有模板或假連結。"),
+        ],
+    )
+    with dbmod.get_conn() as conn:
+        row = _seed_fetched_news(conn, "n_rewrite_resolved_second")
+        result = asyncio.run(run_pipeline.process_item(conn, row, compose_only=True))
+
+        assert result == "queued"
+        assert len(calls) == 3
+        decisions = conn.execute(
+            """SELECT attempt,decision,COUNT(*) AS n
+                 FROM content_quality_evaluations
+                GROUP BY attempt,decision ORDER BY attempt"""
+        ).fetchall()
+        assert [tuple(item) for item in decisions] == [
+            (1, "rewrite", 3),
+            (2, "rewrite", 3),
+            (3, "pass", 3),
+        ]
 
 
 def test_threads_only_scope_composes_only_threads_and_queues(tmp_db, monkeypatch):

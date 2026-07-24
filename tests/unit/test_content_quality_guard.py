@@ -13,6 +13,7 @@ from src.content_quality_guard import (
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
+    statistical_quantity_allowlist,
     should_request_rewrite,
 )
 
@@ -36,7 +37,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v11_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v20_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -85,7 +86,7 @@ def test_v11_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v11_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v20_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -101,6 +102,135 @@ def test_v11_accepts_natural_threads_shape_without_editorial_labels() -> None:
         )
     )
     assert not should_request_rewrite(issues), format_issues(issues)
+
+
+def test_v20_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+    text = (
+        "證交所公告台股本週上漲，這段重複資料很多。" * 14
+        + "\n\n投資人可檢查自己的同期間報酬。"
+        + "\n\n下週產業輪動是否延續？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="台股週報", recovery=True
+        )
+    }
+    assert "platform_copy_too_long" in codes
+    assert "generic_engagement_bait" in codes
+
+
+def test_v20_threads_rejects_stat_dump_and_vague_stock_question() -> None:
+    text = (
+        "證交所本週統計顯示，加權指數上漲2.30%，收43,654.84點。\n\n"
+        "電腦週邊上漲10.29%，綠能下跌9.04%。\n\n"
+        "投資人可以檢查自己的持股。\n\n"
+        "你的配置是否跟上本週產業變化？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="台股週報", recovery=True
+        )
+    }
+    assert "platform_stat_overload" in codes
+    assert "generic_engagement_bait" in codes
+
+
+def test_v22_rejects_stock_question_that_only_says_holdings() -> None:
+    body = (
+        "根據證交所本週統計，加權指數上漲2.3%。\n\n"
+        "若你的報酬跑輸大盤，先比較產業配置與個股選擇。\n\n"
+        "你的持股表現是否跟本週加權指數漲幅一致？\n\n#台股"
+    )
+
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads",
+            body,
+            recovery=True,
+        )
+    }
+
+    assert "generic_engagement_bait" in codes
+
+
+def test_v25_allows_numeric_headline_when_next_paragraph_names_source() -> None:
+    text = (
+        "本週加權指數上漲2.3%，總市值達142.58兆元\n\n"
+        "根據證交所本週統計，加權指數上漲2.3%，總市值達142.58兆元。\n\n"
+        "投資人可比較自己的同期間報酬。"
+    )
+
+    codes = {issue.code for issue in check_quality(text, recovery=True)}
+
+    assert "uncited_stat" not in codes
+
+
+def test_v26_rejects_vague_market_watch_headline() -> None:
+    text = (
+        "本週臺股上漲，投資人需關注市場變化！\n\n"
+        "根據證交所公告，加權指數上漲2.3%。"
+    )
+
+    codes = {issue.code for issue in check_quality(text, recovery=True)}
+
+    assert "formulaic_attention_hook" in codes
+
+
+def test_v20_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
+    text = (
+        "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"
+        "自115年7月27日恢復正常交易。\n\n"
+        "此次恢復代表股東可重新使用一般交易方式；"
+        "股東可在恢復日觀察成交量與價格。\n\n"
+        "你會在7月27日調整隆銘綠能持股嗎？\n\n#台股"
+    )
+    style_codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    quality_codes = {
+        issue.code
+        for issue in check_quality(
+            text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    assert "platform_stat_overload" not in style_codes
+    assert "missing_reader_utility" not in quality_codes
+
+
+def test_v20_formal_reader_pronoun_is_a_direct_question() -> None:
+    text = (
+        "證交所公告隆銘綠能恢復一般交易方式。\n\n"
+        "股東可在券商平臺確認交易方式。\n\n"
+        "您會調整隆銘綠能持股比例嗎？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    assert "generic_engagement_bait" not in codes
+
+
+def test_v20_threads_rejects_two_closing_questions() -> None:
+    text = (
+        "證交所公告本週加權指數上漲2.3%。\n\n"
+        "投資人可對照自己的同期間報酬。\n\n"
+        "你的持股有跑贏2.3%嗎？下週你會換股嗎？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="台股週報", recovery=True
+        )
+    }
+    assert "multiple_closing_questions" in codes
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----
@@ -333,7 +463,7 @@ def test_recovery_rejects_generic_source_and_vague_risk_language():
     assert "missing_reader_utility" in codes
 
 
-def test_recovery_requires_source_in_measured_claim_paragraph():
+def test_recovery_allows_adjacent_measured_paragraph_to_carry_named_source():
     text = (
         "根據公視報導，法國消防單位正處理多起野火。\n\n"
         "已知事實是今年已有 1 萬起野火，燒毀 4.4 萬公頃。\n\n"
@@ -341,7 +471,30 @@ def test_recovery_requires_source_in_measured_claim_paragraph():
     )
     codes = {item.code for item in check_quality(text, title="法國野火", recovery=True)}
     assert "missing_source_attribution" not in codes
+    assert "fact_without_local_source" not in codes
+    assert "uncited_stat" not in codes
+
+
+def test_recovery_requires_source_again_after_intervening_paragraph():
+    text = (
+        "根據公視報導，法國消防單位正處理多起野火。\n\n"
+        "交通影響仍需逐區確認。\n\n"
+        "今年相關支出增加 665 億元。\n\n"
+        "旅客可能面臨封路；旅客可以先查詢當地警報。"
+    )
+    codes = {item.code for item in check_quality(text, title="法國野火", recovery=True)}
     assert "fact_without_local_source" in codes
+    assert "uncited_stat" in codes
+
+
+def test_recovery_accepts_natural_source_based_reader_action():
+    text = (
+        "證交所本週統計顯示，加權指數上漲 2.30%。\n\n"
+        "台灣投資人可能面臨產業漲跌分化；"
+        "投資人可根據證交所公開數據，檢查持股產業與週轉率。"
+    )
+    codes = {item.code for item in check_quality(text, title="台股週報", recovery=True)}
+    assert "missing_reader_utility" not in codes
 
 
 def test_recovery_rejects_unattributed_sensitive_allegation():
@@ -506,9 +659,10 @@ def test_recovery_numeric_claims_must_exist_in_supplied_source_text():
     )
 
     assert "unsupported_numeric_claim" not in grounded_codes
-    assert ("unsupported_numeric_claim", "599") in {
-        (item.code, item.evidence) for item in fabricated_issues
-    }
+    assert any(
+        item.code == "unsupported_numeric_claim" and "599" in item.evidence
+        for item in fabricated_issues
+    )
 
 
 def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages():
@@ -526,7 +680,57 @@ def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages()
     }
 
     assert "unsupported_numeric_claim" not in codes
-    assert numeric_claim_allowlist(source) == ["10%", "3.5", "3521"]
+    assert numeric_claim_allowlist(source) == [
+        "10%",
+        "3.5",
+        "3.5倍",
+        "3521",
+        "3521億元",
+    ]
+
+
+def test_recovery_numeric_grounding_rejects_rounded_compound_amount():
+    source = "證交所公告市值增加3兆2,168.61億元。"
+    rounded = "證交所公告市值增加3兆元。"
+    exact = "證交所公告市值增加3兆2,168.61億元。"
+
+    rounded_codes = {
+        item.code
+        for item in check_quality(
+            rounded, recovery=True, source_text=source
+        )
+    }
+    exact_codes = {
+        item.code
+        for item in check_quality(exact, recovery=True, source_text=source)
+    }
+    assert "unsupported_numeric_claim" in rounded_codes
+    assert "unsupported_numeric_claim" not in exact_codes
+
+
+def test_recovery_rejects_source_free_institutional_audience_extension():
+    source = "證交所公告本週產業指數變化。"
+    text = "證交所公告本週產業指數變化，退休基金與企業資產配置也會受影響。"
+    issues = check_quality(text, recovery=True, source_text=source)
+
+    assert "unsupported_audience_extension" in {item.code for item in issues}
+
+
+def test_recovery_rejects_unproven_liquidity_improvement():
+    source = "證交所公告公司恢復一般交易方式。"
+    text = "證交所公告公司恢復一般交易方式，交易流動性將回歸正常。"
+    issues = check_quality(text, recovery=True, source_text=source)
+
+    assert "unsupported_market_inference" in {item.code for item in issues}
+
+
+def test_statistical_quantity_allowlist_prioritizes_title_order():
+    text = "本週加權指數上漲2.30%，市值達142.58兆元，收43,654.84點。"
+
+    assert statistical_quantity_allowlist(text, limit=2) == [
+        "2.3%",
+        "142.58兆元",
+    ]
 
 
 def test_recovery_numeric_grounding_includes_rendered_carousel_text():
@@ -545,9 +749,10 @@ def test_recovery_numeric_grounding_includes_rendered_carousel_text():
         recovery=True,
         source_text="食藥署公告商品回收，未提供金額。",
     )
-    assert ("unsupported_numeric_claim", "9999") in {
-        (item.code, item.evidence) for item in issues
-    }
+    assert any(
+        item.code == "unsupported_numeric_claim" and "9999" in item.evidence
+        for item in issues
+    )
 
 
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----

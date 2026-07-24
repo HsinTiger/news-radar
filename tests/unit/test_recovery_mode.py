@@ -346,3 +346,14 @@ def test_editorial_mandate_matches_persisted_experiment_type() -> None:
     assert "instagram: type=utility" in mandate
     assert "Instagram visual utility test" in mandate
     assert "same evidence/response/correction standard" in mandate
+
+
+def test_tw_stocks_mandate_requires_portfolio_comparison_not_index_hype() -> None:
+    mandate = editorial_mandate_for({"threads"}, "tw_stocks")
+
+    assert "distinguish index performance" in mandate
+    assert "2-3 source-backed figures" in mandate
+    assert "retirement funds" in mandate
+    assert "Do not tell readers to wait" in mandate
+    assert "measurable personal-result" in mandate
+    assert "trading-status notice" in mandate

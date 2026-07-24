@@ -51,13 +51,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 from dotenv import load_dotenv
 
 from src.llm_brain import call_for_json
-from src.content_quality_guard import numeric_claim_allowlist
+from src.content_quality_guard import (
+    numeric_claim_allowlist,
+    statistical_quantity_allowlist,
+)
 from src.schema import MultiPlatformDraft, PlatformVariant
 from src.cta_pool import decide_cta, get_cta_prompt_fragment
 from src.locale_tw import fix_mainland_text, to_traditional
@@ -408,15 +412,15 @@ def _build_recovery_system_instruction(
 主來源鎖定：`新聞詳情`中的標題是唯一寫作主題。多源脈絡只能交叉核對同一事件，絕對不可因為出現同一人物、政黨或機關，就改寫成多源區塊裡的另一件新聞；若脈絡與主標題不是同一事件，完全忽略它。
 
 每個平台都必須做到：
-1. 第一個可見句子的前 45 個中文字同時出現「具名主體」與「數字或已發生的實際後果」。FB/IG 的 title 也會成為第一個可見句子，所以 title 本身就要合格；Threads 的 body 第一句要合格。
-2. 每個包含事實或數字的段落，就地寫出具名來源，例如「根據行政院 7 月 24 日公告」；禁止只寫「根據報導、官方資料、媒體指出」。
+1. 第一個可見句子的前 45 個中文字同時出現「具名主體」與「數字或已發生的實際後果」。FB/IG 的 title 也會成為第一個可見句子，所以 title 本身就要合格；Threads 的 body 第一句要合格。不可只是重抄新聞標題，要直接說出一個來源可支持的反差或讀者後果。
+2. 第一個事實段落就地寫出具名來源，例如「證交所本週統計顯示」；緊接的下一段可延續同一份來源，但只能使用來源原文確實存在的事實與數字。只要主體、文件或事件改變就必須重新具名。禁止只寫「根據報導、官方資料、媒體指出」。
 3. 讓讀者自然看出哪句是來源事實、哪句是編輯判讀；禁止把「已知事實是」「這裡的判讀是」等內部模板直接寫進貼文。判讀不可比來源更肯定，也不可把草案寫成已生效法律。
 4. 寫出一個對特定台灣讀者的實際後果，以及同一讀者現在可採取的一個具體動作。用自然語氣，例如「通勤族最先感受到的會是轉乘時間增加；出門前先查交通部新班次。」禁止「的具體影響是」「可以先」「下一個問責節點是」等固定句型，也不可用「值得關注、可期待、保持關注」充數。
-5. 結尾只能是一個可具體回答的問題，或可在指定日期驗證的預測。不得要求按讚、追蹤、分享或只問「你怎麼看」。
+5. 結尾只能有一個問號、只問一個可具體回答的問題，或一個可在指定日期驗證的預測。不得連問兩題，不得要求按讚、追蹤、分享或只問「你怎麼看」。
 6. 禁止這些長期重複模板：市場以為、大家以為、真正的賽局、護城河、底層邏輯、神話破滅、信任崩塌、深層代價、產業洗牌、結構性衝擊。也禁止已知事實是、這裡的判讀是、的具體影響是、下一個問責節點是。禁止 Markdown 粗體小標。
 
 平台規格：
-- Threads：180–300 字；2–4 個短段落；body 可獨立閱讀；一個 topic tag。
+- Threads：160–240 字；2–4 個短段落；只留 2–3 個最有解釋力的來源數字；body 可獨立閱讀；一個 topic tag。
 - FB：280–500 字；3–5 個短段落，依序交代事件、證據、缺口與可回答問題；2–3 個 hashtags；不放站外連結。
 - IG：caption 160–340 字、2–4 個短段落，不複製 FB；carousel 五張依序是已驗證後果、發生何事、第一手數字、誰付出或受益、下一步查什麼；3–5 個 hashtags。
 
@@ -441,6 +445,12 @@ def _build_recovery_generation_contract(
     omitted = [platform for platform in ("fb", "ig", "threads") if platform not in requested]
     allowed_numbers = numeric_claim_allowlist(f"{title}\n{content}")
     number_list = ", ".join(allowed_numbers) if allowed_numbers else "NONE"
+    statistical_budget = statistical_quantity_allowlist(title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(content, limit=2)
+    statistical_budget_text = (
+        ", ".join(statistical_budget) if statistical_budget else "NONE"
+    )
     carousel_contract = (
         """
 INSTAGRAM FIVE-CARD CONTRACT (required because ig was requested):
@@ -465,11 +475,47 @@ EXACT REQUESTED-PLATFORM CONTRACT (overrides every generic legacy example):
 NUMERIC GROUNDING BEFORE WRITING:
 - Allowed material Arabic-number values, normalized from this source only: {number_list}.
 - Every date, amount, count, percentage, deadline, title, caption, card, and key figure must use only those values with the original source unit.
+- Never round, abbreviate, convert units, or derive a new value, even when the arithmetic would be equivalent.
 - Do not add today's date, a guessed year, rankings, round numbers, or example numbers from the JSON schema.
 - If the allowlist is NONE, use a verified nonnumeric consequence and do not write Arabic-number claims.
 
+STATISTICAL DENSITY BUDGET:
+- The only market/statistical quantities permitted in visible copy are: {statistical_budget_text}.
+- Use at most two of them. Do not pull any additional percentage, amount, point value, turnover, or ranking from the long source table.
+- Exact dates, company codes, and legal article numbers may be used when essential; they do not consume the statistical budget.
+
 {carousel_contract}
 """
+
+
+def _build_recovery_source_excerpt(title: str, content: str) -> str:
+    """Hide non-budget statistics from the writer while retaining source context."""
+
+    statistical_budget = statistical_quantity_allowlist(title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(content, limit=2)
+    allowed = set(statistical_budget)
+    source_match = re.search(
+        r"(?:根據|依據)[^。！？\n]{2,60}?(?:統計|公告|資料|報告|新聞稿)",
+        content or "",
+    )
+    source_anchor = source_match.group(0).strip() if source_match else ""
+    segments = [
+        segment.strip()
+        for segment in re.split(r"(?<=[。！？])|\n+", content or "")
+        if segment.strip()
+    ]
+    kept: list[str] = []
+    for segment in segments:
+        segment_stats = set(statistical_quantity_allowlist(segment))
+        if segment_stats - allowed:
+            continue
+        if segment not in kept:
+            kept.append(segment)
+        if sum(len(value) for value in kept) >= 1400:
+            break
+    parts = [value for value in (source_anchor, *kept) if value]
+    return "\n".join(parts)[:1800]
 
 
 # 2026-05 實測：gemini-2.0-flash-lite 免費 tier 額度已歸零（429 limit:0），
@@ -497,6 +543,7 @@ async def compose_multi_platform(
     """
     recovery_mode = os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery"
     if recovery_mode:
+        generation_content = _build_recovery_source_excerpt(title, content)
         recovery_contract = _read_file(RECOVERY_CONTRACT_PATH)
         if not recovery_contract:
             raise RuntimeError("Recovery mode requires config/recovery_content_contract.md")
@@ -506,10 +553,11 @@ async def compose_multi_platform(
         )
         system_instruction += _build_recovery_generation_contract(
             title,
-            content,
+            generation_content,
             platforms,
         )
     else:
+        generation_content = content
         main_soul, appendices = load_soul_bundle()
         # 只保留被選中的平台指令
         filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
@@ -561,7 +609,7 @@ async def compose_multi_platform(
 
 === 新聞詳情 ===
 標題: {title}
-本文/摘要: {content[:4000]}
+本文/摘要: {generation_content[:4000]}
 原始圖片網址: {og_image or '無'}
 
 請直接輸出 MultiPlatformDraft 的 JSON，包含 {', '.join(platforms)} 的變體。

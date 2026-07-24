@@ -55,14 +55,30 @@ def _source_current_at_run(published_at: str | None, started_at: str) -> bool:
 def _eligible_current_primary_rows(
     rows: list[dict[str, Any]], started_at: str
 ) -> list[dict[str, Any]]:
-    """Return unpublished public-primary rows inside the freshness window."""
+    """Return current pending primary rows, deduplicated to canonical URLs."""
 
-    return [
+    candidates = [
         row
         for row in rows
         if row.get("source_status") == "fetched"
         and _source_current_at_run(row.get("source_published_at"), started_at)
     ]
+    deduplicated: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in candidates:
+        key = (
+            str(row.get("source_feed") or ""),
+            str(row.get("source_title") or row.get("news_id") or ""),
+            str(row.get("source_published_at") or ""),
+        )
+        previous = deduplicated.get(key)
+        url = str(row.get("source_url") or "")
+        previous_url = str((previous or {}).get("source_url") or "")
+        if previous is None or (
+            url.startswith(("https://", "http://"))
+            and not previous_url.startswith(("https://", "http://"))
+        ):
+            deduplicated[key] = row
+    return list(deduplicated.values())
 
 
 def _filter_pending_items(
@@ -143,7 +159,7 @@ def _latest_quality(
 def _primary_source_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id,feed_name,url,published_at,fetched_at,tags,status,drop_reason
+        SELECT id,feed_name,title,url,published_at,fetched_at,tags,status,drop_reason
           FROM news_items
          WHERE COALESCE(tags,'') LIKE '%"primary-record"%'
         """
@@ -159,6 +175,7 @@ def _primary_source_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
         result[row["id"]] = {
             "news_id": row["id"],
             "source_feed": row["feed_name"],
+            "source_title": row["title"],
             "source_url": row["url"],
             "source_published_at": row["published_at"],
             "source_fetched_at": row["fetched_at"],

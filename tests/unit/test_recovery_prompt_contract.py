@@ -16,6 +16,9 @@ def test_recovery_scorer_uses_public_interest_contract(monkeypatch):
     assert "公司數字" in prompt
     assert "政府宣傳活動、競賽、開幕" in prompt
     assert "日期、人數與主辦機關只能證明活動存在" in prompt
+    assert "全市場 benchmark" in prompt
+    assert "通常可評 0.70–0.82" in prompt
+    assert "程序公告" in prompt and "不得高於 0.65" in prompt
 
 
 def test_default_scorer_preserves_legacy_technology_filter(monkeypatch):
@@ -42,6 +45,9 @@ def test_recovery_composer_contract_is_platform_scoped_and_actionable():
     assert "絕對不可" in prompt
     assert "FB：280–500 字" in prompt
     assert "3–5 個短段落" in prompt
+    assert "緊接的下一段可延續同一份來源" in prompt
+    assert "Threads：160–240 字" in prompt
+    assert "結尾只能有一個問號" in prompt
     assert "SOURCE AND CORRECTNESS GATE" in prompt
 
 
@@ -57,10 +63,29 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     assert "11" in prompt and "3521" in prompt
     assert "render exactly five cards" in prompt
     assert "Do not add today's date" in prompt
+    assert "Never round, abbreviate, convert units" in prompt
+    assert "STATISTICAL DENSITY BUDGET" in prompt
+    assert "3521億元" in prompt
     fb_only = composer._build_recovery_generation_contract(
         "行政院公布政策", "行政院公告政策內容。", ["fb"]
     )
     assert "`carousel` MUST be null" in fb_only
+
+
+def test_recovery_source_excerpt_hides_nonbudget_market_statistics():
+    title = "證交所：加權指數上漲2.30%，市值達142.58兆元"
+    content = (
+        "根據臺灣證券交易所統計，本週加權指數上漲2.30%。\n"
+        "電腦週邊上漲10.29%，綠能下跌9.04%。\n"
+        "以上資料為初步統計。"
+    )
+
+    excerpt = composer._build_recovery_source_excerpt(title, content)
+
+    assert "根據臺灣證券交易所統計" in excerpt
+    assert "2.30%" in excerpt
+    assert "10.29%" not in excerpt
+    assert "9.04%" not in excerpt
 
 
 def test_recovery_compose_prompt_removes_legacy_numeric_examples(monkeypatch):

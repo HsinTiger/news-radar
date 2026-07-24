@@ -13,6 +13,7 @@ News Radar · Pipeline 主程式（Milestone 3.1 · Multi-Platform Native）
 import asyncio
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple, Optional
@@ -20,6 +21,7 @@ from typing import Dict, Tuple, Optional
 from src import db as dbmod
 from src import image_manager
 from src.schema import (
+    CarouselCards,
     Draft,
     DraftContent,
     PlatformVariant,
@@ -36,7 +38,9 @@ from src.content_quality_guard import (
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
+    statistical_quantity_allowlist,
     should_request_rewrite,
+    unsupported_market_inference_terms,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.recovery_mode import (
@@ -70,6 +74,7 @@ MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
 RECOVERY_MAX_POSTS_PER_SLOT = 3 # 三個受限候選；仍只允許一篇通過並發布
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
+MAX_QUALITY_REWRITE_ATTEMPTS = 2  # 新 issue 可再修一次；仍有問題就 fail-closed
 
 # Harvest 節流：兩次 RSS 抓取最少相隔秒數（1.5 小時）
 HARVEST_THROTTLE_SECONDS = 90 * 60
@@ -88,6 +93,117 @@ def candidate_scan_limit() -> int:
     return RECOVERY_MAX_POSTS_PER_SLOT if is_recovery_mode() else MAX_POSTS_PER_SLOT
 
 
+def _is_recovery_market_benchmark(
+    *,
+    topic: str | None,
+    source_label: str,
+    title: str,
+    content: str,
+) -> bool:
+    """Identify a primary whole-market benchmark, never a company procedure notice."""
+
+    if topic != "tw_stocks" or not any(
+        marker in source_label for marker in ("證交所", "櫃買")
+    ):
+        return False
+    evidence = f"{title}\n{content}"
+    has_market_index = any(
+        marker in evidence
+        for marker in ("發行量加權股價指數", "加權股價指數", "櫃買指數")
+    )
+    has_market_scope = any(
+        marker in evidence for marker in ("總市值", "全市場", "整體市場")
+    )
+    return has_market_index and has_market_scope
+
+
+def _deterministic_market_benchmark_variant(
+    variant: PlatformVariant,
+    *,
+    platform: str,
+    source_evidence_text: str,
+) -> PlatformVariant:
+    """Build a source-bounded market benchmark explainer without LLM inference."""
+
+    statistics = statistical_quantity_allowlist(source_evidence_text)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    market_cap = next(
+        (value for value in statistics if "兆" in value or "億" in value),
+        None,
+    )
+    if not benchmark or not market_cap:
+        return variant
+    titles = {
+        "threads": f"證交所本週：加權指數上漲 {benchmark}",
+        "fb": f"證交所本週：加權指數上漲 {benchmark}，上市股票總市值達 {market_cap}",
+        "ig": f"大盤上漲 {benchmark}，你的持股呢？",
+    }
+    bodies = {
+        "threads": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "這兩個數字描述整體市場，不代表每檔股票或每個投資組合都取得相同報酬。"
+            "先比較你的同期間報酬，再拆解產業配置與個股選擇。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的持股有跑贏嗎？"
+        ),
+        "fb": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "大盤上漲不等於每檔股票都上漲，也不等於每個投資組合都取得相同報酬。"
+            "判斷自己的結果，應比較同一期間的報酬，再拆成產業配置與個股選擇。\n\n"
+            "若你的報酬跑輸大盤，先比較證交所產業指數與持股產業權重，確認差距主要來自持股集中度還是選股。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？"
+        ),
+        "ig": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "大盤漲幅不是你的報酬。先比較同一期間，再檢查產業配置與個股選擇。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？"
+        ),
+    }
+    hashtags = {
+        "threads": ["#台股"],
+        "fb": ["#台股", "#證交所", "#投資組合"],
+        "ig": ["#台股", "#證交所", "#投資組合", "#產業配置", "#投資筆記"],
+    }
+    return variant.model_copy(
+        update={
+            "title": titles[platform],
+            "body": bodies[platform],
+            "hashtags": hashtags[platform],
+            "primary_topic_tag": "#台股",
+        }
+    )
+
+
+def _deterministic_market_benchmark_carousel(
+    source_evidence_text: str,
+) -> CarouselCards | None:
+    statistics = statistical_quantity_allowlist(source_evidence_text)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    market_cap = next(
+        (value for value in statistics if "兆" in value or "億" in value),
+        None,
+    )
+    if not benchmark or not market_cap:
+        return None
+    return CarouselCards(
+        insight_statement="大盤上漲，不等於你的持股都上漲",
+        insight_support="先比較同期間報酬，再拆解產業配置與個股選擇。",
+        stat_number=benchmark,
+        stat_caption="證交所本週加權指數漲幅",
+        takeaways=[
+            "比較同期間報酬",
+            "拆解產業配置",
+            "檢查個股選擇",
+        ],
+        key_figures=[
+            {"label": "證交所漲幅", "value": benchmark},
+            {"label": "證交所總市值", "value": market_cap},
+        ],
+    )
+
+
 def _recovery_rewrite_guidance(
     rewrite_codes: set[str],
     *,
@@ -97,6 +213,15 @@ def _recovery_rewrite_guidance(
     """Compile deterministic, source-specific instructions for the one retry."""
     allowed_numbers = numeric_claim_allowlist(source_evidence_text)
     allowed_text = ", ".join(allowed_numbers) if allowed_numbers else "none"
+    source_title = source_evidence_text.splitlines()[0] if source_evidence_text else ""
+    statistical_budget = statistical_quantity_allowlist(source_title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(
+            source_evidence_text, limit=2
+        )
+    statistical_budget_text = (
+        ", ".join(statistical_budget) if statistical_budget else "none"
+    )
     label = " ".join(str(source_label or "").split())
     guidance: list[str] = []
 
@@ -120,7 +245,29 @@ def _recovery_rewrite_guidance(
             "NUMERIC GROUNDING: Delete every unsupported date, amount, count, "
             "percentage, and deadline. Material Arabic-number values permitted "
             f"by the supplied evidence are only: {allowed_text}. Bare single-digit "
-            "list labels are not factual support."
+            "list labels are not factual support. Do not round, abbreviate, "
+            "convert units, or derive mathematically equivalent new values."
+        )
+    if "unsupported_audience_extension" in rewrite_codes:
+        guidance.append(
+            "AUDIENCE GROUNDING: Delete claims about retirement funds, corporate "
+            "asset allocation, all investors, or any other affected group not "
+            "explicitly named in the supplied source. Address the reader without "
+            "inventing institutional impact."
+        )
+    if "unsupported_market_inference" in rewrite_codes:
+        guidance.append(
+            "MARKET INFERENCE: A restored trading method does not prove normal "
+            "liquidity, higher volume, or a price move. State only the verified "
+            "order-method change and tell holders what they can observe."
+        )
+    if "platform_stat_overload" in rewrite_codes:
+        guidance.append(
+            "STATISTICAL BUDGET: Use no more than two market/statistical values, "
+            f"and only from this source-prioritized list: {statistical_budget_text}. "
+            "Dates, company codes, and legal article numbers do not count, but "
+            "must remain exact. Delete all other percentages, amounts, points, "
+            "turnover figures, and rankings."
         )
     if "missing_recovery_five_card_carousel" in rewrite_codes:
         guidance.append(
@@ -143,11 +290,12 @@ def _recovery_rewrite_guidance(
         guidance.append(
             "SOURCE ATTRIBUTION: "
             + source_instruction
-            + "Every paragraph/card containing a fact or number must name that "
-            "exact source, or another exact institution already named in the "
-            "supplied evidence, in the same paragraph/card. Delete unsupported "
-            "claims; never write generic `according to reports` or call a media "
-            "report an official record."
+            + "Name that exact source in the first factual paragraph/card. One "
+            "immediately adjacent paragraph may continue the same record, but "
+            "must use only source-supported facts and exact numeric units. Name "
+            "the source again when the subject, record, or event changes. Delete "
+            "unsupported claims; never write generic `according to reports` or "
+            "call a media report an official record."
         )
     if "missing_taiwan_relevance" in rewrite_codes:
         guidance.append(
@@ -170,6 +318,7 @@ def _recovery_rewrite_guidance(
     if rewrite_codes & {
         "platform_hashtag_overload",
         "platform_copy_too_long",
+        "platform_stat_overload",
         "platform_wall_of_text",
         "platform_paragraph_too_long",
     }:
@@ -179,9 +328,14 @@ def _recovery_rewrite_guidance(
             "tag. Facebook: 280-500 characters, 3-5 paragraphs, 2-3 tags. "
             "Instagram caption: 160-340 characters, 2-4 paragraphs, 3-5 tags."
         )
-    if rewrite_codes & {"missing_answerable_question", "generic_engagement_bait"}:
+    if rewrite_codes & {
+        "missing_answerable_question",
+        "multiple_closing_questions",
+        "generic_engagement_bait",
+    }:
         guidance.append(
-            "CLOSING: End with one specific question that a reader can answer "
+            "CLOSING: End with exactly one question mark and one specific question "
+            "that a reader can answer "
             "from experience, a public record, or a stated trade-off. Never ask "
             "generic `你怎麼看` or request engagement."
         )
@@ -190,6 +344,13 @@ def _recovery_rewrite_guidance(
             "ALLEGATIONS: Attribute every allegation to the exact person, agency, "
             "filing, investigation, indictment, or judgment in the supplied "
             "evidence. Otherwise delete it."
+        )
+    if "unsupported_market_inference" in rewrite_codes:
+        guidance.append(
+            "MARKET INFERENCE: Delete any claim that a rise proves improving "
+            "sentiment, new capital inflow, a bullish signal, or continuation. "
+            "The supplied statistics describe the market; they do not prove a "
+            "cause, forecast, or investment recommendation."
         )
 
     guidance.append(
@@ -202,6 +363,187 @@ def _recovery_rewrite_guidance(
         "platform JSON."
     )
     return guidance
+
+
+def _deterministic_recovery_closing_repair(
+    body: str,
+    *,
+    platform: str,
+    topic: str | None,
+    source_evidence_text: str,
+    source_label: str,
+) -> str:
+    """Repair only a closing-question defect after all substantive gates pass."""
+
+    if topic != "tw_stocks":
+        return body
+    official_source = next(
+        (
+            short_label
+            for marker, short_label in (
+                ("證交所", "證交所"),
+                ("臺灣證券交易所", "證交所"),
+                ("台灣證券交易所", "證交所"),
+                ("櫃買", "櫃買中心"),
+                ("金管會", "金管會"),
+                ("中央銀行", "中央銀行"),
+            )
+            if marker in source_label
+        ),
+        None,
+    )
+    statistics = statistical_quantity_allowlist(source_evidence_text, limit=2)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    if benchmark and official_source:
+        questions = {
+            "threads": f"對照{official_source}本週 {benchmark} 的漲幅，你的持股有跑贏嗎？",
+            "fb": f"對照{official_source}本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？",
+            "ig": f"對照{official_source}本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？",
+        }
+    else:
+        questions = {
+            "threads": "你的持股裡，哪一檔最受這次變化影響？",
+            "fb": "你的持股裡，哪一檔最需要重新檢查產業曝險？",
+            "ig": "你的持股裡，哪一檔最受產業輪動影響？",
+        }
+    question = questions.get(platform, questions["threads"])
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    trailing_hashtags: list[str] = []
+    while paragraphs and all(
+        token.startswith("#") for token in paragraphs[-1].split()
+    ):
+        trailing_hashtags.insert(0, paragraphs.pop())
+    if paragraphs and re.search(r"[？?]", paragraphs[-1]):
+        paragraphs[-1] = question
+    else:
+        paragraphs.append(question)
+    paragraphs.extend(trailing_hashtags)
+    return "\n\n".join(paragraphs)
+
+
+def _deterministic_recovery_utility_repair(
+    body: str,
+    *,
+    topic: str | None,
+) -> str:
+    """Insert one compact, checkable reader action for an otherwise clean stock post."""
+
+    if topic != "tw_stocks":
+        return body
+    utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    trailing_hashtags: list[str] = []
+    while paragraphs and all(
+        token.startswith("#") for token in paragraphs[-1].split()
+    ):
+        trailing_hashtags.insert(0, paragraphs.pop())
+    insert_at = len(paragraphs)
+    if paragraphs and re.search(r"[？?]", paragraphs[-1]):
+        insert_at -= 1
+    if utility not in paragraphs:
+        paragraphs.insert(insert_at, utility)
+    paragraphs.extend(trailing_hashtags)
+    return "\n\n".join(paragraphs)
+
+
+def _deterministic_recovery_stat_prune(
+    body: str,
+    *,
+    topic: str | None,
+    source_evidence_text: str,
+) -> str:
+    """Drop whole stock paragraphs that introduce secondary statistical values."""
+
+    if topic != "tw_stocks":
+        return body
+    allowed = set(statistical_quantity_allowlist(source_evidence_text, limit=2))
+    if not allowed:
+        return body
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    kept: list[str] = []
+    kept_allowed_stat = False
+    for paragraph in paragraphs:
+        statistics = set(statistical_quantity_allowlist(paragraph))
+        if statistics and not statistics <= allowed:
+            continue
+        if statistics & allowed:
+            kept_allowed_stat = True
+        kept.append(paragraph)
+    if not kept or not kept_allowed_stat:
+        return body
+    return "\n\n".join(kept)
+
+
+def _deterministic_recovery_hashtag_prune(body: str, *, platform: str) -> str:
+    """Keep only the platform's allowed leading hashtags without touching prose."""
+
+    limit = {"threads": 1, "fb": 3, "ig": 5}.get(platform)
+    if limit is None:
+        return body
+    seen = 0
+
+    def keep_allowed(match: re.Match[str]) -> str:
+        nonlocal seen
+        seen += 1
+        return match.group(0) if seen <= limit else ""
+
+    repaired = re.sub(r"(?<!\w)#[^\s#]+", keep_allowed, body)
+    paragraphs = [
+        re.sub(r"[ \t]+", " ", part).strip()
+        for part in re.split(r"\n\s*\n", repaired)
+        if part.strip()
+    ]
+    return "\n\n".join(paragraphs)
+
+
+def _deterministic_recovery_inference_prune(
+    body: str,
+    *,
+    topic: str | None,
+    source_evidence_text: str,
+) -> str:
+    """Delete only sentences containing known source-unsupported market inference."""
+
+    if topic != "tw_stocks":
+        return body
+    unsupported = unsupported_market_inference_terms(body, source_evidence_text)
+    if not unsupported:
+        return body
+    paragraphs: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", body):
+        sentences = re.split(r"(?<=[。！？!?])", paragraph.strip())
+        kept = [
+            sentence.strip()
+            for sentence in sentences
+            if sentence.strip() and not any(term in sentence for term in unsupported)
+        ]
+        if kept:
+            paragraphs.append("".join(kept))
+    return "\n\n".join(paragraphs) if paragraphs else body
+
+
+def _deterministic_recovery_title_prune(title: str | None) -> str | None:
+    """Remove only a generic market-watch suffix from an otherwise factual title."""
+
+    if not title:
+        return title
+    return re.sub(
+        r"[，,]?\s*(?:投資人|投資者)?需(?:關注|注意)市場變化[。！!]*$",
+        "",
+        title,
+    ).rstrip("，,。！! ")
+
+
+def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
+    """Lower is better; blocks dominate, then rewrite issues, then warnings."""
+
+    penalty = 0
+    for issues in findings.values():
+        for issue in issues:
+            penalty += {"block": 1000, "rewrite": 10, "warn": 1}.get(
+                issue.severity, 100
+            )
+    return penalty
 
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
@@ -934,6 +1276,23 @@ async def process_item(
         print(" ⚠️  [Pipeline] 寫作 LLM 雙路徑皆失敗 → skip 本篇（不入 queue）")
         return "skipped_no_llm"
 
+    source_evidence_text = (
+        f"{title}\n{content}\n"
+        f"{row['published_at'] if 'published_at' in row.keys() else ''}"
+    )
+    market_benchmark = is_recovery_mode() and _is_recovery_market_benchmark(
+        topic=topic_cls.category_id,
+        source_label=str(row["feed_name"] or ""),
+        title=title,
+        content=content,
+    )
+    if market_benchmark and "ig" in active_platforms:
+        benchmark_carousel = _deterministic_market_benchmark_carousel(
+            source_evidence_text
+        )
+        if benchmark_carousel is not None:
+            bundle = bundle.model_copy(update={"carousel": benchmark_carousel})
+
     # 3. 逐平台 finalize（修 hashtag、壓字數）
     finalized: Dict[str, Tuple[PlatformVariant, str, bool]] = {}
     # 3. 逐一處理有生成的平台變體
@@ -941,6 +1300,12 @@ async def process_item(
         raw_variant = getattr(bundle, platform_key)
         if not raw_variant:
             continue
+        if market_benchmark:
+            raw_variant = _deterministic_market_benchmark_variant(
+                raw_variant,
+                platform=platform_key,
+                source_evidence_text=source_evidence_text,
+            )
 
         variant, full_text, ok = finalize_variant(raw_variant, platform_key)
         finalized[platform_key] = (variant, full_text, ok)
@@ -956,16 +1321,11 @@ async def process_item(
         )
         return "skipped_no_llm"
 
-    # 3.5 品質證據 + 一次受限重寫。
-    # block 仍 fail-closed；rewrite 只給 composer 一次修正機會。第二次仍命中
-    # rewrite 時保留草稿供人工看，但絕不進自動發布 queue。每次判定只保存規則
-    # 與文字 hash，不保存另一份全文。
+    # 3.5 品質證據 + 最多兩次受限重寫。
+    # block 仍 fail-closed；第一次修復若引入新 rewrite issue，可再針對新證據
+    # 修一次。第三版仍命中就保留人工看，絕不進自動發布 queue。每次判定只保存
+    # 規則與文字 hash，不保存另一份全文。
     draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
-    source_evidence_text = (
-        f"{title}\n{content}\n"
-        f"{row['published_at'] if 'published_at' in row.keys() else ''}"
-    )
-
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
         for platform_key, (_variant, ftext, _ok) in finalized.items():
@@ -1035,15 +1395,23 @@ async def process_item(
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped_quality_block"
 
-    rewrite_requests = [
-        f"{platform}: {format_issues(issues)}"
-        for platform, issues in quality_findings.items()
-        if should_request_rewrite(issues)
-    ]
+    best_finalized = dict(finalized)
+    best_bundle = bundle
+    best_findings = quality_findings
     rewrite_unresolved = False
-    if rewrite_requests:
+    for rewrite_index in range(1, MAX_QUALITY_REWRITE_ATTEMPTS + 1):
+        rewrite_requests = [
+            f"{platform}: {format_issues(issues)}"
+            for platform, issues in quality_findings.items()
+            if should_request_rewrite(issues)
+        ]
+        if not rewrite_requests:
+            rewrite_unresolved = False
+            break
+        rewrite_unresolved = True
         print(
-            "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行唯一一次重寫："
+            "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行受限重寫 "
+            f"{rewrite_index}/{MAX_QUALITY_REWRITE_ATTEMPTS}："
             + " || ".join(rewrite_requests)
         )
         rewrite_codes = {
@@ -1059,9 +1427,10 @@ async def process_item(
         )
         rewrite_note = (
             f"{editorial_mandate}\n\n"
-            "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
-            "variant. Preserve source-backed facts and the core insight. Remove or "
-            "attribute unsupported numeric claims; do not invent citations. Fix these "
+            f"QUALITY REWRITE ({rewrite_index}/{MAX_QUALITY_REWRITE_ATTEMPTS}): "
+            "Rewrite every requested platform variant. Preserve source-backed facts "
+            "and the core insight. Remove or attribute unsupported numeric claims; "
+            "do not invent citations. Fix these "
             f"deterministic findings: {' || '.join(rewrite_requests)}\n\n"
             + "\n".join(targeted_rewrite_guidance)
         )
@@ -1072,36 +1441,151 @@ async def process_item(
             editorial_note=rewrite_note,
             platforms=active_platforms,
         )
-        if retry_bundle:
-            retry_finalized = dict(finalized)
-            for platform_key in active_platforms:
-                raw_variant = getattr(retry_bundle, platform_key)
-                if raw_variant:
-                    retry_finalized[platform_key] = finalize_variant(
-                        raw_variant, platform_key
-                    )
-            finalized = retry_finalized
-            bundle = retry_bundle
-            quality_findings = evaluate_quality(2)
-            retry_blocks = [
-                f"{platform}: {format_issues(issues)}"
-                for platform, issues in quality_findings.items()
-                if has_blocking_issues(issues)
-            ]
-            if retry_blocks:
-                print(
-                    " 🛑 [QualityGuard·rewrite] 重寫後出現 block，skip 本篇："
-                    + " || ".join(retry_blocks)
+        if not retry_bundle:
+            print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
+            break
+        if market_benchmark and "ig" in active_platforms:
+            benchmark_carousel = _deterministic_market_benchmark_carousel(
+                source_evidence_text
+            )
+            if benchmark_carousel is not None:
+                retry_bundle = retry_bundle.model_copy(
+                    update={"carousel": benchmark_carousel}
                 )
-                dbmod.update_status(conn, news_id, "dropped")
-                return "dropped_quality_block"
+        retry_finalized = dict(finalized)
+        for platform_key in active_platforms:
+            raw_variant = getattr(retry_bundle, platform_key)
+            if raw_variant:
+                if market_benchmark:
+                    raw_variant = _deterministic_market_benchmark_variant(
+                        raw_variant,
+                        platform=platform_key,
+                        source_evidence_text=source_evidence_text,
+                    )
+                retry_finalized[platform_key] = finalize_variant(
+                    raw_variant, platform_key
+                )
+        finalized = retry_finalized
+        bundle = retry_bundle
+        quality_findings = evaluate_quality(rewrite_index + 1)
+        retry_blocks = [
+            f"{platform}: {format_issues(issues)}"
+            for platform, issues in quality_findings.items()
+            if has_blocking_issues(issues)
+        ]
+        if retry_blocks:
+            print(
+                " 🛑 [QualityGuard·rewrite] 重寫後出現 block，skip 本篇："
+                + " || ".join(retry_blocks)
+            )
+            dbmod.update_status(conn, news_id, "dropped")
+            return "dropped_quality_block"
+        if _quality_rewrite_penalty(quality_findings) < _quality_rewrite_penalty(
+            best_findings
+        ):
+            best_finalized = dict(finalized)
+            best_bundle = bundle
+            best_findings = quality_findings
+        rewrite_unresolved = any(
+            should_request_rewrite(issues)
+            for issues in quality_findings.values()
+        )
+        if not rewrite_unresolved:
+            break
+
+    if rewrite_unresolved and _quality_rewrite_penalty(
+        best_findings
+    ) < _quality_rewrite_penalty(quality_findings):
+        finalized = best_finalized
+        bundle = best_bundle
+        quality_findings = best_findings
+        rewrite_unresolved = any(
+            should_request_rewrite(issues)
+            for issues in quality_findings.values()
+        )
+        print("   ↳ [QualityGuard·best] 後稿品質倒退，恢復 issue 最少版本")
+
+    if rewrite_unresolved and is_recovery_mode() and topic_cls.category_id == "tw_stocks":
+        remaining_codes = {
+            issue.code
+            for issues in quality_findings.values()
+            for issue in issues
+            if issue.severity == "rewrite"
+        }
+        closing_codes = {
+            "missing_answerable_question",
+            "multiple_closing_questions",
+            "generic_engagement_bait",
+        }
+        deterministic_codes = closing_codes | {
+            "missing_reader_utility",
+            "formulaic_attention_hook",
+            "platform_hashtag_overload",
+            "platform_stat_overload",
+            "unsupported_market_inference",
+        }
+        if remaining_codes and remaining_codes <= deterministic_codes:
+            repaired_finalized = dict(finalized)
+            for platform_key, (variant, _full_text, _ok) in finalized.items():
+                platform_codes = {
+                    issue.code
+                    for issue in quality_findings.get(platform_key, [])
+                    if issue.severity == "rewrite"
+                }
+                repaired_body = variant.body
+                repaired_title = variant.title
+                if "formulaic_attention_hook" in platform_codes:
+                    repaired_title = _deterministic_recovery_title_prune(
+                        repaired_title
+                    )
+                if "unsupported_market_inference" in platform_codes:
+                    repaired_body = _deterministic_recovery_inference_prune(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                    )
+                if "platform_hashtag_overload" in platform_codes:
+                    repaired_body = _deterministic_recovery_hashtag_prune(
+                        repaired_body,
+                        platform=platform_key,
+                    )
+                if "platform_stat_overload" in platform_codes:
+                    repaired_body = _deterministic_recovery_stat_prune(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                    )
+                if "missing_reader_utility" in platform_codes:
+                    repaired_body = _deterministic_recovery_utility_repair(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                    )
+                if platform_codes & closing_codes:
+                    repaired_body = _deterministic_recovery_closing_repair(
+                        repaired_body,
+                        platform=platform_key,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                        source_label=str(row["feed_name"] or ""),
+                    )
+                repaired_variant = variant.model_copy(
+                    update={"body": repaired_body, "title": repaired_title}
+                )
+                repaired_finalized[platform_key] = finalize_variant(
+                    repaired_variant, platform_key
+                )
+            finalized = repaired_finalized
+            quality_findings = evaluate_quality(
+                MAX_QUALITY_REWRITE_ATTEMPTS + 2
+            )
             rewrite_unresolved = any(
                 should_request_rewrite(issues)
                 for issues in quality_findings.values()
             )
-        else:
-            rewrite_unresolved = True
-            print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
+            print(
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 title/inference/stats/utility/closing/tags；"
+                f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
+            )
 
     # 4. 建立 Draft（舊表相容；若本輪沒有 FB，就用第一個實際目標作 canonical）
     canonical_key = "fb" if "fb" in finalized else active_platforms[0]
@@ -1123,12 +1607,17 @@ async def process_item(
     )
 
     auto_publish = (
-        (owner_submitted or score >= publish_threshold)
+        (owner_submitted or score >= publish_threshold or market_benchmark)
         and not rewrite_unresolved
     )
     if auto_publish:
         draft.status = "auto_approved"
-        reason = "owner submission" if owner_submitted else f"分數 ≥ {publish_threshold}"
+        if owner_submitted:
+            reason = "owner submission"
+        elif score >= publish_threshold:
+            reason = f"分數 ≥ {publish_threshold}"
+        else:
+            reason = "官方全市場 benchmark + quality PASS"
         print(f" ↳ [Auto-Publish] {reason}，啟動指定平台發布")
     elif rewrite_unresolved:
         print(
