@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-24.recovery-v9";
+const API_VERSION = "2026-07-24.recovery-v10";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -734,6 +734,7 @@ async function syncOperationalData(request, env, cors) {
     const rewriteCount = integer(row.rewrite_count);
     const blockCount = integer(row.block_count);
     const publishReadyCount = integer(row.publish_ready_count);
+    const legacyExcludedCount = integer(row.legacy_excluded_count);
     const coverage = Number(row.evidence_coverage);
     if (!Number.isFinite(coverage) || coverage < 0 || coverage > 1) {
       throw new HTTPError(400, "invalid quality evidence coverage", "invalid_input");
@@ -749,8 +750,8 @@ async function syncOperationalData(request, env, cors) {
         `INSERT INTO content_quality_snapshots(
           platform,captured_at,window_days,candidates,evaluated,evidence_coverage,
           pass_count,warn_count,rewrite_count,block_count,publish_ready_count,
-          top_issue_codes_json,guard_version
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+          top_issue_codes_json,guard_version,legacy_excluded_count
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(platform,captured_at) DO UPDATE SET
           window_days=excluded.window_days,candidates=excluded.candidates,
           evaluated=excluded.evaluated,evidence_coverage=excluded.evidence_coverage,
@@ -758,7 +759,8 @@ async function syncOperationalData(request, env, cors) {
           rewrite_count=excluded.rewrite_count,block_count=excluded.block_count,
           publish_ready_count=excluded.publish_ready_count,
           top_issue_codes_json=excluded.top_issue_codes_json,
-          guard_version=excluded.guard_version`,
+          guard_version=excluded.guard_version,
+          legacy_excluded_count=excluded.legacy_excluded_count`,
       ).bind(
         platform,
         cleanString(row.captured_at, "captured_at", 60, true),
@@ -773,6 +775,7 @@ async function syncOperationalData(request, env, cors) {
         publishReadyCount,
         jsonValue(row.top_issue_codes, 5000),
         cleanString(row.guard_version, "guard_version", 80, true),
+        legacyExcludedCount,
       ),
     );
   }
@@ -979,7 +982,7 @@ async function dashboard(env, cors) {
       FROM content_quality_snapshots
     ) SELECT platform,captured_at,window_days,candidates,evaluated,evidence_coverage,
       pass_count,warn_count,rewrite_count,block_count,publish_ready_count,
-      top_issue_codes_json,guard_version FROM ranked WHERE rn=1`),
+      top_issue_codes_json,guard_version,legacy_excluded_count FROM ranked WHERE rn=1`),
     env.DB.prepare(`SELECT id,kind,status,summary,evidence_json,proposed_change_json,
       decision_comment,created_at,decided_at,applied_at
       FROM learning_proposals ORDER BY created_at DESC LIMIT 20`),
