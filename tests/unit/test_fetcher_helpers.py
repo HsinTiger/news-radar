@@ -6,17 +6,57 @@ News Radar · Unit tests for fetcher 純函式
 """
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock
+
+import httpx
 
 from src.fetcher import (
     make_news_id,
     is_too_old,
     _limited_entries,
+    _get_feed_with_retry,
     _parse_rss_time,
     _rewrite_url_for_extraction,
     _reddit_rss_to_markdown,
 )
 
 import pytest
+
+
+def _response(status: int, body: str = "") -> httpx.Response:
+    return httpx.Response(
+        status,
+        text=body,
+        request=httpx.Request("GET", "https://example.test/feed"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_feed_get_retries_transient_server_error(monkeypatch):
+    client = AsyncMock()
+    client.get.side_effect = [_response(500), _response(200, "<rss />")]
+    sleep = AsyncMock()
+    monkeypatch.setattr("src.fetcher.asyncio.sleep", sleep)
+
+    response = await _get_feed_with_retry(client, "https://example.test/feed")
+
+    assert response.status_code == 200
+    assert client.get.await_count == 2
+    sleep.assert_awaited_once_with(0.5)
+
+
+@pytest.mark.asyncio
+async def test_feed_get_does_not_retry_permanent_client_error(monkeypatch):
+    client = AsyncMock()
+    client.get.return_value = _response(404)
+    sleep = AsyncMock()
+    monkeypatch.setattr("src.fetcher.asyncio.sleep", sleep)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _get_feed_with_retry(client, "https://example.test/feed")
+
+    assert client.get.await_count == 1
+    sleep.assert_not_awaited()
 
 
 def test_make_news_id_stable():

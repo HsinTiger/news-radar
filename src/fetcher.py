@@ -114,6 +114,32 @@ _BROWSER_HEADERS = {
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
     ),
 }
+_TRANSIENT_FEED_STATUS = {429, 500, 502, 503, 504}
+_FEED_RETRY_DELAYS = (0.5, 1.5)
+
+
+async def _get_feed_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+) -> httpx.Response:
+    """Retry only bounded transient HTTP failures; never loop on bad URLs."""
+    last_response: httpx.Response | None = None
+    for attempt in range(len(_FEED_RETRY_DELAYS) + 1):
+        response = await client.get(
+            url,
+            timeout=15,
+            follow_redirects=True,
+            headers=_BROWSER_HEADERS,
+        )
+        last_response = response
+        if response.status_code not in _TRANSIENT_FEED_STATUS:
+            response.raise_for_status()
+            return response
+        if attempt < len(_FEED_RETRY_DELAYS):
+            await asyncio.sleep(_FEED_RETRY_DELAYS[attempt])
+    assert last_response is not None
+    last_response.raise_for_status()
+    return last_response
 
 
 async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> List[NewsItem]:
@@ -124,8 +150,7 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
     print(f"[Module 1] 抓取 Feed → {name}")
 
     try:
-        r = await client.get(url, timeout=15, follow_redirects=True, headers=_BROWSER_HEADERS)
-        r.raise_for_status()
+        r = await _get_feed_with_retry(client, url)
     except Exception as e:
         print(f"[Module 1]  ↳ ⚠️ 失敗：{e}")
         return []
