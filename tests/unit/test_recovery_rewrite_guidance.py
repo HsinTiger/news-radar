@@ -74,10 +74,29 @@ def test_deterministic_market_closing_repair_uses_source_benchmark() -> None:
         platform="threads",
         topic="tw_stocks",
         source_evidence_text="加權指數上漲2.30%，市值達142.58兆元。",
+        source_label="證交所 官方訊息",
     )
 
-    assert repaired.endswith("你的持股本週有跑贏 2.3% 嗎？")
+    assert repaired.endswith("對照證交所本週 2.3% 的漲幅，你的持股有跑贏嗎？")
     assert repaired.count("？") == 1
+    assert "fact_without_local_source" not in {
+        issue.code for issue in check_quality(repaired, recovery=True)
+    }
+
+
+def test_deterministic_market_closing_does_not_attribute_unknown_source() -> None:
+    body = "市場本週上漲。\n\n你的持股有跑贏 2.3% 嗎？"
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="threads",
+        topic="tw_stocks",
+        source_evidence_text="加權指數上漲2.30%。",
+        source_label="user_submission",
+    )
+
+    assert "2.3%" not in repaired
+    assert "user_submission" not in repaired
 
 
 def test_deterministic_market_utility_repair_is_concrete() -> None:

@@ -251,18 +251,34 @@ def _deterministic_recovery_closing_repair(
     platform: str,
     topic: str | None,
     source_evidence_text: str,
+    source_label: str,
 ) -> str:
     """Repair only a closing-question defect after all substantive gates pass."""
 
     if topic != "tw_stocks":
         return body
+    official_source = next(
+        (
+            short_label
+            for marker, short_label in (
+                ("證交所", "證交所"),
+                ("臺灣證券交易所", "證交所"),
+                ("台灣證券交易所", "證交所"),
+                ("櫃買", "櫃買中心"),
+                ("金管會", "金管會"),
+                ("中央銀行", "中央銀行"),
+            )
+            if marker in source_label
+        ),
+        None,
+    )
     statistics = statistical_quantity_allowlist(source_evidence_text, limit=2)
     benchmark = next((value for value in statistics if value.endswith("%")), None)
-    if benchmark:
+    if benchmark and official_source:
         questions = {
-            "threads": f"你的持股本週有跑贏 {benchmark} 嗎？",
-            "fb": f"你這週的投資組合有跑贏 {benchmark} 嗎？",
-            "ig": f"你本週報酬有跑贏 {benchmark} 嗎？",
+            "threads": f"對照{official_source}本週 {benchmark} 的漲幅，你的持股有跑贏嗎？",
+            "fb": f"對照{official_source}本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？",
+            "ig": f"對照{official_source}本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？",
         }
     else:
         questions = {
@@ -1270,6 +1286,7 @@ async def process_item(
                         platform=platform_key,
                         topic=topic_cls.category_id,
                         source_evidence_text=source_evidence_text,
+                        source_label=str(row["feed_name"] or ""),
                     )
                 repaired_variant = variant.model_copy(update={"body": repaired_body})
                 repaired_finalized[platform_key] = finalize_variant(
