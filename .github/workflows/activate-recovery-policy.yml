@@ -1,4 +1,4 @@
-name: "Social Automation · Activate Recovery Policy"
+name: "Social Automation · Activate Taiwan Daily Policy"
 
 on:
   workflow_dispatch:

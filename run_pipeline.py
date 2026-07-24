@@ -684,7 +684,7 @@ async def process_item(
 
     # Phase 2 搜集：compose 前補「多源脈絡」增厚度（EDITORIAL_MODE 才跑；找不到/出錯就略過）。
     from src.slot_routing import editorial_mode as _ed_mode
-    if _ed_mode():
+    if _ed_mode() or is_recovery_mode():
         try:
             from src.gather import gather_brief
             _tc = getattr(topic_cls, "category_id", None)
@@ -1099,8 +1099,8 @@ async def main():
             if is_recovery_mode():
                 pending_items = rank_candidates(conn, pending_items)
                 print(
-                    "[Recovery] 候選已按 robust topic + source-tier evidence "
-                    "預排序；未知題材仍保留"
+                    "[Recovery] 候選已依台灣公共利益範圍 fail-closed 過濾，"
+                    "再按 topic + source-tier evidence 預排序；owner 投稿保留"
                 )
             # 2026-06-27 時段選題路由：晚=政治桶、早午=市場桶優先（soft bias、桶內維持原序）。
             # 藏在 EDITORIAL_MODE flag 後——關＝reorder no-op、完全沿用舊 weighted_score 行為（活下去）。

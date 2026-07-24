@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.recovery-v3"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v4"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -213,7 +213,9 @@ _RECOVERY_NAMED_SOURCE_PATTERN = re.compile(
     r"(?:《[^》]{2,60}》|[A-Za-z0-9\u4e00-\u9fff·．・\s]{2,60}?)"
     r"(?:的)?(?:報導|公告|數據|資料|報告|調查|統計|財報|法說|說法|指出|表示|證實|回應))"
     r"|(?:(?:路透(?:社)?|彭博|BBC|CNBC|華爾街日報|金融時報|美聯社|中央社|"
-    r"公視|自由時報|聯合報|交通部|衛福部|行政院|證交所|金管會)"
+    r"公視|中央社|自由時報|聯合報|交通部|衛福部|食藥署|行政院|立法院|"
+    r"總統府|證交所|櫃買中心|金管會|中央銀行|財政部|主計總處|審計部|"
+    r"監察院|法務部|農業部|環境部|勞動部|經濟部|國發會|國防部)"
     r"(?:報導|公告|指出|表示|證實|回應|資料|數據|報告)?)"
     r"|(?:《[^》]{2,60}》(?:報導|指出|表示|公告))"
     r"|(?:[A-Za-z0-9\u4e00-\u9fff·．・]{2,40}"
@@ -255,6 +257,15 @@ _RECOVERY_ATTRIBUTION_VERBS = (
 _RECOVERY_TRUST_ERODING_FRAMES = (
     "真正的賽局", "信任赤字", "護城河", "底層邏輯", "系統性崩潰",
     "巨大缺口", "信任崩塌", "信任代價", "重創", "迫使各國重新",
+)
+_RECOVERY_FORMULAIC_FRAMES = (
+    "市場以為", "大家以為", "真正的賽局", "護城河", "底層邏輯",
+    "神話破滅", "信任崩塌",
+)
+_RECOVERY_TAIWAN_RELEVANCE_PATTERN = re.compile(
+    r"台灣|臺灣|台股|新台幣|國人|民眾|消費者|納稅人|勞工|投資人|家長|"
+    r"通勤者|通勤族|立法院|行政院|總統府|食藥署|衛福部|交通部|金管會|"
+    r"證交所|櫃買中心|中央銀行|財政部|主計總處|台積電"
 )
 
 # Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
@@ -376,6 +387,11 @@ def _recovery_jargon_pileup(full_text: str, _title: str) -> Optional[str]:
     return None
 
 
+def _recovery_formulaic_frame(full_text: str, _title: str) -> Optional[str]:
+    hit = next((term for term in _RECOVERY_FORMULAIC_FRAMES if term in full_text), None)
+    return f"formulaic_frame:{hit}" if hit else None
+
+
 _RULES: tuple[_Rule, ...] = (
     _Rule(
         code="templated_fallback_marker",
@@ -492,6 +508,22 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
         severity="rewrite",
         message="策略黑話或戲劇化框架堆疊會侵蝕信任並掩蓋讀者用途",
         matcher=_recovery_jargon_pileup,
+    ),
+    _Rule(
+        code="formulaic_attention_hook",
+        severity="rewrite",
+        message="Recovery v4 禁用長期重複的 AI 框架，吸睛必須來自可驗證的具體後果",
+        matcher=_recovery_formulaic_frame,
+    ),
+    _Rule(
+        code="missing_taiwan_relevance",
+        severity="rewrite",
+        message="每日自動貼文必須明寫它與台灣人民、制度、金錢、安全或權利的關係",
+        matcher=lambda ft, _t: (
+            "no_taiwan_relevance_marker"
+            if not _RECOVERY_TAIWAN_RELEVANCE_PATTERN.search(ft)
+            else None
+        ),
     ),
     _Rule(
         code="missing_reader_utility",

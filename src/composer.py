@@ -264,7 +264,11 @@ def finalize_variant(variant: PlatformVariant, platform: str) -> Tuple[PlatformV
     if platform == "fb":
         try:
             from src.slot_routing import editorial_mode
-            if editorial_mode():
+            if (
+                editorial_mode()
+                and os.environ.get("AUTOMATION_MODE", "").strip().lower()
+                != "recovery"
+            ):
                 from src.cta_pool import fb_funnel_cta, SUBSTACK_URL
                 cta = fb_funnel_cta()
                 # 用 URL（非整句）判重 → 不管池子抽到哪一句，body 內已有連結就不再加（冪等）。
@@ -424,7 +428,11 @@ async def compose_multi_platform(
     # system_instruction 尾端，由同一個 LLM call 自然帶出 CTA。風格選取會自動
     # 排除最近 2 篇用過的類，避免演算法 fingerprint。
     cta_style = None
-    if "threads" in platforms:
+    if (
+        "threads" in platforms
+        and os.environ.get("AUTOMATION_MODE", "").strip().lower()
+        != "recovery"
+    ):
         cta_style = decide_cta()
         if cta_style is not None:
             system_instruction += get_cta_prompt_fragment(cta_style)

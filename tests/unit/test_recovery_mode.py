@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from src import db as dbmod
 from src.recovery_mode import editorial_mandate_for, rank_candidates, record_experiments
@@ -41,14 +42,14 @@ def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
     conn = _conn()
     rows = [
         {
-            "title": "較新的二手報導",
+            "title": "較新的台灣二手報導",
             "topic_category": "current_affairs",
             "feed_tier": "secondary",
             "source_type": "article",
             "published_at": "2026-07-24T10:00:00Z",
         },
         {
-            "title": "較早的第一手來源",
+            "title": "較早的台灣第一手來源",
             "topic_category": "current_affairs",
             "feed_tier": "primary",
             "source_type": "article",
@@ -56,21 +57,21 @@ def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
         },
     ]
     ranked = rank_candidates(conn, rows)
-    assert ranked[0]["title"] == "較早的第一手來源"
+    assert ranked[0]["title"] == "較早的台灣第一手來源"
 
 
 def test_rank_candidates_downranks_social_source() -> None:
     conn = _conn()
     rows = [
         {
-            "title": "社群轉述",
+            "title": "台灣社群轉述",
             "topic_category": "current_affairs",
             "feed_tier": "primary",
             "source_type": "social",
             "published_at": "2026-07-24T10:00:00Z",
         },
         {
-            "title": "正式文章",
+            "title": "台灣正式文章",
             "topic_category": "current_affairs",
             "feed_tier": "secondary",
             "source_type": "article",
@@ -78,7 +79,90 @@ def test_rank_candidates_downranks_social_source() -> None:
         },
     ]
     ranked = rank_candidates(conn, rows)
-    assert ranked[0]["title"] == "正式文章"
+    assert ranked[0]["title"] == "台灣正式文章"
+
+
+def test_rank_candidates_fail_closed_outside_taiwan_editorial_scope() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "New AI model launches overseas",
+            "topic_category": "tech_product_launch",
+            "feed_tier": "primary",
+            "source_type": "article",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+        {
+            "title": "食藥署公布台灣食品回收批號",
+            "topic_category": "current_affairs",
+            "feed_tier": "primary",
+            "source_type": "article",
+            "published_at": "2026-07-24T09:00:00Z",
+        },
+    ]
+    ranked = rank_candidates(conn, rows)
+    assert [row["title"] for row in ranked] == ["食藥署公布台灣食品回收批號"]
+
+
+def test_global_disaster_from_taiwan_media_is_not_automatically_taiwan_relevant() -> None:
+    conn = _conn()
+    row = {
+        "title": "南亞暴雨釀洪災上百人下落不明",
+        "topic_category": "current_affairs",
+        "feed_name": "公視新聞 PTS",
+        "published_at": "2026-07-24T10:00:00Z",
+    }
+    assert rank_candidates(conn, [row]) == []
+
+
+def test_public_consequence_outranks_ceremonial_politics() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "立法院長接見訪賓並合影",
+            "topic_category": "current_affairs",
+            "feed_tier": "primary",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+        {
+            "title": "食安不合格產品回收批號公布",
+            "topic_category": "current_affairs",
+            "feed_tier": "secondary",
+            "published_at": "2026-07-24T09:00:00Z",
+        },
+    ]
+    assert rank_candidates(conn, rows)[0]["title"] == "食安不合格產品回收批號公布"
+
+
+def test_future_dated_row_cannot_evict_current_taiwan_candidates() -> None:
+    conn = _conn()
+    now = datetime.now(timezone.utc)
+    rows = [
+        {
+            "title": "台灣食安回收公告",
+            "topic_category": "current_affairs",
+            "published_at": now.isoformat(),
+        },
+        {
+            "title": "Future poison row",
+            "topic_category": "other",
+            "published_at": (now + timedelta(days=3650)).isoformat(),
+        },
+    ]
+    ranked = rank_candidates(conn, rows)
+    assert [row["title"] for row in ranked] == ["台灣食安回收公告"]
+
+
+def test_rank_candidates_keeps_owner_submission_for_one_off_post() -> None:
+    conn = _conn()
+    row = {
+        "title": "Owner viewpoint",
+        "topic_category": "other",
+        "feed_name": "user_submission",
+        "tags": '["user_submission"]',
+        "published_at": "2026-07-24T10:00:00Z",
+    }
+    assert rank_candidates(conn, [row]) == [row]
 
 
 def test_record_experiments_is_platform_specific() -> None:
@@ -112,3 +196,4 @@ def test_editorial_mandate_matches_persisted_experiment_type() -> None:
     )
     assert "threads: type=utility" in mandate
     assert "instagram: type=format" in mandate
+    assert "same evidence/response/correction standard" in mandate

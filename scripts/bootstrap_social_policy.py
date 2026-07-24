@@ -16,7 +16,7 @@ from src.schedule_policy import load_policy
 from src.reflector.proposals import PROPOSALS_DIR, read_proposals, update_decision
 
 
-FIRE_ID = "meta-recovery-topic-policy-v3"
+FIRE_ID = "meta-recovery-taiwan-editorial-policy-v4"
 
 
 def supersede_drifted_topic_proposals(
@@ -120,7 +120,7 @@ def apply_policy(
         return result
 
     evidence = {
-        "source": "owner-approved 2026-07-24 Meta recovery mode",
+        "source": "owner-approved 2026-07-24 Taiwan daily editorial objective",
         "captured_at": "2026-07-24T03:45:58.359620+00:00",
         "runtime_state_revision": 20,
         "threads_posts": 103,
@@ -144,9 +144,15 @@ def apply_policy(
         "facebook_metric_status": "degraded_126_of_127_error_markers",
         "instagram_metric_status": "low_signal_carousel_experiment_required",
         "method": (
-            "robust topic medians plus source-tier and format evidence; avoid "
-            "outlier-led ranking; no automatic frequency increase"
+            "owner-defined Taiwan public-interest scope plus robust topic medians, "
+            "official-source priority, and fail-closed off-scope selection"
         ),
+        "owner_editorial_scope": [
+            "politics_and_government_accountability",
+            "food_safety_and_consumer_protection",
+            "national_policy",
+            "markets_and_economy",
+        ],
     }
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -239,7 +245,7 @@ def main() -> int:
     )
     parser.add_argument("--proposals-dir", type=Path, default=PROPOSALS_DIR)
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--decided-at", default="2026-07-24T00:00:00+08:00")
+    parser.add_argument("--decided-at", default="2026-07-24T15:09:14+08:00")
     args = parser.parse_args()
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row

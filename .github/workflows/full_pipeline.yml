@@ -117,7 +117,7 @@ jobs:
         if: env.AUTOMATION_MODE == 'recovery'
         run: |
           python scripts/bootstrap_social_policy.py --apply \
-            --decided-at "2026-07-24T00:00:00+08:00"
+            --decided-at "2026-07-24T15:09:14+08:00"
 
       # ========== STAGE 0: USER SUBMISSIONS ==========
       - name: "📤 [STAGE] Process user-submitted sources"

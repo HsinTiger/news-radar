@@ -10,10 +10,13 @@ from datetime import datetime, timezone, timedelta
 from src.fetcher import (
     make_news_id,
     is_too_old,
+    _limited_entries,
     _parse_rss_time,
     _rewrite_url_for_extraction,
     _reddit_rss_to_markdown,
 )
+
+import pytest
 
 
 def test_make_news_id_stable():
@@ -23,6 +26,17 @@ def test_make_news_id_stable():
     assert a == b
     assert a != c
     assert len(a) == 40  # sha1 hex
+
+
+def test_official_archive_feed_limit_is_bounded():
+    assert _limited_entries(list(range(250)), 15) == list(range(15))
+    assert _limited_entries([1, 2], None) == [1, 2]
+
+
+@pytest.mark.parametrize("value", [0, 101, True, "15"])
+def test_invalid_feed_limit_fails_closed(value):
+    with pytest.raises(ValueError, match="max_entries"):
+        _limited_entries([1, 2, 3], value)
 
 
 def test_is_too_old_yes():
