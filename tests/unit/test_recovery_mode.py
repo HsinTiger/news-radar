@@ -200,7 +200,7 @@ def test_record_experiments_is_platform_specific() -> None:
         "SELECT platform,experiment_type,baseline_followers FROM recovery_experiments ORDER BY platform"
     ).fetchall()
     assert [tuple(row) for row in rows] == [
-        ("instagram", "format", 9),
+        ("instagram", "utility", 9),
         ("threads", "utility", 3748),
     ]
     dbmod.mark_recovery_actual_format(
@@ -216,5 +216,6 @@ def test_editorial_mandate_matches_persisted_experiment_type() -> None:
         {"threads", "instagram"}, "tech_product_launch"
     )
     assert "threads: type=utility" in mandate
-    assert "instagram: type=format" in mandate
+    assert "instagram: type=utility" in mandate
+    assert "Instagram visual utility test" in mandate
     assert "same evidence/response/correction standard" in mandate

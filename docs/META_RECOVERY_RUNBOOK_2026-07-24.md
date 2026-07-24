@@ -14,6 +14,7 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 - `PROVEN`: carousel-backed Threads posts have median 287.5 views over 94 posts versus 121 over 9 feed-only posts.
 - `PROVEN`: Facebook has 104 latest engagement snapshots with only four total likes and no comments or shares. Facebook reach/view is `UNKNOWN`, not zero: the API collector currently receives post clicks and reaction totals but not reach/impressions.
 - `PROVEN`: Instagram has 104 latest snapshots with median reach zero; 67.3% have zero reach and 96.2% zero likes. This is a cold-start distribution problem, not evidence of a permanent ban.
+- `PROVEN`: 89 of those 104 Instagram posts were already carousel albums and 15 were single images; both cohorts have median reach zero. The next experiment tests save/share utility inside a five-card carousel, not carousel versus image.
 - `PROVEN`: platform API audience snapshots at 2026-07-24 14:07 Asia/Taipei report Facebook 28 followers, Instagram 9, and Threads 3,749. The stored history spans only about 18 hours: Facebook and Instagram are unchanged while Threads moved from 3,748 to 3,749.
 - `PROVEN`: active publishing days averaged 4.93 successful Facebook posts, 4.93 Instagram posts, and 4.84 Threads posts; the maximum was nine per platform in one UTC day. This is materially above the owner's remembered three-to-four posts.
 - `ASSUMED`: frequency amplified weak per-post signals and audience fatigue. The available Threads cohort shows 68–75% zero-interaction posts on days with four or more measured posts, but the relationship is observational, incomplete, and confounded by topic, time, and format. Do not claim frequency alone caused low reach.
@@ -60,7 +61,7 @@ off-peak opportunities inside each approved local window (`:07`, `:22`, `:37`,
 and 20-hour interval remain the duplicate-prevention authority; redundant
 scheduler runs never widen the publishing envelope.
 
-Every recovery post has exactly one experiment type: `interest`, `trust`, `utility`, or `format`. It records the hypothesis, topic, format, follower baseline, primary-metric baseline, real platform post ID, and the latest 1h/24h/168h result. The initial platform hypotheses are deliberately different: Facebook tests trust with a sourced accountability explainer; Instagram tests utility/format with a standalone five-card carousel; Threads tests interest with a concise consequence-first post.
+Every recovery post has exactly one experiment type: `interest`, `trust`, `utility`, or `format`. It records the hypothesis, topic, format, follower baseline, primary-metric baseline, real platform post ID, and the latest 1h/24h/168h result. The initial platform hypotheses are deliberately different: Facebook tests trust with a sourced accountability explainer; Instagram tests utility with a standalone five-card save/share aid; Threads tests interest with a concise consequence-first post.
 
 Recovery safeguards:
 

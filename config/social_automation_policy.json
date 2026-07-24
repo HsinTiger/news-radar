@@ -74,9 +74,9 @@
       "instagram": {
         "followers": 9,
         "captured_at": "2026-07-23T12:47:30.849994+00:00",
-        "primary_metric": "views",
+        "primary_metric": "reach",
         "primary_value": null,
-        "metric_note": "Legacy distribution signal is near zero; carousel format experiment first."
+        "metric_note": "Legacy median reach is zero; 89 of 104 audited posts were already carousels, so test save/share utility rather than the container alone."
       }
     },
     "editorial_policy": {
