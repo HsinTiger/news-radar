@@ -142,6 +142,10 @@ jobs:
           echo "=== Verdict ==="
 
       # ========== STAGE 2: SCORE + COMPOSE ==========
+      - name: Mark exact compose verification boundary
+        run: |
+          python -c "from datetime import datetime, timezone; from pathlib import Path; Path('state/compose_started_at.txt').write_text(datetime.now(timezone.utc).isoformat(), encoding='utf-8')"
+
       - name: "🤖 [STAGE] Score + Compose (LiteLLM cloud)"
         id: compose
         env:
@@ -163,7 +167,8 @@ jobs:
         run: |
           set -o pipefail
           echo "=== Compose Verification (scripts/verify_compose.py) ==="
-          python scripts/verify_compose.py --since-minutes 30 \
+          python scripts/verify_compose.py \
+            --since-iso "$(cat state/compose_started_at.txt)" \
             --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" 2>&1
           echo "=== Verdict ==="
 

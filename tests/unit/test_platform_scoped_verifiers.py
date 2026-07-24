@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from scripts.verify_compose import verify_compose
 from scripts.verify_publish import verify as verify_publish
@@ -63,6 +64,34 @@ def test_compose_verifier_rejects_wrong_scope_or_missing_lineage() -> None:
         since_minutes=30,
         recovery=False,
     ) == 1
+
+
+def test_compose_verifier_exact_boundary_excludes_prior_held_draft() -> None:
+    conn = _conn()
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    conn.execute(
+        "INSERT INTO drafts VALUES('old','舊稿',0.9,'pending_review',NULL,?,'n0')",
+        (old,),
+    )
+    conn.execute(
+        "INSERT INTO platform_drafts VALUES('old','threads',30,'無來源舊稿不應污染新 run')"
+    )
+    boundary = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    _seed_threads_draft(conn)
+
+    assert verify_compose(
+        conn,
+        expected_platforms={"threads"},
+        since_minutes=30,
+        recovery=True,
+        since_iso=boundary,
+    ) == 0
+
+
+def test_full_pipeline_passes_exact_compose_boundary_to_verifier() -> None:
+    workflow = Path(".github/workflows/full_pipeline.yml").read_text(encoding="utf-8")
+    assert "state/compose_started_at.txt" in workflow
+    assert '--since-iso "$(cat state/compose_started_at.txt)"' in workflow
 
 
 def test_publish_verifier_requires_success_for_requested_platform() -> None:
