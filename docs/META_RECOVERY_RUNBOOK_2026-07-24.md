@@ -86,6 +86,7 @@ Recovery safeguards:
 12. Compose verification uses the exact UTC boundary recorded immediately before the current compose stage. Earlier held drafts may not fail or prove the current release.
 13. Multi-source context must cover at least 35% of the shorter title and remain the same event. Shared politicians, parties, agencies, or broad beats do not authorize switching the primary story.
 14. A numeric claim may use a named source elsewhere in the same paragraph, but a source in another paragraph cannot cite it by proximity.
+15. A Recovery cycle may scan at most two candidates. A failed draft is evidence to fix, not permission to burn the daily LLM quota across eight replacements.
 
 Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
 slot until at least seven posts on that platform complete their 168h windows;
