@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.recovery-v2"
+QUALITY_GUARD_VERSION = "2026-07-24.recovery-v3"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -206,19 +206,55 @@ _CITATION_MARKERS = (
 )
 
 # Recovery mode is deliberately stricter than the long-running legacy feed.
-# These are structural markers, not source validation: they force the writer to
-# make attribution and reader utility visible, while named-source accuracy is
-# still bounded by the supplied article and the anti-hallucination prompt.
-_RECOVERY_SOURCE_PATTERN = re.compile(
-    r"(?:根據|資料來源|來源\s*[:：]|官方(?:公告|數據|報告|網站)|"
-    r"路透|彭博|BBC|CNBC|華爾街日報|金融時報|美聯社|中央社|"
-    r"[A-Za-z0-9\u4e00-\u9fff]{2,30}(?:財報|法說|白皮書|公告|調查|報告))",
+# A bare "根據報導" is not a named source.  The pattern accepts either an
+# explicit publisher/institution or a named actor followed by an evidence verb.
+_RECOVERY_NAMED_SOURCE_PATTERN = re.compile(
+    r"(?:(?:根據|依據|依照)\s*"
+    r"(?:《[^》]{2,60}》|[A-Za-z0-9\u4e00-\u9fff·．・\s]{2,60}?)"
+    r"(?:的)?(?:報導|公告|數據|資料|報告|調查|統計|財報|法說|說法|指出|表示|證實|回應))"
+    r"|(?:(?:路透(?:社)?|彭博|BBC|CNBC|華爾街日報|金融時報|美聯社|中央社|"
+    r"公視|自由時報|聯合報|交通部|衛福部|行政院|證交所|金管會)"
+    r"(?:報導|公告|指出|表示|證實|回應|資料|數據|報告)?)"
+    r"|(?:《[^》]{2,60}》(?:報導|指出|表示|公告))"
+    r"|(?:[A-Za-z0-9\u4e00-\u9fff·．・]{2,40}"
+    r"(?:報導|財報|法說|白皮書|公告|調查|報告|統計|說法))",
     re.IGNORECASE,
 )
-_RECOVERY_UTILITY_PATTERN = re.compile(
-    r"(?:對(?:一般人|消費者|使用者|讀者|上班族|投資人|你)|"
-    r"你可以|可以先|需要留意|值得追蹤|下一步|實際影響|"
-    r"安全|風險|生活|工作|錢包|判斷)",
+_GENERIC_RECOVERY_SOURCE_PATTERN = re.compile(
+    r"(?:(?:根據|依據|據)\s*(?:該|這篇|相關)?\s*(?:報導|媒體|新聞|資料|消息))"
+    r"|(?<![A-Za-z0-9\u4e00-\u9fff])(?:媒體|新聞|官方|相關人士)"
+    r"\s*(?:報導|指出|表示|公告|資料|數據)",
+)
+_RECOVERY_READER = (
+    r"一般人|消費者|使用者|讀者|上班族|投資人|家長|學生|通勤族|"
+    r"一般通勤者|通勤者|駕駛|旅客|家庭|企業|你"
+)
+_RECOVERY_IMPACT_PATTERN = re.compile(
+    rf"(?:對(?:{_RECOVERY_READER}).{{0,24}}(?:實際|直接|具體)"
+    r"(?:影響|風險|成本)|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
+)
+_RECOVERY_ACTION_PATTERN = re.compile(
+    rf"(?:(?:{_RECOVERY_READER}).{{0,8}}(?:可以|應該|需要|最好|不妨)"
+    r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
+    r"(?:查詢|確認|檢查|比較|保留|避開|避免|等待|追蹤|申請|備份|"
+    r"諮詢|停止|關閉|更新|調整)|下一步(?:是|可|可以|應))",
+)
+_RECOVERY_MEASURED_CLAIM_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|公頃|公里|公尺|人|件|起|"
+    r"度|美元|元|倍|顆|噸|GB|TB|MW|GW)",
+    re.IGNORECASE,
+)
+_RECOVERY_ALLEGATION_TERMS = (
+    "恐嚇", "威脅提告", "掩蓋", "造假", "圖利", "貪腐", "黑箱",
+    "勒索", "詐騙", "收賄", "違法施壓",
+)
+_RECOVERY_ATTRIBUTION_VERBS = (
+    "主張", "質疑", "指控", "聲稱", "表示", "回應", "否認", "判決",
+    "起訴", "調查中",
+)
+_RECOVERY_TRUST_ERODING_FRAMES = (
+    "真正的賽局", "信任赤字", "護城河", "底層邏輯", "系統性崩潰",
+    "巨大缺口", "信任崩塌", "信任代價", "重創", "迫使各國重新",
 )
 
 # Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
@@ -289,6 +325,55 @@ def _stale_year_with_recent_context(full_text: str, _title: str) -> Optional[str
     # 只有舊年份、沒當代年份 = LLM 用 outdated data
     stale_hits = [y for y in _STALE_YEAR_MARKERS if y in full_text]
     return "only_stale_years:" + ",".join(stale_hits)
+
+
+def _generic_recovery_source(full_text: str, _title: str) -> Optional[str]:
+    match = _GENERIC_RECOVERY_SOURCE_PATTERN.search(full_text)
+    return f"generic_source:{match.group(0)}" if match else None
+
+
+def _recovery_fact_without_local_source(
+    full_text: str, _title: str
+) -> Optional[str]:
+    for paragraph in re.split(r"\n\s*\n", full_text):
+        if not paragraph.strip():
+            continue
+        factual = "已知事實" in paragraph or _RECOVERY_MEASURED_CLAIM_PATTERN.search(
+            paragraph
+        )
+        named = _RECOVERY_NAMED_SOURCE_PATTERN.search(paragraph)
+        generic = _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
+        if factual and (not named or generic):
+            return "fact_paragraph_without_named_source:" + paragraph.strip()[:80]
+    return None
+
+
+def _recovery_unattributed_allegation(
+    full_text: str, _title: str
+) -> Optional[str]:
+    for sentence in re.split(r"[。！？\n]+", full_text):
+        term = next(
+            (item for item in _RECOVERY_ALLEGATION_TERMS if item in sentence),
+            None,
+        )
+        if term is None:
+            continue
+        attributed = (
+            _RECOVERY_NAMED_SOURCE_PATTERN.search(sentence)
+            and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(sentence)
+        ) or any(
+            verb in sentence for verb in _RECOVERY_ATTRIBUTION_VERBS
+        )
+        if not attributed:
+            return f"unattributed_allegation:{term}:{sentence.strip()[:70]}"
+    return None
+
+
+def _recovery_jargon_pileup(full_text: str, _title: str) -> Optional[str]:
+    hits = [term for term in _RECOVERY_TRUST_ERODING_FRAMES if term in full_text]
+    if len(hits) >= 2:
+        return "trust_eroding_frames=" + "/".join(hits[:5])
+    return None
 
 
 _RULES: tuple[_Rule, ...] = (
@@ -375,22 +460,49 @@ _RULES: tuple[_Rule, ...] = (
 
 _RECOVERY_RULES: tuple[_Rule, ...] = (
     _Rule(
+        code="generic_source_attribution",
+        severity="rewrite",
+        message="Recovery Mode 不接受『根據報導／官方資料』等匿名來源",
+        matcher=_generic_recovery_source,
+    ),
+    _Rule(
         code="missing_source_attribution",
         severity="rewrite",
         message="Recovery Mode 要求具名來源，避免讀者把自動生成內容當成無來源事實",
         matcher=lambda ft, _t: (
             "no_named_source_marker"
-            if not _RECOVERY_SOURCE_PATTERN.search(ft)
+            if not _RECOVERY_NAMED_SOURCE_PATTERN.search(ft)
             else None
         ),
     ),
     _Rule(
+        code="fact_without_local_source",
+        severity="rewrite",
+        message="已知事實或具體數字所在段落必須就地標示具名來源",
+        matcher=_recovery_fact_without_local_source,
+    ),
+    _Rule(
+        code="unattributed_sensitive_allegation",
+        severity="rewrite",
+        message="爭議指控必須寫成某人主張／某機關回應，不得當成已證明事實",
+        matcher=_recovery_unattributed_allegation,
+    ),
+    _Rule(
+        code="recovery_jargon_pileup",
+        severity="rewrite",
+        message="策略黑話或戲劇化框架堆疊會侵蝕信任並掩蓋讀者用途",
+        matcher=_recovery_jargon_pileup,
+    ),
+    _Rule(
         code="missing_reader_utility",
         severity="rewrite",
-        message="Recovery Mode 每篇必須明說這項資訊能幫讀者做什麼判斷",
+        message="Recovery Mode 每篇必須同時寫出具體讀者影響與可採取的下一步",
         matcher=lambda ft, _t: (
             "no_reader_utility_marker"
-            if not _RECOVERY_UTILITY_PATTERN.search(ft)
+            if not (
+                _RECOVERY_IMPACT_PATTERN.search(ft)
+                and _RECOVERY_ACTION_PATTERN.search(ft)
+            )
             else None
         ),
     ),

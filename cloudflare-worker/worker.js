@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-24.recovery-v6";
+const API_VERSION = "2026-07-24.recovery-v7";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -614,7 +614,8 @@ async function syncOperationalData(request, env, cors) {
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
           draft_id=excluded.draft_id,submission_id=excluded.submission_id,
-          platform_post_id=excluded.platform_post_id,status=excluded.status,
+          format=excluded.format,platform_post_id=excluded.platform_post_id,
+          status=excluded.status,
           title=excluded.title,topic=excluded.topic,source_url=excluded.source_url,
           posted_at=excluded.posted_at,updated_at=excluded.updated_at`,
       ).bind(

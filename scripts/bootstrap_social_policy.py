@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.schedule_policy import load_policy
 
 
-FIRE_ID = "meta-recovery-topic-policy-v2"
+FIRE_ID = "meta-recovery-topic-policy-v3"
 
 
 def apply_policy(
@@ -69,12 +69,32 @@ def apply_policy(
 
     evidence = {
         "source": "owner-approved 2026-07-24 Meta recovery mode",
-        "threads_posts": 102,
-        "threads_median_views": 279.5,
-        "threads_best_topics": ["current_affairs", "tech_product_launch"],
+        "captured_at": "2026-07-24T03:45:58.359620+00:00",
+        "runtime_state_revision": 20,
+        "threads_posts": 103,
+        "threads_median_views": 277.0,
+        "threads_median_actions": 0.0,
+        "threads_nonzero_action_posts": 48,
+        "threads_robust_topic_medians": {
+            "earnings": {"posts": 18, "median_views": 376.0},
+            "supply_chain": {"posts": 18, "median_views": 337.0},
+            "current_affairs": {"posts": 7, "median_views": 260.0},
+            "tech_product_launch": {"posts": 9, "median_views": 206.0},
+        },
+        "threads_source_tier_medians": {
+            "primary": {"posts": 29, "median_views": 379.0},
+            "secondary": {"posts": 74, "median_views": 256.0},
+        },
+        "threads_format_medians": {
+            "carousel": {"posts": 94, "median_views": 287.5},
+            "feed": {"posts": 9, "median_views": 121.0},
+        },
         "facebook_metric_status": "degraded_126_of_127_error_markers",
         "instagram_metric_status": "low_signal_carousel_experiment_required",
-        "method": "historical topic ranking plus bounded recovery cadence; no automatic frequency increase",
+        "method": (
+            "robust topic medians plus source-tier and format evidence; avoid "
+            "outlier-led ranking; no automatic frequency increase"
+        ),
     }
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -142,7 +162,7 @@ def apply_policy(
             (
                 now,
                 json.dumps(evidence, ensure_ascii=False, sort_keys=True),
-                102,
+                103,
                 "unchanged",
                 "unchanged",
                 json.dumps(changes, ensure_ascii=False, sort_keys=True),
