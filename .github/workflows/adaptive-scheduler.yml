@@ -2,7 +2,10 @@ name: "Social Automation · Governed Scheduler"
 
 on:
   schedule:
-    - cron: "12 * * * *"
+    # GitHub schedule delivery is best-effort. Use four off-peak opportunities
+    # inside each approved 0-50 minute window, and do not wake the 108 MB state
+    # reader during unrelated hours. UTC 00/10/12 = Taipei 08/18/20.
+    - cron: "7,22,37,47 0,10,12 * * *"
   workflow_dispatch:
     inputs:
       now:
