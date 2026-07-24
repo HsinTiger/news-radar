@@ -88,6 +88,7 @@ Recovery safeguards:
 14. A numeric claim may use a named source elsewhere in the same paragraph, but a source in another paragraph cannot cite it by proximity.
 15. A Recovery cycle may scan at most two candidates. A failed draft is evidence to fix, not permission to burn the daily LLM quota across eight replacements.
 16. Any Recovery compose-quality attempt consumes that platform's local-day attempt quota, even when no post is published. Later scheduler ticks report `daily_attempt_quota_reached`; the attempt quota resets at the next Asia/Taipei day boundary.
+17. Within one process, a confirmed provider quota error opens a quota circuit. When LiteLLM targets Gemini, both wrappers are skipped for subsequent calls and the configured independent fallback is used directly; explicit caller-selected backend lists remain exempt.
 
 Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
 slot until at least seven posts on that platform complete their 168h windows;

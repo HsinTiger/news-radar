@@ -1006,6 +1006,17 @@ async def _try_openai_compatible(
 # 啟用條件：LITELLM_API_KEY 有設（可以是任何支援 OpenAI-compatible 的 provider key；
 #   也可設 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY 等，LiteLLM 會自動取用）
 LITELLM_MODEL = os.getenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
+_QUOTA_EXHAUSTED_BACKENDS: set[str] = set()
+
+
+def _quota_family(backend: str) -> set[str]:
+    """Return wrappers that consume the same provider quota."""
+    if LITELLM_MODEL.lower().startswith("gemini/") and backend in {
+        "litellm",
+        "gemini",
+    }:
+        return {"litellm", "gemini"}
+    return {backend}
 
 
 def _litellm_available() -> bool:
@@ -1195,6 +1206,7 @@ async def call_for_json(
     Returns:
         LLMResult，data 為 None 表所有指定 backend 都失敗（呼叫端要自己 skip）。
     """
+    use_quota_circuit = backends is None
     if backends is None:
         # 動態預設：Cloud (GitHub Actions) → litellm → gemini → groq；
         # Mac (有 Claude CLI) → claude_cli → gemini → litellm。
@@ -1210,6 +1222,11 @@ async def call_for_json(
     # 依 `allowed` 內的順序逐一嘗試（= 能力 / 可靠度排序），第一個成功就回。
     # 預設鏈：claude_cli(Max 主腦) → gemini(SDK structured) → groq → cerebras。
     for name in allowed:
+        if use_quota_circuit and name in _QUOTA_EXHAUSTED_BACKENDS:
+            print(
+                f"[llm_brain] ℹ️ quota circuit 已開啟，略過本 process 已耗盡的 {name}。"
+            )
+            continue
         if name == "claude_cli":
             if not _claude_cli_available():
                 print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，略過 claude_cli。")
@@ -1293,6 +1310,17 @@ async def call_for_json(
 
         last_error = result.raw_error
         print(f"[llm_brain] ⚠️ {name} 失敗。reason={result.raw_error}")
+        if (
+            use_quota_circuit
+            and result.raw_error
+            and _is_quota_error(result.raw_error)
+        ):
+            exhausted = _quota_family(name)
+            _QUOTA_EXHAUSTED_BACKENDS.update(exhausted)
+            print(
+                "[llm_brain] ℹ️ quota circuit 記錄本 process 已耗盡："
+                + ",".join(sorted(exhausted))
+            )
 
     # 所有指定 backend 都失敗
     return LLMResult(

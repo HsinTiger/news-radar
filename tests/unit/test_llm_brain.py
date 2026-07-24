@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+import src.llm_brain as llm_brain
 from src.llm_brain import (
     LLMResult,
     _extract_json_blob,
@@ -258,6 +259,52 @@ async def test_call_for_json_gemini_fails_no_claude_cli(monkeypatch):
     r = await call_for_json(system="sys", prompt="p", response_model=_Demo)
     assert r.data is None
     assert r.provider == "none"
+
+
+@pytest.mark.asyncio
+async def test_default_quota_circuit_skips_shared_gemini_wrappers(monkeypatch):
+    expected = _Demo(name="fallback", score=0.9)
+    calls = {"litellm": 0, "gemini": 0, "opencode": 0}
+
+    async def fake_litellm(**kwargs):
+        calls["litellm"] += 1
+        return LLMResult(
+            data=None,
+            provider="litellm",
+            raw_error="429 RESOURCE_EXHAUSTED quota",
+        )
+
+    async def fake_gemini(**kwargs):
+        calls["gemini"] += 1
+        raise AssertionError("direct Gemini shares the exhausted LiteLLM quota")
+
+    async def fake_openai_compatible(**kwargs):
+        calls["opencode"] += 1
+        return LLMResult(
+            data=expected,
+            provider="opencode",
+            model="big-pickle",
+        )
+
+    monkeypatch.setattr(llm_brain, "_QUOTA_EXHAUSTED_BACKENDS", set())
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: False)
+    monkeypatch.setattr(llm_brain, "_litellm_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "_try_litellm", fake_litellm)
+    monkeypatch.setattr(llm_brain, "_try_gemini", fake_gemini)
+    monkeypatch.setattr(
+        llm_brain,
+        "_try_openai_compatible",
+        fake_openai_compatible,
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    monkeypatch.setenv("OPENCODE_API_KEY", "fake-opencode")
+
+    first = await call_for_json(system="sys", prompt="p", response_model=_Demo)
+    second = await call_for_json(system="sys", prompt="p2", response_model=_Demo)
+
+    assert first.data == second.data == expected
+    assert calls == {"litellm": 1, "gemini": 0, "opencode": 2}
+    assert llm_brain._QUOTA_EXHAUSTED_BACKENDS == {"litellm", "gemini"}
 
 
 # ----------------------------------------------------------------------
