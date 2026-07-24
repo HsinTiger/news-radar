@@ -31,6 +31,7 @@ from src.composer import compose_multi_platform, finalize_variant
 from src.content_quality_guard import (
     check_quality,
     check_platform_format,
+    check_platform_style,
     combine_visible_text,
     format_issues,
     has_blocking_issues,
@@ -108,14 +109,11 @@ def _recovery_rewrite_guidance(
         )
     if "missing_reader_utility" in rewrite_codes:
         guidance.append(
-            "READER UTILITY: End with exactly two factual sentences shaped as "
-            "`對[具體讀者]的具體影響是...。` and "
-            "`[同一讀者]可以先[查詢/確認/比對/保留/避開/追蹤]...。` "
-            "Replace both bracketed placeholders with real words. In the actual "
-            "requested platform body/caption (not title or metadata), the literal "
-            "Chinese substrings `的具體影響是` and `可以先` must both appear. "
-            "The action must name a real list, batch, date, document, authority, "
-            "or risk signal from the supplied source."
+            "READER UTILITY: In natural prose, name one concrete consequence for "
+            "a specific Taiwan reader and one action tied to a real list, batch, "
+            "date, document, authority, or risk signal in the supplied source. "
+            "Do not use fixed scaffolding such as `的具體影響是`, `可以先`, "
+            "`已知事實是`, `這裡的判讀是`, or `下一個問責節點是`."
         )
     if "unsupported_numeric_claim" in rewrite_codes:
         guidance.append(
@@ -162,6 +160,31 @@ def _recovery_rewrite_guidance(
             "`護城河`, `底層邏輯`, and `信任赤字`. Attention must come from the "
             "verified consequence, not strategy jargon."
         )
+    if "recovery_template_scaffolding" in rewrite_codes:
+        guidance.append(
+            "NATURAL PROSE: Remove every exposed editorial label, including "
+            "`已知事實是`, `這裡的判讀是`, `的具體影響是`, and "
+            "`下一個問責節點是`. Preserve the distinction through attribution, "
+            "paragraph order, and ordinary Taiwanese prose."
+        )
+    if rewrite_codes & {
+        "platform_hashtag_overload",
+        "platform_copy_too_long",
+        "platform_wall_of_text",
+        "platform_paragraph_too_long",
+    }:
+        guidance.append(
+            "PLATFORM SHAPE: Remove repeated facts and secondary numbers. Use "
+            "short native paragraphs. Threads: 180-300 Chinese characters and 1 "
+            "tag. Facebook: 280-500 characters, 3-5 paragraphs, 2-3 tags. "
+            "Instagram caption: 160-340 characters, 2-4 paragraphs, 3-5 tags."
+        )
+    if rewrite_codes & {"missing_answerable_question", "generic_engagement_bait"}:
+        guidance.append(
+            "CLOSING: End with one specific question that a reader can answer "
+            "from experience, a public record, or a stated trade-off. Never ask "
+            "generic `你怎麼看` or request engagement."
+        )
     if "unattributed_sensitive_allegation" in rewrite_codes:
         guidance.append(
             "ALLEGATIONS: Attribute every allegation to the exact person, agency, "
@@ -173,9 +196,10 @@ def _recovery_rewrite_guidance(
         "FINAL SELF-CHECK BEFORE JSON: (1) every material Arabic number appears "
         f"in this allowlist: {allowed_text}; (2) every factual paragraph/card names "
         "its exact supplied source; (3) the first 45 characters contain actor plus "
-        "verifiable consequence; (4) the final two body/caption sentences literally "
-        "contain `的具體影響是` and `可以先`, with a real reader and source-backed "
-        "action. Return only the requested platform JSON."
+        "verifiable consequence; (4) prose contains no editorial scaffolding; "
+        "(5) paragraphs and hashtag counts fit the requested platform; (6) the "
+        "closing question is specific and answerable. Return only the requested "
+        "platform JSON."
     )
     return guidance
 
@@ -956,6 +980,14 @@ async def process_item(
                 title=title,
                 recovery=is_recovery_mode(),
                 source_text=source_evidence_text if is_recovery_mode() else None,
+            )
+            issues.extend(
+                check_platform_style(
+                    platform_key,
+                    ftext,
+                    title=title,
+                    recovery=is_recovery_mode(),
+                )
             )
             if visible_carousel is not None:
                 from substack_radar.cards import build_cards

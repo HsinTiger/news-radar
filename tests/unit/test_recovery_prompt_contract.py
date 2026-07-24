@@ -35,11 +35,13 @@ def test_recovery_composer_contract_is_platform_scoped_and_actionable():
 
     assert "這次只撰寫：fb" in prompt
     assert "第一個可見句子的前 45 個中文字" in prompt
-    assert "同一讀者現在可採取的一個動作" in prompt
+    assert "同一讀者現在可採取的一個具體動作" in prompt
+    assert "禁止把「已知事實是」「這裡的判讀是」" in prompt
     assert "禁止 Markdown 粗體小標" in prompt
     assert "標題是唯一寫作主題" in prompt
     assert "絕對不可" in prompt
-    assert "FB：500–750 字" in prompt
+    assert "FB：280–500 字" in prompt
+    assert "3–5 個短段落" in prompt
     assert "SOURCE AND CORRECTNESS GATE" in prompt
 
 

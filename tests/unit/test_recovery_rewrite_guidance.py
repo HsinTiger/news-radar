@@ -23,9 +23,10 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "19" in guidance and "24" in guidance and "501" in guidance
     assert "25" not in guidance
     assert "`食藥署 本署新聞`" in guidance
-    assert "對[具體讀者]的具體影響是" in guidance
-    assert "literal Chinese substrings `的具體影響是` and `可以先`" in guidance
-    assert "actual requested platform body/caption" in guidance
+    assert "In natural prose" in guidance
+    assert "Do not use fixed scaffolding" in guidance
+    assert "`的具體影響是`" in guidance and "`可以先`" in guidance
+    assert "specific Taiwan reader" in guidance
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 

@@ -12,6 +12,7 @@ import json
 from src import db as dbmod
 from src.content_quality_guard import (
     check_quality,
+    check_platform_style,
     has_blocking_issues,
     should_request_rewrite,
 )
@@ -88,6 +89,14 @@ def verify_compose(
                 text,
                 title=draft["title"] or "",
                 recovery=recovery,
+            )
+            issues.extend(
+                check_platform_style(
+                    plat,
+                    text,
+                    title=draft["title"] or "",
+                    recovery=recovery,
+                )
             )
             quality_failed = has_blocking_issues(issues) or (
                 recovery and should_request_rewrite(issues)

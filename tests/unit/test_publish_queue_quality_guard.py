@@ -305,6 +305,7 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
         return {"image_url": kwargs.get("original_image_url")}
 
     monkeypatch.setattr(rpq, "check_quality", lambda *_a, **_kw: [])
+    monkeypatch.setattr(rpq, "check_platform_style", lambda *_a, **_kw: [])
     monkeypatch.setattr(rpq, "prepare_publish_image", _prepare)
     monkeypatch.setattr(rpq, "render_cards", lambda **_kw: [Path(f"{i}.png") for i in range(5)])
     monkeypatch.setattr(

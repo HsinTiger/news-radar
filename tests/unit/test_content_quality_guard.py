@@ -7,6 +7,7 @@ from __future__ import annotations
 from src.content_quality_guard import (
     _RULES,
     check_platform_format,
+    check_platform_style,
     check_quality,
     combine_visible_text,
     format_issues,
@@ -33,6 +34,73 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     assert not check_platform_format(
         "instagram", carousel_card_count=0, recovery=False
     )
+
+
+def test_v11_rejects_actual_recovery_canary_editorial_shapes() -> None:
+    threads = (
+        "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
+        "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
+        "這裡的判讀是宜蘭居民應準備因應交通變化。對通勤族的具體影響是"
+        "時間可能縮短；通勤族可以先留意公開展覽。下一個可驗證節點是環評日期。"
+        "\n\n#交通政策"
+    )
+    facebook = (
+        "臺中市政府稽查中聯油品12次，抽驗2次均合格\n\n"
+        + "根據臺中市食安GIS，市府持續稽查。" * 24
+        + "已知事實是抽驗合格。這裡的判讀是資訊透明度仍需加強。"
+        "對消費者的具體影響是抽驗頻率有限。下一個問責節點是持續公開結果。"
+        "\n\n#食安 #中聯油脂 #台中市政府 #食藥署 #消費者 #稽查"
+    )
+    instagram = (
+        "氣象署警告紅霞颱風今明最接近臺灣\n\n"
+        "根據氣象署公告，花東居民須防豪雨。已知事實是警報持續；"
+        "這裡的判讀是民眾應準備。對居民的具體影響是風險增加。"
+        "\n\n#颱風 #紅霞 #氣象署 #豪雨 #防災 #花東 #警報 #安全"
+    )
+
+    for platform, title, text in (
+        ("threads", "高鐵延伸宜蘭", threads),
+        ("facebook", "臺中市政府稽查中聯油品12次，抽驗2次均合格", facebook),
+        ("instagram", "氣象署警告紅霞颱風今明最接近臺灣", instagram),
+    ):
+        quality_codes = {
+            issue.code
+            for issue in check_quality(text, title=title, recovery=True)
+        }
+        style_codes = {
+            issue.code
+            for issue in check_platform_style(
+                platform, text, title=title, recovery=True
+            )
+        }
+        assert "recovery_template_scaffolding" in quality_codes
+        assert "missing_answerable_question" in style_codes
+    assert "platform_hashtag_overload" in {
+        issue.code
+        for issue in check_platform_style(
+            "facebook", facebook,
+            title="臺中市政府稽查中聯油品12次，抽驗2次均合格",
+            recovery=True,
+        )
+    }
+
+
+def test_v11_accepts_natural_threads_shape_without_editorial_labels() -> None:
+    text = (
+        "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
+        "路線將由南港延伸至宜蘭。\n\n"
+        "爭點不只是快幾分鐘，而是龐大建設能否真的分流國道5號。"
+        "宜蘭通勤族可能少花時間；出門前先查詢縣府公開展覽資料。\n\n"
+        "完工後若國道5號仍壅塞，你會用哪個公開指標驗收？\n\n"
+        "#交通政策"
+    )
+    issues = check_quality(text, title="宜蘭高鐵", recovery=True)
+    issues.extend(
+        check_platform_style(
+            "threads", text, title="宜蘭高鐵", recovery=True
+        )
+    )
+    assert not should_request_rewrite(issues), format_issues(issues)
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----

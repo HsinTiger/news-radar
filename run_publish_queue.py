@@ -39,6 +39,7 @@ from src import image_manager
 from src.content_quality_guard import (
     check_quality,
     check_platform_format,
+    check_platform_style,
     combine_visible_text,
     format_issues,
     has_blocking_issues,
@@ -216,6 +217,14 @@ async def _publish_one(
             visible_text,
             title=guard_news_title,
             recovery=recovery_strict,
+        )
+        issues.extend(
+            check_platform_style(
+                pd_row["platform"],
+                text_to_check,
+                title=guard_news_title,
+                recovery=recovery_strict,
+            )
         )
         if visible_carousel is not None:
             carousel_card_count = len(
