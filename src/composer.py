@@ -386,6 +386,44 @@ def _build_system_instruction(soul: str, appendices: dict) -> str:
     return "\n".join(parts)
 
 
+def _build_recovery_system_instruction(
+    recovery_contract: str,
+    platforms: List[str],
+) -> str:
+    """Concise, non-conflicting contract for the Taiwan recovery cohort.
+
+    The legacy soul contains technology-business positioning and historical
+    hook recipes that directly conflict with the recovery guard.  Keeping the
+    recovery instruction separate makes the model optimize for evidence,
+    reader utility, and platform-native delivery instead of trying to satisfy
+    both contracts at once.
+    """
+    requested = ", ".join(platforms)
+    return f"""
+你是 News Radar 的台灣公共利益編輯。這次只撰寫：{requested}。
+
+成功條件依序是：事實正確、具名來源、讀者信任、實際用途、最後才是吸睛。只可使用使用者訊息提供的新聞本文與多源脈絡；不確定就刪除，不得用記憶補數字、日期、法案狀態或指控。
+
+每個平台都必須做到：
+1. 第一個可見句子的前 45 個中文字同時出現「具名主體」與「數字或已發生的實際後果」。FB/IG 的 title 也會成為第一個可見句子，所以 title 本身就要合格；Threads 的 body 第一句要合格。
+2. 每個包含事實或數字的段落，就地寫出具名來源，例如「根據行政院 7 月 24 日公告」；禁止只寫「根據報導、官方資料、媒體指出」。
+3. 清楚分開已知事實與判讀。判讀不可比來源更肯定，也不可把草案寫成已生效法律。
+4. 明寫一個對特定台灣讀者的具體影響，以及同一讀者現在可採取的一個動作。請使用自然但可辨識的句子，例如「對通勤族的具體影響是轉乘時間增加；通勤族可以先查詢新班次。」不可用「值得關注、可期待、保持關注」充數。
+5. 結尾只能是一個可具體回答的問題，或可在指定日期驗證的預測。不得要求按讚、追蹤、分享或只問「你怎麼看」。
+6. 禁止這些長期重複模板：市場以為、大家以為、真正的賽局、護城河、底層邏輯、神話破滅、信任崩塌、深層代價、產業洗牌、結構性衝擊。禁止 Markdown 粗體小標。
+
+平台規格：
+- Threads：220–360 字；body 可獨立閱讀；一個 topic tag。
+- FB：500–750 字；事件、紀錄、受影響者、責任機關、回應、下一個問責節點；3–5 個 hashtags；不放站外連結。
+- IG：caption 不複製 FB；carousel 五張依序是已驗證後果、發生何事、第一手數字、誰付出或受益、下一步查什麼；5–8 個 hashtags。
+
+輸出 MultiPlatformDraft JSON。未要求的平台填 null。完稿前逐句檢查數字來源、第一句、讀者影響與行動；任何一項不合格就先自行重寫再輸出。
+
+=== Taiwan Daily Meta Editorial Contract ===
+{recovery_contract}
+"""
+
+
 # 2026-05 實測：gemini-2.0-flash-lite 免費 tier 額度已歸零（429 limit:0），
 # 故預設改用仍有免費額度的 gemini-2.5-flash。可用 NEWS_RADAR_COMPOSER_MODEL 覆寫。
 DEFAULT_COMPOSER_MODEL = os.getenv("NEWS_RADAR_COMPOSER_MODEL", "gemini-2.5-flash")
@@ -409,19 +447,20 @@ async def compose_multi_platform(
     Args:
         model: 覆寫預設 Gemini 模型名稱；None 時用 DEFAULT_COMPOSER_MODEL。
     """
-    main_soul, appendices = load_soul_bundle()
-
-    # 只保留被選中的平台指令
-    filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
-    system_instruction = _build_system_instruction(main_soul, filtered_appendices)
-    if os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery":
+    recovery_mode = os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery"
+    if recovery_mode:
         recovery_contract = _read_file(RECOVERY_CONTRACT_PATH)
         if not recovery_contract:
             raise RuntimeError("Recovery mode requires config/recovery_content_contract.md")
-        system_instruction += (
-            "\n\n=== RECOVERY MODE · HIGHEST PRIORITY CONTRACT ===\n"
-            + recovery_contract
+        system_instruction = _build_recovery_system_instruction(
+            recovery_contract,
+            platforms,
         )
+    else:
+        main_soul, appendices = load_soul_bundle()
+        # 只保留被選中的平台指令
+        filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
+        system_instruction = _build_system_instruction(main_soul, filtered_appendices)
 
     # === Phase 2 (2026-05-14): Threads Substack CTA 注入（threads_v2.md §14.6）===
     # 只在 threads 在 active platforms 內時擲骰；中籤就把 prompt fragment 接到
@@ -491,7 +530,7 @@ async def compose_multi_platform(
         prompt=prompt,
         response_model=MultiPlatformDraft,
         gemini_model=chosen_model,
-        temperature=0.3,  # 寫作需要一點變化
+        temperature=0.2 if recovery_mode else 0.3,
         timeout_s=240,    # Claude CLI 寫長文需要較長 timeout
     )
 
