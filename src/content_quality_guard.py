@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v4"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v5"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -267,6 +267,23 @@ _RECOVERY_TAIWAN_RELEVANCE_PATTERN = re.compile(
     r"通勤者|通勤族|立法院|行政院|總統府|食藥署|衛福部|交通部|金管會|"
     r"證交所|櫃買中心|中央銀行|財政部|主計總處|台積電"
 )
+_RECOVERY_HOOK_ACTOR_PATTERN = re.compile(
+    r"(?:行政院|立法院|總統府|食藥署|衛福部|交通部|金管會|證交所|"
+    r"櫃買中心|中央銀行|財政部|主計總處|審計部|監察院|法務部|農業部|"
+    r"環境部|勞動部|經濟部|國發會|國防部|法院|檢方|市府|縣府|"
+    r"民進黨|國民黨|民眾黨|台股|臺股|加權指數|美國|歐盟|聯準會|"
+    r"台積電|聯電|聯發科|鴻海|廣達|緯創|台達電|日月光|環球晶|"
+    r"華邦電|南亞科|國巨|台塑|"
+    r"[A-Za-z0-9一-鿿·．・]{2,16}(?:公司|銀行|金控|政府|市府|"
+    r"縣府|部|署|會|院|黨))"
+)
+_RECOVERY_HOOK_CONSEQUENCE_PATTERN = re.compile(
+    r"(?:\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|人|件|批|家|元|美元|倍|"
+    r"點|日|年|小時))|(?:公告|公布|宣布|通過|否決|裁罰|起訴|判決|下架|"
+    r"回收|停產|停業|暫停|恢復|調漲|調降|上調|下調|失守|大跌|暴跌|"
+    r"上漲|下跌|增加|減少|超標|不合格|生效|延後|取消|刪減|凍結|"
+    r"解禁|召回|關稅|缺藥|停電)"
+)
 
 # Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
 _WAVE_PATTERN = re.compile(
@@ -392,6 +409,16 @@ def _recovery_formulaic_frame(full_text: str, _title: str) -> Optional[str]:
     return f"formulaic_frame:{hit}" if hit else None
 
 
+def _weak_recovery_hook(full_text: str, _title: str) -> Optional[str]:
+    hook = re.sub(r"\s+", "", full_text).lstrip("#")[:45]
+    if (
+        _RECOVERY_HOOK_ACTOR_PATTERN.search(hook)
+        and _RECOVERY_HOOK_CONSEQUENCE_PATTERN.search(hook)
+    ):
+        return None
+    return "first_45_missing_actor_or_consequence:" + hook
+
+
 _RULES: tuple[_Rule, ...] = (
     _Rule(
         code="templated_fallback_marker",
@@ -475,6 +502,12 @@ _RULES: tuple[_Rule, ...] = (
 )
 
 _RECOVERY_RULES: tuple[_Rule, ...] = (
+    _Rule(
+        code="weak_recovery_hook",
+        severity="rewrite",
+        message="Recovery 前 45 字必須同時有具名主體與可驗證的數字或實際後果",
+        matcher=_weak_recovery_hook,
+    ),
     _Rule(
         code="generic_source_attribution",
         severity="rewrite",

@@ -15,7 +15,7 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 - `PROVEN`: median Threads actions are zero and only 48 of 103 posts have any nonzero action. Reach outliers exist, but useful interaction and follower conversion remain the main unproven problem.
 - `PROVEN`: Facebook legacy engagement measurement is degraded; 126 of 127 samples contain API error markers.
 - `PROVEN`: Instagram cold-start distribution is near zero and needs a visual-format experiment.
-- `PROVEN`: Threads post `18059705018757201` proves API delivery only. It was composed and checked under `2026-07-24.recovery-v2`; replaying its final text through the current `2026-07-24.taiwan-daily-v4` guard produces six rewrite findings (generic attribution, fact without local source, unattributed allegation, jargon pileup, formulaic hook, and missing reader utility). Exclude it from the v4 editorial-quality and recovery-performance cohort; do not delete it automatically.
+- `PROVEN`: Threads post `18059705018757201` proves API delivery only. It was composed and checked under `2026-07-24.recovery-v2`; replaying its final text through the current `2026-07-24.taiwan-daily-v5` guard produces rewrite findings for generic attribution, fact without local source, unattributed allegation, jargon pileup, formulaic hook, and missing reader utility. Exclude it from the current editorial-quality and recovery-performance cohort; do not delete it automatically.
 - `UNKNOWN`: the two follower snapshots on 2026-07-23 are only about one hour apart, so they do not prove a long-term plateau or its cause.
 
 ## Recovery contract
@@ -35,11 +35,12 @@ Recovery safeguards:
 3. A high-risk political, food-safety, legal, corruption, or health allegation from ordinary media is held unless the same event has authoritative corroboration. Broad same-beat matches do not count.
 4. Freshness is measured from actual execution time; a fully stale batch and future-dated poison rows fail closed.
 5. Every factual paragraph needs a named source. Generic `根據報導` attribution, unattributed allegations, and unsupported measured claims trigger a rewrite.
-6. A concrete reader consequence plus a usable next action are both required; risk words or rhetorical questions alone do not count.
-7. Strategy jargon and dramatic frames are held when they obscure the useful point.
-8. Unsupported statistics trigger one rewrite; unresolved drafts are held.
-9. Recovery cadence ignores old live-mode frequency overrides.
-10. No recommendation may increase frequency before seven posts per platform have complete 168h evidence.
+6. The first 45 Chinese characters must contain a named actor and a verifiable number or concrete consequence; background-first hooks trigger a rewrite.
+7. A concrete reader consequence plus a usable next action are both required; risk words or rhetorical questions alone do not count.
+8. Strategy jargon and dramatic frames are held when they obscure the useful point.
+9. Unsupported statistics trigger one rewrite; unresolved drafts are held.
+10. Recovery cadence ignores old live-mode frequency overrides.
+11. No recommendation may increase frequency before seven posts per platform have complete 168h evidence.
 
 Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
 slot until at least seven posts on that platform complete their 168h windows;
