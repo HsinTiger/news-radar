@@ -1,8 +1,8 @@
 """
 News Radar · LLM Brain (Phase 8.19)
 ====================================
-統一的 LLM 呼叫層：claude_cli → gemini → GitHub Models → opencode →
-groq → cerebras → None（依能力排序）。
+統一的 LLM 呼叫層：claude_cli → gemini → GitHub Models GPT-4.1 mini →
+GitHub Models GPT-4o mini → opencode → groq → cerebras → None（依能力排序）。
 
 為什麼獨立一個模組：
 - scorer.py / composer.py 都各自呼叫 Gemini；現在要加 Claude CLI fallback
@@ -869,6 +869,18 @@ _OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
         model_env="GITHUB_MODELS_MODEL",
         model_default="openai/gpt-4.1-mini",
     ),
+    # GitHub Models quotas are model-specific.  Keep one separate low-tier
+    # model pool so a bounded rewrite can finish when gpt-4.1-mini returns 429.
+    # This is not a quality bypass: the same schema, numeric grounding, and
+    # current-guard requirements still apply.
+    "github_models_4o": _OpenAICompatProvider(
+        name="github_models_4o",
+        key_env="GITHUB_TOKEN",
+        base_url_env="GITHUB_MODELS_BASE_URL",
+        base_url_default="https://models.github.ai/inference",
+        model_env="GITHUB_MODELS_4O_MODEL",
+        model_default="openai/gpt-4o-mini",
+    ),
     "groq": _OpenAICompatProvider(
         name="groq",
         key_env="GROQ_API_KEY",
@@ -1176,7 +1188,7 @@ async def call_for_json(
     """核心 API：依能力 / 可靠度排序逐一嘗試 backend，第一個成功即交付。
 
     預設鏈（2026-07-24 擴充）：claude_cli (Max 主腦) → gemini (SDK structured,
-        1M context) → GitHub Models (gpt-4.1-mini, 1M) → opencode
+        1M context) → GitHub Models (gpt-4.1-mini → gpt-4o-mini) → opencode
         (big-pickle = GLM-4.6, 200k) → groq → cerebras。
         GitHub Models 使用 Actions 短效 GITHUB_TOKEN；其餘免費兜底需設對應 key
         （OPENCODE_API_KEY / GROQ_API_KEY / CEREBRAS_API_KEY）才會啟用，沒設就自動
@@ -1212,7 +1224,7 @@ async def call_for_json(
         timeout_s: Claude CLI subprocess 硬上限
         backends: 可指定的 backend 順序與白名單（tuple，按序嘗試）。
             None = 預設 ("claude_cli","gemini_cli","gemini","github_models",
-            "opencode","groq","cerebras")。
+            "github_models_4o","opencode","groq","cerebras")。
             例：("claude_cli",) 只試 Claude；("gemini","groq") 跳過 Claude、
             先 Gemini 再 Groq。未知名稱會被略過。
         disallowed_tools: 傳給 Claude CLI 的 `--disallowedTools`（例：
@@ -1229,12 +1241,13 @@ async def call_for_json(
         if _claude_cli_available():
             backends = (
                 "claude_cli", "litellm", "gemini", "gemini_cli",
-                "github_models", "opencode", "groq", "cerebras",
+                "github_models", "github_models_4o", "opencode", "groq",
+                "cerebras",
             )
         else:
             backends = (
-                "litellm", "gemini", "github_models", "opencode", "groq",
-                "cerebras",
+                "litellm", "gemini", "github_models", "github_models_4o",
+                "opencode", "groq", "cerebras",
             )
     allowed = backends
     primary = allowed[0] if allowed else None

@@ -131,6 +131,22 @@ class MultiPlatformDraft(BaseModel):
         description="2–4 張社群圖卡的蒸餾內容（洞察句、關鍵數字、帶走判斷）。",
     )
 
+    @field_validator("fb", "ig", "threads", mode="before")
+    @classmethod
+    def _drop_incomplete_optional_variant(cls, value):
+        """Normalize unsolicited partial platform objects to ``None``.
+
+        Some fallback models emit a half-filled object for an unrequested
+        platform instead of JSON null.  A requested platform is still checked
+        by ``run_pipeline`` after validation and fails closed when it is None.
+        """
+
+        if isinstance(value, dict):
+            required = ("title", "body", "char_count")
+            if any(key not in value or value[key] is None for key in required):
+                return None
+        return value
+
 
 class ScoreBreakdown(BaseModel):
     data_density: float = 0.0
