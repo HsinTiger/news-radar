@@ -5,6 +5,7 @@ from run_pipeline import (
     _deterministic_recovery_hashtag_prune,
     _deterministic_recovery_inference_prune,
     _deterministic_recovery_stat_prune,
+    _deterministic_recovery_title_prune,
     _deterministic_recovery_utility_repair,
     _is_recovery_market_benchmark,
     _quality_rewrite_penalty,
@@ -226,6 +227,31 @@ def test_deterministic_market_inference_prune_keeps_sourced_fact() -> None:
     assert "加權指數上漲2.3%" in repaired
     assert "市場情緒有所回暖" not in repaired
     assert "吸引更多資金" not in repaired
+
+
+def test_deterministic_market_prunes_vague_fb_interpretation_and_title() -> None:
+    title = "本週臺股指數上漲2.30%，投資者需注意市場變化。"
+    body = (
+        "根據證交所統計，加權指數上漲2.3%。"
+        "這意味著市場情況正在改善，可能影響到投資決策。\n\n"
+        "數據顯示出市場的活躍度，能幫助投資人把握市場動向，"
+        "做出明智的投資選擇。\n\n"
+        "投資人可比較自己的同期間報酬。"
+    )
+    source = "根據證交所統計，加權指數上漲2.3%。"
+
+    repaired_title = _deterministic_recovery_title_prune(title)
+    repaired_body = _deterministic_recovery_inference_prune(
+        body,
+        topic="tw_stocks",
+        source_evidence_text=source,
+    )
+
+    assert repaired_title == "本週臺股指數上漲2.30%"
+    assert "市場情況正在改善" not in repaired_body
+    assert "市場的活躍度" not in repaired_body
+    assert "明智的投資選擇" not in repaired_body
+    assert "投資人可比較自己的同期間報酬" in repaired_body
 
 
 def test_best_of_repair_penalty_prefers_fewer_rewrite_issues() -> None:

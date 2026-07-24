@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v27"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v28"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -291,7 +291,7 @@ _RECOVERY_TRUST_ERODING_FRAMES = (
 )
 _RECOVERY_FORMULAIC_FRAMES = (
     "市場以為", "大家以為", "真正的賽局", "護城河", "底層邏輯",
-    "神話破滅", "信任崩塌", "需關注市場變化",
+    "神話破滅", "信任崩塌", "需關注市場變化", "需注意市場變化",
 )
 _RECOVERY_TEMPLATE_SCAFFOLDING = (
     "已知事實是",
@@ -730,6 +730,15 @@ _UNSUPPORTED_MARKET_INFERENCES = (
     "市場整體表現回暖",
     "市場的活躍程度",
     "重新評估投資組合的好時機",
+    "市場情況正在改善",
+    "意味著市場",
+    "市場的活躍度",
+    "把握市場動向",
+    "明智的投資選擇",
+    "這波漲幅中受益",
+    "適應市場變化",
+    "跟上市場的步伐",
+    "可能影響到投資決策",
 )
 
 

@@ -434,6 +434,18 @@ def _deterministic_recovery_inference_prune(
     return "\n\n".join(paragraphs) if paragraphs else body
 
 
+def _deterministic_recovery_title_prune(title: str | None) -> str | None:
+    """Remove only a generic market-watch suffix from an otherwise factual title."""
+
+    if not title:
+        return title
+    return re.sub(
+        r"[，,]?\s*(?:投資人|投資者)?需(?:關注|注意)市場變化[。！!]*$",
+        "",
+        title,
+    ).rstrip("，,。！! ")
+
+
 def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
     """Lower is better; blocks dominate, then rewrite issues, then warnings."""
 
@@ -1387,6 +1399,7 @@ async def process_item(
         }
         deterministic_codes = closing_codes | {
             "missing_reader_utility",
+            "formulaic_attention_hook",
             "platform_hashtag_overload",
             "platform_stat_overload",
             "unsupported_market_inference",
@@ -1400,6 +1413,11 @@ async def process_item(
                     if issue.severity == "rewrite"
                 }
                 repaired_body = variant.body
+                repaired_title = variant.title
+                if "formulaic_attention_hook" in platform_codes:
+                    repaired_title = _deterministic_recovery_title_prune(
+                        repaired_title
+                    )
                 if "unsupported_market_inference" in platform_codes:
                     repaired_body = _deterministic_recovery_inference_prune(
                         repaired_body,
@@ -1430,7 +1448,9 @@ async def process_item(
                         source_evidence_text=source_evidence_text,
                         source_label=str(row["feed_name"] or ""),
                     )
-                repaired_variant = variant.model_copy(update={"body": repaired_body})
+                repaired_variant = variant.model_copy(
+                    update={"body": repaired_body, "title": repaired_title}
+                )
                 repaired_finalized[platform_key] = finalize_variant(
                     repaired_variant, platform_key
                 )
@@ -1443,7 +1463,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 inference/stats/utility/closing/tags；"
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 title/inference/stats/utility/closing/tags；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 
