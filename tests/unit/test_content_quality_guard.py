@@ -345,6 +345,52 @@ def test_taiwan_daily_accepts_actor_and_consequence_in_first_45_chars():
     assert "weak_recovery_hook" not in codes
 
 
+def test_recovery_accepts_modified_reader_phrase_and_specific_action():
+    text = (
+        "行政院通過法院組織法修正草案，未來進入法院將全面安檢。\n\n"
+        "根據行政院 7 月 23 日新聞稿，草案將送立法院審議。\n\n"
+        "對臺灣到法院洽公的民眾而言，具體影響是可能需要預留額外時間；"
+        "民眾可以先留意各法院公布的安檢措施與禁帶物品。"
+    )
+    codes = {item.code for item in check_quality(text, title="法院安檢", recovery=True)}
+    assert "missing_reader_utility" not in codes
+    assert "fact_without_local_source" not in codes
+
+
+def test_recovery_accepts_reader_warning_and_inspection_action():
+    text = (
+        "全臺7700村里僅少數具自主防災能力。\n\n"
+        "根據內政部消防署統計，認證韌性社區仍未覆蓋多數村里。\n\n"
+        "對坡地社區居民而言，排水溝異常與路面縱向裂縫是可自行檢視的警訊；"
+        "居民可將這兩項納入日常巡檢並通報工務單位。"
+    )
+    codes = {item.code for item in check_quality(text, title="社區防災", recovery=True)}
+    assert "weak_recovery_hook" not in codes
+    assert "missing_reader_utility" not in codes
+
+
+def test_recovery_numeric_headline_uses_immediately_following_named_source():
+    text = (
+        "美國301關稅上路，臺灣適用10%且不疊加MFN。\n\n"
+        "美國貿易代表署 7 月 24 日公告，這項措施適用60個經濟體。\n\n"
+        "對臺灣出口業者的具體影響是部分商品成本改變；"
+        "業者可以先查詢USTR公告附件並比對產品稅則。"
+    )
+    codes = {item.code for item in check_quality(text, title="301關稅", recovery=True)}
+    assert "fact_without_local_source" not in codes
+    assert "missing_reader_utility" not in codes
+
+
+def test_recovery_still_rejects_vague_attention_as_action():
+    text = (
+        "行政院通過新草案，臺灣民眾將受影響。\n\n"
+        "根據行政院公告，草案將送立法院審議。\n\n"
+        "對臺灣民眾的具體影響是規則可能改變；民眾可以期待並持續關注。"
+    )
+    codes = {item.code for item in check_quality(text, title="新草案", recovery=True)}
+    assert "missing_reader_utility" in codes
+
+
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----
 
 def test_corporate_fluff_pileup_warns():
