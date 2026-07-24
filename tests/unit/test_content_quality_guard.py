@@ -156,6 +156,18 @@ def test_v22_rejects_stock_question_that_only_says_holdings() -> None:
     assert "generic_engagement_bait" in codes
 
 
+def test_v25_allows_numeric_headline_when_next_paragraph_names_source() -> None:
+    text = (
+        "本週加權指數上漲2.3%，總市值達142.58兆元\n\n"
+        "根據證交所本週統計，加權指數上漲2.3%，總市值達142.58兆元。\n\n"
+        "投資人可比較自己的同期間報酬。"
+    )
+
+    codes = {issue.code for issue in check_quality(text, recovery=True)}
+
+    assert "uncited_stat" not in codes
+
+
 def test_v20_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     text = (
         "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"

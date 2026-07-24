@@ -3,6 +3,7 @@ from __future__ import annotations
 from run_pipeline import (
     _deterministic_recovery_closing_repair,
     _deterministic_recovery_hashtag_prune,
+    _deterministic_recovery_inference_prune,
     _deterministic_recovery_stat_prune,
     _deterministic_recovery_utility_repair,
     _quality_rewrite_penalty,
@@ -189,6 +190,25 @@ def test_deterministic_facebook_repairs_question_before_hashtags() -> None:
     assert "platform_hashtag_overload" not in codes
     assert "multiple_closing_questions" not in codes
     assert "generic_engagement_bait" not in codes
+
+
+def test_deterministic_market_inference_prune_keeps_sourced_fact() -> None:
+    body = (
+        "根據證交所統計，加權指數上漲2.3%，總市值達142.58兆元。"
+        "這一漲幅意味著市場情緒有所回暖，可能吸引更多資金進入市場。\n\n"
+        "投資人可比較自己的同期間報酬。"
+    )
+    source = "證交所統計顯示，加權指數上漲2.3%，總市值達142.58兆元。"
+
+    repaired = _deterministic_recovery_inference_prune(
+        body,
+        topic="tw_stocks",
+        source_evidence_text=source,
+    )
+
+    assert "加權指數上漲2.3%" in repaired
+    assert "市場情緒有所回暖" not in repaired
+    assert "吸引更多資金" not in repaired
 
 
 def test_best_of_repair_penalty_prefers_fewer_rewrite_issues() -> None:

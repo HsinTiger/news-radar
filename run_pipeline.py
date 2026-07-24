@@ -39,6 +39,7 @@ from src.content_quality_guard import (
     numeric_claim_allowlist,
     statistical_quantity_allowlist,
     should_request_rewrite,
+    unsupported_market_inference_terms,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.recovery_mode import (
@@ -232,6 +233,13 @@ def _recovery_rewrite_guidance(
             "filing, investigation, indictment, or judgment in the supplied "
             "evidence. Otherwise delete it."
         )
+    if "unsupported_market_inference" in rewrite_codes:
+        guidance.append(
+            "MARKET INFERENCE: Delete any claim that a rise proves improving "
+            "sentiment, new capital inflow, a bullish signal, or continuation. "
+            "The supplied statistics describe the market; they do not prove a "
+            "cause, forecast, or investment recommendation."
+        )
 
     guidance.append(
         "FINAL SELF-CHECK BEFORE JSON: (1) every material Arabic number appears "
@@ -368,6 +376,32 @@ def _deterministic_recovery_hashtag_prune(body: str, *, platform: str) -> str:
         if part.strip()
     ]
     return "\n\n".join(paragraphs)
+
+
+def _deterministic_recovery_inference_prune(
+    body: str,
+    *,
+    topic: str | None,
+    source_evidence_text: str,
+) -> str:
+    """Delete only sentences containing known source-unsupported market inference."""
+
+    if topic != "tw_stocks":
+        return body
+    unsupported = unsupported_market_inference_terms(body, source_evidence_text)
+    if not unsupported:
+        return body
+    paragraphs: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", body):
+        sentences = re.split(r"(?<=[。！？!?])", paragraph.strip())
+        kept = [
+            sentence.strip()
+            for sentence in sentences
+            if sentence.strip() and not any(term in sentence for term in unsupported)
+        ]
+        if kept:
+            paragraphs.append("".join(kept))
+    return "\n\n".join(paragraphs) if paragraphs else body
 
 
 def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
@@ -1325,6 +1359,7 @@ async def process_item(
             "missing_reader_utility",
             "platform_hashtag_overload",
             "platform_stat_overload",
+            "unsupported_market_inference",
         }
         if remaining_codes and remaining_codes <= deterministic_codes:
             repaired_finalized = dict(finalized)
@@ -1335,6 +1370,12 @@ async def process_item(
                     if issue.severity == "rewrite"
                 }
                 repaired_body = variant.body
+                if "unsupported_market_inference" in platform_codes:
+                    repaired_body = _deterministic_recovery_inference_prune(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                    )
                 if "platform_hashtag_overload" in platform_codes:
                     repaired_body = _deterministic_recovery_hashtag_prune(
                         repaired_body,
@@ -1372,7 +1413,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 stats/utility/closing/tags；"
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 inference/stats/utility/closing/tags；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 

@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v24"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v25"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -389,12 +389,20 @@ def _uncited_stat(full_text: str, _title: str) -> Optional[str]:
         if paragraph.strip()
     ]
     previous_named = False
-    for paragraph in paragraphs:
+    for index, paragraph in enumerate(paragraphs):
         named = (
             _has_recovery_named_source(paragraph)
             and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
         )
         for match in _STAT_PATTERN.finditer(paragraph):
+            if (
+                index == 0
+                and len(paragraph) <= 120
+                and "\n" not in paragraph
+                and len(paragraphs) > 1
+                and _has_recovery_named_source(paragraphs[1])
+            ):
+                continue
             if _has_citation_nearby(paragraph, match.start()):
                 continue
             if named or (
@@ -710,6 +718,15 @@ _UNSUPPORTED_MARKET_INFERENCES = (
     "交易流動性將回歸正常",
     "交易流動性提升",
     "成交量將回升",
+    "市場活躍度的提升",
+    "市場情緒有所回暖",
+    "市場情緒回暖",
+    "吸引更多資金",
+    "資金進入市場",
+    "正面的信號",
+    "多頭訊號",
+    "漲勢是否能持續",
+    "漲幅是否能持續",
 )
 
 
@@ -806,14 +823,20 @@ def _unsupported_audience_extensions(
     return ",".join(missing) if missing else None
 
 
-def _unsupported_market_inferences(
+def unsupported_market_inference_terms(
     full_text: str, source_text: str
-) -> Optional[str]:
-    missing = [
+) -> list[str]:
+    return [
         term
         for term in _UNSUPPORTED_MARKET_INFERENCES
         if term in full_text and term not in source_text
     ]
+
+
+def _unsupported_market_inferences(
+    full_text: str, source_text: str
+) -> Optional[str]:
+    missing = unsupported_market_inference_terms(full_text, source_text)
     return ",".join(missing) if missing else None
 
 
@@ -1153,5 +1176,6 @@ __all__ = [
     "numeric_claim_allowlist",
     "statistical_quantity_allowlist",
     "should_request_rewrite",
+    "unsupported_market_inference_terms",
     "format_issues",
 ]
