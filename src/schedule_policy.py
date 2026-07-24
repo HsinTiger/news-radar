@@ -18,6 +18,7 @@ class PlatformDecision:
     reason: str
     posts_today: int
     quality_attempts_today: int
+    retryable_queue: int
     last_success: str | None
     target_posts_per_day: int
     minimum_interval_hours: float
@@ -72,6 +73,33 @@ def _inside_slot(now_local: datetime, hours: list[int], tolerance: int) -> bool:
         0 <= minute_of_day - hour * 60 <= tolerance
         for hour in hours
     )
+
+
+def _retryable_recovery_queue(conn: sqlite3.Connection, platform: str) -> int:
+    """Count publish-ready Recovery drafts that still lack platform success."""
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT d.id)
+              FROM drafts d
+              JOIN platform_drafts pd
+                ON pd.draft_id=d.id AND pd.platform=?
+              JOIN recovery_experiments rx
+                ON rx.draft_id=d.id AND rx.platform=?
+             WHERE d.queue_status='queued'
+               AND d.status IN ('approved','auto_approved')
+               AND NOT EXISTS (
+                 SELECT 1 FROM publish_log p
+                  WHERE p.draft_id=d.id AND p.platform=? AND p.success=1
+               )
+            """,
+            (platform, platform, platform),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower() or "no such column" in str(exc).lower():
+            return 0
+        raise
+    return int(row[0] if row else 0)
 
 
 def _effective_platform_config(
@@ -170,6 +198,7 @@ def decide_schedule(
         last_value = row["last_success"] if row else None
         posts_today = int((row["posts_today"] if row else 0) or 0)
         quality_attempts_today = 0
+        retryable_queue = 0
         if mode == "recovery":
             try:
                 attempt_row = conn.execute(
@@ -189,6 +218,8 @@ def decide_schedule(
             except sqlite3.OperationalError as exc:
                 if "no such table" not in str(exc).lower():
                     raise
+            if quality_attempts_today > 0:
+                retryable_queue = _retryable_recovery_queue(conn, platform)
         last = _parse_timestamp(last_value)
         interval = timedelta(hours=float(config["minimum_interval_hours"]))
         slot_ok = _inside_slot(
@@ -199,7 +230,11 @@ def decide_schedule(
         local_days = [int(value) for value in config.get("local_days", range(7))]
         day_ok = local.weekday() in local_days
         post_quota_ok = posts_today < int(config["target_posts_per_day"])
-        attempt_quota_ok = mode != "recovery" or quality_attempts_today == 0
+        attempt_quota_ok = (
+            mode != "recovery"
+            or quality_attempts_today == 0
+            or retryable_queue > 0
+        )
         interval_ok = last is None or now_utc - last >= interval
         due = day_ok and slot_ok and post_quota_ok and attempt_quota_ok and interval_ok
         reasons = []
@@ -222,6 +257,7 @@ def decide_schedule(
                 reason=",".join(reasons),
                 posts_today=posts_today,
                 quality_attempts_today=quality_attempts_today,
+                retryable_queue=retryable_queue,
                 last_success=last_value,
                 target_posts_per_day=int(config["target_posts_per_day"]),
                 minimum_interval_hours=float(config["minimum_interval_hours"]),
