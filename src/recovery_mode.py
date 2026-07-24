@@ -41,6 +41,13 @@ SOURCE_AUTHORITY_MULTIPLIERS = {
     20: 1.05,
     10: 1.00,
 }
+# Correctness and primary evidence are the owner's first-order constraints.
+# A bounded selection bonus lets an in-scope official record survive the
+# two-candidate Recovery scan budget even when a secondary account of the same
+# event carries a historically stronger topic label.  Public-impact and
+# ceremonial-content weights still decide among primary records and prevent
+# routine event notices from automatically winning.
+PRIMARY_RECORD_SELECTION_MULTIPLIER = 1.5
 TAIWAN_RELEVANCE_MARKERS = (
     "台灣", "臺灣", "全台", "全臺", "台股", "臺股", "加權指數",
     "立法院", "立院", "行政院", "政院", "總統府", "監察院", "監院",
@@ -375,6 +382,17 @@ def rank_candidates(
             return 1.25
         return 1.0
 
+    def primary_record_weight(row: Any) -> float:
+        feed_name = str(_row_value(row, "feed_name", "") or "")
+        tags = str(_row_value(row, "tags", "") or "")
+        tier = str(_row_value(row, "feed_tier", "") or "").lower()
+        authority, _ = source_authority(feed_name, tags, tier)
+        return (
+            PRIMARY_RECORD_SELECTION_MULTIPLIER
+            if "primary-record" in tags or authority >= 45
+            else 1.0
+        )
+
     ranked = [
         row
         for row in candidate_rows
@@ -399,6 +417,7 @@ def rank_candidates(
             estimated_topic_weight(row)
             * estimated_source_weight(row)
             * public_impact_weight(row)
+            * primary_record_weight(row)
         ),
         reverse=True,
     )

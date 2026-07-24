@@ -52,6 +52,8 @@ def _conn() -> sqlite3.Connection:
         """
         CREATE TABLE topic_weights(category_id TEXT PRIMARY KEY,weight REAL);
         INSERT INTO topic_weights VALUES('current_affairs',1.6);
+        INSERT INTO topic_weights VALUES('tw_politics',1.65);
+        INSERT INTO topic_weights VALUES('policy_geopolitics',1.35);
         INSERT INTO topic_weights VALUES('tech_product_launch',1.55);
         INSERT INTO topic_weights VALUES('other',0.7);
         CREATE TABLE recovery_experiments(
@@ -98,6 +100,34 @@ def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
     ]
     ranked = rank_candidates(conn, rows, now=NOW)
     assert ranked[0]["title"] == "較早的台灣第一手來源"
+
+
+def test_primary_record_survives_bounded_scan_ahead_of_media_reaction() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "食藥署公布重新上架產品清單　藍：沒有真相不准上架",
+            "topic_category": "tw_politics",
+            "feed_tier": "primary",
+            "feed_name": "中央社 政治",
+            "tags": '["taiwan","politics","news"]',
+            "source_type": "article",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+        {
+            "title": "美公布301調查新稅率 台灣2,231項產品豁免關稅",
+            "topic_category": "policy_geopolitics",
+            "feed_tier": "primary",
+            "feed_name": "行政院 本院新聞",
+            "tags": '["taiwan","official","government","primary-record"]',
+            "source_type": "article",
+            "published_at": "2026-07-24T09:00:00Z",
+        },
+    ]
+
+    ranked = rank_candidates(conn, rows, now=NOW)
+
+    assert ranked[0]["feed_name"] == "行政院 本院新聞"
 
 
 def test_rank_candidates_downranks_social_source() -> None:
