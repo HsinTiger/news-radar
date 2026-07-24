@@ -38,6 +38,7 @@ from src import db as dbmod
 from src import image_manager
 from src.content_quality_guard import (
     check_quality,
+    combine_visible_text,
     format_issues,
     has_blocking_issues,
     should_request_rewrite,
@@ -183,6 +184,17 @@ async def _publish_one(
             dbmod.mark_queue_failed(conn, draft_id, reason="no_platform_drafts")
         return OUTCOME_NO_PLATFORM_DRAFTS
 
+    # Decode the persisted cards before the quality gate.  Card text is visible
+    # content even though Meta receives it as rendered pixels, so caption-only
+    # validation is not sufficient.
+    carousel = None
+    cjson = row["carousel_json"] if "carousel_json" in row.keys() else None
+    if cjson:
+        try:
+            carousel = CarouselCards.model_validate_json(cjson)
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠️ carousel_json 解析失敗 → 純單圖：{exc}")
+
     # ---------- Phase 8.20：品質守門員（攔下 Phase 8.19 前的 emergency_template）----------
     # 檢查每個平台的 final/full_text；只要有任一個 platform_draft 觸發 block 級規則，
     # 整筆 draft 不發，標 failed，跳 Mac 通知。Hsin 要求不刪 DB、他手動處理。
@@ -191,8 +203,9 @@ async def _publish_one(
     block_reasons: list[str] = []
     for pd_row in platform_drafts:
         text_to_check = pd_row["final_text"] or pd_row["full_text"] or ""
+        visible_text = combine_visible_text(text_to_check, carousel)
         issues = check_quality(
-            text_to_check,
+            visible_text,
             title=guard_news_title,
             recovery=recovery_strict,
         )
@@ -204,7 +217,7 @@ async def _publish_one(
                 platform=pd_row["platform"],
                 stage="pre_publish",
                 attempt=1,
-                full_text=text_to_check,
+                full_text=visible_text,
                 issues=issues,
             )
         if has_blocking_issues(issues) or (
@@ -270,14 +283,6 @@ async def _publish_one(
 
     # Phase 10 (2026-06-03)：2–4 圖卡 carousel（compose 階段持久化在 draft 層）。
     # 有內容時每平台優先發 carousel，任何一步失敗就 fall through 到單圖。
-    carousel = None
-    cjson = row["carousel_json"] if "carousel_json" in row.keys() else None
-    if cjson:
-        try:
-            carousel = CarouselCards.model_validate_json(cjson)
-        except Exception as exc:  # noqa: BLE001
-            print(f"   ⚠️ carousel_json 解析失敗 → 純單圖：{exc}")
-
     # Map DB-side platform names ("facebook"/"instagram"/"threads") to the
     # cover_pipeline platform_key codes ("fb"/"ig"/"threads").
     _COVER_KEY = {"facebook": "fb", "instagram": "ig", "threads": "threads"}

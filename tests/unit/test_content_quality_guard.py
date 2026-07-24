@@ -7,6 +7,7 @@ from __future__ import annotations
 from src.content_quality_guard import (
     _RULES,
     check_quality,
+    combine_visible_text,
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
@@ -438,6 +439,27 @@ def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages()
 
     assert "unsupported_numeric_claim" not in codes
     assert numeric_claim_allowlist(source) == ["10%", "3.5", "3521"]
+
+
+def test_recovery_numeric_grounding_includes_rendered_carousel_text():
+    visible = combine_visible_text(
+        "食藥署公告回收一批商品。",
+        {
+            "stat_number": "9,999萬元",
+            "stat_caption": "這是會被畫進圖卡的來源外數字。",
+            "takeaways": ["消費者先核對批號。"],
+            "key_figures": [{"label": "回收金額", "value": "9,999萬元"}],
+        },
+    )
+    issues = check_quality(
+        visible,
+        title="問題商品回收",
+        recovery=True,
+        source_text="食藥署公告商品回收，未提供金額。",
+    )
+    assert ("unsupported_numeric_claim", "9999") in {
+        (item.code, item.evidence) for item in issues
+    }
 
 
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----

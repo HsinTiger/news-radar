@@ -30,13 +30,13 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
-from typing import Callable, List, Literal, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v8"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v9"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -677,6 +677,56 @@ def numeric_claim_allowlist(source_text: str) -> list[str]:
     return sorted(_normalized_numeric_claims(source_text))
 
 
+def combine_visible_text(full_text: str, carousel: Any = None) -> str:
+    """Return every user-visible caption/card string as one guard input.
+
+    Carousel text is rendered into images and therefore bypasses a caption-only
+    check.  Keep this helper schema-tolerant so compose-time Pydantic models and
+    publish-time decoded JSON share exactly the same evidence boundary.
+    """
+
+    parts = [str(full_text or "").strip()]
+    if carousel is None:
+        return parts[0]
+    if hasattr(carousel, "model_dump"):
+        data = carousel.model_dump()
+    elif isinstance(carousel, dict):
+        data = carousel
+    else:
+        return parts[0]
+
+    # Mirror the renderer's semantic cards.  A stat number and its caption are
+    # one visible card, so a named source in the caption legitimately
+    # attributes the number; treating every JSON field as a separate paragraph
+    # would create a false rewrite.
+    for field_names in (
+        ("insight_statement", "insight_support"),
+        ("stat_number", "stat_caption"),
+    ):
+        card = " ".join(
+            str(data.get(name) or "").strip() for name in field_names
+        ).strip()
+        if card:
+            parts.append(card)
+    takeaways = [
+        str(value).strip() for value in (data.get("takeaways") or []) if value
+    ]
+    if takeaways:
+        parts.append("；".join(takeaways))
+    figures: list[str] = []
+    for figure in data.get("key_figures") or []:
+        if hasattr(figure, "model_dump"):
+            figure = figure.model_dump()
+        if isinstance(figure, dict):
+            label = str(figure.get("label") or "").strip()
+            value = str(figure.get("value") or "").strip()
+            if label or value:
+                figures.append("：".join(item for item in (label, value) if item))
+    if figures:
+        parts.append("；".join(figures))
+    return "\n\n".join(part for part in parts if part)
+
+
 # ---------- 公開 API（呼叫端只用這三個）----------
 
 def check_quality(
@@ -738,6 +788,7 @@ __all__ = [
     "QUALITY_GUARD_VERSION",
     "QualityIssue",
     "check_quality",
+    "combine_visible_text",
     "has_blocking_issues",
     "numeric_claim_allowlist",
     "should_request_rewrite",
