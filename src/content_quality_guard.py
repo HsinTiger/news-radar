@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v14"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v15"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -233,6 +233,7 @@ _RECOVERY_SOURCE_CARRY_BREAK_PATTERN = re.compile(
 )
 _RECOVERY_READER = (
     r"一般人|民眾|居民|住戶|消費者|使用者|讀者|上班族|投資人|股民|"
+    r"股東|持有人|持股人|市場參與者|"
     r"家長|學生|通勤族|一般通勤者|通勤者|駕駛|旅客|家庭|企業|業者|"
     r"出口商|製造業|產業|產業界|供應鏈業者|店家|商家|勞工|農民|你"
 )
@@ -243,17 +244,23 @@ _RECOVERY_IMPACT_PATTERN = re.compile(
     r"(?:可自行檢視|可以自行檢視|警訊)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,60}}"
     r"(?:會|可能|將|得|面臨|增加|減少|多花|少拿|延誤|損失|受益)"
-    r"|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
+    r"|(?:這|此).{0,20}(?:對你意味著|會直接影響)"
+    rf"|(?:這|此次|此舉)[^。！？\n]{{0,20}}(?:意味|代表)"
+    rf"[^。！？\n]{{0,20}}(?:{_RECOVERY_READER})[^。！？\n]{{0,40}}"
+    r"(?:可|可以|能|能夠))",
 )
 _RECOVERY_ACTION_PATTERN = re.compile(
     rf"(?:(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
     r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切)?"
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
-    r"關注|採取|納入|參考)"
+    r"關注|採取|納入|參考|觀察)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
     r"(?:可以|可|應該|應)(?:依|依據|根據)[^。！？\n]{1,24}"
     r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
+    r"(?:可以|可|應該|應)[^。！？\n]{0,20}"
+    r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整|觀察)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}可將[^。！？\n]{{0,20}}"
     r"(?:納入|列入|通報|備妥|改用|避開)"
     r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
@@ -738,6 +745,16 @@ def _normalized_quantity_claims(text: str) -> set[str]:
     return claims
 
 
+def _statistical_quantity_claims(text: str) -> set[str]:
+    """Return market/statistical figures, excluding dates and legal citations."""
+
+    return {
+        value
+        for value in _normalized_quantity_claims(text)
+        if not value.endswith(("年", "月", "日", "條", "期", "天"))
+    }
+
+
 def _unsupported_numeric_claims(full_text: str, source_text: str) -> Optional[str]:
     source_claims = _normalized_numeric_claims(source_text)
     missing_numbers = sorted(_normalized_numeric_claims(full_text) - source_claims)
@@ -976,7 +993,7 @@ def check_platform_style(
                 f"max={config['max_chars']}"
             ),
         ))
-    quantity_count = len(_normalized_quantity_claims(text))
+    quantity_count = len(_statistical_quantity_claims(text))
     if canonical == "threads" and quantity_count > 3:
         issues.append(QualityIssue(
             code="platform_stat_overload",

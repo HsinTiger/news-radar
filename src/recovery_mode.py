@@ -192,6 +192,7 @@ def editorial_mandate_for(platforms: Iterable[str], topic: str | None) -> str:
             "- TW stocks: do not add retirement funds, corporate asset allocation, foreign investors, or other affected groups unless the source explicitly names them.",
             "- TW stocks: the action must be usable now: compare the reader's same-period return or sector exposure with the official figures. Do not tell readers to wait for next week's report.",
             "- TW stocks: close with a measurable personal-result or allocation question addressed directly to the reader, not a generic prediction about whether the market will keep rising.",
+            "- TW stocks: for a trading-status notice, lead with the old restriction versus the effective-date change, omit rule numbers unless essential, and tell holders which order method or liquidity signal they can check now.",
         ])
     for platform in sorted(set(platforms)):
         experiment_type = experiment_type_for(platform, topic)

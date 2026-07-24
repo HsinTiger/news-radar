@@ -356,3 +356,4 @@ def test_tw_stocks_mandate_requires_portfolio_comparison_not_index_hype() -> Non
     assert "retirement funds" in mandate
     assert "Do not tell readers to wait" in mandate
     assert "measurable personal-result" in mandate
+    assert "trading-status notice" in mandate

@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-25.recovery-v14";
+const API_VERSION = "2026-07-25.recovery-v15";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);

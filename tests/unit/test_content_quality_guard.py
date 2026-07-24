@@ -36,7 +36,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v14_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v15_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -85,7 +85,7 @@ def test_v14_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v14_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v15_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -103,7 +103,7 @@ def test_v14_accepts_natural_threads_shape_without_editorial_labels() -> None:
     assert not should_request_rewrite(issues), format_issues(issues)
 
 
-def test_v14_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+def test_v15_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     text = (
         "證交所公告台股本週上漲，這段重複資料很多。" * 14
         + "\n\n投資人可檢查自己的同期間報酬。"
@@ -119,7 +119,7 @@ def test_v14_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
-def test_v14_threads_rejects_stat_dump_and_vague_stock_question() -> None:
+def test_v15_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     text = (
         "證交所本週統計顯示，加權指數上漲2.30%，收43,654.84點。\n\n"
         "電腦週邊上漲10.29%，綠能下跌9.04%。\n\n"
@@ -134,6 +134,30 @@ def test_v14_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     }
     assert "platform_stat_overload" in codes
     assert "generic_engagement_bait" in codes
+
+
+def test_v15_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
+    text = (
+        "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"
+        "自115年7月27日恢復正常交易。\n\n"
+        "此次恢復代表股東可重新使用一般交易方式；"
+        "股東可在恢復日觀察成交量與價格。\n\n"
+        "你會在7月27日調整隆銘綠能持股嗎？\n\n#台股"
+    )
+    style_codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    quality_codes = {
+        issue.code
+        for issue in check_quality(
+            text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    assert "platform_stat_overload" not in style_codes
+    assert "missing_reader_utility" not in quality_codes
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----
