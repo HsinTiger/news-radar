@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
@@ -487,6 +488,36 @@ STATISTICAL DENSITY BUDGET:
 """
 
 
+def _build_recovery_source_excerpt(title: str, content: str) -> str:
+    """Hide non-budget statistics from the writer while retaining source context."""
+
+    statistical_budget = statistical_quantity_allowlist(title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(content, limit=2)
+    allowed = set(statistical_budget)
+    source_match = re.search(
+        r"(?:根據|依據)[^。！？\n]{2,60}?(?:統計|公告|資料|報告|新聞稿)",
+        content or "",
+    )
+    source_anchor = source_match.group(0).strip() if source_match else ""
+    segments = [
+        segment.strip()
+        for segment in re.split(r"(?<=[。！？])|\n+", content or "")
+        if segment.strip()
+    ]
+    kept: list[str] = []
+    for segment in segments:
+        segment_stats = set(statistical_quantity_allowlist(segment))
+        if segment_stats - allowed:
+            continue
+        if segment not in kept:
+            kept.append(segment)
+        if sum(len(value) for value in kept) >= 1400:
+            break
+    parts = [value for value in (source_anchor, *kept) if value]
+    return "\n".join(parts)[:1800]
+
+
 # 2026-05 實測：gemini-2.0-flash-lite 免費 tier 額度已歸零（429 limit:0），
 # 故預設改用仍有免費額度的 gemini-2.5-flash。可用 NEWS_RADAR_COMPOSER_MODEL 覆寫。
 DEFAULT_COMPOSER_MODEL = os.getenv("NEWS_RADAR_COMPOSER_MODEL", "gemini-2.5-flash")
@@ -512,6 +543,7 @@ async def compose_multi_platform(
     """
     recovery_mode = os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery"
     if recovery_mode:
+        generation_content = _build_recovery_source_excerpt(title, content)
         recovery_contract = _read_file(RECOVERY_CONTRACT_PATH)
         if not recovery_contract:
             raise RuntimeError("Recovery mode requires config/recovery_content_contract.md")
@@ -521,10 +553,11 @@ async def compose_multi_platform(
         )
         system_instruction += _build_recovery_generation_contract(
             title,
-            content,
+            generation_content,
             platforms,
         )
     else:
+        generation_content = content
         main_soul, appendices = load_soul_bundle()
         # 只保留被選中的平台指令
         filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
@@ -576,7 +609,7 @@ async def compose_multi_platform(
 
 === 新聞詳情 ===
 標題: {title}
-本文/摘要: {content[:4000]}
+本文/摘要: {generation_content[:4000]}
 原始圖片網址: {og_image or '無'}
 
 請直接輸出 MultiPlatformDraft 的 JSON，包含 {', '.join(platforms)} 的變體。

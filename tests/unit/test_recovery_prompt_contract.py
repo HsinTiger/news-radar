@@ -68,6 +68,22 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     assert "`carousel` MUST be null" in fb_only
 
 
+def test_recovery_source_excerpt_hides_nonbudget_market_statistics():
+    title = "證交所：加權指數上漲2.30%，市值達142.58兆元"
+    content = (
+        "根據臺灣證券交易所統計，本週加權指數上漲2.30%。\n"
+        "電腦週邊上漲10.29%，綠能下跌9.04%。\n"
+        "以上資料為初步統計。"
+    )
+
+    excerpt = composer._build_recovery_source_excerpt(title, content)
+
+    assert "根據臺灣證券交易所統計" in excerpt
+    assert "2.30%" in excerpt
+    assert "10.29%" not in excerpt
+    assert "9.04%" not in excerpt
+
+
 def test_recovery_compose_prompt_removes_legacy_numeric_examples(monkeypatch):
     monkeypatch.setenv("AUTOMATION_MODE", "recovery")
     captured = {}
