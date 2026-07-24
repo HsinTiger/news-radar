@@ -59,7 +59,34 @@ async def _process_single(client, item, cfg, conn, report):
         report.items_new += 1
 
 
-async def run_harvest_once() -> HarvestReport:
+def _select_feed_config(cfg: dict, feed_tag: str | None) -> dict:
+    """Return a shallow config copy restricted to one explicit feed tag.
+
+    The normal production harvest keeps its existing all-feed behavior.  A
+    caller such as the Recovery setup canary may ask the same fetcher/cleaner
+    path to exercise only authoritative sources without maintaining a second
+    harvester implementation.
+    """
+    if feed_tag is None:
+        return cfg
+    normalized = str(feed_tag).strip()
+    if not normalized:
+        raise ValueError("feed_tag must be a non-empty string")
+    feeds = [
+        feed
+        for feed in cfg.get("feeds", [])
+        if normalized in (feed.get("tags") or [])
+    ]
+    if not feeds:
+        raise ValueError(f"no configured feeds carry tag: {normalized}")
+    return {**cfg, "feeds": feeds}
+
+
+async def run_harvest_once(
+    *,
+    feed_tag: str | None = None,
+    write_log: bool = True,
+) -> HarvestReport:
     """可被其他模組 import 的入口（例如 run_pipeline.py --loop）。
     與 main() 行為一致：抓 RSS → 清洗 → 寫 DB → 回傳 HarvestReport。
     """
@@ -70,15 +97,25 @@ async def run_harvest_once() -> HarvestReport:
     )
 
     # 1. 載入設定 + 初始化 DB
-    cfg = load_config()
+    cfg = _select_feed_config(load_config(), feed_tag)
     dbmod.init_db()
     conn = dbmod.get_conn()
 
     # 2. 抓所有 RSS
     print("\n=== 啟動 News Radar Harvest ===")
-    all_items = await harvest_all_feeds(cfg)
+    feed_results: dict[str, dict] = {}
+    all_items = await harvest_all_feeds(
+        cfg,
+        feed_diagnostics=feed_results,
+    )
     report.feeds_checked = len(cfg["feeds"])
+    report.feed_results = feed_results
     report.items_found = len(all_items)
+    for feed_name, result in feed_results.items():
+        if result.get("status") != "ok":
+            report.errors.append(
+                f"feed_failed:{feed_name}:{result.get('error_type') or 'unknown'}"
+            )
 
     # 3. 逐篇抓原始 HTML 並清洗（並行，但限制併發避免被當 DDoS）
     sem = asyncio.Semaphore(5)
@@ -111,12 +148,16 @@ async def run_harvest_once() -> HarvestReport:
         for e in report.errors[:3]:
             print(f"     {e}")
 
-    # 5. 寫 jsonl log
-    log_dir = Path(__file__).resolve().parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    with open(log_dir / "execution_log.jsonl", "a", encoding="utf-8") as f:
-        f.write(report.model_dump_json() + "\n")
-    print(f"\n  Log 寫入      : logs/execution_log.jsonl")
+    # 5. 寫 jsonl log。Disposable canary 可明確停用，避免把測試執行
+    # 混入 production execution history。
+    if write_log:
+        log_dir = Path(__file__).resolve().parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        with open(log_dir / "execution_log.jsonl", "a", encoding="utf-8") as f:
+            f.write(report.model_dump_json() + "\n")
+        print(f"\n  Log 寫入      : logs/execution_log.jsonl")
+    else:
+        print("\n  Log 寫入      : disabled (disposable run)")
 
     return report
 

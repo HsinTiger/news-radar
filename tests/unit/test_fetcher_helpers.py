@@ -16,6 +16,7 @@ from src.fetcher import (
     _limited_entries,
     _resolve_entry_link,
     _get_feed_with_retry,
+    fetch_feed,
     _parse_rss_time,
     _rewrite_url_for_extraction,
     _reddit_rss_to_markdown,
@@ -58,6 +59,50 @@ async def test_feed_get_does_not_retry_permanent_client_error(monkeypatch):
 
     assert client.get.await_count == 1
     sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_records_failure_in_diagnostics(monkeypatch):
+    async def fail_fetch(*args, **kwargs):
+        raise httpx.ConnectError("certificate failure")
+
+    monkeypatch.setattr("src.fetcher._get_feed_with_retry", fail_fetch)
+    diagnostics = {}
+
+    items = await fetch_feed(
+        AsyncMock(),
+        {"name": "official", "url": "https://example.test/feed"},
+        diagnostics=diagnostics,
+    )
+
+    assert items == []
+    assert diagnostics == {
+        "official": {
+            "status": "failed",
+            "error_type": "ConnectError",
+            "entries_raw": 0,
+            "entries_kept": 0,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_does_not_report_empty_payload_as_healthy(monkeypatch):
+    async def empty_feed(*args, **kwargs):
+        return _response(200, "<rss><channel></channel></rss>")
+
+    monkeypatch.setattr("src.fetcher._get_feed_with_retry", empty_feed)
+    diagnostics = {}
+
+    items = await fetch_feed(
+        AsyncMock(),
+        {"name": "official", "url": "https://example.test/feed"},
+        diagnostics=diagnostics,
+    )
+
+    assert items == []
+    assert diagnostics["official"]["status"] == "failed"
+    assert diagnostics["official"]["error_type"] == "NoUsableEntries"
 
 
 def test_make_news_id_stable():

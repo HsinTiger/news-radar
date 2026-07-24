@@ -44,7 +44,9 @@ def _latest_quality(
     *,
     platform: str,
     since_iso: str,
+    freshly_harvested_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    freshly_harvested_ids = freshly_harvested_ids or set()
     rows = conn.execute(
         """
         WITH ranked AS (
@@ -56,22 +58,81 @@ def _latest_quality(
            WHERE q.platform=? AND q.guard_version=?
              AND datetime(q.checked_at) >= datetime(?)
         )
-        SELECT draft_id,platform,decision,attempt,guard_version,issue_codes_json
-          FROM ranked WHERE rn=1 ORDER BY id
+        SELECT q.draft_id,COALESCE(q.news_id,d.news_id) AS news_id,
+               q.platform,q.decision,q.attempt,
+               q.guard_version,q.issue_codes_json,
+               n.feed_name,n.url,n.fetched_at,n.tags
+          FROM ranked q
+          LEFT JOIN drafts d ON d.id=q.draft_id
+          LEFT JOIN news_items n ON n.id=COALESCE(q.news_id,d.news_id)
+         WHERE q.rn=1 ORDER BY q.id
         """,
         (platform, QUALITY_GUARD_VERSION, since_iso),
     ).fetchall()
-    return [
-        {
+    result = []
+    for row in rows:
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+        news_id = row["news_id"]
+        result.append({
             "draft_id": row["draft_id"],
+            "news_id": news_id,
             "platform": row["platform"],
             "decision": row["decision"],
             "attempt": row["attempt"],
             "guard_version": row["guard_version"],
             "issue_codes": json.loads(row["issue_codes_json"] or "[]"),
+            "source_feed": row["feed_name"],
+            "source_url": row["url"],
+            "source_fetched_at": row["fetched_at"],
+            "source_tags": tags,
+            "source_is_primary_record": "primary-record" in tags,
+            "harvested_this_run": news_id in freshly_harvested_ids,
+        })
+    return result
+
+
+def _primary_source_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT id,feed_name,url,fetched_at,tags,status,drop_reason
+          FROM news_items
+         WHERE COALESCE(tags,'') LIKE '%"primary-record"%'
+        """
+    ).fetchall()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+        if "primary-record" not in tags:
+            continue
+        result[row["id"]] = {
+            "news_id": row["id"],
+            "source_feed": row["feed_name"],
+            "source_url": row["url"],
+            "source_fetched_at": row["fetched_at"],
+            "source_tags": tags,
+            "source_status": row["status"],
+            "source_drop_reason": row["drop_reason"],
         }
-        for row in rows
-    ]
+    return result
+
+
+def _all_configured_feeds_healthy(harvest_report: dict[str, Any] | None) -> bool:
+    report = harvest_report or {}
+    feed_results = report.get("feed_results") or {}
+    return bool(
+        feed_results
+        and len(feed_results) == int(report.get("feeds_checked") or 0)
+        and all(
+            result.get("status") == "ok"
+            for result in feed_results.values()
+        )
+    )
 
 
 async def run_setup_canary(
@@ -79,6 +140,7 @@ async def run_setup_canary(
     source_db: Path,
     platform: str,
     report_path: Path,
+    refresh_primary_sources: bool = False,
 ) -> dict[str, Any]:
     # The script name is a runtime contract, not a suggestion.  Lock the
     # canary to the same Recovery/editorial path as the production workflow so
@@ -97,9 +159,11 @@ async def run_setup_canary(
         temp_db = Path(temp_dir) / "news_radar.db"
         shutil.copy2(source_db, temp_db)
 
+        import run_harvest
         import run_pipeline
 
         dbmod.DB_PATH = temp_db
+        run_harvest.dbmod.DB_PATH = temp_db
         run_pipeline.dbmod.DB_PATH = temp_db
         run_pipeline.refresh_threads_token = lambda: None
         run_pipeline.save_md_draft = lambda *args, **kwargs: None
@@ -110,6 +174,7 @@ async def run_setup_canary(
 
         run_pipeline._publish_platform = forbidden_publish
 
+        started_at = datetime.now(timezone.utc).isoformat()
         conn = dbmod.get_conn()
         publish_before = conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0]
         queued_before = dbmod.count_queued_pending_for_platforms(
@@ -117,22 +182,52 @@ async def run_setup_canary(
             {platform},
             recovery_only=True,
         )
+        primary_before = _primary_source_rows(conn)
         conn.close()
 
-        started_at = datetime.now(timezone.utc).isoformat()
-        original_argv = sys.argv[:]
-        try:
-            sys.argv = [
-                "run_pipeline.py",
-                "--compose-only",
-                "--buffer-target",
-                str(queued_before + 1),
-                "--platforms",
-                platform,
-            ]
-            await run_pipeline.main()
-        finally:
-            sys.argv = original_argv
+        harvest_report: dict[str, Any] | None = None
+        if refresh_primary_sources:
+            harvested = await run_harvest.run_harvest_once(
+                feed_tag="primary-record",
+                write_log=False,
+            )
+            harvest_report = harvested.model_dump(mode="json")
+
+        conn = dbmod.get_conn()
+        primary_after = _primary_source_rows(conn)
+        conn.close()
+        freshly_harvested_ids = set(primary_after) - set(primary_before)
+        fresh_primary_sources = [
+            primary_after[news_id]
+            for news_id in sorted(freshly_harvested_ids)
+        ]
+        eligible_fresh_primary_sources = [
+            row
+            for row in fresh_primary_sources
+            if row["source_status"] != "dropped"
+        ]
+
+        # If a requested live refresh found no new official record, there is no
+        # valid source candidate to prove.  Stop before spending an LLM call on
+        # an unrelated legacy item and report a truthful held result instead.
+        should_compose = (
+            not refresh_primary_sources
+            or bool(eligible_fresh_primary_sources)
+        )
+        if should_compose:
+            original_argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "run_pipeline.py",
+                    "--compose-only",
+                    "--buffer-target",
+                    str(queued_before + 1),
+                    "--platforms",
+                    platform,
+                ]
+                await run_pipeline.main()
+            finally:
+                sys.argv = original_argv
 
         conn = dbmod.get_conn()
         publish_after = conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0]
@@ -140,6 +235,7 @@ async def run_setup_canary(
             conn,
             platform=platform,
             since_iso=started_at,
+            freshly_harvested_ids=freshly_harvested_ids,
         )
         queued_after = dbmod.count_queued_pending_for_platforms(
             conn,
@@ -161,19 +257,47 @@ async def run_setup_canary(
     publish_ready = any(
         row["decision"] in {"pass", "warn"} for row in quality
     )
+    fresh_primary_quality = [
+        row
+        for row in quality
+        if row["harvested_this_run"] and row["source_is_primary_record"]
+    ]
+    fresh_primary_ready = any(
+        row["decision"] in {"pass", "warn"}
+        for row in fresh_primary_quality
+    )
+    primary_harvest_complete = (
+        not refresh_primary_sources
+        or _all_configured_feeds_healthy(harvest_report)
+    )
+    source_gate_ready = (
+        fresh_primary_ready and primary_harvest_complete
+        if refresh_primary_sources
+        else publish_ready
+    )
     status = (
         "pass"
         if publish_unchanged
         and canonical_unchanged
-        and publish_ready
+        and source_gate_ready
         and experiments > 0
         and queued_after > queued_before
         else "held"
     )
     if not canonical_unchanged or not publish_unchanged:
         hold_reason = "state_invariant_failed"
+    elif refresh_primary_sources and not primary_harvest_complete:
+        hold_reason = "primary_harvest_incomplete"
+    elif refresh_primary_sources and not fresh_primary_sources:
+        hold_reason = "no_fresh_primary_sources"
+    elif refresh_primary_sources and not eligible_fresh_primary_sources:
+        hold_reason = "no_eligible_fresh_primary_sources"
     elif not quality:
         hold_reason = "no_current_guard_evaluation"
+    elif refresh_primary_sources and not fresh_primary_quality:
+        hold_reason = "fresh_primary_not_selected"
+    elif refresh_primary_sources and not fresh_primary_ready:
+        hold_reason = "fresh_primary_quality_held"
     elif not publish_ready:
         hold_reason = "quality_held"
     elif experiments <= 0:
@@ -197,6 +321,17 @@ async def run_setup_canary(
         "queued_before": queued_before,
         "queued_after": queued_after,
         "new_experiments": experiments,
+        "primary_source_gate_required": refresh_primary_sources,
+        "primary_source_gate_ready": source_gate_ready,
+        "fresh_primary_quality_ready": fresh_primary_ready,
+        "primary_refresh": {
+            "requested": refresh_primary_sources,
+            "all_configured_feeds_healthy": primary_harvest_complete,
+            "harvest_report": harvest_report,
+            "fresh_source_count": len(fresh_primary_sources),
+            "eligible_fresh_source_count": len(eligible_fresh_primary_sources),
+            "fresh_sources": fresh_primary_sources,
+        },
         "quality": quality,
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,12 +356,21 @@ def main() -> int:
         type=Path,
         default=ROOT / "reports" / "recovery_setup_canary.json",
     )
+    parser.add_argument(
+        "--refresh-primary-sources",
+        action="store_true",
+        help=(
+            "harvest configured primary-record feeds into the disposable DB "
+            "and require a newly fetched source to pass the current guard"
+        ),
+    )
     args = parser.parse_args()
     report = asyncio.run(
         run_setup_canary(
             source_db=args.source_db.resolve(),
             platform=args.platform,
             report_path=args.report.resolve(),
+            refresh_primary_sources=args.refresh_primary_sources,
         )
     )
     return 0 if report["status"] == "pass" else 1

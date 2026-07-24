@@ -148,7 +148,11 @@ async def _get_feed_with_retry(
     return last_response
 
 
-async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> List[NewsItem]:
+async def fetch_feed(
+    client: httpx.AsyncClient,
+    feed_cfg: Dict[str, Any],
+    diagnostics: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[NewsItem]:
     """抓單個 RSS feed，回傳本次新發現的 NewsItem 清單（raw_html / clean_markdown 留空，
     交給 cleaner 下一階段填。）"""
     name = feed_cfg["name"]
@@ -159,6 +163,13 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
         r = await _get_feed_with_retry(client, url)
     except Exception as e:
         print(f"[Module 1]  ↳ ⚠️ 失敗：{e}")
+        if diagnostics is not None:
+            diagnostics[name] = {
+                "status": "failed",
+                "error_type": type(e).__name__,
+                "entries_raw": 0,
+                "entries_kept": 0,
+            }
         return []
 
     parsed = feedparser.parse(r.text)
@@ -174,6 +185,13 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
         entries = _limited_entries(parsed.entries, feed_cfg.get("max_entries"))
     except ValueError as exc:
         print(f"[Module 1]  ↳ ⚠️ 設定錯誤：{exc}")
+        if diagnostics is not None:
+            diagnostics[name] = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "entries_raw": len(parsed.entries),
+                "entries_kept": 0,
+            }
         return []
 
     for entry in entries:
@@ -300,6 +318,14 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
         f"[Module 1]  ↳ RSS entry 數 raw={raw}{limited_note} "
         f"kept={len(items)}{prefilled_note}{skip_note}"
     )
+    if diagnostics is not None:
+        usable = raw > 0 and bool(items)
+        diagnostics[name] = {
+            "status": "ok" if usable else "failed",
+            "error_type": None if usable else "NoUsableEntries",
+            "entries_raw": raw,
+            "entries_kept": len(items),
+        }
     return items
 
 
@@ -337,10 +363,17 @@ def is_too_old(published_at_iso: str, max_age_hours: int) -> bool:
         return False
 
 
-async def harvest_all_feeds(cfg: Dict[str, Any]) -> List[NewsItem]:
+async def harvest_all_feeds(
+    cfg: Dict[str, Any],
+    *,
+    feed_diagnostics: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[NewsItem]:
     """並行抓取所有 feeds。"""
     async with httpx.AsyncClient() as client:
-        tasks = [fetch_feed(client, f) for f in cfg["feeds"]]
+        tasks = [
+            fetch_feed(client, f, diagnostics=feed_diagnostics)
+            for f in cfg["feeds"]
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=False)
 
     all_items: List[NewsItem] = []
