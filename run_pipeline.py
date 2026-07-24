@@ -86,6 +86,95 @@ def candidate_scan_limit() -> int:
     """Keep Recovery bounded while preserving the legacy live-mode budget."""
     return RECOVERY_MAX_POSTS_PER_SLOT if is_recovery_mode() else MAX_POSTS_PER_SLOT
 
+
+def _recovery_rewrite_guidance(
+    rewrite_codes: set[str],
+    *,
+    source_evidence_text: str,
+    source_label: str,
+) -> list[str]:
+    """Compile deterministic, source-specific instructions for the one retry."""
+    allowed_numbers = numeric_claim_allowlist(source_evidence_text)
+    allowed_text = ", ".join(allowed_numbers) if allowed_numbers else "none"
+    label = " ".join(str(source_label or "").split())
+    guidance: list[str] = []
+
+    if "weak_recovery_hook" in rewrite_codes:
+        guidance.append(
+            "HOOK: The first visible sentence, within its first 45 Chinese "
+            "characters, must name the event's actual institution/company/party "
+            "and one source-backed number or completed consequence. Do not begin "
+            "with background, a citation preface, or a generic opinion."
+        )
+    if "missing_reader_utility" in rewrite_codes:
+        guidance.append(
+            "READER UTILITY: End with exactly two factual sentences shaped as "
+            "`對[具體讀者]的具體影響是...。` and "
+            "`[同一讀者]可以先[查詢/確認/比對/保留/避開/追蹤]...。` "
+            "The action must name a real list, batch, date, document, authority, "
+            "or risk signal from the supplied source."
+        )
+    if "unsupported_numeric_claim" in rewrite_codes:
+        guidance.append(
+            "NUMERIC GROUNDING: Delete every unsupported date, amount, count, "
+            "percentage, and deadline. Material Arabic-number values permitted "
+            f"by the supplied evidence are only: {allowed_text}. Bare single-digit "
+            "list labels are not factual support."
+        )
+    if "missing_recovery_five_card_carousel" in rewrite_codes:
+        guidance.append(
+            "INSTAGRAM FORMAT: Return all five standalone carousel jobs: "
+            "verified consequence, what happened, primary-source number, "
+            "who pays or benefits, and the exact next check. Populate the "
+            "structured carousel fields so the renderer produces five cards."
+        )
+    if rewrite_codes & {
+        "uncited_stat",
+        "fact_without_local_source",
+        "missing_source_attribution",
+        "generic_source_attribution",
+    }:
+        source_instruction = (
+            f"The originating feed's exact label is `{label}`. "
+            if label and label != "user_submission"
+            else "Use the exact named institution or filing present in the supplied evidence. "
+        )
+        guidance.append(
+            "SOURCE ATTRIBUTION: "
+            + source_instruction
+            + "Every paragraph/card containing a fact or number must name that "
+            "exact source, or another exact institution already named in the "
+            "supplied evidence, in the same paragraph/card. Delete unsupported "
+            "claims; never write generic `according to reports` or call a media "
+            "report an official record."
+        )
+    if "missing_taiwan_relevance" in rewrite_codes:
+        guidance.append(
+            "TAIWAN RELEVANCE: Explicitly name the affected people, right, safety "
+            "risk, cost, policy, listed company, or market in Taiwan."
+        )
+    if rewrite_codes & {"formulaic_attention_hook", "recovery_jargon_pileup"}:
+        guidance.append(
+            "VOICE: Delete formulaic frames such as `市場以為`, `真正的賽局`, "
+            "`護城河`, `底層邏輯`, and `信任赤字`. Attention must come from the "
+            "verified consequence, not strategy jargon."
+        )
+    if "unattributed_sensitive_allegation" in rewrite_codes:
+        guidance.append(
+            "ALLEGATIONS: Attribute every allegation to the exact person, agency, "
+            "filing, investigation, indictment, or judgment in the supplied "
+            "evidence. Otherwise delete it."
+        )
+
+    guidance.append(
+        "FINAL SELF-CHECK BEFORE JSON: (1) every material Arabic number appears "
+        f"in this allowlist: {allowed_text}; (2) every factual paragraph/card names "
+        "its exact supplied source; (3) the first 45 characters contain actor plus "
+        "verifiable consequence; (4) the final two sentences contain concrete "
+        "reader impact plus action. Return only the requested platform JSON."
+    )
+    return guidance
+
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
 CANONICAL_TO_COMPOSER_PLATFORM = {
@@ -927,43 +1016,11 @@ async def process_item(
             for issue in issues
             if issue.severity == "rewrite"
         }
-        targeted_rewrite_guidance: list[str] = []
-        if "missing_reader_utility" in rewrite_codes:
-            targeted_rewrite_guidance.append(
-                "READER UTILITY: Add two explicit, factual sentences using this "
-                "shape: `對[具體讀者]的具體影響是...；[同一讀者]可以先...`。"
-                "The action must name a real list, batch, date, document, authority, "
-                "or risk signal from the supplied source."
-            )
-        if "unsupported_numeric_claim" in rewrite_codes:
-            allowed_numbers = numeric_claim_allowlist(source_evidence_text)
-            targeted_rewrite_guidance.append(
-                "NUMERIC GROUNDING: Delete every unsupported date, amount, count, "
-                "percentage, and deadline. Material Arabic-number values permitted "
-                "by the supplied evidence are only: "
-                + (", ".join(allowed_numbers) if allowed_numbers else "none")
-                + ". Bare single-digit list labels are not factual support."
-            )
-        if "missing_recovery_five_card_carousel" in rewrite_codes:
-            targeted_rewrite_guidance.append(
-                "INSTAGRAM FORMAT: Return all five standalone carousel jobs: "
-                "verified consequence, what happened, primary-source number, "
-                "who pays or benefits, and the exact next check. Populate the "
-                "structured carousel fields so the renderer produces five cards."
-            )
-        if rewrite_codes & {
-            "uncited_stat",
-            "fact_without_local_source",
-            "missing_source_attribution",
-            "generic_source_attribution",
-        }:
-            targeted_rewrite_guidance.append(
-                "SOURCE ATTRIBUTION: In every factual or numeric paragraph/card, "
-                "name the exact institution, filing, exchange, wire, public broadcaster, "
-                "or fact-check that supplied the claim. Put the source in the same "
-                "paragraph/card as the fact. Delete the claim if the supplied evidence "
-                "does not identify a source; never write generic `according to reports`."
-            )
+        targeted_rewrite_guidance = _recovery_rewrite_guidance(
+            rewrite_codes,
+            source_evidence_text=source_evidence_text,
+            source_label=str(row["feed_name"] or ""),
+        )
         rewrite_note = (
             f"{editorial_mandate}\n\n"
             "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
