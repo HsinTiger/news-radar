@@ -1,4 +1,4 @@
-# Taiwan Daily Meta Editorial Contract v4
+# Taiwan Daily Meta Editorial Contract v5
 
 This contract has highest priority while `AUTOMATION_MODE=recovery`.
 
@@ -15,7 +15,7 @@ This contract has highest priority while `AUTOMATION_MODE=recovery`.
 - Use the supplied multi-source brief to cross-check names, dates, amounts, bill status, recall scope, and quoted claims. If sources conflict, state the conflict. If the supplied material cannot support the claim, omit it; never complete a plausible-looking number from memory.
 - A high-risk political, food-safety, legal, corruption, or health allegation from an ordinary media source is ineligible unless the same event is corroborated by an official record, exchange/company disclosure, public broadcaster/wire, or independent fact-check. A second ordinary-media retelling is not sufficient.
 - The 36-hour freshness limit is measured from the actual pipeline execution time. A stale batch or future-dated feed row cannot redefine the freshness window.
-- Separate fact from interpretation. Use a natural but explicit boundary such as `已知事實是…` followed by `這裡的判讀是…`. A strong opinion is allowed only after the factual base is visible.
+- Separate fact from interpretation through attribution and ordinary prose. Never expose internal scaffolding such as `已知事實是`, `這裡的判讀是`, `的具體影響是`, or `下一個問責節點是`. A strong opinion is allowed only after the factual base is visible.
 - Accusations, legal claims, health risks, corruption claims, and political claims remain attributed claims unless an official decision or primary record establishes them. Include the named subject's response when it is present in the source bundle.
 - Apply exactly the same evidence, attribution, response, and correction standard to DPP, KMT, TPP, local factions, ministries, state-owned enterprises, and private companies. Criticize the documented act and consequence, not a party identity.
 
@@ -30,9 +30,9 @@ This contract has highest priority while `AUTOMATION_MODE=recovery`.
 
 ## Platform-native daily versions
 
-- Threads — 08:00 Asia/Taipei morning-commute experiment. Target 220–360 Chinese characters. Consequence first; named evidence second; explicit interpretation third; one answerable question last. One topic tag only.
-- Facebook — 18:00 evening-commute experiment. Target 500–750 Chinese characters. Use a compact evidence-led explainer: event, record, affected people, responsible institution, response, and the next accountability checkpoint. Native text; no routine outbound link.
-- Instagram — 20:00 post-commute experiment. The carousel must stand alone: card 1 verified consequence, card 2 what happened, card 3 primary-source number, card 4 who pays or benefits, card 5 what to check next. The caption supports the cards and does not merely paste the Facebook version.
+- Threads — 08:00 Asia/Taipei morning-commute experiment. Target 180–300 Chinese characters in 2–4 short paragraphs. Consequence first; named evidence second; original interpretation third; one answerable question last. One topic tag only.
+- Facebook — 18:00 evening-commute experiment. Target 280–500 Chinese characters in 3–5 short paragraphs. Use a compact evidence-led explainer: event, record, affected people, evidence gap, and one answerable question. Native text; 2–3 topic tags; no routine outbound link.
+- Instagram — 20:00 post-commute experiment. Caption target 160–340 Chinese characters in 2–4 short paragraphs, with 3–5 topic tags. The carousel must stand alone: card 1 verified consequence, card 2 what happened, card 3 primary-source number, card 4 who pays or benefits, card 5 what to check next. The caption supports the cards and does not merely paste the Facebook version.
 
 ## Experiment and exit gate
 

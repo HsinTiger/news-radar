@@ -8,6 +8,14 @@ from scripts.verify_compose import verify_compose
 from scripts.verify_publish import verify as verify_publish
 
 
+GOOD_THREADS_TEXT = (
+    "交通部公告新制下週上路，通勤規則確定改變。\n\n"
+    "根據交通部公告，通勤族可能增加轉乘時間；出門前先查詢新班次。\n\n"
+    "哪一段轉乘最需要交通部補上配套？\n\n"
+    "#交通政策"
+)
+
+
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -36,7 +44,7 @@ def _seed_threads_draft(conn: sqlite3.Connection, *, lineage: bool = True) -> No
         "INSERT INTO drafts VALUES('d1','交通新制',0.9,'auto_approved','queued',?,'n1')",
         (now,),
     )
-    text = "根據交通部公告，新制下週上路。對一般通勤者的實際影響是轉乘時間可能增加，可以先檢查班次。"
+    text = GOOD_THREADS_TEXT
     conn.execute(
         "INSERT INTO platform_drafts VALUES('d1','threads',?,?)",
         (len(text), text),
@@ -67,7 +75,7 @@ def _seed_nonqueued_quality_draft(conn: sqlite3.Connection) -> None:
         "'pending_review', NULL, ?, 'n-not-queued')",
         (now,),
     )
-    text = "根據交通部公告，新制下週上路。對一般通勤者的實際影響是轉乘時間可能增加，可以先檢查班次。"
+    text = GOOD_THREADS_TEXT
     conn.execute(
         "INSERT INTO platform_drafts VALUES('not-queued', 'threads', ?, ?)",
         (len(text), text),

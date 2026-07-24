@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v10"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v11"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -238,6 +238,8 @@ _RECOVERY_IMPACT_PATTERN = re.compile(
     r"(?:實際|直接|具體)(?:影響|風險|成本)"
     rf"|對[^。！？\n]{{0,36}}(?:{_RECOVERY_READER})[^。！？\n]{{0,80}}"
     r"(?:可自行檢視|可以自行檢視|警訊)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,60}}"
+    r"(?:會|可能|將|得|面臨|增加|減少|多花|少拿|延誤|損失|受益)"
     r"|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
 )
 _RECOVERY_ACTION_PATTERN = re.compile(
@@ -251,6 +253,10 @@ _RECOVERY_ACTION_PATTERN = re.compile(
     r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|留意)"
+    r"|(?:出門|購買|交易|投票|申請|通勤|上路|下單|食用)前(?:請)?(?:先)?"
+    r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|追蹤|更新|檢視|留意)"
+    r"|(?:請先|先|立即|優先)"
+    r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|追蹤|更新|檢視|通報)"
     r"|下一步(?:是|可|可以|應))",
 )
 _RECOVERY_MEASURED_CLAIM_PATTERN = re.compile(
@@ -273,6 +279,13 @@ _RECOVERY_TRUST_ERODING_FRAMES = (
 _RECOVERY_FORMULAIC_FRAMES = (
     "市場以為", "大家以為", "真正的賽局", "護城河", "底層邏輯",
     "神話破滅", "信任崩塌",
+)
+_RECOVERY_TEMPLATE_SCAFFOLDING = (
+    "已知事實是",
+    "這裡的判讀是",
+    "的具體影響是",
+    "下一個問責節點是",
+    "下一個可驗證節點是",
 )
 _RECOVERY_TAIWAN_RELEVANCE_PATTERN = re.compile(
     r"台灣|臺灣|全台|全臺|台股|新台幣|國人|民眾|消費者|納稅人|勞工|投資人|家長|"
@@ -473,6 +486,11 @@ def _recovery_formulaic_frame(full_text: str, _title: str) -> Optional[str]:
     return f"formulaic_frame:{hit}" if hit else None
 
 
+def _recovery_template_scaffolding(full_text: str, _title: str) -> Optional[str]:
+    hits = [term for term in _RECOVERY_TEMPLATE_SCAFFOLDING if term in full_text]
+    return "template_scaffolding=" + "/".join(hits) if hits else None
+
+
 def _weak_recovery_hook(full_text: str, _title: str) -> Optional[str]:
     hook = re.sub(r"\s+", "", full_text).lstrip("#")[:45]
     if (
@@ -611,6 +629,12 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
         severity="rewrite",
         message="Recovery v4 禁用長期重複的 AI 框架，吸睛必須來自可驗證的具體後果",
         matcher=_recovery_formulaic_frame,
+    ),
+    _Rule(
+        code="recovery_template_scaffolding",
+        severity="rewrite",
+        message="讀者可見文案不得暴露『已知事實／這裡的判讀／具體影響』等寫作模板",
+        matcher=_recovery_template_scaffolding,
     ),
     _Rule(
         code="missing_taiwan_relevance",
@@ -793,6 +817,130 @@ def check_platform_format(
     return []
 
 
+def check_platform_style(
+    platform: str,
+    full_text: str,
+    *,
+    title: str = "",
+    recovery: bool = False,
+) -> List[QualityIssue]:
+    """Validate the native reading shape separately from factual correctness."""
+
+    if not recovery:
+        return []
+    canonical = {
+        "fb": "facebook",
+        "facebook": "facebook",
+        "ig": "instagram",
+        "instagram": "instagram",
+        "threads": "threads",
+    }.get(str(platform).strip().lower(), str(platform).strip().lower())
+    limits = {
+        "threads": {
+            "max_chars": 320,
+            "max_paragraph": 180,
+            "min_paragraphs": 2,
+            "hashtags": 1,
+        },
+        "facebook": {
+            "max_chars": 520,
+            "max_paragraph": 220,
+            "min_paragraphs": 3,
+            "hashtags": 3,
+        },
+        "instagram": {
+            "max_chars": 360,
+            "max_paragraph": 180,
+            "min_paragraphs": 2,
+            "hashtags": 5,
+        },
+    }
+    config = limits.get(canonical)
+    if config is None:
+        return []
+
+    text = full_text or ""
+    hashtags = re.findall(r"(?<!\w)#[^\s#]+", text)
+    paragraphs = [
+        part.strip()
+        for part in re.split(r"\n\s*\n", text)
+        if part.strip()
+    ]
+    content_paragraphs = [
+        part
+        for part in paragraphs
+        if not all(token.startswith("#") for token in part.split())
+    ]
+    if content_paragraphs and title and content_paragraphs[0] == title.strip():
+        content_paragraphs = content_paragraphs[1:]
+
+    compact_chars = len(re.sub(r"\s+", "", "\n".join(content_paragraphs)))
+    issues: List[QualityIssue] = []
+    if len(hashtags) > config["hashtags"]:
+        issues.append(QualityIssue(
+            code="platform_hashtag_overload",
+            severity="rewrite",
+            message="Recovery hashtag 必須節制，避免看起來像批量行銷文",
+            evidence=(
+                f"platform={canonical};count={len(hashtags)};"
+                f"max={config['hashtags']}"
+            ),
+        ))
+    if compact_chars > config["max_chars"]:
+        issues.append(QualityIssue(
+            code="platform_copy_too_long",
+            severity="rewrite",
+            message="平台文案超過 Recovery 高品質上限，需刪除重述與次要數字",
+            evidence=(
+                f"platform={canonical};chars={compact_chars};"
+                f"max={config['max_chars']}"
+            ),
+        ))
+    if len(content_paragraphs) < config["min_paragraphs"]:
+        issues.append(QualityIssue(
+            code="platform_wall_of_text",
+            severity="rewrite",
+            message="Recovery 文案需要平台原生短段落，不得輸出單一文字牆",
+            evidence=(
+                f"platform={canonical};paragraphs={len(content_paragraphs)};"
+                f"min={config['min_paragraphs']}"
+            ),
+        ))
+    longest = max(
+        (len(re.sub(r"\s+", "", part)) for part in content_paragraphs),
+        default=0,
+    )
+    if longest > config["max_paragraph"]:
+        issues.append(QualityIssue(
+            code="platform_paragraph_too_long",
+            severity="rewrite",
+            message="Recovery 單段過長，讀者難以在行動裝置掃讀",
+            evidence=(
+                f"platform={canonical};longest={longest};"
+                f"max={config['max_paragraph']}"
+            ),
+        ))
+    closing = content_paragraphs[-1] if content_paragraphs else ""
+    if not (closing.rstrip().endswith("？") or closing.rstrip().endswith("?")):
+        issues.append(QualityIssue(
+            code="missing_answerable_question",
+            severity="rewrite",
+            message="Recovery 文案須以一個可具體回答的問題收尾",
+            evidence=f"platform={canonical};closing={closing[-80:]}",
+        ))
+    elif any(
+        generic in closing
+        for generic in ("你怎麼看", "大家怎麼看", "你認為呢")
+    ):
+        issues.append(QualityIssue(
+            code="generic_engagement_bait",
+            severity="rewrite",
+            message="結尾問題必須可具體回答，不得使用泛用互動誘餌",
+            evidence=closing[-80:],
+        ))
+    return issues
+
+
 def has_blocking_issues(issues: List[QualityIssue]) -> bool:
     return any(i.severity == "block" for i in issues)
 
@@ -816,6 +964,7 @@ __all__ = [
     "QualityIssue",
     "check_quality",
     "check_platform_format",
+    "check_platform_style",
     "combine_visible_text",
     "has_blocking_issues",
     "numeric_claim_allowlist",
