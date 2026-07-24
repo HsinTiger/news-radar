@@ -8,6 +8,7 @@ import asyncio
 import html
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,12 @@ import feedparser
 import httpx
 import yaml
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from src.cleaner import extract_markdown
 
 
-ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 
