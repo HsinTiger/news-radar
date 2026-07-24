@@ -37,6 +37,50 @@ def test_rank_candidates_applies_weight_before_freshness() -> None:
     assert ranked[0]["title"] == "食安事件擴大"
 
 
+def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "較新的二手報導",
+            "topic_category": "current_affairs",
+            "feed_tier": "secondary",
+            "source_type": "article",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+        {
+            "title": "較早的第一手來源",
+            "topic_category": "current_affairs",
+            "feed_tier": "primary",
+            "source_type": "article",
+            "published_at": "2026-07-24T09:00:00Z",
+        },
+    ]
+    ranked = rank_candidates(conn, rows)
+    assert ranked[0]["title"] == "較早的第一手來源"
+
+
+def test_rank_candidates_downranks_social_source() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "社群轉述",
+            "topic_category": "current_affairs",
+            "feed_tier": "primary",
+            "source_type": "social",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+        {
+            "title": "正式文章",
+            "topic_category": "current_affairs",
+            "feed_tier": "secondary",
+            "source_type": "article",
+            "published_at": "2026-07-24T09:00:00Z",
+        },
+    ]
+    ranked = rank_candidates(conn, rows)
+    assert ranked[0]["title"] == "正式文章"
+
+
 def test_record_experiments_is_platform_specific() -> None:
     conn = _conn()
     record_experiments(

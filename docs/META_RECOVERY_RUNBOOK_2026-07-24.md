@@ -7,8 +7,12 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 ## Current evidence
 
 - `PROVEN`: canonical runtime is `HsinTiger/news-radar`.
-- `PROVEN`: 212 successful posts per platform were produced over 43 active days; the same 212 drafts were cross-posted to all three platforms.
-- `PROVEN`: Threads metrics are usable. Historical median latest-snapshot views are 279.5 across 102 posts; `current_affairs` and `tech_product_launch` produced the strongest long-tail results.
+- `PROVEN`: before Recovery, 212 successful posts per platform were produced over 43 active days and the same drafts were cross-posted everywhere. The first Recovery canary raised Threads to 213 while Facebook and Instagram remain at 212.
+- `PROVEN`: Threads metrics are usable. The current audited set has 103 latest snapshots with median 277 views. The first experiment keeps its frozen 102-post / 279.5-view baseline so the benchmark does not move during measurement.
+- `PROVEN`: robust medians disagree with the earlier outlier-led ranking. `earnings` has median 376 views over 18 posts and `supply_chain` 337 over 18; `current_affairs` is 260 over 7 and `tech_product_launch` 206 over 9. Topic weights therefore use robust medians plus editorial usefulness, not the largest viral post.
+- `PROVEN`: primary-tier sources have median 379 Threads views over 29 posts versus 256 over 74 secondary-tier posts. Recovery ranking now uses source tier as a bounded multiplier.
+- `PROVEN`: carousel-backed Threads posts have median 287.5 views over 94 posts versus 121 over 9 feed-only posts.
+- `PROVEN`: median Threads actions are zero and only 48 of 103 posts have any nonzero action. Reach outliers exist, but useful interaction and follower conversion remain the main unproven problem.
 - `PROVEN`: Facebook legacy engagement measurement is degraded; 126 of 127 samples contain API error markers.
 - `PROVEN`: Instagram cold-start distribution is near zero and needs a visual-format experiment.
 - `UNKNOWN`: the two follower snapshots on 2026-07-23 are only about one hour apart, so they do not prove a long-term plateau or its cause.
@@ -26,10 +30,13 @@ Every recovery post has exactly one experiment type: `interest`, `trust`, `utili
 Recovery safeguards:
 
 1. Legacy queued drafts are ineligible.
-2. Named source attribution and a concrete reader benefit are required.
-3. Unsupported statistics trigger one rewrite; unresolved drafts are held.
-4. Recovery cadence ignores old live-mode frequency overrides.
-5. No recommendation may increase frequency before 168h evidence.
+2. Primary-tier sources are preferred inside each topic; social sources are down-ranked, not silently promoted to evidence.
+3. Every factual paragraph needs a named source. Generic `根據報導` attribution, unattributed allegations, and unsupported measured claims trigger a rewrite.
+4. A concrete reader consequence plus a usable next action are both required; risk words or rhetorical questions alone do not count.
+5. Strategy jargon and dramatic frames are held when they obscure the useful point.
+6. Unsupported statistics trigger one rewrite; unresolved drafts are held.
+7. Recovery cadence ignores old live-mode frequency overrides.
+8. No recommendation may increase frequency before 168h evidence.
 
 ## Activation sequence
 

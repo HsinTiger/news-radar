@@ -20,6 +20,16 @@ from src.topic_classifier import classify_topic_keyword, match_disambiguation
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = PROJECT_ROOT / "config" / "social_automation_policy.json"
 EXPERIMENT_TYPES = {"interest", "trust", "utility", "format"}
+SOURCE_TIER_MULTIPLIERS = {
+    "primary": 1.2,
+    "secondary": 1.0,
+}
+SOURCE_TYPE_MULTIPLIERS = {
+    "article": 1.0,
+    "forum": 0.95,
+    "video": 0.9,
+    "social": 0.75,
+}
 
 
 def is_recovery_mode() -> bool:
@@ -136,11 +146,13 @@ def rank_candidates(
     conn: sqlite3.Connection,
     rows: Sequence[Any],
 ) -> list[Any]:
-    """Apply topic weights before scorer/composer calls.
+    """Apply robust topic and configured source-priority weights before composition.
 
     New rows normally have no ``weighted_score`` yet, which made the old topic
     policy ineffective at selection time. Recovery mode estimates the category
-    with deterministic classifier paths and keeps unknown topics eligible.
+    with deterministic classifier paths, then uses the configured feed tier and
+    source type as bounded multipliers. This preserves exploration while making
+    a primary article outrank a secondary article inside the same topic.
     """
 
     weights = {
@@ -148,7 +160,7 @@ def rank_candidates(
         for row in conn.execute("SELECT category_id,weight FROM topic_weights")
     }
 
-    def estimated_weight(row: Any) -> float:
+    def estimated_topic_weight(row: Any) -> float:
         category = _row_value(row, "topic_category")
         if not category:
             title = str(_row_value(row, "title", "") or "")
@@ -159,12 +171,24 @@ def rank_candidates(
             category = match.category_id if match is not None else "other"
         return weights.get(str(category), weights.get("other", 0.7))
 
+    def estimated_source_weight(row: Any) -> float:
+        tier = str(_row_value(row, "feed_tier", "") or "").lower()
+        source_type = str(
+            _row_value(row, "source_type", "article") or "article"
+        ).lower()
+        return SOURCE_TIER_MULTIPLIERS.get(tier, 0.9) * SOURCE_TYPE_MULTIPLIERS.get(
+            source_type, 0.9
+        )
+
     ranked = list(rows)
     ranked.sort(
         key=lambda row: str(_row_value(row, "published_at", "") or ""),
         reverse=True,
     )
-    ranked.sort(key=estimated_weight, reverse=True)
+    ranked.sort(
+        key=lambda row: estimated_topic_weight(row) * estimated_source_weight(row),
+        reverse=True,
+    )
     return ranked
 
 

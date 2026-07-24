@@ -91,6 +91,21 @@ def _submission_for_platform(raw_tags: str | None, platform: str) -> str | None:
 
 def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[str, Any]]:
     where = "" if full else "WHERE COALESCE(p.posted_at,'') >= datetime('now','-45 day')"
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    format_select = (
+        "rx.actual_format AS actual_format"
+        if "recovery_experiments" in tables
+        else "NULL AS actual_format"
+    )
+    format_join = (
+        "LEFT JOIN recovery_experiments rx "
+        "ON rx.draft_id=p.draft_id AND rx.platform=p.platform"
+        if "recovery_experiments" in tables
+        else ""
+    )
     rows = conn.execute(
         f"""
         WITH ranked AS (
@@ -101,10 +116,12 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
           FROM publish_log p {where}
         )
         SELECT p.id,p.draft_id,p.platform,p.platform_post_id,p.posted_at,p.success,
-               p.error_message,d.title,n.topic_category,n.url,n.tags,d.generated_at
+               p.error_message,d.title,n.topic_category,n.url,n.tags,d.generated_at,
+               {format_select}
         FROM ranked p
         LEFT JOIN drafts d ON d.id=p.draft_id
         LEFT JOIN news_items n ON n.id=d.news_id
+        {format_join}
         WHERE p.rn=1 AND p.platform IN ('facebook','instagram','threads')
         ORDER BY COALESCE(p.posted_at,d.generated_at) ASC
         """
@@ -123,7 +140,7 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
                     row["tags"], row["platform"]
                 ),
                 "platform": row["platform"],
-                "format": "feed",
+                "format": row["actual_format"] or "feed",
                 "platform_post_id": row["platform_post_id"] or None,
                 "status": "published" if row["success"] else "failed",
                 "title": row["title"] or None,

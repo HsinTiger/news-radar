@@ -232,6 +232,66 @@ def test_recovery_source_and_utility_contract_passes():
     assert "missing_reader_utility" not in codes
 
 
+def test_recovery_rejects_generic_source_and_vague_risk_language():
+    text = (
+        "根據報導，已知事實是問題產品回收率不到兩成。"
+        "這對孩童健康有潛在風險，值得持續關注。"
+    )
+    codes = {item.code for item in check_quality(text, title="食安事件", recovery=True)}
+    assert "generic_source_attribution" in codes
+    assert "fact_without_local_source" in codes
+    assert "missing_reader_utility" in codes
+
+
+def test_recovery_requires_source_in_measured_claim_paragraph():
+    text = (
+        "根據公視報導，法國消防單位正處理多起野火。\n\n"
+        "已知事實是今年已有 1 萬起野火，燒毀 4.4 萬公頃。\n\n"
+        "這對旅客的具體影響是部分地區可能封路；旅客可以先查詢當地警報。"
+    )
+    codes = {item.code for item in check_quality(text, title="法國野火", recovery=True)}
+    assert "missing_source_attribution" not in codes
+    assert "fact_without_local_source" in codes
+
+
+def test_recovery_rejects_unattributed_sensitive_allegation():
+    text = (
+        "根據自由時報報導，家長質疑產品流入校園。"
+        "這裡的判讀是市府選擇掩蓋並威脅提告。"
+        "這對家長的具體影響是批號仍不清楚；家長可以先確認學校供貨紀錄。"
+    )
+    codes = {item.code for item in check_quality(text, title="食安爭議", recovery=True)}
+    assert "unattributed_sensitive_allegation" in codes
+
+
+def test_recovery_rejects_strategy_jargon_pileup():
+    text = (
+        "根據交通部公告，新制下週上路。真正的賽局是產業護城河。"
+        "這對通勤族的具體影響是轉乘時間增加；通勤族可以先檢查班次。"
+    )
+    issues = check_quality(text, title="交通新制", recovery=True)
+    assert ("recovery_jargon_pileup", "rewrite") in {
+        (item.code, item.severity) for item in issues
+    }
+
+
+def test_recovery_accepts_attributed_fact_impact_and_action():
+    text = (
+        "根據交通部 7 月 23 日公告，已知事實是新制下週上路。"
+        "這裡的判讀是尖峰轉乘需要多留時間。"
+        "這對一般通勤者的實際影響是轉乘時間可能增加，出門前可以先檢查班次。"
+    )
+    codes = {item.code for item in check_quality(text, title="交通新制", recovery=True)}
+    assert not {
+        "generic_source_attribution",
+        "missing_source_attribution",
+        "fact_without_local_source",
+        "unattributed_sensitive_allegation",
+        "recovery_jargon_pileup",
+        "missing_reader_utility",
+    } & codes
+
+
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----
 
 def test_corporate_fluff_pileup_warns():

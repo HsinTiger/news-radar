@@ -112,6 +112,23 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert experiments[0]["actual_format"] is None
 
 
+def test_post_sync_uses_proven_actual_recovery_format() -> None:
+    conn = _db()
+    conn.execute(
+        "UPDATE recovery_experiments SET actual_format='carousel', "
+        "actual_format_at='2099-01-03T00:00:01Z' WHERE draft_id='d1'"
+    )
+    post = build_posts(conn, full=True)[0]
+    assert post["id"] == "post_d1_threads_feed"
+    assert post["format"] == "carousel"
+
+
+def test_post_sync_defaults_to_feed_for_pre_recovery_state() -> None:
+    conn = _db()
+    conn.execute("DROP TABLE recovery_experiments")
+    assert build_posts(conn, full=True)[0]["format"] == "feed"
+
+
 def test_automation_state_uses_canonical_repository_variables(monkeypatch) -> None:
     monkeypatch.setenv("AUTOMATION_MODE", "recovery")
     monkeypatch.setenv("SUBMISSION_PROCESSOR_MODE", "paused")

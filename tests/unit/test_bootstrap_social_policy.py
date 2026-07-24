@@ -76,7 +76,10 @@ def test_apply_is_audited_and_idempotent() -> None:
     ).fetchone()
     assert lineage["hsin_decision"] == "approved"
     assert lineage["deployed_at"]
-    assert json.loads(lineage["evidence_json"])["threads_posts"] == 102
+    evidence = json.loads(lineage["evidence_json"])
+    assert evidence["threads_posts"] == 103
+    assert evidence["threads_median_actions"] == 0.0
+    assert evidence["threads_source_tier_medians"]["primary"]["median_views"] == 379.0
     second = apply_policy(
         conn, _policy(), apply=True, decided_at="2026-07-23T18:00:00+08:00"
     )
