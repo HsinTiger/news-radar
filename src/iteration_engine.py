@@ -12,7 +12,7 @@ News Radar · 論文實證自我迭代演算法
 """
 
 from __future__ import annotations
-import json, math, sys
+import json, math, statistics, sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +21,7 @@ from collections import defaultdict
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 from src import db as dbmod
+from src.content_quality_guard import QUALITY_GUARD_VERSION
 
 
 # ====================================================================
@@ -108,70 +109,131 @@ def predict_engagement_rate(
 # 2. Optimal Posting Time (STL 分解, Cleveland 1990)
 # ====================================================================
 
-def analyze_optimal_times(platform: str = "") -> Dict:
+def analyze_optimal_times(
+    platform: str = "",
+    *,
+    minimum_post_age_hours: int = 168,
+    minimum_complete_posts: int = 7,
+) -> Dict:
     """分析各時段的互動表現，找出最佳發布時間。
 
     把歷史互動數據按 hour of day 分組，計算 avg engagement rate。
     使用指數平滑避免零星數據干擾。
     """
     conn = dbmod.get_conn()
+    params: list[Any] = [QUALITY_GUARD_VERSION, minimum_post_age_hours]
+    platform_clause = ""
     if platform:
-        rows = conn.execute("""
-            SELECT e.platform, e.likes, e.comments, e.reach, e.views,
-                   CAST(STRFTIME('%H', e.fetched_at) AS INTEGER) as hour,
-                   CAST(STRFTIME('%w', e.fetched_at) AS INTEGER) as dow
+        platform_clause = "AND e.platform = ?"
+        params.append(platform)
+    rows = conn.execute(
+        f"""
+        WITH current_quality AS (
+          SELECT DISTINCT draft_id,platform
+            FROM content_quality_evaluations
+           WHERE stage='pre_publish' AND decision='pass' AND guard_version=?
+        ), ranked AS (
+          SELECT e.*,
+                 ROW_NUMBER() OVER(
+                   PARTITION BY e.platform,e.platform_post_id
+                   ORDER BY COALESCE(e.post_age_bucket,0) DESC,e.fetched_at DESC,e.id DESC
+                 ) AS rn
             FROM engagement_stats e
-            WHERE e.fetched_at >= datetime('now', '-60 days', 'localtime')
-              AND e.platform = ?
-              AND (e.likes > 0 OR e.comments > 0)
-        """, (platform,)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT e.platform, e.likes, e.comments, e.reach, e.views,
-                   CAST(STRFTIME('%H', e.fetched_at) AS INTEGER) as hour,
-                   CAST(STRFTIME('%w', e.fetched_at) AS INTEGER) as dow
-            FROM engagement_stats e
-            WHERE e.fetched_at >= datetime('now', '-60 days', 'localtime')
-              AND (e.likes > 0 OR e.comments > 0)
-        """).fetchall()
+        )
+        SELECT e.platform,e.likes,e.comments,e.shares,e.saves,e.reposts,
+               e.quotes,e.replies,e.reach,e.views,
+               CAST(STRFTIME('%H',DATETIME(p.posted_at,'+8 hours')) AS INTEGER) AS hour
+          FROM ranked e
+          JOIN publish_log p
+            ON p.platform=e.platform AND p.platform_post_id=e.platform_post_id
+           AND p.success=1
+          JOIN recovery_experiments rx
+            ON rx.draft_id=p.draft_id AND rx.platform=p.platform
+          JOIN current_quality q
+            ON q.draft_id=p.draft_id AND q.platform=p.platform
+         WHERE e.rn=1
+           AND COALESCE(e.post_age_bucket,0) >= ?
+           AND DATETIME(p.posted_at) >= DATETIME('now','-90 days')
+           AND (e.raw_json IS NULL OR LOWER(e.raw_json) NOT LIKE '%error%')
+           {platform_clause}
+        """,
+        tuple(params),
+    ).fetchall()
     conn.close()
 
     if not rows:
-        return {"status": "insufficient_data"}
+        return {
+            "status": "insufficient_data",
+            "guard_version": QUALITY_GUARD_VERSION,
+            "required_post_age_hours": minimum_post_age_hours,
+            "minimum_complete_posts": minimum_complete_posts,
+        }
 
     # Group by hour × platform
     from src.analytics_engine import engagement_rate
-    buckets = {}
+    buckets: Dict[Tuple[str, int], Dict[str, Any]] = {}
     for r in rows:
         key = (r["platform"], r["hour"])
         if key not in buckets:
-            buckets[key] = {"count": 0, "ers": []}
+            buckets[key] = {"count": 0, "ers": [], "primary": [], "actions": []}
         er = engagement_rate(
             r["platform"], likes=r["likes"] or 0, comments=r["comments"] or 0,
-            reach=r["reach"] or 0, views=r["views"] or 0,
+            shares=r["shares"] or 0, saves=r["saves"] or 0,
+            reposts=r["reposts"] or 0, quotes=r["quotes"] or 0,
+            replies=r["replies"] or 0, reach=r["reach"] or 0,
+            views=r["views"] or 0,
         )
+        primary = (r["views"] or 0) if r["platform"] == "threads" else (r["reach"] or 0)
+        actions = sum(
+            r[name] or 0
+            for name in ("likes", "comments", "shares", "saves", "reposts", "quotes", "replies")
+        )
+        buckets[key]["count"] += 1
         buckets[key]["ers"].append(er)
+        buckets[key]["primary"].append(primary)
+        buckets[key]["actions"].append(actions)
 
     # Calculate smoothed averages per hour
     platforms = set(k[0] for k in buckets)
     results = {}
     for pf in platforms:
+        complete_posts = sum(
+            bucket["count"] for (bucket_platform, _), bucket in buckets.items()
+            if bucket_platform == pf
+        )
         hourly = []
         for h in range(24):
             key = (pf, h)
-            if key in buckets and buckets[key]["count"] >= 2:
-                avg = sum(buckets[key]["ers"]) / len(buckets[key]["ers"])
-                hourly.append({"hour": h, "avg_er": round(avg, 6), "samples": len(buckets[key]["ers"])})
+            if key in buckets:
+                bucket = buckets[key]
+                hourly.append({
+                    "hour": h,
+                    "avg_er": round(statistics.mean(bucket["ers"]), 6),
+                    "median_er": round(statistics.median(bucket["ers"]), 6),
+                    "median_primary": round(statistics.median(bucket["primary"]), 1),
+                    "median_actions": round(statistics.median(bucket["actions"]), 1),
+                    "samples": bucket["count"],
+                })
             else:
-                hourly.append({"hour": h, "avg_er": 0, "samples": 0})
+                hourly.append({
+                    "hour": h, "avg_er": 0, "median_er": 0,
+                    "median_primary": 0, "median_actions": 0, "samples": 0,
+                })
 
-        # Find top 3 hours
-        sorted_hours = sorted([h for h in hourly if h["avg_er"] > 0],
-                               key=lambda x: x["avg_er"], reverse=True)
+        # Reach/view distribution outranks ratio spikes from tiny denominators.
+        sorted_hours = sorted(
+            [h for h in hourly if h["samples"] >= 3 and h["median_primary"] > 0],
+            key=lambda x: (x["median_primary"], x["median_actions"], x["median_er"]),
+            reverse=True,
+        )
         results[pf] = {
             "top3_hours": sorted_hours[:3],
             "worst_hours": sorted_hours[-3:] if len(sorted_hours) >= 3 else sorted_hours,
             "hourly_data": hourly,
+            "complete_posts": complete_posts,
+            "required_post_age_hours": minimum_post_age_hours,
+            "guard_version": QUALITY_GUARD_VERSION,
+            "decision_ready": complete_posts >= minimum_complete_posts,
         }
 
     return results
@@ -501,7 +563,11 @@ def generate_system_recommendations() -> Dict:
     # 2. Optimal times
     times = analyze_optimal_times()
     for pf, data in times.items():
-        if isinstance(data, dict) and "top3_hours" in data:
+        if (
+            isinstance(data, dict)
+            and data.get("decision_ready") is True
+            and data.get("top3_hours")
+        ):
             hours = [str(h["hour"]) + ":00(er=" + str(h["avg_er"]) + ")"
                      for h in data["top3_hours"][:3]]
             recs.append({
