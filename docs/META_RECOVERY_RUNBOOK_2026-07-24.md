@@ -24,6 +24,9 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 - `PROVEN`: PRs #38–#40 isolate the Taiwan public-interest scorer/composer, introduce guard `2026-07-24.taiwan-daily-v6`, and scope compose verification to the current run's exact UTC boundary. Seven production drafts from run `30086522743` replay 7/7 PASS through v6; this is deterministic guard evidence, not publishing proof.
 - `UNKNOWN`: Account Status / recommendation eligibility inside the Meta products has not been observed. Low metrics alone do not prove a shadowban or account-level recommendation penalty.
 - `PROVEN`: PRs #45–#46 changed dashboard quality rates to the current `2026-07-24.taiwan-daily-v6` cohort and fixed direct workflow execution. Production Worker `2026-07-24.recovery-v10` and D1 readback show zero current-v6 evaluations before the next canary, with 188 Facebook, 177 Instagram, and 179 Threads legacy evaluations explicitly excluded. The previous apparent pass rate was not current-cohort evidence.
+- `PROVEN`: Instagram-only canary run `30091541453` evaluated six new v6 drafts; all six remained `rewrite`, publish was skipped, and the publish verifier recorded zero attempts. Final issue counts were `uncited_stat=4`, `fact_without_local_source=3`, `missing_reader_utility=2`, and `weak_recovery_hook=1`. No Instagram post ID was created.
+- `PROVEN`: that canary exposed two independent defects. The legacy citation-radius rule rejected sourced numbers when the named source was elsewhere in the same paragraph, while the gatherer attached a food-safety event to a different Chiang Wan-an street-rally source because actor/party bigrams met a permissive 15% title-coverage threshold. Guard v7 accepts a named source only within the same paragraph, raises same-event title coverage to 35%, and explicitly forbids changing away from the primary-source title. Genuine missing-source, utility, and hook findings remain held.
+- `PROVEN`: Gemini `gemini-2.5-flash` exhausted its 20-request free-tier daily quota during the canary. Rewrites fell back to `opencode/big-pickle`; fallback availability prevented fabricated emergency templates but did not produce a publish-ready draft. Model availability is therefore separate from editorial correctness.
 
 ## Why volume did not create distribution
 
@@ -81,6 +84,8 @@ Recovery safeguards:
 10. Recovery cadence ignores old live-mode frequency overrides.
 11. No recommendation may increase frequency before seven posts per platform have complete 168h evidence.
 12. Compose verification uses the exact UTC boundary recorded immediately before the current compose stage. Earlier held drafts may not fail or prove the current release.
+13. Multi-source context must cover at least 35% of the shorter title and remain the same event. Shared politicians, parties, agencies, or broad beats do not authorize switching the primary story.
+14. A numeric claim may use a named source elsewhere in the same paragraph, but a source in another paragraph cannot cite it by proximity.
 
 Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
 slot until at least seven posts on that platform complete their 168h windows;

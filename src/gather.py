@@ -24,6 +24,7 @@ def _tokens(s: str) -> Set[str]:
 
 _FACTCHECK_LIKE = ("%查核%", "%TFC%", "%MyGoPen%", "%事實查核%")
 _RELATED_SOURCE_SCAN_LIMIT = 1000
+_MIN_SHORTER_TITLE_COVERAGE = 0.35
 
 
 def _same_story(seed: Set[str], candidate: Set[str], min_overlap: int) -> bool:
@@ -37,7 +38,7 @@ def _same_story(seed: Set[str], candidate: Set[str], min_overlap: int) -> bool:
         return False
     overlap = len(seed & candidate)
     shorter_coverage = overlap / min(len(seed), len(candidate))
-    return overlap >= min_overlap and shorter_coverage >= 0.15
+    return overlap >= min_overlap and shorter_coverage >= _MIN_SHORTER_TITLE_COVERAGE
 
 
 def source_authority(feed_name: str, tags: str, feed_tier: str) -> tuple[int, str]:
@@ -211,14 +212,19 @@ def gather_brief(
 
     lines = []
     if picked:
-        lines.append("【多源脈絡（同一主題的其他報導，供交叉查證與補充，不要照抄）】")
+        lines.append(
+            "【多源脈絡（只供主標題所指同一事件交叉查證；不得切換成另一事件）】"
+        )
         for authority_label, r in picked:
             snippet = re.sub(r"\s+", " ", (r["clean_markdown"] or "")[:280]).strip()
             lines.append(
                 f"· [{authority_label}｜{r['feed_name']}] {r['title']}"
                 f"（{r['published_at']}）：{snippet}（{r['url'] or ''}）"
             )
-        lines.append(f"（共 {len(picked)} 篇同主題來源；請用來補充事實、交叉比對，而非單篇轉述）")
+        lines.append(
+            f"（共 {len(picked)} 篇同事件來源；主標題仍是唯一寫作主題，"
+            "只可補充可交叉核對的事實）"
+        )
     # Phase 3 查證：附 TFC/MyGoPen 同主題查核提醒（即使沒有多源脈絡也要出現）。
     fc = factcheck_note(conn, title)
     if fc:

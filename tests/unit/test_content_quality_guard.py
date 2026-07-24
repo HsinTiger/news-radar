@@ -446,6 +446,24 @@ def test_cited_stat_passes():
     assert "uncited_stat" not in codes
 
 
+def test_named_source_in_same_paragraph_cites_distant_stat():
+    text = (
+        "根據審計部 114 年度總決算審核報告，中央政府歲入歲出仍有賸餘，"
+        "但前瞻第 5 期特別決算在多項支出後出現 665 億元差短。"
+    )
+    codes = {item.code for item in check_quality(text, title="中央政府總決算")}
+    assert "uncited_stat" not in codes
+
+
+def test_named_source_elsewhere_does_not_cite_unsourced_stat_paragraph():
+    text = (
+        "根據審計部報告，中央政府公布年度決算。\n\n"
+        "市場傳聞稱另有支出增加 665 億元，但沒有任何佐證。"
+    )
+    codes = {item.code for item in check_quality(text, title="中央政府總決算")}
+    assert "uncited_stat" in codes
+
+
 # ---- Pattern 9：wave_opener_without_year（rewrite, year-anchor gate）----
 
 def test_wave_opener_without_year_rewrites():

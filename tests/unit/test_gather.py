@@ -72,6 +72,26 @@ def test_unrelated_factcheck_on_same_broad_beat_is_not_attached() -> None:
     ) == ""
 
 
+def test_same_politician_and_party_do_not_make_different_events_related() -> None:
+    conn = _conn()
+    _insert(
+        conn,
+        item_id="food-safety",
+        title="毒油案受害人數增加 蔣萬安批民進黨政府沒有作為",
+        feed_name="中央社 政治",
+        feed_tier="primary",
+    )
+
+    brief = gather_brief(
+        conn,
+        "street-seed",
+        "蔣萬安稱不參加街頭集會 民進黨團批評",
+        topic_category="tw_politics",
+    )
+
+    assert brief == ""
+
+
 def test_related_context_prefers_primary_record_over_secondary_media() -> None:
     conn = _conn()
     _insert(
