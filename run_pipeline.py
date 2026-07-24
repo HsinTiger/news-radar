@@ -278,6 +278,37 @@ def _deterministic_recovery_closing_repair(
         paragraphs.append(question)
     return "\n\n".join(paragraphs)
 
+
+def _deterministic_recovery_utility_repair(
+    body: str,
+    *,
+    topic: str | None,
+) -> str:
+    """Insert one compact, checkable reader action for an otherwise clean stock post."""
+
+    if topic != "tw_stocks":
+        return body
+    utility = "若你的報酬跑輸大盤，先檢查持股產業曝險。"
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    insert_at = len(paragraphs)
+    if paragraphs and re.search(r"[？?]", paragraphs[-1]):
+        insert_at -= 1
+    if utility not in paragraphs:
+        paragraphs.insert(insert_at, utility)
+    return "\n\n".join(paragraphs)
+
+
+def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
+    """Lower is better; blocks dominate, then rewrite issues, then warnings."""
+
+    penalty = 0
+    for issues in findings.values():
+        for issue in issues:
+            penalty += {"block": 1000, "rewrite": 10, "warn": 1}.get(
+                issue.severity, 100
+            )
+    return penalty
+
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
 CANONICAL_TO_COMPOSER_PLATFORM = {
@@ -1110,6 +1141,9 @@ async def process_item(
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped_quality_block"
 
+    best_finalized = dict(finalized)
+    best_bundle = bundle
+    best_findings = quality_findings
     rewrite_unresolved = False
     for rewrite_index in range(1, MAX_QUALITY_REWRITE_ATTEMPTS + 1):
         rewrite_requests = [
@@ -1178,12 +1212,30 @@ async def process_item(
             )
             dbmod.update_status(conn, news_id, "dropped")
             return "dropped_quality_block"
+        if _quality_rewrite_penalty(quality_findings) < _quality_rewrite_penalty(
+            best_findings
+        ):
+            best_finalized = dict(finalized)
+            best_bundle = bundle
+            best_findings = quality_findings
         rewrite_unresolved = any(
             should_request_rewrite(issues)
             for issues in quality_findings.values()
         )
         if not rewrite_unresolved:
             break
+
+    if rewrite_unresolved and _quality_rewrite_penalty(
+        best_findings
+    ) < _quality_rewrite_penalty(quality_findings):
+        finalized = best_finalized
+        bundle = best_bundle
+        quality_findings = best_findings
+        rewrite_unresolved = any(
+            should_request_rewrite(issues)
+            for issues in quality_findings.values()
+        )
+        print("   ↳ [QualityGuard·best] 後稿品質倒退，恢復 issue 最少版本")
 
     if rewrite_unresolved and is_recovery_mode() and topic_cls.category_id == "tw_stocks":
         remaining_codes = {
@@ -1197,15 +1249,28 @@ async def process_item(
             "multiple_closing_questions",
             "generic_engagement_bait",
         }
-        if remaining_codes and remaining_codes <= closing_codes:
+        deterministic_codes = closing_codes | {"missing_reader_utility"}
+        if remaining_codes and remaining_codes <= deterministic_codes:
             repaired_finalized = dict(finalized)
             for platform_key, (variant, _full_text, _ok) in finalized.items():
-                repaired_body = _deterministic_recovery_closing_repair(
-                    variant.body,
-                    platform=platform_key,
-                    topic=topic_cls.category_id,
-                    source_evidence_text=source_evidence_text,
-                )
+                platform_codes = {
+                    issue.code
+                    for issue in quality_findings.get(platform_key, [])
+                    if issue.severity == "rewrite"
+                }
+                repaired_body = variant.body
+                if "missing_reader_utility" in platform_codes:
+                    repaired_body = _deterministic_recovery_utility_repair(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                    )
+                if platform_codes & closing_codes:
+                    repaired_body = _deterministic_recovery_closing_repair(
+                        repaired_body,
+                        platform=platform_key,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                    )
                 repaired_variant = variant.model_copy(update={"body": repaired_body})
                 repaired_finalized[platform_key] = finalize_variant(
                     repaired_variant, platform_key
@@ -1219,7 +1284,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·closing] 台股稿僅剩結尾問題；"
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 utility/closing；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 

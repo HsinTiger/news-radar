@@ -37,7 +37,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v19_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v20_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -86,7 +86,7 @@ def test_v19_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v19_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v20_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -104,7 +104,7 @@ def test_v19_accepts_natural_threads_shape_without_editorial_labels() -> None:
     assert not should_request_rewrite(issues), format_issues(issues)
 
 
-def test_v19_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+def test_v20_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     text = (
         "證交所公告台股本週上漲，這段重複資料很多。" * 14
         + "\n\n投資人可檢查自己的同期間報酬。"
@@ -120,7 +120,7 @@ def test_v19_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
-def test_v19_threads_rejects_stat_dump_and_vague_stock_question() -> None:
+def test_v20_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     text = (
         "證交所本週統計顯示，加權指數上漲2.30%，收43,654.84點。\n\n"
         "電腦週邊上漲10.29%，綠能下跌9.04%。\n\n"
@@ -137,7 +137,7 @@ def test_v19_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
-def test_v19_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
+def test_v20_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     text = (
         "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"
         "自115年7月27日恢復正常交易。\n\n"
@@ -161,7 +161,7 @@ def test_v19_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     assert "missing_reader_utility" not in quality_codes
 
 
-def test_v19_formal_reader_pronoun_is_a_direct_question() -> None:
+def test_v20_formal_reader_pronoun_is_a_direct_question() -> None:
     text = (
         "證交所公告隆銘綠能恢復一般交易方式。\n\n"
         "股東可在券商平臺確認交易方式。\n\n"
@@ -176,7 +176,7 @@ def test_v19_formal_reader_pronoun_is_a_direct_question() -> None:
     assert "generic_engagement_bait" not in codes
 
 
-def test_v19_threads_rejects_two_closing_questions() -> None:
+def test_v20_threads_rejects_two_closing_questions() -> None:
     text = (
         "證交所公告本週加權指數上漲2.3%。\n\n"
         "投資人可對照自己的同期間報酬。\n\n"

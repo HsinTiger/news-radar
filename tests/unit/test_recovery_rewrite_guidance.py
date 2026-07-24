@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from run_pipeline import (
     _deterministic_recovery_closing_repair,
+    _deterministic_recovery_utility_repair,
+    _quality_rewrite_penalty,
     _recovery_rewrite_guidance,
 )
+from src.content_quality_guard import QualityIssue, check_quality
 
 
 def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
@@ -75,3 +78,33 @@ def test_deterministic_market_closing_repair_uses_source_benchmark() -> None:
 
     assert repaired.endswith("你的持股本週有跑贏 2.3% 嗎？")
     assert repaired.count("？") == 1
+
+
+def test_deterministic_market_utility_repair_is_concrete() -> None:
+    body = "證交所公布本週市場統計。\n\n你的持股有跑贏大盤嗎？"
+
+    repaired = _deterministic_recovery_utility_repair(
+        body,
+        topic="tw_stocks",
+    )
+    codes = {
+        issue.code
+        for issue in check_quality(repaired, recovery=True)
+    }
+
+    assert "若你的報酬跑輸大盤，先檢查持股產業曝險。" in repaired
+    assert "missing_reader_utility" not in codes
+
+
+def test_best_of_repair_penalty_prefers_fewer_rewrite_issues() -> None:
+    one_issue = {
+        "threads": [QualityIssue("a", "rewrite", "a")],
+    }
+    degraded = {
+        "threads": [
+            QualityIssue("a", "rewrite", "a"),
+            QualityIssue("b", "rewrite", "b"),
+        ],
+    }
+
+    assert _quality_rewrite_penalty(one_issue) < _quality_rewrite_penalty(degraded)
