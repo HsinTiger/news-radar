@@ -164,3 +164,32 @@ def test_source_authority_matches_recovery_contract_order() -> None:
     )[0]
     media = source_authority("某新聞網", '["news"]', "secondary")[0]
     assert official > disclosure > wire > factcheck > media
+
+
+def test_related_source_survives_busy_feed_window() -> None:
+    conn = _conn()
+    _insert(
+        conn,
+        item_id="related-wire",
+        title="美國公布301調查 台灣適用百分之十關稅",
+        feed_name="中央社 國際",
+        tags='["news"]',
+        feed_tier="primary",
+        days_old=1,
+    )
+    for index in range(150):
+        _insert(
+            conn,
+            item_id=f"noise-{index}",
+            title=f"完全無關的產業消息第{index}則",
+            feed_name="高流量新聞源",
+        )
+
+    brief = gather_brief(
+        conn,
+        "seed",
+        "美國公布301調查結果 台灣適用百分之十關稅",
+        topic_category="policy_geopolitics",
+    )
+
+    assert "中央社 國際" in brief
