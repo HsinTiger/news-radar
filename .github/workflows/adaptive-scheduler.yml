@@ -15,8 +15,11 @@ on:
         type: string
 
 concurrency:
-  group: news-radar-scheduler
-  cancel-in-progress: true
+  # Serialize the decision reader with state writers and publishers. A later
+  # redundant tick must wait for the in-flight pipeline to persist its result
+  # before deciding whether the daily quota is still due.
+  group: news-radar-production
+  cancel-in-progress: false
 
 permissions:
   actions: write
