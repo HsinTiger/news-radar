@@ -231,9 +231,10 @@ feeds:
 
   # === 台灣官方第一手來源（2026-07-24 · live-verified 200 + parseable XML）===
   # `max_entries` prevents a first harvest from draining years of official archives.
-  # `rss_summary` keeps the signed/official feed body as the evidence input and avoids
-  # fragile article-page scraping. Secondary media may add context but cannot outrank
-  # these records on the same event.
+  # `rss_summary` is used only when the feed itself carries enough signed/official body.
+  # FDA summaries are title-only, so those two feeds fetch the live official article page;
+  # a title alone is not enough evidence for a food-safety post. Secondary media may add
+  # context but cannot outrank these records on the same event.
   - name: 行政院 本院新聞
     url: https://www.ey.gov.tw/RSS_Content.aspx?ModuleType=3
     tier: primary
@@ -255,7 +256,8 @@ feeds:
   - name: 食藥署 本署新聞
     url: https://www.fda.gov.tw/TC/rssNews.ashx
     tier: primary
-    source_type: rss_summary
+    source_type: article
+    min_word_count: 80  # 官方短公告仍有完整檢驗、批號或處置事實
     max_entries: 15
     language: zh
     feed_added_at: 2026-07-24T00:00:00+00:00
@@ -264,7 +266,8 @@ feeds:
   - name: 食藥署 闢謠專區
     url: https://www.fda.gov.tw/TC/rssNewsAboutRumor.ashx
     tier: primary
-    source_type: rss_summary
+    source_type: article
+    min_word_count: 80  # 短篇官方澄清可作高風險主張的反證
     max_entries: 15
     language: zh
     feed_added_at: 2026-07-24T00:00:00+00:00
