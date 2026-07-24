@@ -9,6 +9,7 @@ from src.content_quality_guard import (
     check_quality,
     format_issues,
     has_blocking_issues,
+    numeric_claim_allowlist,
     should_request_rewrite,
 )
 
@@ -389,6 +390,54 @@ def test_recovery_still_rejects_vague_attention_as_action():
     )
     codes = {item.code for item in check_quality(text, title="新草案", recovery=True)}
     assert "missing_reader_utility" in codes
+
+
+def test_recovery_numeric_claims_must_exist_in_supplied_source_text():
+    source = "食藥署於7月24日公告，19批油品合格，涉及501項產品。"
+    grounded = (
+        "食藥署7月24日公布19批合格油品，涉及501項產品。"
+        "對消費者的具體影響是可核對上架品項；消費者可以先查食藥署清單。"
+    )
+    fabricated = grounded.replace("501", "599")
+
+    grounded_codes = {
+        item.code
+        for item in check_quality(
+            grounded,
+            title="油品清單",
+            recovery=True,
+            source_text=source,
+        )
+    }
+    fabricated_issues = check_quality(
+        fabricated,
+        title="油品清單",
+        recovery=True,
+        source_text=source,
+    )
+
+    assert "unsupported_numeric_claim" not in grounded_codes
+    assert ("unsupported_numeric_claim", "599") in {
+        (item.code, item.evidence) for item in fabricated_issues
+    }
+
+
+def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages():
+    source = "核定經費3521億元，費率10％，成長3.50倍。"
+    text = "經費3,521億元、費率10%、成長3.5倍均來自核定資料。"
+
+    codes = {
+        item.code
+        for item in check_quality(
+            text,
+            title="政策核定",
+            recovery=True,
+            source_text=source,
+        )
+    }
+
+    assert "unsupported_numeric_claim" not in codes
+    assert numeric_claim_allowlist(source) == ["10%", "3.5", "3521"]
 
 
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----

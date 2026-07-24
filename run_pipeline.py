@@ -32,6 +32,7 @@ from src.content_quality_guard import (
     check_quality,
     format_issues,
     has_blocking_issues,
+    numeric_claim_allowlist,
     should_request_rewrite,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
@@ -773,6 +774,10 @@ async def process_item(
     # rewrite 時保留草稿供人工看，但絕不進自動發布 queue。每次判定只保存規則
     # 與文字 hash，不保存另一份全文。
     draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
+    source_evidence_text = (
+        f"{title}\n{content}\n"
+        f"{row['published_at'] if 'published_at' in row.keys() else ''}"
+    )
 
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
@@ -781,6 +786,7 @@ async def process_item(
                 ftext,
                 title=title,
                 recovery=is_recovery_mode(),
+                source_text=source_evidence_text if is_recovery_mode() else None,
             )
             findings[platform_key] = issues
             dbmod.record_quality_evaluation(
@@ -820,12 +826,36 @@ async def process_item(
             "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行唯一一次重寫："
             + " || ".join(rewrite_requests)
         )
+        rewrite_codes = {
+            issue.code
+            for issues in quality_findings.values()
+            for issue in issues
+            if issue.severity == "rewrite"
+        }
+        targeted_rewrite_guidance: list[str] = []
+        if "missing_reader_utility" in rewrite_codes:
+            targeted_rewrite_guidance.append(
+                "READER UTILITY: Add two explicit, factual sentences using this "
+                "shape: `對[具體讀者]的具體影響是...；[同一讀者]可以先...`。"
+                "The action must name a real list, batch, date, document, authority, "
+                "or risk signal from the supplied source."
+            )
+        if "unsupported_numeric_claim" in rewrite_codes:
+            allowed_numbers = numeric_claim_allowlist(source_evidence_text)
+            targeted_rewrite_guidance.append(
+                "NUMERIC GROUNDING: Delete every unsupported date, amount, count, "
+                "percentage, and deadline. Material Arabic-number values permitted "
+                "by the supplied evidence are only: "
+                + (", ".join(allowed_numbers) if allowed_numbers else "none")
+                + ". Bare single-digit list labels are not factual support."
+            )
         rewrite_note = (
             f"{editorial_mandate}\n\n"
             "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
             "variant. Preserve source-backed facts and the core insight. Remove or "
             "attribute unsupported numeric claims; do not invent citations. Fix these "
-            f"deterministic findings: {' || '.join(rewrite_requests)}"
+            f"deterministic findings: {' || '.join(rewrite_requests)}\n\n"
+            + "\n".join(targeted_rewrite_guidance)
         )
         retry_bundle = await compose_multi_platform(
             title,
