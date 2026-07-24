@@ -61,6 +61,7 @@ RESCUE_PUBLISH_THRESHOLD = 0.65 # Rescue 模式放寬門檻（距上次發文 �
 MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
                                 # ⚠️ RESCUE == MIN：rescue 時段等於「composer 產出全發」
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
+RECOVERY_MAX_POSTS_PER_SLOT = 2 # Recovery 每日品質優先，限制 LLM 額度與 held 草稿爆量
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
 
 # Harvest 節流：兩次 RSS 抓取最少相隔秒數（1.5 小時）
@@ -73,6 +74,11 @@ HARVEST_STATE_FILE = Path(__file__).resolve().parent / "state" / "last_harvest.t
 MIN_PUBLISH_INTERVAL_SECONDS = 60 * 60        # 1 hr，兩篇之間至少間隔這麼久
 SOFT_MAX_PUBLISH_INTERVAL_SECONDS = 2 * 60 * 60  # 2 hr 上限：超過就切 Rescue 門檻
 HEARTBEAT_SECONDS = 30 * 60                   # 30 分鐘心跳，讓 cadence 解析度足夠細
+
+
+def candidate_scan_limit() -> int:
+    """Keep Recovery bounded while preserving the legacy live-mode budget."""
+    return RECOVERY_MAX_POSTS_PER_SLOT if is_recovery_mode() else MAX_POSTS_PER_SLOT
 
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
@@ -1141,9 +1147,10 @@ async def main():
                 )
                 published_count = 0
                 scanned = 0
+                scan_limit = candidate_scan_limit()
                 # Hunter 獵殺模式：掃描到獵殺成功 MAX_PUBLISH_PER_SLOT 篇就收手
                 for row in pending_items:
-                    if scanned >= MAX_POSTS_PER_SLOT:
+                    if scanned >= scan_limit:
                         print(
                             f"[Hunter] 已掃描 {scanned} 篇仍未達獵殺額度，本輪收手（剩下留待下次 cycle）"
                         )
