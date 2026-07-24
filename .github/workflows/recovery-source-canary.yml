@@ -8,6 +8,7 @@ on:
       - "config/config.yaml"
       - "scripts/recovery_source_canary.py"
       - "src/cleaner.py"
+      - "src/fetcher.py"
       - "tests/unit/test_recovery_source_canary.py"
 
 permissions:

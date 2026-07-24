@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.cleaner import extract_markdown
+from src.fetcher import _resolve_entry_link
 
 
 CONFIG_PATH = ROOT / "config" / "config.yaml"
@@ -101,10 +102,18 @@ def validate_payload(
             errors.append(f"entry_{index}_missing_link")
         if not str(entry.get("published") or entry.get("updated") or "").strip():
             errors.append(f"entry_{index}_missing_timestamp")
-        link = str(entry.get("link") or "").strip()
+        link = _resolve_entry_link(
+            str(source.get("url") or ""), str(entry.get("link") or "")
+        )
         if link and not _same_site(str(source.get("url") or ""), link):
             errors.append(f"entry_{index}_offsite_link")
-    latest_link = str(entries[0].get("link") or "").strip() if entries else ""
+    latest_link = (
+        _resolve_entry_link(
+            str(source.get("url") or ""), str(entries[0].get("link") or "")
+        )
+        if entries
+        else ""
+    )
     summary_length = 0
     summary_word_count = 0
     if entries:

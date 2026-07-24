@@ -9,6 +9,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from urllib.parse import urljoin
 
 import httpx
 import feedparser
@@ -48,6 +49,11 @@ def _limited_entries(entries: List[Any], configured_limit: Any) -> List[Any]:
     ):
         raise ValueError("feed max_entries must be an integer in 1..100")
     return list(entries[:configured_limit])
+
+
+def _resolve_entry_link(feed_url: str, entry_link: str) -> str:
+    """Resolve relative RSS entry links against the authoritative feed URL."""
+    return urljoin(feed_url, str(entry_link or "").strip())
 
 
 # ---------- URL rewriters（deterministic，易測、易回放）----------
@@ -182,6 +188,8 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
                 link = enclosures[0].get("href") or enclosures[0].get("url")
         if not link:
             link = entry.get("id") or entry.get("guid")
+        if link:
+            link = _resolve_entry_link(url, link)
         title = entry.get("title")
         if not link:
             skipped_no_link += 1
