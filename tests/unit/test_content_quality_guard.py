@@ -333,7 +333,7 @@ def test_recovery_rejects_generic_source_and_vague_risk_language():
     assert "missing_reader_utility" in codes
 
 
-def test_recovery_requires_source_in_measured_claim_paragraph():
+def test_recovery_allows_adjacent_measured_paragraph_to_carry_named_source():
     text = (
         "根據公視報導，法國消防單位正處理多起野火。\n\n"
         "已知事實是今年已有 1 萬起野火，燒毀 4.4 萬公頃。\n\n"
@@ -341,7 +341,30 @@ def test_recovery_requires_source_in_measured_claim_paragraph():
     )
     codes = {item.code for item in check_quality(text, title="法國野火", recovery=True)}
     assert "missing_source_attribution" not in codes
+    assert "fact_without_local_source" not in codes
+    assert "uncited_stat" not in codes
+
+
+def test_recovery_requires_source_again_after_intervening_paragraph():
+    text = (
+        "根據公視報導，法國消防單位正處理多起野火。\n\n"
+        "交通影響仍需逐區確認。\n\n"
+        "今年相關支出增加 665 億元。\n\n"
+        "旅客可能面臨封路；旅客可以先查詢當地警報。"
+    )
+    codes = {item.code for item in check_quality(text, title="法國野火", recovery=True)}
     assert "fact_without_local_source" in codes
+    assert "uncited_stat" in codes
+
+
+def test_recovery_accepts_natural_source_based_reader_action():
+    text = (
+        "證交所本週統計顯示，加權指數上漲 2.30%。\n\n"
+        "台灣投資人可能面臨產業漲跌分化；"
+        "投資人可根據證交所公開數據，檢查持股產業與週轉率。"
+    )
+    codes = {item.code for item in check_quality(text, title="台股週報", recovery=True)}
+    assert "missing_reader_utility" not in codes
 
 
 def test_recovery_rejects_unattributed_sensitive_allegation():

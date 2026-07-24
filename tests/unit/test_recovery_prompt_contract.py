@@ -42,6 +42,8 @@ def test_recovery_composer_contract_is_platform_scoped_and_actionable():
     assert "絕對不可" in prompt
     assert "FB：280–500 字" in prompt
     assert "3–5 個短段落" in prompt
+    assert "緊接的下一段可延續同一份來源" in prompt
+    assert "Threads：160–240 字" in prompt
     assert "SOURCE AND CORRECTNESS GATE" in prompt
 
 
@@ -57,6 +59,7 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     assert "11" in prompt and "3521" in prompt
     assert "render exactly five cards" in prompt
     assert "Do not add today's date" in prompt
+    assert "Never round, abbreviate, convert units" in prompt
     fb_only = composer._build_recovery_generation_contract(
         "行政院公布政策", "行政院公告政策內容。", ["fb"]
     )

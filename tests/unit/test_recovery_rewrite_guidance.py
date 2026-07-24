@@ -27,6 +27,8 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "Do not use fixed scaffolding" in guidance
     assert "`的具體影響是`" in guidance and "`可以先`" in guidance
     assert "specific Taiwan reader" in guidance
+    assert "Do not round, abbreviate" in guidance
+    assert "One immediately adjacent paragraph may continue" in guidance
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 

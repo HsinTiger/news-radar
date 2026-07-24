@@ -120,7 +120,8 @@ def _recovery_rewrite_guidance(
             "NUMERIC GROUNDING: Delete every unsupported date, amount, count, "
             "percentage, and deadline. Material Arabic-number values permitted "
             f"by the supplied evidence are only: {allowed_text}. Bare single-digit "
-            "list labels are not factual support."
+            "list labels are not factual support. Do not round, abbreviate, "
+            "convert units, or derive mathematically equivalent new values."
         )
     if "missing_recovery_five_card_carousel" in rewrite_codes:
         guidance.append(
@@ -143,11 +144,12 @@ def _recovery_rewrite_guidance(
         guidance.append(
             "SOURCE ATTRIBUTION: "
             + source_instruction
-            + "Every paragraph/card containing a fact or number must name that "
-            "exact source, or another exact institution already named in the "
-            "supplied evidence, in the same paragraph/card. Delete unsupported "
-            "claims; never write generic `according to reports` or call a media "
-            "report an official record."
+            + "Name that exact source in the first factual paragraph/card. One "
+            "immediately adjacent paragraph may continue the same record, but "
+            "must use only source-supported facts and exact numeric units. Name "
+            "the source again when the subject, record, or event changes. Delete "
+            "unsupported claims; never write generic `according to reports` or "
+            "call a media report an official record."
         )
     if "missing_taiwan_relevance" in rewrite_codes:
         guidance.append(

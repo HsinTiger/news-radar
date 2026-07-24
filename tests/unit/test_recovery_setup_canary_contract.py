@@ -135,8 +135,19 @@ def test_current_primary_allowlist_requires_unpublished_current_rows() -> None:
     started_at = "2026-07-25T12:00:00+00:00"
     rows = [
         {
-            "news_id": "eligible",
+            "news_id": "eligible-relative",
             "source_status": "fetched",
+            "source_feed": "證交所 官方訊息",
+            "source_title": "本週台股統計",
+            "source_url": "/rwd/news/record",
+            "source_published_at": "2026-07-25T10:00:00+00:00",
+        },
+        {
+            "news_id": "eligible-canonical",
+            "source_status": "fetched",
+            "source_feed": "證交所 官方訊息",
+            "source_title": "本週台股統計",
+            "source_url": "https://www.twse.com.tw/rwd/news/record",
             "source_published_at": "2026-07-25T10:00:00+00:00",
         },
         {
@@ -153,10 +164,11 @@ def test_current_primary_allowlist_requires_unpublished_current_rows() -> None:
 
     eligible = _eligible_current_primary_rows(rows, started_at)
 
-    assert [row["news_id"] for row in eligible] == ["eligible"]
+    assert [row["news_id"] for row in eligible] == ["eligible-canonical"]
     assert _filter_pending_items(
-        [{"id": "secondary"}, {"id": "eligible"}], {"eligible"}
-    ) == [{"id": "eligible"}]
+        [{"id": "secondary"}, {"id": "eligible-canonical"}],
+        {"eligible-canonical"},
+    ) == [{"id": "eligible-canonical"}]
 
 
 def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:

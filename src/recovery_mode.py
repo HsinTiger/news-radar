@@ -180,11 +180,17 @@ def editorial_mandate_for(platforms: Iterable[str], topic: str | None) -> str:
         "TAIWAN DAILY RECOVERY (highest priority):",
         "- Scope: Taiwan politics/accountability, food safety, public policy, markets, or economy with a direct Taiwan consequence.",
         "- Hook: strongest verified actor + consequence in the first 45 Chinese characters; sharp is allowed, fabrication is not.",
-        "- Evidence: name the primary record or named publisher in every factual paragraph; expose conflicts and omit unsupported details.",
+        "- Evidence: name the primary record in the first factual paragraph; one immediately adjacent paragraph may carry the same record, but a changed subject/document must be named again. Omit unsupported details.",
         "- Accountability: apply the same evidence/response/correction standard to every political party and public official.",
         "- Structure: visible fact/interpretation boundary, who pays or benefits, one usable next check, and one answerable question.",
         "RECOVERY EXPERIMENT (primary hypothesis; keep other goals secondary):",
     ]
+    if topic == "tw_stocks":
+        lines.extend([
+            "- TW stocks: distinguish index performance from any reader's own portfolio; never imply that every investor, holding, or pension gained with the index.",
+            "- TW stocks: keep only 2-3 source-backed figures, use their original units, and make the utility a same-period comparison of the reader's return or sector exposure.",
+            "- TW stocks: close with a measurable personal-result or allocation question, not a generic prediction about whether the market will keep rising.",
+        ])
     for platform in sorted(set(platforms)):
         experiment_type = experiment_type_for(platform, topic)
         lines.append(

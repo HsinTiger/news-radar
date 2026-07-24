@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v11"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v12"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -228,6 +228,9 @@ _GENERIC_RECOVERY_SOURCE_PATTERN = re.compile(
     r"|(?<![A-Za-z0-9\u4e00-\u9fff])(?:媒體|新聞|官方|相關人士)"
     r"\s*(?:報導|指出|表示|公告|資料|數據)",
 )
+_RECOVERY_SOURCE_CARRY_BREAK_PATTERN = re.compile(
+    r"市場傳聞|據傳|傳聞|消息人士|未經證實|另有|另一份|其他來源"
+)
 _RECOVERY_READER = (
     r"一般人|民眾|居民|住戶|消費者|使用者|讀者|上班族|投資人|股民|"
     r"家長|學生|通勤族|一般通勤者|通勤者|駕駛|旅客|家庭|企業|業者|"
@@ -248,6 +251,9 @@ _RECOVERY_ACTION_PATTERN = re.compile(
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
     r"關注|採取|納入)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
+    r"(?:可以|可|應該|應)(?:依|依據|根據)[^。！？\n]{1,24}"
+    r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}可將[^。！？\n]{{0,20}}"
     r"(?:納入|列入|通報|備妥|改用|避開)"
     r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
@@ -368,21 +374,29 @@ def _has_citation_nearby(text: str, stat_pos: int, radius: int = 40) -> bool:
 
 
 def _uncited_stat(full_text: str, _title: str) -> Optional[str]:
-    """Reject numbers lacking either a nearby marker or a named paragraph source."""
-    for m in _STAT_PATTERN.finditer(full_text):
-        if _has_citation_nearby(full_text, m.start()):
-            continue
-        paragraph_start = full_text.rfind("\n\n", 0, m.start()) + 2
-        paragraph_end = full_text.find("\n\n", m.end())
-        if paragraph_end < 0:
-            paragraph_end = len(full_text)
-        paragraph = full_text[paragraph_start:paragraph_end].strip()
-        if (
+    """Require a named source in this or the immediately preceding paragraph."""
+
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", full_text)
+        if paragraph.strip()
+    ]
+    previous_named = False
+    for paragraph in paragraphs:
+        named = (
             _has_recovery_named_source(paragraph)
             and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
-        ):
-            continue
-        return "stat_no_citation:" + m.group(0)
+        )
+        for match in _STAT_PATTERN.finditer(paragraph):
+            if _has_citation_nearby(paragraph, match.start()):
+                continue
+            if named or (
+                previous_named
+                and not _RECOVERY_SOURCE_CARRY_BREAK_PATTERN.search(paragraph)
+            ):
+                continue
+            return "stat_no_citation:" + match.group(0)
+        previous_named = bool(named)
     return None
 
 
@@ -448,7 +462,13 @@ def _recovery_fact_without_local_source(
             continue
         named = _has_recovery_named_source(paragraph)
         generic = _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
-        if factual and (not named or generic):
+        previous_named = (
+            index > 0
+            and _has_recovery_named_source(paragraphs[index - 1])
+            and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraphs[index - 1])
+            and not _RECOVERY_SOURCE_CARRY_BREAK_PATTERN.search(paragraph)
+        )
+        if factual and (not named or generic) and not previous_named:
             return "fact_paragraph_without_named_source:" + paragraph[:80]
     return None
 
