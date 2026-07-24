@@ -68,6 +68,7 @@ load_dotenv(ENV_PATH)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOUL_PATH = PROJECT_ROOT / "config" / "news_radar_soul.md"
 PLATFORMS_DIR = PROJECT_ROOT / "config" / "platforms"
+RECOVERY_CONTRACT_PATH = PROJECT_ROOT / "config" / "recovery_content_contract.md"
 
 PLATFORM_FILES = {
     "fb": PLATFORMS_DIR / "fb_v2.md",
@@ -409,6 +410,14 @@ async def compose_multi_platform(
     # 只保留被選中的平台指令
     filtered_appendices = {k: v for k, v in appendices.items() if k in platforms}
     system_instruction = _build_system_instruction(main_soul, filtered_appendices)
+    if os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery":
+        recovery_contract = _read_file(RECOVERY_CONTRACT_PATH)
+        if not recovery_contract:
+            raise RuntimeError("Recovery mode requires config/recovery_content_contract.md")
+        system_instruction += (
+            "\n\n=== RECOVERY MODE · HIGHEST PRIORITY CONTRACT ===\n"
+            + recovery_contract
+        )
 
     # === Phase 2 (2026-05-14): Threads Substack CTA 注入（threads_v2.md §14.6）===
     # 只在 threads 在 active platforms 內時擲骰；中籤就把 prompt fragment 接到

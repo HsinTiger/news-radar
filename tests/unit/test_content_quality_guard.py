@@ -212,6 +212,26 @@ def test_real_named_source_passes():
     assert "fake_source_marker" not in codes
 
 
+def test_recovery_requires_named_source_and_reader_utility():
+    text = "某公司今天推出新功能，整體方向清楚，產品團隊預計下週開始逐步提供服務。"
+    normal_codes = {item.code for item in check_quality(text, title="新品")}
+    recovery_codes = {
+        item.code for item in check_quality(text, title="新品", recovery=True)
+    }
+    assert "missing_source_attribution" not in normal_codes
+    assert {"missing_source_attribution", "missing_reader_utility"} <= recovery_codes
+
+
+def test_recovery_source_and_utility_contract_passes():
+    text = (
+        "根據交通部 7 月 23 日公告，新制下週上路。"
+        "對一般通勤者的實際影響是轉乘時間可能增加，出門前可以先檢查班次。"
+    )
+    codes = {item.code for item in check_quality(text, title="交通新制", recovery=True)}
+    assert "missing_source_attribution" not in codes
+    assert "missing_reader_utility" not in codes
+
+
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----
 
 def test_corporate_fluff_pileup_warns():

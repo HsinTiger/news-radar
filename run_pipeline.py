@@ -35,6 +35,11 @@ from src.content_quality_guard import (
     should_request_rewrite,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
+from src.recovery_mode import (
+    is_recovery_mode,
+    rank_candidates,
+    record_experiments,
+)
 from src.publisher import (
     publish_to_fb, publish_to_threads, publish_to_ig,
     publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
@@ -736,7 +741,11 @@ async def process_item(
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
         for platform_key, (_variant, ftext, _ok) in finalized.items():
-            issues = check_quality(ftext, title=title)
+            issues = check_quality(
+                ftext,
+                title=title,
+                recovery=is_recovery_mode(),
+            )
             findings[platform_key] = issues
             dbmod.record_quality_evaluation(
                 conn,
@@ -890,6 +899,20 @@ async def process_item(
             created_at=created_at,
         )
 
+    if is_recovery_mode() and auto_publish:
+        record_experiments(
+            conn,
+            draft_id=draft_id,
+            platforms={
+                dbmod.PLATFORM_DB_NAME[platform_key]
+                for platform_key in finalized
+            },
+            topic=topic_cls.category_id,
+            content_format="carousel" if bundle.carousel is not None else "feed",
+            created_at=created_at,
+        )
+        print("   ↳ [Recovery] 已保存平台實驗 lineage；publisher 只會取本輪新稿")
+
     # 7. 自動發布路徑
     publish_results: Dict[str, bool] = {}
     any_success = False
@@ -1026,17 +1049,20 @@ async def main():
             if args.compose_only:
                 # Phase 8.18：compose-only 模式的 buffer 上限檢查
                 queued_n = dbmod.count_queued_pending_for_platforms(
-                    conn, requested_platforms
+                    conn,
+                    requested_platforms,
+                    recovery_only=is_recovery_mode(),
                 )
                 # EDITORIAL_MODE 時段 buffer：只看「這個 slot 桶」有沒有料；桶空就 compose 一筆，
                 # 即使總 buffer 已被別桶（Mac 端非 slot-aware 填充）塞滿——否則晚間政治稿永遠擠不進。
-                from src.slot_routing import editorial_mode, current_slot, bucket_categories
-                _slot = current_slot() if editorial_mode() else None
+                from src.slot_routing import slot_routing_enabled, current_slot, bucket_categories
+                _slot = current_slot() if slot_routing_enabled() else None
                 if _slot:
                     slot_n = dbmod.count_queued_in_categories(
                         conn,
                         bucket_categories(_slot),
                         platforms=requested_platforms,
+                        recovery_only=is_recovery_mode(),
                     )
                     should_publish = slot_n < 1
                     threshold = AUTO_PUBLISH_THRESHOLD
@@ -1058,10 +1084,13 @@ async def main():
             print(f"\n[Cadence] {reason}")
 
             pending_items = dbmod.get_pending_items(conn)
+            if is_recovery_mode():
+                pending_items = rank_candidates(conn, pending_items)
+                print("[Recovery] 候選已按歷史 topic evidence 預排序；未知題材仍保留")
             # 2026-06-27 時段選題路由：晚=政治桶、早午=市場桶優先（soft bias、桶內維持原序）。
             # 藏在 EDITORIAL_MODE flag 後——關＝reorder no-op、完全沿用舊 weighted_score 行為（活下去）。
-            from src.slot_routing import reorder_by_slot, current_slot, editorial_mode
-            if editorial_mode():
+            from src.slot_routing import reorder_by_slot, current_slot, slot_routing_enabled
+            if slot_routing_enabled():
                 _slot = current_slot()
                 if _slot:
                     pending_items = reorder_by_slot(pending_items, _slot)

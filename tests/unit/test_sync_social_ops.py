@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.sync_social_ops import (
+    build_automation_state,
     build_engagement,
     build_health,
     build_knowledge,
     build_posts,
     build_proposals,
     build_quality,
+    build_recovery_experiments,
     build_submission_updates,
 )
 
@@ -48,6 +50,12 @@ def _db() -> sqlite3.Connection:
           rewrite_count INTEGER,warn_count INTEGER,issue_codes_json TEXT,
           issues_json TEXT
         );
+        CREATE TABLE recovery_experiments(
+          id TEXT PRIMARY KEY,draft_id TEXT,platform TEXT,experiment_type TEXT,
+          hypothesis TEXT,baseline_followers INTEGER,baseline_primary_metric TEXT,
+          baseline_primary_value REAL,baseline_captured_at TEXT,content_format TEXT,
+          actual_format TEXT,actual_format_at TEXT,topic TEXT,created_at TEXT
+        );
         INSERT INTO news_items VALUES(
           'n1','rss','https://example.com','Useful source','ai_application','scored',
           '2099-01-01T00:00:00Z',800,0.9,'rss','[]',NULL,NULL,NULL
@@ -63,6 +71,14 @@ def _db() -> sqlite3.Connection:
         );
         INSERT INTO engagement_stats VALUES(
           'threads','t-post','2099-01-04T00:00:00Z',24,100,0,5,0,0,0,2,1,0,'{}',0
+        );
+        INSERT INTO recovery_experiments(
+          id,draft_id,platform,experiment_type,hypothesis,baseline_followers,
+          baseline_primary_metric,baseline_primary_value,baseline_captured_at,
+          content_format,topic,created_at
+        ) VALUES(
+          'rx','d1','threads','utility','Reader utility test',3748,'views',279.5,
+          '2026-07-23T00:00:00Z','carousel','ai_application','2099-01-02T00:00:00Z'
         );
         """
     )
@@ -90,6 +106,18 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert threads_quality["top_issue_codes"] == [
         {"code": "uncited_stat", "count": 1}
     ]
+    experiments = build_recovery_experiments(conn)
+    assert experiments[0]["id"] == "rx"
+    assert experiments[0]["content_format"] == "carousel"
+    assert experiments[0]["actual_format"] is None
+
+
+def test_automation_state_uses_canonical_repository_variables(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOMATION_MODE", "recovery")
+    monkeypatch.setenv("SUBMISSION_PROCESSOR_MODE", "paused")
+    row = build_automation_state()[0]
+    assert row["mode"] == "recovery"
+    assert row["submission_processor"] == "paused"
 
 
 def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None:

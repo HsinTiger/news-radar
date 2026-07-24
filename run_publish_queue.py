@@ -40,6 +40,7 @@ from src.content_quality_guard import (
     check_quality,
     format_issues,
     has_blocking_issues,
+    should_request_rewrite,
 )
 from src.local_notify import notify_quality_block
 from src.publisher import (
@@ -123,20 +124,29 @@ def _decide_cadence(
 
 # ---------- 選稿 ----------
 
-def _pick_draft(conn, allow_fallback: bool, platforms: set[str] | None = None):
+def _pick_draft(
+    conn,
+    allow_fallback: bool,
+    platforms: set[str] | None = None,
+    *,
+    recovery_only: bool = False,
+):
     """回傳 (row, mode) 或 (None, "empty")。mode ∈ {"fresh", "fallback"}."""
     # EDITORIAL_MODE 時段路由：晚優先發政治桶、早午優先發市場桶（soft——桶空自動退回最新）。
-    from src.slot_routing import editorial_mode, current_slot, bucket_categories
-    prefer = bucket_categories(current_slot()) if editorial_mode() else None
+    from src.slot_routing import slot_routing_enabled, current_slot, bucket_categories
+    prefer = bucket_categories(current_slot()) if slot_routing_enabled() else None
     row = dbmod.pick_freshest_queued(
         conn,
         prefer_categories=(prefer or None),
         platforms=platforms,
+        recovery_only=recovery_only,
     )
     if row is not None:
         return row, "fresh"
     if allow_fallback:
-        row = dbmod.pick_fallback_any_approved(conn, platforms=platforms)
+        row = dbmod.pick_fallback_any_approved(
+            conn, platforms=platforms, recovery_only=recovery_only
+        )
         if row is not None:
             return row, "fallback"
     return None, "empty"
@@ -177,10 +187,15 @@ async def _publish_one(
     # 檢查每個平台的 final/full_text；只要有任一個 platform_draft 觸發 block 級規則，
     # 整筆 draft 不發，標 failed，跳 Mac 通知。Hsin 要求不刪 DB、他手動處理。
     guard_news_title = row["news_title"] or ""
+    recovery_strict = os.getenv("AUTOMATION_MODE", "").strip().lower() == "recovery"
     block_reasons: list[str] = []
     for pd_row in platform_drafts:
         text_to_check = pd_row["final_text"] or pd_row["full_text"] or ""
-        issues = check_quality(text_to_check, title=guard_news_title)
+        issues = check_quality(
+            text_to_check,
+            title=guard_news_title,
+            recovery=recovery_strict,
+        )
         if not dry_run:
             dbmod.record_quality_evaluation(
                 conn,
@@ -192,7 +207,9 @@ async def _publish_one(
                 full_text=text_to_check,
                 issues=issues,
             )
-        if has_blocking_issues(issues):
+        if has_blocking_issues(issues) or (
+            recovery_strict and should_request_rewrite(issues)
+        ):
             block_reasons.append(f"{pd_row['platform']}: {format_issues(issues)}")
     if block_reasons:
         one_line = " || ".join(block_reasons)
@@ -311,12 +328,16 @@ async def _publish_one(
                         else:  # facebook
                             cresult = await publish_fb_carousel(card_urls, full_text)
                         if cresult.get("success"):
+                            format_at = datetime.now(timezone.utc).isoformat()
                             dbmod.log_publish(conn, PublishResult(
                                 draft_id=draft_id, platform=platform,
                                 platform_post_id=cresult.get("id"),
                                 posted_at=datetime.now(timezone.utc).isoformat(),
                                 success=True, error_message=None,
                             ))
+                            dbmod.mark_recovery_actual_format(
+                                conn, draft_id, platform, "carousel", format_at
+                            )
                             any_success = True
                             print(f"   ✅ [{platform}] carousel 成功 id={cresult.get('id')}（{len(card_urls)} 卡）")
                             continue
@@ -377,6 +398,13 @@ async def _publish_one(
             error_message=str(result.get("error", "")) if not success else None,
         ))
         if success:
+            dbmod.mark_recovery_actual_format(
+                conn,
+                draft_id,
+                platform,
+                "feed",
+                datetime.now(timezone.utc).isoformat(),
+            )
             any_success = True
             print(f"   ✅ [{platform}] 成功 id={result.get('id')}")
         else:
@@ -452,10 +480,12 @@ async def main() -> int:
             return 0
 
         # 2. 選稿
+        recovery_only = os.getenv("AUTOMATION_MODE", "").strip().lower() == "recovery"
         row, mode = _pick_draft(
             conn,
             allow_fallback=allow_fallback,
             platforms=platforms,
+            recovery_only=recovery_only,
         )
         if row is None:
             print(f"[PublishQueue] queue 空（mode={mode}），無稿可發。")

@@ -143,6 +143,39 @@ def test_platform_aware_picker_skips_other_or_already_published_platforms(tmp_db
         ) == 1
 
 
+def test_recovery_picker_excludes_legacy_queue_entries(tmp_db):
+    with dbmod.get_conn() as conn:
+        _seed_news(conn, "legacy-new", _now_minus_hours(1))
+        _seed_news(conn, "recovery-old", _now_minus_hours(2))
+        _seed_approved_draft(conn, "d_legacy", "legacy-new")
+        _seed_approved_draft(conn, "d_recovery", "recovery-old")
+        now = datetime.now(timezone.utc).isoformat()
+        for draft_id in ("d_legacy", "d_recovery"):
+            dbmod.enqueue_draft(conn, draft_id)
+            conn.execute(
+                "INSERT INTO platform_drafts(draft_id,platform,full_text,created_at) VALUES(?, 'threads', 'body', ?)",
+                (draft_id, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO recovery_experiments(
+              id,draft_id,platform,experiment_type,hypothesis,
+              baseline_followers,baseline_primary_metric,baseline_primary_value,
+              baseline_captured_at,content_format,topic,created_at
+            ) VALUES(
+              'rx','d_recovery','threads','utility','test',3748,'views',279.5,
+              '2026-07-23T00:00:00Z','feed','tech_product_launch',?
+            )
+            """,
+            (now,),
+        )
+        conn.commit()
+        assert dbmod.pick_freshest_queued(conn, platforms={"threads"})["id"] == "d_legacy"
+        assert dbmod.pick_freshest_queued(
+            conn, platforms={"threads"}, recovery_only=True
+        )["id"] == "d_recovery"
+
+
 def test_cadence_is_scoped_to_requested_platforms(tmp_db):
     with dbmod.get_conn() as conn:
         _seed_news(conn, "cadence", _now_minus_hours(4))

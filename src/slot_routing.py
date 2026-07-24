@@ -35,6 +35,11 @@ def editorial_mode() -> bool:
     return os.getenv("EDITORIAL_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def slot_routing_enabled() -> bool:
+    """Recovery uses historical topic weights instead of legacy 3x/day buckets."""
+    return editorial_mode() and os.getenv("AUTOMATION_MODE", "").strip().lower() != "recovery"
+
+
 def editor_enforce() -> bool:
     """總編輯閘是否『真的殺稿』。預設關＝shadow mode（只跑五關、記 log，不擋發文），
     讓人先觀察副編在真實稿上的判斷，校準後再 EDITOR_ENFORCE=1 開啟真殺。"""
@@ -77,7 +82,7 @@ def reorder_by_slot(rows: Sequence, slot: Optional[str]) -> List:
     slot=None 或 editorial_mode 關 → 原樣回傳（no-op，活下去：flag 關就是舊行為）。
     """
     rows = list(rows)
-    if not slot or not editorial_mode():
+    if not slot or not slot_routing_enabled():
         return rows
     bucket = bucket_categories(slot)
     if not bucket:

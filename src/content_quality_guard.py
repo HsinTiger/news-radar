@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-23.v1"
+QUALITY_GUARD_VERSION = "2026-07-24.recovery-v2"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -205,6 +205,22 @@ _CITATION_MARKERS = (
     "白皮書", "研究指出", "公告", "分析師預估",
 )
 
+# Recovery mode is deliberately stricter than the long-running legacy feed.
+# These are structural markers, not source validation: they force the writer to
+# make attribution and reader utility visible, while named-source accuracy is
+# still bounded by the supplied article and the anti-hallucination prompt.
+_RECOVERY_SOURCE_PATTERN = re.compile(
+    r"(?:根據|資料來源|來源\s*[:：]|官方(?:公告|數據|報告|網站)|"
+    r"路透|彭博|BBC|CNBC|華爾街日報|金融時報|美聯社|中央社|"
+    r"[A-Za-z0-9\u4e00-\u9fff]{2,30}(?:財報|法說|白皮書|公告|調查|報告))",
+    re.IGNORECASE,
+)
+_RECOVERY_UTILITY_PATTERN = re.compile(
+    r"(?:對(?:一般人|消費者|使用者|讀者|上班族|投資人|你)|"
+    r"你可以|可以先|需要留意|值得追蹤|下一步|實際影響|"
+    r"安全|風險|生活|工作|錢包|判斷)",
+)
+
 # Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
 _WAVE_PATTERN = re.compile(
     r"在\s*(數位化|AI|快速變動|科技|全球化|變革)\s*的\s*浪潮\s*(中|下|裡|之中|之下)"
@@ -345,7 +361,7 @@ _RULES: tuple[_Rule, ...] = (
     ),
     _Rule(
         code="uncited_stat",
-        severity="warn",
+        severity="rewrite",
         message="有具體數字但 ±40 字內找不到來源 marker——LLM 可能自己掰的",
         matcher=_uncited_stat,
     ),
@@ -357,17 +373,46 @@ _RULES: tuple[_Rule, ...] = (
     ),
 )
 
+_RECOVERY_RULES: tuple[_Rule, ...] = (
+    _Rule(
+        code="missing_source_attribution",
+        severity="rewrite",
+        message="Recovery Mode 要求具名來源，避免讀者把自動生成內容當成無來源事實",
+        matcher=lambda ft, _t: (
+            "no_named_source_marker"
+            if not _RECOVERY_SOURCE_PATTERN.search(ft)
+            else None
+        ),
+    ),
+    _Rule(
+        code="missing_reader_utility",
+        severity="rewrite",
+        message="Recovery Mode 每篇必須明說這項資訊能幫讀者做什麼判斷",
+        matcher=lambda ft, _t: (
+            "no_reader_utility_marker"
+            if not _RECOVERY_UTILITY_PATTERN.search(ft)
+            else None
+        ),
+    ),
+)
+
 
 # ---------- 公開 API（呼叫端只用這三個）----------
 
-def check_quality(full_text: str, title: str = "") -> List[QualityIssue]:
+def check_quality(
+    full_text: str,
+    title: str = "",
+    *,
+    recovery: bool = False,
+) -> List[QualityIssue]:
     """對『最終要送進 Meta API 的那段字』跑所有規則，回傳命中的 issue 列表。
     full_text = 已經組好、含 hashtag 的完整貼文（platform_drafts.full_text 即是）。
     title = 新聞原始標題，用來判定是否沒翻譯。
     """
     ft = full_text or ""
     issues: List[QualityIssue] = []
-    for rule in _RULES:
+    rules = _RULES + (_RECOVERY_RULES if recovery else ())
+    for rule in rules:
         evidence = rule.matcher(ft, title or "")
         if evidence is not None:
             issues.append(QualityIssue(

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "timezone": "Asia/Taipei",
   "product_goal": "Publish helpful, evidence-backed content that earns qualified attention on each Meta platform.",
   "automation_mode_default": "paused",
@@ -29,6 +29,56 @@
       "metric_health": "contract_healthy_low_signal"
     }
   },
+  "recovery": {
+    "owner_approved_at": "2026-07-24T00:00:00+08:00",
+    "purpose": "Mac-independent, evidence-gated restart that separates interest, trust, utility, and format hypotheses.",
+    "platforms": {
+      "threads": {
+        "target_posts_per_day": 1,
+        "minimum_interval_hours": 20,
+        "local_slots": [12],
+        "local_days": [0, 1, 2, 3, 4, 5, 6],
+        "slot_tolerance_minutes": 50
+      },
+      "facebook": {
+        "target_posts_per_day": 1,
+        "minimum_interval_hours": 60,
+        "local_slots": [20],
+        "local_days": [1, 4],
+        "slot_tolerance_minutes": 50
+      },
+      "instagram": {
+        "target_posts_per_day": 1,
+        "minimum_interval_hours": 60,
+        "local_slots": [20],
+        "local_days": [2, 5],
+        "slot_tolerance_minutes": 50
+      }
+    },
+    "baselines": {
+      "threads": {
+        "followers": 3748,
+        "captured_at": "2026-07-23T12:47:30.849994+00:00",
+        "primary_metric": "views",
+        "primary_value": 279.5,
+        "metric_note": "Median latest-snapshot views across 102 historical posts; API coverage usable."
+      },
+      "facebook": {
+        "followers": 28,
+        "captured_at": "2026-07-23T12:47:30.849994+00:00",
+        "primary_metric": "clicks",
+        "primary_value": null,
+        "metric_note": "126 of 127 legacy samples contain API error markers; measurement-first."
+      },
+      "instagram": {
+        "followers": 9,
+        "captured_at": "2026-07-23T12:47:30.849994+00:00",
+        "primary_metric": "views",
+        "primary_value": null,
+        "metric_note": "Legacy distribution signal is near zero; carousel format experiment first."
+      }
+    }
+  },
   "reels": {
     "independent_cron": false,
     "publish_requires_unpublished_draft": true,
@@ -45,17 +95,17 @@
     "owner_approval_required_for_frequency_increase": true
   },
   "initial_topic_weights": {
-    "earnings": 1.4,
-    "supply_chain": 1.4,
-    "us_stocks": 1.2,
-    "military_defense": 1.15,
-    "policy_geopolitics": 1.15,
-    "current_affairs": 1.1,
-    "tech_product_launch": 1.1,
-    "ai_application": 1.1,
-    "tw_stocks": 1.0,
-    "tw_politics": 1.0,
-    "ai_model": 0.9,
+    "current_affairs": 1.6,
+    "tech_product_launch": 1.55,
+    "military_defense": 1.2,
+    "ai_application": 1.15,
+    "ai_model": 1.1,
+    "supply_chain": 1.05,
+    "policy_geopolitics": 1.0,
+    "earnings": 0.9,
+    "us_stocks": 0.85,
+    "tw_stocks": 0.85,
+    "tw_politics": 0.85,
     "ai_agent": 0.8,
     "other": 0.7
   },

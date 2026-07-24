@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.schedule_policy import load_policy
 
 
-FIRE_ID = "bootstrap-social-policy-v1"
+FIRE_ID = "meta-recovery-topic-policy-v2"
 
 
 def apply_policy(
@@ -68,12 +68,13 @@ def apply_policy(
         return result
 
     evidence = {
-        "source": "owner-approved 2026-07-23 production reconstruction",
+        "source": "owner-approved 2026-07-24 Meta recovery mode",
         "threads_posts": 102,
         "threads_median_views": 279.5,
-        "facebook_metric_status": "degraded_invalid_insights_metric",
-        "instagram_metric_status": "low_signal_requires_canary",
-        "method": "conservative robust baseline; no automatic frequency increase",
+        "threads_best_topics": ["current_affairs", "tech_product_launch"],
+        "facebook_metric_status": "degraded_126_of_127_error_markers",
+        "instagram_metric_status": "low_signal_carousel_experiment_required",
+        "method": "historical topic ranking plus bounded recovery cadence; no automatic frequency increase",
     }
     now = datetime.now(timezone.utc).isoformat()
     try:
@@ -165,7 +166,7 @@ def main() -> int:
         "--policy", type=Path, default=Path("config/social_automation_policy.json")
     )
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--decided-at", default="2026-07-23T18:00:00+08:00")
+    parser.add_argument("--decided-at", default="2026-07-24T00:00:00+08:00")
     args = parser.parse_args()
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row

@@ -86,6 +86,7 @@ def validate_database(path: Path) -> dict[str, Any]:
                 "reflector_proposal_lineage",
                 "social_policy_overrides",
                 "social_policy_history",
+                "recovery_experiments",
             ):
                 if table in existing:
                     counts[table] = int(

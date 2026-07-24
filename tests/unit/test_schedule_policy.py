@@ -107,3 +107,61 @@ def test_runtime_override_rejects_spacing_violation_across_midnight() -> None:
             load_policy(POLICY),
             datetime(2026, 7, 23, 12, 10, tzinfo=timezone.utc),
         )
+
+
+def test_recovery_midday_dispatches_threads_only() -> None:
+    decision = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),  # Friday 12:10 Taipei
+        mode="recovery",
+    )
+    assert decision.mode == "recovery"
+    assert decision.platforms == ["threads"]
+    threads = decision.platform_decisions[0]
+    assert threads.target_posts_per_day == 1
+    assert threads.policy_source == "recovery_policy"
+
+
+def test_recovery_weekly_days_separate_facebook_and_instagram() -> None:
+    friday = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 24, 12, 10, tzinfo=timezone.utc),  # Friday 20:10
+        mode="recovery",
+    )
+    saturday = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 25, 12, 10, tzinfo=timezone.utc),  # Saturday 20:10
+        mode="recovery",
+    )
+    assert friday.platforms == ["facebook"]
+    assert saturday.platforms == ["instagram"]
+
+
+def test_recovery_ignores_live_runtime_override() -> None:
+    conn = _conn()
+    conn.execute(
+        """
+        CREATE TABLE social_policy_overrides(
+          platform TEXT PRIMARY KEY,target_posts_per_day INTEGER,
+          minimum_interval_hours REAL,local_slots_json TEXT,
+          source_proposal_id TEXT,updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO social_policy_overrides VALUES(?,?,?,?,?,?)",
+        ("threads", 4, 4.0, "[0,6,12,18]", "legacy-fast", "2026-07-23T00:00:00Z"),
+    )
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    threads = next(item for item in decision.platform_decisions if item.platform == "threads")
+    assert threads.target_posts_per_day == 1
+    assert threads.local_slots == [12]
+    assert threads.policy_source == "recovery_policy"
