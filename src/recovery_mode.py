@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from src.gather import source_authority
 from src.topic_classifier import classify_topic_keyword, match_disambiguation
 
 
@@ -27,9 +28,18 @@ SOURCE_TIER_MULTIPLIERS = {
 }
 SOURCE_TYPE_MULTIPLIERS = {
     "article": 1.0,
+    "rss_summary": 1.0,
     "forum": 0.95,
     "video": 0.9,
     "social": 0.75,
+}
+SOURCE_AUTHORITY_MULTIPLIERS = {
+    50: 1.35,
+    45: 1.30,
+    40: 1.20,
+    30: 1.15,
+    20: 1.05,
+    10: 1.00,
 }
 INHERENTLY_TAIWAN_TOPICS = {"tw_politics", "tw_stocks"}
 TAIWAN_RELEVANCE_MARKERS = (
@@ -183,6 +193,8 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
 def rank_candidates(
     conn: sqlite3.Connection,
     rows: Sequence[Any],
+    *,
+    now: datetime | None = None,
 ) -> list[Any]:
     """Apply robust topic and configured source-priority weights before composition.
 
@@ -262,26 +274,25 @@ def rank_candidates(
         return parsed.astimezone(timezone.utc)
 
     candidate_rows = list(rows)
-    observed_times = [
-        value for value in (published_time(row) for row in candidate_rows) if value
-    ]
-    if observed_times:
-        # One malformed future timestamp must not evict every legitimate item.
-        reference_time = min(
-            max(observed_times),
-            datetime.now(timezone.utc) + timedelta(hours=6),
-        )
-        freshness_cutoff = reference_time - max_source_age
-    else:
-        freshness_cutoff = None
+    reference_time = now or datetime.now(timezone.utc)
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    reference_time = reference_time.astimezone(timezone.utc)
+    freshness_cutoff = reference_time - max_source_age
+    future_tolerance = reference_time + timedelta(hours=6)
 
     def estimated_source_weight(row: Any) -> float:
         tier = str(_row_value(row, "feed_tier", "") or "").lower()
+        feed_name = str(_row_value(row, "feed_name", "") or "")
+        tags = str(_row_value(row, "tags", "") or "")
         source_type = str(
             _row_value(row, "source_type", "article") or "article"
         ).lower()
-        return SOURCE_TIER_MULTIPLIERS.get(tier, 0.9) * SOURCE_TYPE_MULTIPLIERS.get(
-            source_type, 0.9
+        authority, _ = source_authority(feed_name, tags, tier)
+        return (
+            SOURCE_AUTHORITY_MULTIPLIERS.get(authority, 0.9)
+            * SOURCE_TIER_MULTIPLIERS.get(tier, 0.9)
+            * SOURCE_TYPE_MULTIPLIERS.get(source_type, 0.9)
         )
 
     def public_impact_weight(row: Any) -> float:
@@ -297,7 +308,11 @@ def rank_candidates(
         for row in candidate_rows
         if owner_submitted(row)
         or (
-            (freshness_cutoff is None or (published_time(row) or datetime.min.replace(tzinfo=timezone.utc)) >= freshness_cutoff)
+            (
+                freshness_cutoff
+                <= (published_time(row) or datetime.min.replace(tzinfo=timezone.utc))
+                <= future_tolerance
+            )
             and
             estimated_topic(row) in allowed_topics
             and taiwan_relevant(row, estimated_topic(row))

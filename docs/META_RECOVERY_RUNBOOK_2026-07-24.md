@@ -15,31 +15,34 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 - `PROVEN`: median Threads actions are zero and only 48 of 103 posts have any nonzero action. Reach outliers exist, but useful interaction and follower conversion remain the main unproven problem.
 - `PROVEN`: Facebook legacy engagement measurement is degraded; 126 of 127 samples contain API error markers.
 - `PROVEN`: Instagram cold-start distribution is near zero and needs a visual-format experiment.
+- `PROVEN`: Threads post `18059705018757201` proves API delivery only. It was composed and checked under `2026-07-24.recovery-v2`; replaying its final text through the current `2026-07-24.taiwan-daily-v4` guard produces six rewrite findings (generic attribution, fact without local source, unattributed allegation, jargon pileup, formulaic hook, and missing reader utility). Exclude it from the v4 editorial-quality and recovery-performance cohort; do not delete it automatically.
 - `UNKNOWN`: the two follower snapshots on 2026-07-23 are only about one hour apart, so they do not prove a long-term plateau or its cause.
 
 ## Recovery contract
 
 | Platform | Initial cadence | Purpose |
 |---|---:|---|
-| Threads | 1/day at 16:00 Asia/Taipei | Timing experiment: historical 16:00 median 625 views over 5 posts; frequency unchanged |
-| Facebook | Tue/Fri 20:00 | Evidence-backed explainer; measurement-first |
-| Instagram | Wed/Sat 20:00 | Native carousel; format-first cold-start test |
+| Threads | Daily at 08:00 Asia/Taipei | Morning-commute attention experiment; historical timing evidence is confounded, so confidence remains LOW |
+| Facebook | Daily at 18:00 Asia/Taipei | Evening-commute evidence explainer; measurement-first |
+| Instagram | Daily at 20:00 Asia/Taipei | Post-commute native carousel; format-first cold-start test |
 
 Every recovery post has exactly one experiment type: `interest`, `trust`, `utility`, or `format`. It records the hypothesis, topic, format, follower baseline, primary-metric baseline, real platform post ID, and the latest 1h/24h/168h result.
 
 Recovery safeguards:
 
 1. Legacy queued drafts are ineligible.
-2. Primary-tier sources are preferred inside each topic; social sources are down-ranked, not silently promoted to evidence.
-3. Every factual paragraph needs a named source. Generic `根據報導` attribution, unattributed allegations, and unsupported measured claims trigger a rewrite.
-4. A concrete reader consequence plus a usable next action are both required; risk words or rhetorical questions alone do not count.
-5. Strategy jargon and dramatic frames are held when they obscure the useful point.
-6. Unsupported statistics trigger one rewrite; unresolved drafts are held.
-7. Recovery cadence ignores old live-mode frequency overrides.
-8. No recommendation may increase frequency before 168h evidence.
+2. Source authority is explicit: official record > exchange/company disclosure > public broadcaster/wire > independent fact-check > named media. Feed curation tier alone never turns a media article into a primary record.
+3. A high-risk political, food-safety, legal, corruption, or health allegation from ordinary media is held unless the same event has authoritative corroboration. Broad same-beat matches do not count.
+4. Freshness is measured from actual execution time; a fully stale batch and future-dated poison rows fail closed.
+5. Every factual paragraph needs a named source. Generic `根據報導` attribution, unattributed allegations, and unsupported measured claims trigger a rewrite.
+6. A concrete reader consequence plus a usable next action are both required; risk words or rhetorical questions alone do not count.
+7. Strategy jargon and dramatic frames are held when they obscure the useful point.
+8. Unsupported statistics trigger one rewrite; unresolved drafts are held.
+9. Recovery cadence ignores old live-mode frequency overrides.
+10. No recommendation may increase frequency before seven posts per platform have complete 168h evidence.
 
-The 16:00 Threads slot is a bounded timing hypothesis, not a proven optimum.
-Keep it only after at least three Recovery posts complete their 168h windows;
+Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
+slot until at least seven posts on that platform complete their 168h windows;
 topic, format, and source-quality effects remain possible confounders.
 
 ## Activation sequence

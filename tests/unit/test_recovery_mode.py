@@ -7,6 +7,9 @@ from src import db as dbmod
 from src.recovery_mode import editorial_mandate_for, rank_candidates, record_experiments
 
 
+NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+
+
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -34,7 +37,7 @@ def test_rank_candidates_applies_weight_before_freshness() -> None:
         {"title": "一般消息", "clean_markdown": "沒有特定分類", "published_at": "2026-07-24T10:00:00Z"},
         {"title": "食安事件擴大", "clean_markdown": "食安與產品召回", "published_at": "2026-07-24T09:00:00Z"},
     ]
-    ranked = rank_candidates(conn, rows)
+    ranked = rank_candidates(conn, rows, now=NOW)
     assert ranked[0]["title"] == "食安事件擴大"
 
 
@@ -52,11 +55,13 @@ def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
             "title": "較早的台灣第一手來源",
             "topic_category": "current_affairs",
             "feed_tier": "primary",
+            "feed_name": "食藥署 本署新聞",
+            "tags": '["official","primary-record"]',
             "source_type": "article",
             "published_at": "2026-07-24T09:00:00Z",
         },
     ]
-    ranked = rank_candidates(conn, rows)
+    ranked = rank_candidates(conn, rows, now=NOW)
     assert ranked[0]["title"] == "較早的台灣第一手來源"
 
 
@@ -78,7 +83,7 @@ def test_rank_candidates_downranks_social_source() -> None:
             "published_at": "2026-07-24T09:00:00Z",
         },
     ]
-    ranked = rank_candidates(conn, rows)
+    ranked = rank_candidates(conn, rows, now=NOW)
     assert ranked[0]["title"] == "台灣正式文章"
 
 
@@ -100,7 +105,7 @@ def test_rank_candidates_fail_closed_outside_taiwan_editorial_scope() -> None:
             "published_at": "2026-07-24T09:00:00Z",
         },
     ]
-    ranked = rank_candidates(conn, rows)
+    ranked = rank_candidates(conn, rows, now=NOW)
     assert [row["title"] for row in ranked] == ["食藥署公布台灣食品回收批號"]
 
 
@@ -112,7 +117,7 @@ def test_global_disaster_from_taiwan_media_is_not_automatically_taiwan_relevant(
         "feed_name": "公視新聞 PTS",
         "published_at": "2026-07-24T10:00:00Z",
     }
-    assert rank_candidates(conn, [row]) == []
+    assert rank_candidates(conn, [row], now=NOW) == []
 
 
 def test_public_consequence_outranks_ceremonial_politics() -> None:
@@ -131,26 +136,42 @@ def test_public_consequence_outranks_ceremonial_politics() -> None:
             "published_at": "2026-07-24T09:00:00Z",
         },
     ]
-    assert rank_candidates(conn, rows)[0]["title"] == "食安不合格產品回收批號公布"
+    assert rank_candidates(conn, rows, now=NOW)[0]["title"] == "食安不合格產品回收批號公布"
 
 
 def test_future_dated_row_cannot_evict_current_taiwan_candidates() -> None:
     conn = _conn()
-    now = datetime.now(timezone.utc)
     rows = [
         {
             "title": "台灣食安回收公告",
             "topic_category": "current_affairs",
-            "published_at": now.isoformat(),
+            "published_at": NOW.isoformat(),
         },
         {
-            "title": "Future poison row",
-            "topic_category": "other",
-            "published_at": (now + timedelta(days=3650)).isoformat(),
+            "title": "台灣未來日期污染資料",
+            "topic_category": "current_affairs",
+            "published_at": (NOW + timedelta(days=3650)).isoformat(),
         },
     ]
-    ranked = rank_candidates(conn, rows)
+    ranked = rank_candidates(conn, rows, now=NOW)
     assert [row["title"] for row in ranked] == ["台灣食安回收公告"]
+
+
+def test_entirely_stale_batch_cannot_redefine_freshness_window() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "台灣食安舊公告",
+            "topic_category": "current_affairs",
+            "published_at": (NOW - timedelta(days=10)).isoformat(),
+        },
+        {
+            "title": "台股舊消息",
+            "topic_category": "tw_stocks",
+            "published_at": (NOW - timedelta(days=9)).isoformat(),
+        },
+    ]
+    assert rank_candidates(conn, rows, now=NOW) == []
 
 
 def test_rank_candidates_keeps_owner_submission_for_one_off_post() -> None:
@@ -162,7 +183,7 @@ def test_rank_candidates_keeps_owner_submission_for_one_off_post() -> None:
         "tags": '["user_submission"]',
         "published_at": "2026-07-24T10:00:00Z",
     }
-    assert rank_candidates(conn, [row]) == [row]
+    assert rank_candidates(conn, [row], now=NOW) == [row]
 
 
 def test_record_experiments_is_platform_specific() -> None:
