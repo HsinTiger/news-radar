@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from src import db as dbmod
-from src.recovery_mode import rank_candidates, record_experiments
+from src.recovery_mode import editorial_mandate_for, rank_candidates, record_experiments
 
 
 def _conn() -> sqlite3.Connection:
@@ -60,3 +60,11 @@ def test_record_experiments_is_platform_specific() -> None:
     assert conn.execute(
         "SELECT actual_format FROM recovery_experiments WHERE platform='instagram'"
     ).fetchone()[0] == "feed"
+
+
+def test_editorial_mandate_matches_persisted_experiment_type() -> None:
+    mandate = editorial_mandate_for(
+        {"threads", "instagram"}, "tech_product_launch"
+    )
+    assert "threads: type=utility" in mandate
+    assert "instagram: type=format" in mandate
