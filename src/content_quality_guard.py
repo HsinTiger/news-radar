@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v5"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v6"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -228,18 +228,29 @@ _GENERIC_RECOVERY_SOURCE_PATTERN = re.compile(
     r"\s*(?:報導|指出|表示|公告|資料|數據)",
 )
 _RECOVERY_READER = (
-    r"一般人|消費者|使用者|讀者|上班族|投資人|家長|學生|通勤族|"
-    r"一般通勤者|通勤者|駕駛|旅客|家庭|企業|你"
+    r"一般人|民眾|居民|住戶|消費者|使用者|讀者|上班族|投資人|股民|"
+    r"家長|學生|通勤族|一般通勤者|通勤者|駕駛|旅客|家庭|企業|業者|"
+    r"出口商|製造業|產業|產業界|供應鏈業者|店家|商家|勞工|農民|你"
 )
 _RECOVERY_IMPACT_PATTERN = re.compile(
-    rf"(?:對(?:{_RECOVERY_READER}).{{0,24}}(?:實際|直接|具體)"
-    r"(?:影響|風險|成本)|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
+    rf"(?:對[^。！？\n]{{0,36}}(?:{_RECOVERY_READER})[^。！？\n]{{0,24}}"
+    r"(?:實際|直接|具體)(?:影響|風險|成本)"
+    rf"|對[^。！？\n]{{0,36}}(?:{_RECOVERY_READER})[^。！？\n]{{0,80}}"
+    r"(?:可自行檢視|可以自行檢視|警訊)"
+    r"|(?:這|此).{0,20}(?:對你意味著|會直接影響))",
 )
 _RECOVERY_ACTION_PATTERN = re.compile(
-    rf"(?:(?:{_RECOVERY_READER}).{{0,8}}(?:可以|應該|需要|最好|不妨)"
+    rf"(?:(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
+    r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切)?"
+    r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
+    r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
+    r"關注|採取|納入)"
+    rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}可將[^。！？\n]{{0,20}}"
+    r"(?:納入|列入|通報|備妥|改用|避開)"
     r"|(?:可以|應該|需要|最好)(?:先|再|立即|優先)?"
-    r"(?:查詢|確認|檢查|比較|保留|避開|避免|等待|追蹤|申請|備份|"
-    r"諮詢|停止|關閉|更新|調整)|下一步(?:是|可|可以|應))",
+    r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
+    r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|留意)"
+    r"|下一步(?:是|可|可以|應))",
 )
 _RECOVERY_MEASURED_CLAIM_PATTERN = re.compile(
     r"\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|公頃|公里|公尺|人|件|起|"
@@ -263,7 +274,7 @@ _RECOVERY_FORMULAIC_FRAMES = (
     "神話破滅", "信任崩塌",
 )
 _RECOVERY_TAIWAN_RELEVANCE_PATTERN = re.compile(
-    r"台灣|臺灣|台股|新台幣|國人|民眾|消費者|納稅人|勞工|投資人|家長|"
+    r"台灣|臺灣|全台|全臺|台股|新台幣|國人|民眾|消費者|納稅人|勞工|投資人|家長|"
     r"通勤者|通勤族|立法院|行政院|總統府|食藥署|衛福部|交通部|金管會|"
     r"證交所|櫃買中心|中央銀行|財政部|主計總處|台積電"
 )
@@ -271,7 +282,8 @@ _RECOVERY_HOOK_ACTOR_PATTERN = re.compile(
     r"(?:行政院|立法院|總統府|食藥署|衛福部|交通部|金管會|證交所|"
     r"櫃買中心|中央銀行|財政部|主計總處|審計部|監察院|法務部|農業部|"
     r"環境部|勞動部|經濟部|國發會|國防部|法院|檢方|市府|縣府|"
-    r"民進黨|國民黨|民眾黨|台股|臺股|加權指數|美國|歐盟|聯準會|"
+    r"民進黨|國民黨|民眾黨|台灣|臺灣|全台|全臺|台股|臺股|加權指數|"
+    r"美國|歐盟|聯準會|"
     r"台積電|聯電|聯發科|鴻海|廣達|緯創|台達電|日月光|環球晶|"
     r"華邦電|南亞科|國巨|台塑|"
     r"[A-Za-z0-9一-鿿·．・]{2,16}(?:公司|銀行|金控|政府|市府|"
@@ -279,10 +291,24 @@ _RECOVERY_HOOK_ACTOR_PATTERN = re.compile(
 )
 _RECOVERY_HOOK_CONSEQUENCE_PATTERN = re.compile(
     r"(?:\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|人|件|批|家|元|美元|倍|"
-    r"點|日|年|小時))|(?:公告|公布|宣布|通過|否決|裁罰|起訴|判決|下架|"
+    r"點|日|年|小時|分鐘|秒|個|公里|公尺|毫米|公厘|縣市|村|里|村里))|"
+    r"(?:公告|公布|宣布|通過|否決|裁罰|起訴|判決|下架|"
     r"回收|停產|停業|暫停|恢復|調漲|調降|上調|下調|失守|大跌|暴跌|"
     r"上漲|下跌|增加|減少|超標|不合格|生效|延後|取消|刪減|凍結|"
     r"解禁|召回|關稅|缺藥|停電)"
+)
+
+_RECOVERY_CONTEXTUAL_SOURCE_PATTERN = re.compile(
+    r"(?:USTR|NCC|美國貿易代表署|國家通訊傳播委員會|路透(?:社)?|彭博|"
+    r"BBC|CNBC|華爾街日報|金融時報|美聯社|中央社|公視|行政院|立法院|"
+    r"總統府|證交所|櫃買中心|金管會|中央銀行|財政部|主計總處|審計部|"
+    r"監察院|法務部|農業部|環境部|勞動部|經濟部|國發會|國防部|交通部|"
+    r"衛福部|食藥署|法院|檢方|[A-Za-z0-9\u4e00-\u9fff·．・]{2,24}"
+    r"(?:部|署|會|院|局|市府|縣府|法院|檢方|研究院|大學|協會))"
+    r"[^。！？\n]{0,48}"
+    r"(?:報導|公告|新聞稿|指出|表示|證實|回應|資料|數據|報告|調查|統計|"
+    r"財報|法說|說法|宣布|宣佈|說明|強調|提醒|分析)",
+    re.IGNORECASE,
 )
 
 # Pattern 9：LLM 開場套話——用中間有空白的版本抓 "在 數位化 的 浪潮 中"
@@ -360,19 +386,41 @@ def _generic_recovery_source(full_text: str, _title: str) -> Optional[str]:
     return f"generic_source:{match.group(0)}" if match else None
 
 
+def _has_recovery_named_source(text: str) -> bool:
+    return bool(
+        _RECOVERY_NAMED_SOURCE_PATTERN.search(text)
+        or _RECOVERY_CONTEXTUAL_SOURCE_PATTERN.search(text)
+    )
+
+
 def _recovery_fact_without_local_source(
     full_text: str, _title: str
 ) -> Optional[str]:
-    for paragraph in re.split(r"\n\s*\n", full_text):
-        if not paragraph.strip():
-            continue
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", full_text)
+        if paragraph.strip()
+    ]
+    for index, paragraph in enumerate(paragraphs):
         factual = "已知事實" in paragraph or _RECOVERY_MEASURED_CLAIM_PATTERN.search(
             paragraph
         )
-        named = _RECOVERY_NAMED_SOURCE_PATTERN.search(paragraph)
+        # FB/IG prepend a one-line title.  A sourced numeric hook is valid when
+        # the immediately following paragraph names the source; forcing
+        # "根據..." into the headline conflicts with the 45-character hook.
+        if (
+            index == 0
+            and factual
+            and len(paragraph) <= 120
+            and "\n" not in paragraph
+            and len(paragraphs) > 1
+            and _has_recovery_named_source(paragraphs[1])
+        ):
+            continue
+        named = _has_recovery_named_source(paragraph)
         generic = _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
         if factual and (not named or generic):
-            return "fact_paragraph_without_named_source:" + paragraph.strip()[:80]
+            return "fact_paragraph_without_named_source:" + paragraph[:80]
     return None
 
 
@@ -387,7 +435,7 @@ def _recovery_unattributed_allegation(
         if term is None:
             continue
         attributed = (
-            _RECOVERY_NAMED_SOURCE_PATTERN.search(sentence)
+            _has_recovery_named_source(sentence)
             and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(sentence)
         ) or any(
             verb in sentence for verb in _RECOVERY_ATTRIBUTION_VERBS
@@ -520,7 +568,7 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
         message="Recovery Mode 要求具名來源，避免讀者把自動生成內容當成無來源事實",
         matcher=lambda ft, _t: (
             "no_named_source_marker"
-            if not _RECOVERY_NAMED_SOURCE_PATTERN.search(ft)
+            if not _has_recovery_named_source(ft)
             else None
         ),
     ),
