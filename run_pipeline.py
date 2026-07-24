@@ -92,6 +92,30 @@ def candidate_scan_limit() -> int:
     return RECOVERY_MAX_POSTS_PER_SLOT if is_recovery_mode() else MAX_POSTS_PER_SLOT
 
 
+def _is_recovery_market_benchmark(
+    *,
+    topic: str | None,
+    source_label: str,
+    title: str,
+    content: str,
+) -> bool:
+    """Identify a primary whole-market benchmark, never a company procedure notice."""
+
+    if topic != "tw_stocks" or not any(
+        marker in source_label for marker in ("證交所", "櫃買")
+    ):
+        return False
+    evidence = f"{title}\n{content}"
+    has_market_index = any(
+        marker in evidence
+        for marker in ("發行量加權股價指數", "加權股價指數", "櫃買指數")
+    )
+    has_market_scope = any(
+        marker in evidence for marker in ("總市值", "全市場", "整體市場")
+    )
+    return has_market_index and has_market_scope
+
+
 def _recovery_rewrite_guidance(
     rewrite_codes: set[str],
     *,
@@ -1442,13 +1466,24 @@ async def process_item(
         status="pending_review",
     )
 
+    market_benchmark = is_recovery_mode() and _is_recovery_market_benchmark(
+        topic=topic_cls.category_id,
+        source_label=str(row["feed_name"] or ""),
+        title=title,
+        content=content,
+    )
     auto_publish = (
-        (owner_submitted or score >= publish_threshold)
+        (owner_submitted or score >= publish_threshold or market_benchmark)
         and not rewrite_unresolved
     )
     if auto_publish:
         draft.status = "auto_approved"
-        reason = "owner submission" if owner_submitted else f"分數 ≥ {publish_threshold}"
+        if owner_submitted:
+            reason = "owner submission"
+        elif score >= publish_threshold:
+            reason = f"分數 ≥ {publish_threshold}"
+        else:
+            reason = "官方全市場 benchmark + quality PASS"
         print(f" ↳ [Auto-Publish] {reason}，啟動指定平台發布")
     elif rewrite_unresolved:
         print(

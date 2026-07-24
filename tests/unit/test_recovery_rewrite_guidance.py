@@ -6,6 +6,7 @@ from run_pipeline import (
     _deterministic_recovery_inference_prune,
     _deterministic_recovery_stat_prune,
     _deterministic_recovery_utility_repair,
+    _is_recovery_market_benchmark,
     _quality_rewrite_penalty,
     _recovery_rewrite_guidance,
 )
@@ -239,3 +240,18 @@ def test_best_of_repair_penalty_prefers_fewer_rewrite_issues() -> None:
     }
 
     assert _quality_rewrite_penalty(one_issue) < _quality_rewrite_penalty(degraded)
+
+
+def test_recovery_market_benchmark_excludes_company_procedure_notice() -> None:
+    assert _is_recovery_market_benchmark(
+        topic="tw_stocks",
+        source_label="證交所 官方訊息",
+        title="本週發行量加權股價指數上漲2.3%",
+        content="上市股票總市值達142.58兆元。",
+    )
+    assert not _is_recovery_market_benchmark(
+        topic="tw_stocks",
+        source_label="證交所 官方訊息",
+        title="英柏得科技申請股票上市",
+        content="公司送件申請上市，公告資本額與產品。",
+    )
