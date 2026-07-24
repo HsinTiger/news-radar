@@ -17,6 +17,7 @@ class PlatformDecision:
     due: bool
     reason: str
     posts_today: int
+    quality_attempts_today: int
     last_success: str | None
     target_posts_per_day: int
     minimum_interval_hours: float
@@ -168,6 +169,26 @@ def decide_schedule(
         ).fetchone()
         last_value = row["last_success"] if row else None
         posts_today = int((row["posts_today"] if row else 0) or 0)
+        quality_attempts_today = 0
+        if mode == "recovery":
+            try:
+                attempt_row = conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT draft_id) AS attempts
+                      FROM content_quality_evaluations
+                     WHERE platform=? AND stage='compose'
+                       AND guard_version LIKE '%.taiwan-daily-%'
+                       AND datetime(checked_at) >= datetime(?)
+                       AND datetime(checked_at) < datetime(?)
+                    """,
+                    (platform, start_utc, end_utc),
+                ).fetchone()
+                quality_attempts_today = int(
+                    (attempt_row["attempts"] if attempt_row else 0) or 0
+                )
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc).lower():
+                    raise
         last = _parse_timestamp(last_value)
         interval = timedelta(hours=float(config["minimum_interval_hours"]))
         slot_ok = _inside_slot(
@@ -177,16 +198,19 @@ def decide_schedule(
         )
         local_days = [int(value) for value in config.get("local_days", range(7))]
         day_ok = local.weekday() in local_days
-        quota_ok = posts_today < int(config["target_posts_per_day"])
+        post_quota_ok = posts_today < int(config["target_posts_per_day"])
+        attempt_quota_ok = mode != "recovery" or quality_attempts_today == 0
         interval_ok = last is None or now_utc - last >= interval
-        due = day_ok and slot_ok and quota_ok and interval_ok
+        due = day_ok and slot_ok and post_quota_ok and attempt_quota_ok and interval_ok
         reasons = []
         if not day_ok:
             reasons.append("outside_local_day")
         if not slot_ok:
             reasons.append("outside_local_slot")
-        if not quota_ok:
+        if not post_quota_ok:
             reasons.append("daily_quota_reached")
+        if not attempt_quota_ok:
+            reasons.append("daily_attempt_quota_reached")
         if not interval_ok:
             reasons.append("minimum_interval_not_reached")
         if due:
@@ -197,6 +221,7 @@ def decide_schedule(
                 due=due,
                 reason=",".join(reasons),
                 posts_today=posts_today,
+                quality_attempts_today=quality_attempts_today,
                 last_success=last_value,
                 target_posts_per_day=int(config["target_posts_per_day"]),
                 minimum_interval_hours=float(config["minimum_interval_hours"]),
