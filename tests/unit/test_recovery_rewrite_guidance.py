@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from run_pipeline import (
     _deterministic_recovery_closing_repair,
+    _deterministic_recovery_hashtag_prune,
     _deterministic_recovery_stat_prune,
     _deterministic_recovery_utility_repair,
     _quality_rewrite_penalty,
@@ -152,6 +153,41 @@ def test_deterministic_market_stat_prune_drops_secondary_stat_paragraph() -> Non
     assert "9.04%" not in repaired
     assert "37.64%" not in repaired
     assert "platform_stat_overload" not in codes
+    assert "generic_engagement_bait" not in codes
+
+
+def test_deterministic_facebook_repairs_question_before_hashtags() -> None:
+    body = (
+        "根據證交所公告，加權指數本週上漲2.3%。\n\n"
+        "投資人可比較自己的同期間報酬與產業曝險。\n\n"
+        "下週臺股能否延續漲勢？哪些產業將成為資金焦點？\n\n"
+        "#台股 #證交所 #市場數據 #投資"
+    )
+    source = "加權指數本週上漲2.3%。"
+
+    pruned = _deterministic_recovery_hashtag_prune(body, platform="fb")
+    repaired = _deterministic_recovery_closing_repair(
+        pruned,
+        platform="fb",
+        topic="tw_stocks",
+        source_evidence_text=source,
+        source_label="證交所 官方訊息",
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "facebook",
+            repaired,
+            title="台股週報",
+            recovery=True,
+        )
+    }
+
+    assert repaired.count("#") == 3
+    assert repaired.count("？") == 1
+    assert repaired.index("你的投資組合有跑贏嗎？") < repaired.index("#台股")
+    assert "platform_hashtag_overload" not in codes
+    assert "multiple_closing_questions" not in codes
     assert "generic_engagement_bait" not in codes
 
 

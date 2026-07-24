@@ -288,10 +288,16 @@ def _deterministic_recovery_closing_repair(
         }
     question = questions.get(platform, questions["threads"])
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    trailing_hashtags: list[str] = []
+    while paragraphs and all(
+        token.startswith("#") for token in paragraphs[-1].split()
+    ):
+        trailing_hashtags.insert(0, paragraphs.pop())
     if paragraphs and re.search(r"[？?]", paragraphs[-1]):
         paragraphs[-1] = question
     else:
         paragraphs.append(question)
+    paragraphs.extend(trailing_hashtags)
     return "\n\n".join(paragraphs)
 
 
@@ -340,6 +346,28 @@ def _deterministic_recovery_stat_prune(
     if not kept or not kept_allowed_stat:
         return body
     return "\n\n".join(kept)
+
+
+def _deterministic_recovery_hashtag_prune(body: str, *, platform: str) -> str:
+    """Keep only the platform's allowed leading hashtags without touching prose."""
+
+    limit = {"threads": 1, "fb": 3, "ig": 5}.get(platform)
+    if limit is None:
+        return body
+    seen = 0
+
+    def keep_allowed(match: re.Match[str]) -> str:
+        nonlocal seen
+        seen += 1
+        return match.group(0) if seen <= limit else ""
+
+    repaired = re.sub(r"(?<!\w)#[^\s#]+", keep_allowed, body)
+    paragraphs = [
+        re.sub(r"[ \t]+", " ", part).strip()
+        for part in re.split(r"\n\s*\n", repaired)
+        if part.strip()
+    ]
+    return "\n\n".join(paragraphs)
 
 
 def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
@@ -1295,6 +1323,7 @@ async def process_item(
         }
         deterministic_codes = closing_codes | {
             "missing_reader_utility",
+            "platform_hashtag_overload",
             "platform_stat_overload",
         }
         if remaining_codes and remaining_codes <= deterministic_codes:
@@ -1306,6 +1335,11 @@ async def process_item(
                     if issue.severity == "rewrite"
                 }
                 repaired_body = variant.body
+                if "platform_hashtag_overload" in platform_codes:
+                    repaired_body = _deterministic_recovery_hashtag_prune(
+                        repaired_body,
+                        platform=platform_key,
+                    )
                 if "platform_stat_overload" in platform_codes:
                     repaired_body = _deterministic_recovery_stat_prune(
                         repaired_body,
@@ -1338,7 +1372,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 stats/utility/closing；"
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 stats/utility/closing/tags；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 
