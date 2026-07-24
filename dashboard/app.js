@@ -9,19 +9,20 @@
     instagram: { label: "Instagram", short: "IG", color: "#d977d3" },
     threads: { label: "Threads", short: "TH", color: "#55d8e6" },
   };
+  const EXPERIMENT_COPY = { interest:"興趣", trust:"信任", utility:"實用性", format:"格式" };
   const STATUS_COPY = {
     queued: "等待 poller", claimed: "已領取", dispatched: "已派送",
     processing: "處理中", content_queued: "內容已入佇列", source_queued: "素材已入庫",
     draft_created: "草稿已建立", published: "已發布", partial: "部分平台已發布",
     quality_held: "品質待複核", failed: "失敗", rejected: "拒絕",
-    planned: "規劃中", deleted: "已刪除", unknown: "未知",
+    planned: "規劃中", measuring: "量測中", complete: "已收滿 168h", deleted: "已刪除", unknown: "未知",
     proposed: "待 owner 決策", approved: "已批准", applied: "已套用",
     superseded: "已取代",
   };
   const HEALTH_COPY = {
     substack_draft_worker: "Substack 草稿 worker",
   };
-  const GOOD = new Set(["published", "draft_created", "healthy", "approved", "applied"]);
+  const GOOD = new Set(["published", "complete", "draft_created", "healthy", "approved", "applied"]);
   const BAD = new Set(["failed", "rejected", "error"]);
   const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
   let chart = null;
@@ -101,6 +102,7 @@
 
   function render(data) {
     renderAutomation(data.automation || {});
+    renderRecovery(data.recovery || {}, data.automation || {});
     renderKpis(data);
     renderPlatforms(data);
     renderTrend(data.engagement_trend || []);
@@ -117,7 +119,57 @@
   function renderAutomation(automation) {
     const mode = automation.mode || "unknown";
     $("automation-mode").textContent = mode.toUpperCase();
-    $("mode-dot").className = `state-dot ${mode === "live" ? "live" : (mode === "paused" ? "paused" : "error")}`;
+    $("mode-dot").className = `state-dot ${mode === "live" ? "live" : (mode === "recovery" ? "recovery" : (mode === "paused" ? "paused" : "error"))}`;
+  }
+
+  function renderRecovery(recovery, automation) {
+    const host = $("recovery-list");
+    const summary = $("recovery-summary");
+    clear(host); clear(summary);
+    const rows = recovery.experiments || [];
+    const completed = rows.filter(row => row.status === "complete").length;
+    const measuring = rows.filter(row => row.status === "measuring" || row.status === "published").length;
+    summary.append(
+      metric("Runtime", text(automation.mode, "unknown").toUpperCase(), `來源 ${text(automation.source,"unknown")} · ${when(automation.updated_at)}`),
+      metric("實驗", fmt(rows.length), `${fmt(measuring)} measuring · ${fmt(completed)} complete`),
+      metric("決策規則", "1 / 24 / 168h", "沒有 post ID 或資料退化時禁止放大"),
+    );
+    if (!rows.length) {
+      empty(host, "尚無 Recovery 實驗；paused 狀態下這是預期結果。");
+      return;
+    }
+    rows.slice(0, 18).forEach(item => {
+      const card = node("article", "recovery-card");
+      const head = node("div", "recovery-card-head");
+      head.append(
+        node("div", "row-title", `${PLATFORM_META[item.platform]?.label || item.platform} · ${EXPERIMENT_COPY[item.experiment_type] || item.experiment_type}`),
+        badge(item.status),
+      );
+      const hypothesis = node("div", "row-detail", item.hypothesis || "未記錄 hypothesis");
+      const follower = item.follower_delta === null || item.follower_delta === undefined
+        ? "follower Δ UNKNOWN"
+        : `follower Δ ${item.follower_delta >= 0 ? "+" : ""}${fmt(item.follower_delta)}`;
+      const bucket = item.post_age_hours === null || item.post_age_hours === undefined
+        ? "等待 1h"
+        : `${fmt(item.post_age_hours)}h`;
+      const result = node("div", "recovery-result");
+      result.append(
+        metric(item.baseline_primary_metric || "primary", fmt(item.primary_value), `baseline ${item.baseline_primary_value === null || item.baseline_primary_value === undefined ? "UNKNOWN" : fmt(item.baseline_primary_value)}`),
+        metric("Actions", fmt(item.actions), `${bucket} snapshot`),
+        metric("Followers", item.current_followers === null || item.current_followers === undefined ? "UNKNOWN" : fmt(item.current_followers), follower),
+      );
+      const recommendation = node(
+        "div",
+        `recommendation ${/stop|revise|fix/.test(item.recommendation_code || "") ? "bad" : ""}`,
+        item.recommendation || "等待 evidence",
+      );
+      const formatEvidence = item.actual_format
+        ? `實際 ${item.actual_format}`
+        : `預定 ${item.content_format || "feed"}`;
+      const meta = node("div", "row-meta", `${formatEvidence} · ${item.topic || "unclassified"} · 發布 ${when(item.posted_at)}`);
+      card.append(head, hypothesis, result, recommendation, meta);
+      host.appendChild(card);
+    });
   }
 
   function renderKpis(data) {

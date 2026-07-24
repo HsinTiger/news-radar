@@ -21,8 +21,8 @@ permissions:
 
 jobs:
   decide:
-    # Repository variable is intentionally absent/paused during migration.
-    if: vars.AUTOMATION_MODE == 'live'
+    # Recovery is a bounded, platform-specific envelope; paused remains a hard stop.
+    if: vars.AUTOMATION_MODE == 'live' || vars.AUTOMATION_MODE == 'recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -42,19 +42,22 @@ jobs:
         id: policy
         env:
           REQUESTED_NOW: ${{ inputs.now }}
+          AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}
         run: |
           EXTRA=()
           [ -n "$REQUESTED_NOW" ] && EXTRA=(--now "$REQUESTED_NOW")
-          python scripts/adaptive_dispatch.py "${EXTRA[@]}"
+          python scripts/adaptive_dispatch.py --mode "$AUTOMATION_MODE" "${EXTRA[@]}"
       - name: Dispatch production pipeline
         if: steps.policy.outputs.dispatch == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PLATFORMS: ${{ steps.policy.outputs.platforms }}
+          AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}
         run: |
           gh workflow run full_pipeline.yml \
             --ref main \
             -f platforms="$PLATFORMS" \
+            -f automation_mode="$AUTOMATION_MODE" \
             -f dispatch_reason="adaptive-scheduler:${{ github.run_id }}"
       - name: Upload decision evidence
         if: always()

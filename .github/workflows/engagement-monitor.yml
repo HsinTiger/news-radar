@@ -73,6 +73,8 @@ jobs:
         env:
           SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
           SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}
+          SUBMISSION_PROCESSOR_MODE: ${{ vars.SUBMISSION_PROCESSOR_MODE }}
         run: python scripts/sync_social_ops.py --knowledge-limit 100
       - name: Release canonical state write lease
         if: always()

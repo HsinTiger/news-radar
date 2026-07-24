@@ -890,6 +890,27 @@ def enqueue_draft(
     conn.commit()
 
 
+def mark_recovery_actual_format(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    platform: str,
+    actual_format: str,
+    observed_at: str,
+) -> None:
+    """Record the API path that actually succeeded, not the intended format."""
+    if actual_format not in {"feed", "carousel", "reel"}:
+        raise ValueError(f"unsupported recovery format: {actual_format}")
+    conn.execute(
+        """
+        UPDATE recovery_experiments
+           SET actual_format=?,actual_format_at=?
+         WHERE draft_id=? AND platform=?
+        """,
+        (actual_format, observed_at, draft_id, platform),
+    )
+    conn.commit()
+
+
 def _pending_platform_clause(platforms) -> tuple[str, list[str]]:
     targets = sorted({str(value) for value in (platforms or []) if value})
     if not targets:
@@ -911,10 +932,35 @@ def _pending_platform_clause(platforms) -> tuple[str, list[str]]:
     )
 
 
+def _recovery_experiment_clause(
+    recovery_only: bool,
+    platforms,
+) -> tuple[str, list[str]]:
+    if not recovery_only:
+        return "", []
+    targets = sorted({str(value) for value in (platforms or []) if value})
+    if not targets:
+        return (
+            " AND EXISTS (SELECT 1 FROM recovery_experiments rx WHERE rx.draft_id=d.id)",
+            [],
+        )
+    placeholders = ",".join("?" * len(targets))
+    return (
+        f"""
+          AND EXISTS (
+            SELECT 1 FROM recovery_experiments rx
+             WHERE rx.draft_id=d.id AND rx.platform IN ({placeholders})
+          )
+        """,
+        targets,
+    )
+
+
 def pick_freshest_queued(
     conn: sqlite3.Connection,
     prefer_categories=None,
     platforms=None,
+    recovery_only: bool = False,
 ) -> Optional[sqlite3.Row]:
     """Cloud publisher 的主選稿邏輯：挑 news_items.published_at 最新的那筆 queued draft。
 
@@ -956,6 +1002,9 @@ def pick_freshest_queued(
           AND d.status IN ('approved', 'auto_approved')
     """
     platform_sql, platform_params = _pending_platform_clause(platforms)
+    recovery_sql, recovery_params = _recovery_experiment_clause(
+        recovery_only, platforms
+    )
     # EDITORIAL_MODE 時段路由：先試「該 slot 桶」裡最新的 queued draft；桶內沒料就
     # 落到下面原本的 freshness-first（Phase 8.18 契約，預設 prefer_categories=None 完全不變）。
     if prefer_categories:
@@ -963,29 +1012,38 @@ def pick_freshest_queued(
         if cats:
             ph = ",".join("?" * len(cats))
             row = conn.execute(
-                _base + platform_sql
+                _base + platform_sql + recovery_sql
                 + f" AND n.topic_category IN ({ph}) ORDER BY n.published_at DESC LIMIT 1",
-                tuple(platform_params + cats),
+                tuple(platform_params + recovery_params + cats),
             ).fetchone()
             if row is not None:
                 return row
     return conn.execute(
-        _base + platform_sql + " ORDER BY n.published_at DESC LIMIT 1",
-        tuple(platform_params),
+        _base + platform_sql + recovery_sql + " ORDER BY n.published_at DESC LIMIT 1",
+        tuple(platform_params + recovery_params),
     ).fetchone()
 
 
-def count_queued_pending_for_platforms(conn: sqlite3.Connection, platforms) -> int:
+def count_queued_pending_for_platforms(
+    conn: sqlite3.Connection,
+    platforms,
+    *,
+    recovery_only: bool = False,
+) -> int:
     """Count queued drafts that still owe at least one requested platform."""
     platform_sql, platform_params = _pending_platform_clause(platforms)
+    recovery_sql, recovery_params = _recovery_experiment_clause(
+        recovery_only, platforms
+    )
     row = conn.execute(
         """SELECT COUNT(DISTINCT d.id)
              FROM drafts d
             WHERE d.queue_status='queued'
               AND d.status IN ('approved','auto_approved')
         """
-        + platform_sql,
-        tuple(platform_params),
+        + platform_sql
+        + recovery_sql,
+        tuple(platform_params + recovery_params),
     ).fetchone()
     return int(row[0]) if row else 0
 
@@ -994,6 +1052,7 @@ def count_queued_in_categories(
     conn: sqlite3.Connection,
     categories,
     platforms=None,
+    recovery_only: bool = False,
 ) -> int:
     """數 queued（可直接發）draft 中、topic_category 落在 categories 的筆數。
     給 EDITORIAL_MODE 的時段 buffer 用：某 slot 桶還沒料就該 compose，即使總 buffer 已被
@@ -1003,12 +1062,15 @@ def count_queued_in_categories(
         return 0
     ph = ",".join("?" * len(cats))
     platform_sql, platform_params = _pending_platform_clause(platforms)
+    recovery_sql, recovery_params = _recovery_experiment_clause(
+        recovery_only, platforms
+    )
     row = conn.execute(
         f"""SELECT COUNT(*) FROM drafts d JOIN news_items n ON d.news_id = n.id
             WHERE d.queue_status = 'queued' AND d.status IN ('approved','auto_approved')
-              {platform_sql}
+              {platform_sql} {recovery_sql}
               AND n.topic_category IN ({ph})""",
-        tuple(platform_params + cats),
+        tuple(platform_params + recovery_params + cats),
     ).fetchone()
     return int(row[0]) if row else 0
 
@@ -1016,6 +1078,7 @@ def count_queued_in_categories(
 def pick_fallback_any_approved(
     conn: sqlite3.Connection,
     platforms=None,
+    recovery_only: bool = False,
 ) -> Optional[sqlite3.Row]:
     """2h lower bound degradation：過了兩小時還沒發，queue 又空，
     放寬條件挑 status='approved' 的（含 queue_status='stale' 的）硬發一則，
@@ -1027,6 +1090,9 @@ def pick_fallback_any_approved(
     只有在『queue 空、走 fallback』的情境才讓 topic weight 發聲。
     """
     platform_sql, platform_params = _pending_platform_clause(platforms)
+    recovery_sql, recovery_params = _recovery_experiment_clause(
+        recovery_only, platforms
+    )
     return conn.execute(
         """
         SELECT d.*,
@@ -1042,12 +1108,12 @@ def pick_fallback_any_approved(
         JOIN news_items n ON d.news_id = n.id
         WHERE d.status IN ('approved', 'auto_approved')
           AND (d.queue_status IS NULL OR d.queue_status IN ('queued', 'stale'))
-        """ + platform_sql + """
+        """ + platform_sql + recovery_sql + """
         ORDER BY COALESCE(n.weighted_score, 0) DESC,
                  n.published_at DESC
         LIMIT 1
         """,
-        tuple(platform_params),
+        tuple(platform_params + recovery_params),
     ).fetchone()
 
 

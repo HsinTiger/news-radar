@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-23.v5";
+const API_VERSION = "2026-07-24.recovery-v6";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -480,9 +480,11 @@ function jsonValue(value, max = 20_000) {
 async function syncOperationalData(request, env, cors) {
   const body = await bodyJson(request, 500_000);
   const groups = {
+    automation: listField(body, "automation"),
     posts: listField(body, "posts"),
     engagement: listField(body, "engagement"),
     quality: listField(body, "quality"),
+    experiments: listField(body, "experiments"),
     knowledge: listField(body, "knowledge"),
     audience: listField(body, "audience"),
     health: listField(body, "health"),
@@ -494,6 +496,105 @@ async function syncOperationalData(request, env, cors) {
 
   const statements = [];
   const counts = {};
+  for (const row of groups.automation) {
+    const id = cleanString(row.id, "automation.id", 20, true);
+    const mode = cleanString(row.mode, "automation.mode", 20, true);
+    const processor = cleanString(
+      row.submission_processor,
+      "automation.submission_processor",
+      20,
+      true,
+    );
+    if (id !== "runtime" || !new Set(["paused", "recovery", "live"]).has(mode)) {
+      throw new HTTPError(400, "invalid automation state", "invalid_input");
+    }
+    if (!new Set(["paused", "live"]).has(processor)) {
+      throw new HTTPError(400, "invalid submission processor state", "invalid_input");
+    }
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO automation_state(id,mode,submission_processor,source,detail,updated_at)
+         VALUES(?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET mode=excluded.mode,
+           submission_processor=excluded.submission_processor,source=excluded.source,
+           detail=excluded.detail,updated_at=excluded.updated_at`,
+      ).bind(
+        id,
+        mode,
+        processor,
+        cleanString(row.source, "automation.source", 80, true),
+        cleanString(row.detail, "automation.detail", 1000),
+        cleanString(row.updated_at, "automation.updated_at", 60, true),
+      ),
+    );
+  }
+  counts.automation = groups.automation.length;
+
+  for (const row of groups.experiments) {
+    const platform = cleanString(row.platform, "experiment.platform", 20, true);
+    const experimentType = cleanString(
+      row.experiment_type,
+      "experiment.type",
+      20,
+      true,
+    );
+    const contentFormat = cleanString(row.content_format, "experiment.format", 20, true);
+    const actualFormat = cleanString(row.actual_format, "experiment.actual_format", 20);
+    if (!PLATFORMS.has(platform)) {
+      throw new HTTPError(400, "unknown experiment platform", "invalid_input");
+    }
+    if (!new Set(["interest", "trust", "utility", "format"]).has(experimentType)) {
+      throw new HTTPError(400, "unknown experiment type", "invalid_input");
+    }
+    if (!new Set(["feed", "carousel", "reel"]).has(contentFormat)) {
+      throw new HTTPError(400, "invalid experiment format", "invalid_input");
+    }
+    if (actualFormat && !new Set(["feed", "carousel", "reel"]).has(actualFormat)) {
+      throw new HTTPError(400, "invalid actual experiment format", "invalid_input");
+    }
+    const rawBaseline = row.baseline_primary_value;
+    const baselineValue = rawBaseline === null || rawBaseline === undefined
+      ? null
+      : Number(rawBaseline);
+    if (baselineValue !== null && !Number.isFinite(baselineValue)) {
+      throw new HTTPError(400, "invalid experiment baseline", "invalid_input");
+    }
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO recovery_experiments(
+          id,draft_id,platform,experiment_type,hypothesis,baseline_followers,
+          baseline_primary_metric,baseline_primary_value,baseline_captured_at,
+          content_format,actual_format,actual_format_at,topic,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET experiment_type=excluded.experiment_type,
+          hypothesis=excluded.hypothesis,baseline_followers=excluded.baseline_followers,
+          baseline_primary_metric=excluded.baseline_primary_metric,
+          baseline_primary_value=excluded.baseline_primary_value,
+          baseline_captured_at=excluded.baseline_captured_at,
+          content_format=excluded.content_format,actual_format=excluded.actual_format,
+          actual_format_at=excluded.actual_format_at,topic=excluded.topic,
+          updated_at=excluded.updated_at`,
+      ).bind(
+        cleanString(row.id, "experiment.id", 200, true),
+        cleanString(row.draft_id, "experiment.draft_id", 160, true),
+        platform,
+        experimentType,
+        cleanString(row.hypothesis, "experiment.hypothesis", 1500, true),
+        nullableInteger(row.baseline_followers),
+        cleanString(row.baseline_primary_metric, "experiment.baseline_metric", 40, true),
+        baselineValue,
+        cleanString(row.baseline_captured_at, "experiment.baseline_at", 60, true),
+        contentFormat,
+        actualFormat || null,
+        cleanString(row.actual_format_at, "experiment.actual_format_at", 60) || null,
+        cleanString(row.topic, "experiment.topic", 100) || null,
+        cleanString(row.created_at, "experiment.created_at", 60, true),
+        new Date().toISOString(),
+      ),
+    );
+  }
+  counts.experiments = groups.experiments.length;
+
   for (const row of groups.posts) {
     const platform = cleanString(row.platform, "platform", 20, true);
     if (!PLATFORMS.has(platform)) throw new HTTPError(400, "unknown post platform", "invalid_input");
@@ -794,7 +895,8 @@ async function audit(env, actor, action, subjectId, status, metadata) {
 async function dashboard(env, cors) {
   const [
     submissions, recentSubmissions, posts, recentPosts, engagement, engagementTrend,
-    audience, quality, proposals, knowledgeTopics, knowledgeTotal, health, events,
+    audience, quality, proposals, knowledgeTopics, knowledgeTotal, health,
+    runtimeState, recoveryExperiments, events,
   ] = await env.DB.batch([
     env.DB.prepare("SELECT target,status,COUNT(*) AS count FROM submissions GROUP BY target,status"),
     env.DB.prepare(`SELECT id,target,source_type,note,platforms_json,requested_mode,status,
@@ -849,16 +951,42 @@ async function dashboard(env, cors) {
       SELECT *,ROW_NUMBER() OVER(PARTITION BY platform,metric ORDER BY captured_at DESC) AS rn
       FROM data_health_snapshots
     ) SELECT platform,metric,status,detail,captured_at FROM ranked WHERE rn=1 ORDER BY platform,metric`),
+    env.DB.prepare("SELECT mode,submission_processor,source,detail,updated_at FROM automation_state WHERE id='runtime'"),
+    env.DB.prepare(`WITH ranked_posts AS (
+      SELECT *,ROW_NUMBER() OVER(
+        PARTITION BY draft_id,platform ORDER BY COALESCE(posted_at,updated_at) DESC
+      ) AS rn FROM platform_posts
+    ), ranked_engagement AS (
+      SELECT *,ROW_NUMBER() OVER(
+        PARTITION BY platform,platform_post_id ORDER BY post_age_hours DESC,captured_at DESC
+      ) AS rn FROM engagement_snapshots
+    ), ranked_audience AS (
+      SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
+      FROM audience_snapshots
+    )
+    SELECT r.*,p.status AS publish_status,p.platform_post_id,p.posted_at,
+      e.post_age_hours,e.views,e.reach,e.clicks,e.likes,e.comments,e.shares,
+      e.saves,e.replies,e.reposts,e.quotes,e.metric_status,e.captured_at AS result_captured_at,
+      a.followers AS current_followers,a.captured_at AS followers_captured_at
+    FROM recovery_experiments r
+    LEFT JOIN ranked_posts p ON p.draft_id=r.draft_id AND p.platform=r.platform AND p.rn=1
+    LEFT JOIN ranked_engagement e ON e.platform=p.platform
+      AND e.platform_post_id=p.platform_post_id AND e.rn=1
+    LEFT JOIN ranked_audience a ON a.platform=r.platform AND a.rn=1
+    ORDER BY r.created_at DESC LIMIT 50`),
     env.DB.prepare("SELECT actor,action,subject_id,status,created_at FROM audit_events ORDER BY id DESC LIMIT 50"),
   ]);
+  const runtime = runtimeState.results[0] || {};
   return reply(
     {
       ok: true,
       version: API_VERSION,
       generated_at: new Date().toISOString(),
       automation: {
-        mode: env.AUTOMATION_MODE || "paused",
-        submission_processor: env.SUBMISSION_PROCESSOR_MODE || "paused",
+        mode: runtime.mode || env.AUTOMATION_MODE || "paused",
+        submission_processor: runtime.submission_processor || env.SUBMISSION_PROCESSOR_MODE || "paused",
+        source: runtime.source || "worker_fallback",
+        updated_at: runtime.updated_at || null,
         meta_publish_now_enabled: env.ENABLE_META_PUBLISH_NOW === "true",
         substack_auto_publish: false,
       },
@@ -890,9 +1018,81 @@ async function dashboard(env, cors) {
         topics: knowledgeTopics.results,
       },
       data_health: health.results,
+      recovery: {
+        experiments: recoveryExperiments.results.map(recoveryExperimentView),
+      },
       recent_events: events.results,
     },
     200,
     cors,
   );
+}
+
+function recoveryExperimentView(row) {
+  const actions = integer(row.likes) + integer(row.comments) + integer(row.shares)
+    + integer(row.saves) + integer(row.replies) + integer(row.reposts)
+    + integer(row.quotes) + integer(row.clicks);
+  const primaryMetric = row.baseline_primary_metric;
+  const primaryValue = primaryMetric === "clicks"
+    ? integer(row.clicks)
+    : primaryMetric === "reach"
+      ? integer(row.reach)
+      : integer(row.views);
+  const followerDelta = row.current_followers === null || row.current_followers === undefined
+    || row.baseline_followers === null || row.baseline_followers === undefined
+    ? null
+    : Number(row.current_followers) - Number(row.baseline_followers);
+  const bucket = row.post_age_hours === null || row.post_age_hours === undefined
+    ? null
+    : Number(row.post_age_hours);
+  let status = "planned";
+  let recommendationCode = "wait_for_publish";
+  let recommendation = "等待真實 platform post ID；不要擴大頻率。";
+  if (row.publish_status === "published" && row.platform_post_id) {
+    status = bucket === null ? "published" : (bucket >= 168 ? "complete" : "measuring");
+    if (bucket === null) {
+      recommendationCode = "wait_for_1h";
+      recommendation = "貼文已發布；等待 1h 平台回讀。";
+    } else if (row.metric_status !== "ok") {
+      recommendationCode = "fix_measurement";
+      recommendation = "量測退化；先修資料，不把零值解讀為觀眾沒興趣。";
+    } else if (bucket < 24) {
+      recommendationCode = "continue_measuring";
+      recommendation = "只有早期訊號；至少量到 24h，再判斷內容方向。";
+    } else if (row.baseline_primary_value === null || row.baseline_primary_value === undefined) {
+      const promising = (followerDelta !== null && followerDelta > 0) || primaryValue > 0 || actions > 0;
+      if (bucket >= 168) {
+        recommendationCode = promising ? "continue" : "stop_or_redesign";
+        recommendation = promising
+          ? "冷啟動已有非零訊號；保留此實驗，再累積至少 3 篇。"
+          : "168h 仍無非零訊號；停止同格式，重新設計下一個實驗。";
+      } else {
+        recommendationCode = "collect_168h";
+        recommendation = "舊資料不可當可靠基準；收滿 168h 與 follower delta。";
+      }
+    } else if (bucket >= 168) {
+      const beatsBaseline = primaryValue >= Number(row.baseline_primary_value);
+      const followerSafe = followerDelta === null || followerDelta >= 0;
+      recommendationCode = beatsBaseline && followerSafe ? "continue" : "revise";
+      recommendation = beatsBaseline && followerSafe
+        ? "達到歷史中位基準且未傷害粉絲；保留方向，再累積樣本。"
+        : "未達歷史中位基準或粉絲下降；降低頻率並改寫假設。";
+    } else {
+      recommendationCode = primaryValue >= Number(row.baseline_primary_value)
+        ? "promising_collect_168h"
+        : "collect_168h";
+      recommendation = primaryValue >= Number(row.baseline_primary_value)
+        ? "24h 已達基準；先收滿 168h，不提早加頻率。"
+        : "24h 尚未達基準；等 168h 再決定停止或改寫。";
+    }
+  }
+  return {
+    ...row,
+    status,
+    actions,
+    primary_value: primaryValue,
+    follower_delta: followerDelta,
+    recommendation_code: recommendationCode,
+    recommendation,
+  };
 }

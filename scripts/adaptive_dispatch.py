@@ -23,6 +23,12 @@ def main() -> int:
         "--policy", type=Path, default=Path("config/social_automation_policy.json")
     )
     parser.add_argument("--now", help="Optional ISO timestamp for deterministic replay")
+    parser.add_argument(
+        "--mode",
+        choices=("live", "recovery"),
+        default=os.environ.get("AUTOMATION_MODE", "live"),
+        help="Select normal live cadence or the bounded recovery envelope",
+    )
     parser.add_argument("--output", type=Path, default=Path("reports/schedule_decision.json"))
     args = parser.parse_args()
 
@@ -31,7 +37,7 @@ def main() -> int:
     conn = sqlite3.connect(f"file:{args.db.resolve().as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        decision = decide_schedule(conn, policy, now=now)
+        decision = decide_schedule(conn, policy, now=now, mode=args.mode)
     finally:
         conn.close()
     payload = decision.to_dict()

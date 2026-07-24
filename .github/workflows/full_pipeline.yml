@@ -27,6 +27,15 @@ on:
         required: false
         default: "manual"
         type: string
+      automation_mode:
+        description: "Execution contract: paused, recovery, or live"
+        required: false
+        default: "paused"
+        type: choice
+        options:
+          - paused
+          - recovery
+          - live
 
 concurrency:
   # All DB writers and external publishers share this group across workflows.
@@ -41,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      AUTOMATION_MODE: ${{ inputs.automation_mode || vars.AUTOMATION_MODE || 'paused' }}
+      DISPATCH_REASON: ${{ inputs.dispatch_reason || 'manual' }}
       # 2026-06-27 啟用時段選題路由：晚=政治桶、早午=市場桶（soft bias、桶空自動退回最新）。
       # 關掉就把這行刪掉/設空＝全線回舊行為（活下去）。Mac compose 端不設此旗、不受影響。
       EDITORIAL_MODE: "1"
@@ -101,6 +112,12 @@ jobs:
             date -u -v-2H +%Y-%m-%dT%H:%M:%S+00:00 > state/last_harvest.txt 2>/dev/null || \
             python3 -c "from pathlib import Path; Path('state/last_harvest.txt').write_text('2026-06-01T00:00:00+00:00')"
           fi
+
+      - name: Apply owner-approved Recovery topic policy
+        if: env.AUTOMATION_MODE == 'recovery'
+        run: |
+          python scripts/bootstrap_social_policy.py --apply \
+            --decided-at "2026-07-24T00:00:00+08:00"
 
       # ========== STAGE 0: USER SUBMISSIONS ==========
       - name: "📤 [STAGE] Process user-submitted sources"

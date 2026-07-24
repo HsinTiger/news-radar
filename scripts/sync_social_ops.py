@@ -276,6 +276,46 @@ def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[
     return result
 
 
+def build_recovery_experiments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Export experiment lineage only; no generated post body crosses to D1."""
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "recovery_experiments" not in tables:
+        return []
+    rows = conn.execute(
+        """
+        SELECT id,draft_id,platform,experiment_type,hypothesis,
+               baseline_followers,baseline_primary_metric,baseline_primary_value,
+               baseline_captured_at,content_format,actual_format,actual_format_at,
+               topic,created_at
+          FROM recovery_experiments
+         ORDER BY created_at ASC
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def build_automation_state() -> list[dict[str, Any]]:
+    mode = os.environ.get("AUTOMATION_MODE", "paused").strip().lower()
+    processor = os.environ.get("SUBMISSION_PROCESSOR_MODE", "paused").strip().lower()
+    if mode not in {"paused", "recovery", "live"}:
+        mode = "paused"
+    if processor not in {"paused", "live"}:
+        processor = "paused"
+    return [
+        {
+            "id": "runtime",
+            "mode": mode,
+            "submission_processor": processor,
+            "source": "github_repository_variables",
+            "detail": "Synced by canonical news-radar operational workflow",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+
+
 def build_knowledge(
     conn: sqlite3.Connection,
     *,
@@ -760,9 +800,11 @@ def main() -> int:
     conn.row_factory = sqlite3.Row
     try:
         groups = {
+            "automation": build_automation_state(),
             "posts": build_posts(conn, full=args.full),
             "engagement": build_engagement(conn, full=args.full),
             "quality": build_quality(conn, full=args.full),
+            "experiments": build_recovery_experiments(conn),
             "knowledge": build_knowledge(conn, full=args.full, limit=args.knowledge_limit),
             "proposals": build_proposals(conn, proposals_dir=args.proposals_dir),
             "health": build_health(conn),

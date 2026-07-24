@@ -21,6 +21,7 @@ class PlatformDecision:
     target_posts_per_day: int
     minimum_interval_hours: float
     local_slots: list[int]
+    local_days: list[int]
     policy_source: str
 
 
@@ -28,6 +29,7 @@ class PlatformDecision:
 class ScheduleDecision:
     evaluated_at: str
     timezone: str
+    mode: str
     dispatch: bool
     platforms: list[str]
     platform_decisions: list[PlatformDecision]
@@ -42,7 +44,7 @@ class ScheduleDecision:
 
 def load_policy(path: Path) -> dict[str, Any]:
     policy = json.loads(path.read_text(encoding="utf-8"))
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 2:
         raise ValueError("unsupported social automation policy schema")
     return policy
 
@@ -65,8 +67,14 @@ def _effective_platform_config(
     conn: sqlite3.Connection,
     platform: str,
     base: dict[str, Any],
+    *,
+    mode: str,
 ) -> tuple[dict[str, Any], str]:
     config = dict(base)
+    # Recovery cadence is a hard safety envelope. Historical live-mode
+    # overrides must not silently raise its frequency.
+    if mode == "recovery":
+        return config, "recovery_policy"
     try:
         row = conn.execute(
             """
@@ -113,7 +121,11 @@ def decide_schedule(
     conn: sqlite3.Connection,
     policy: dict[str, Any],
     now: datetime | None = None,
+    *,
+    mode: str = "live",
 ) -> ScheduleDecision:
+    if mode not in {"live", "recovery"}:
+        raise ValueError(f"unsupported automation mode: {mode}")
     if now is None:
         now = datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -126,9 +138,14 @@ def decide_schedule(
     end_utc = (start_local + timedelta(days=1)).astimezone(timezone.utc).isoformat()
     decisions: list[PlatformDecision] = []
 
-    for platform, base_config in policy["platforms"].items():
+    platform_policy = (
+        policy["recovery"]["platforms"]
+        if mode == "recovery"
+        else policy["platforms"]
+    )
+    for platform, base_config in platform_policy.items():
         config, policy_source = _effective_platform_config(
-            conn, platform, base_config
+            conn, platform, base_config, mode=mode
         )
         row = conn.execute(
             """
@@ -148,10 +165,14 @@ def decide_schedule(
             [int(value) for value in config["local_slots"]],
             int(config["slot_tolerance_minutes"]),
         )
+        local_days = [int(value) for value in config.get("local_days", range(7))]
+        day_ok = local.weekday() in local_days
         quota_ok = posts_today < int(config["target_posts_per_day"])
         interval_ok = last is None or now_utc - last >= interval
-        due = slot_ok and quota_ok and interval_ok
+        due = day_ok and slot_ok and quota_ok and interval_ok
         reasons = []
+        if not day_ok:
+            reasons.append("outside_local_day")
         if not slot_ok:
             reasons.append("outside_local_slot")
         if not quota_ok:
@@ -170,6 +191,7 @@ def decide_schedule(
                 target_posts_per_day=int(config["target_posts_per_day"]),
                 minimum_interval_hours=float(config["minimum_interval_hours"]),
                 local_slots=[int(value) for value in config["local_slots"]],
+                local_days=local_days,
                 policy_source=policy_source,
             )
         )
@@ -178,6 +200,7 @@ def decide_schedule(
     return ScheduleDecision(
         evaluated_at=now_utc.isoformat(),
         timezone=tz_name,
+        mode=mode,
         dispatch=bool(platforms),
         platforms=platforms,
         platform_decisions=decisions,
