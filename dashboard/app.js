@@ -211,17 +211,17 @@
       const metrics=node("div","platform-main");
       const nativeMetrics = platform === "facebook"
         ? [
-          metric("平均 clicks",eng.avg_clicks===null||eng.avg_clicks===undefined?"UNKNOWN":fmt(eng.avg_clicks),`${fmt(eng.posts)} posts sampled`),
-          metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Facebook native"),
+          metric("中位 clicks",eng.median_clicks===null||eng.median_clicks===undefined?"UNKNOWN":fmt(eng.median_clicks),`${fmt(eng.posts)} posts sampled`),
+          metric("中位 actions",eng.median_actions===null||eng.median_actions===undefined?"UNKNOWN":fmt(eng.median_actions),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
         ]
         : platform === "instagram"
           ? [
-            metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
-            metric("平均 reach",eng.avg_reach===null||eng.avg_reach===undefined?"UNKNOWN":fmt(eng.avg_reach),"Instagram native"),
+            metric("中位 views",eng.median_views===null||eng.median_views===undefined?"UNKNOWN":fmt(eng.median_views),`${fmt(eng.posts)} posts sampled`),
+            metric("中位 reach",eng.median_reach===null||eng.median_reach===undefined?"UNKNOWN":fmt(eng.median_reach),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
           ]
           : [
-            metric("平均 views",eng.avg_views===null||eng.avg_views===undefined?"UNKNOWN":fmt(eng.avg_views),`${fmt(eng.posts)} posts sampled`),
-            metric("平均 actions",eng.avg_actions===null||eng.avg_actions===undefined?"UNKNOWN":fmt(eng.avg_actions),"Threads native"),
+            metric("中位 views",eng.median_views===null||eng.median_views===undefined?"UNKNOWN":fmt(eng.median_views),`${fmt(eng.posts)} posts sampled`),
+            metric("中位 actions",eng.median_actions===null||eng.median_actions===undefined?"UNKNOWN":fmt(eng.median_actions),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
           ];
       const qualityRate = n(q.evaluated)>0
         ? `${(n(q.publish_ready_count)/n(q.evaluated)*100).toFixed(0)}%`

@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-24.recovery-v8";
+const API_VERSION = "2026-07-24.recovery-v9";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -32,6 +32,40 @@ SELECT latest.platform,latest.captured_at,latest.followers,
   latest.metric_status
 FROM ranked latest
 WHERE latest.rn=1`;
+
+const LATEST_ENGAGEMENT_SQL = `WITH ranked AS (
+  SELECT *,ROW_NUMBER() OVER(
+    PARTITION BY platform,platform_post_id ORDER BY captured_at DESC
+  ) AS snapshot_rank
+  FROM engagement_snapshots
+), latest AS (
+  SELECT *,likes+comments+shares+saves+replies+reposts+quotes+clicks AS actions_total
+  FROM ranked WHERE snapshot_rank=1
+), ordered AS (
+  SELECT *,
+    ROW_NUMBER() OVER(PARTITION BY platform ORDER BY views) AS views_rank,
+    ROW_NUMBER() OVER(PARTITION BY platform ORDER BY reach) AS reach_rank,
+    ROW_NUMBER() OVER(PARTITION BY platform ORDER BY clicks) AS clicks_rank,
+    ROW_NUMBER() OVER(PARTITION BY platform ORDER BY actions_total) AS actions_rank,
+    COUNT(*) OVER(PARTITION BY platform) AS platform_count
+  FROM latest
+)
+SELECT platform,COUNT(*) AS posts,MAX(captured_at) AS last_captured_at,
+  ROUND(AVG(views),1) AS avg_views,ROUND(AVG(reach),1) AS avg_reach,
+  ROUND(AVG(clicks),1) AS avg_clicks,ROUND(AVG(actions_total),1) AS avg_actions,
+  ROUND(AVG(CASE WHEN views_rank IN ((platform_count+1)/2,(platform_count+2)/2)
+    THEN views END),1) AS median_views,
+  ROUND(AVG(CASE WHEN reach_rank IN ((platform_count+1)/2,(platform_count+2)/2)
+    THEN reach END),1) AS median_reach,
+  ROUND(AVG(CASE WHEN clicks_rank IN ((platform_count+1)/2,(platform_count+2)/2)
+    THEN clicks END),1) AS median_clicks,
+  ROUND(AVG(CASE WHEN actions_rank IN ((platform_count+1)/2,(platform_count+2)/2)
+    THEN actions_total END),1) AS median_actions,
+  ROUND(100.0*SUM(CASE WHEN actions_total=0 THEN 1 ELSE 0 END)/COUNT(*),1)
+    AS zero_action_rate,
+  SUM(actions_total) AS actions,
+  SUM(CASE WHEN metric_status='ok' THEN 1 ELSE 0 END) AS healthy_posts
+FROM ordered GROUP BY platform`;
 
 class HTTPError extends Error {
   constructor(status, message, code = "request_error") {
@@ -926,18 +960,7 @@ async function dashboard(env, cors) {
     env.DB.prepare(`SELECT id,draft_id,submission_id,platform,format,platform_post_id,
       status,title,topic,source_url,posted_at FROM platform_posts
       ORDER BY COALESCE(posted_at,created_at) DESC LIMIT 30`),
-    env.DB.prepare(`WITH ranked AS (
-      SELECT *,ROW_NUMBER() OVER(
-        PARTITION BY platform,platform_post_id ORDER BY captured_at DESC
-      ) AS rn FROM engagement_snapshots
-    )
-    SELECT platform,COUNT(*) AS posts,MAX(captured_at) AS last_captured_at,
-      ROUND(AVG(views),1) AS avg_views,ROUND(AVG(reach),1) AS avg_reach,
-      ROUND(AVG(clicks),1) AS avg_clicks,
-      ROUND(AVG(likes+comments+shares+saves+replies+reposts+quotes+clicks),1) AS avg_actions,
-      SUM(likes+comments+shares+saves+replies+reposts+quotes+clicks) AS actions,
-      SUM(CASE WHEN metric_status='ok' THEN 1 ELSE 0 END) AS healthy_posts
-    FROM ranked WHERE rn=1 GROUP BY platform`),
+    env.DB.prepare(LATEST_ENGAGEMENT_SQL),
     env.DB.prepare(`WITH daily_post AS (
       SELECT platform,platform_post_id,substr(captured_at,1,10) AS day,MAX(captured_at) AS captured_at
       FROM engagement_snapshots
