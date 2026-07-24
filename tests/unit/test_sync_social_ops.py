@@ -1,5 +1,7 @@
 import json
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +17,18 @@ from scripts.sync_social_ops import (
     build_recovery_experiments,
     build_submission_updates,
 )
+
+
+def test_sync_social_ops_can_run_as_a_direct_script(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parents[2] / "scripts" / "sync_social_ops.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _db() -> sqlite3.Connection:
