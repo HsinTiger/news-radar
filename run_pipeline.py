@@ -30,6 +30,7 @@ from src.scorer import score_news
 from src.composer import compose_multi_platform, finalize_variant
 from src.content_quality_guard import (
     check_quality,
+    combine_visible_text,
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
@@ -62,7 +63,7 @@ RESCUE_PUBLISH_THRESHOLD = 0.65 # Rescue 模式放寬門檻（距上次發文 �
 MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
                                 # ⚠️ RESCUE == MIN：rescue 時段等於「composer 產出全發」
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
-RECOVERY_MAX_POSTS_PER_SLOT = 2 # Recovery 每日品質優先，限制 LLM 額度與 held 草稿爆量
+RECOVERY_MAX_POSTS_PER_SLOT = 3 # 三個受限候選；仍只允許一篇通過並發布
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
 
 # Harvest 節流：兩次 RSS 抓取最少相隔秒數（1.5 小時）
@@ -818,8 +819,9 @@ async def process_item(
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
         for platform_key, (_variant, ftext, _ok) in finalized.items():
+            visible_text = combine_visible_text(ftext, bundle.carousel)
             issues = check_quality(
-                ftext,
+                visible_text,
                 title=title,
                 recovery=is_recovery_mode(),
                 source_text=source_evidence_text if is_recovery_mode() else None,
@@ -832,7 +834,7 @@ async def process_item(
                 platform=dbmod.PLATFORM_DB_NAME[platform_key],
                 stage="compose",
                 attempt=attempt,
-                full_text=ftext,
+                full_text=visible_text,
                 issues=issues,
             )
         return findings
@@ -884,6 +886,19 @@ async def process_item(
                 "by the supplied evidence are only: "
                 + (", ".join(allowed_numbers) if allowed_numbers else "none")
                 + ". Bare single-digit list labels are not factual support."
+            )
+        if rewrite_codes & {
+            "uncited_stat",
+            "fact_without_local_source",
+            "missing_source_attribution",
+            "generic_source_attribution",
+        }:
+            targeted_rewrite_guidance.append(
+                "SOURCE ATTRIBUTION: In every factual or numeric paragraph/card, "
+                "name the exact institution, filing, exchange, wire, public broadcaster, "
+                "or fact-check that supplied the claim. Put the source in the same "
+                "paragraph/card as the fact. Delete the claim if the supplied evidence "
+                "does not identify a source; never write generic `according to reports`."
             )
         rewrite_note = (
             f"{editorial_mandate}\n\n"

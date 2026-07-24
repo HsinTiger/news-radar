@@ -31,6 +31,8 @@ def _fresh_memory_conn():
         conn.execute("ALTER TABLE drafts ADD COLUMN queue_status TEXT")
     if "publish_at" not in cols:
         conn.execute("ALTER TABLE drafts ADD COLUMN publish_at TEXT")
+    if "carousel_json" not in cols:
+        conn.execute("ALTER TABLE drafts ADD COLUMN carousel_json TEXT")
     return conn
 
 
@@ -96,6 +98,58 @@ def test_publish_queue_blocks_templated_draft(monkeypatch):
     # After block, queue_status='failed'
     qs = conn.execute("SELECT queue_status FROM drafts WHERE id='d1'").fetchone()[0]
     assert qs == "failed", f"expected queue_status=failed, got {qs}"
+
+
+def test_publish_queue_guard_includes_rendered_carousel_text(monkeypatch):
+    import run_publish_queue as rpq
+    from src.content_quality_guard import QualityIssue
+    from src.schema import CarouselCards
+
+    conn = _fresh_memory_conn()
+    _seed_one_templated_draft(conn)
+    conn.execute(
+        "UPDATE platform_drafts SET full_text='caption passes isolated test' WHERE draft_id='d1'"
+    )
+    cards = CarouselCards(insight_statement="CAROUSEL_ONLY_TRAP")
+    conn.execute(
+        "UPDATE drafts SET carousel_json=? WHERE id='d1'",
+        (cards.model_dump_json(),),
+    )
+    conn.commit()
+
+    checked: list[str] = []
+
+    def _guard(text, *args, **kwargs):
+        checked.append(text)
+        if "CAROUSEL_ONLY_TRAP" in text:
+            return [
+                QualityIssue(
+                    code="carousel_trap",
+                    severity="block",
+                    message="test",
+                    evidence="CAROUSEL_ONLY_TRAP",
+                )
+            ]
+        return []
+
+    async def _never_called(*args, **kwargs):
+        raise AssertionError("publisher must not receive unguarded carousel text")
+
+    monkeypatch.setattr(rpq, "check_quality", _guard)
+    monkeypatch.setattr(rpq, "publish_to_fb", _never_called)
+    monkeypatch.setattr(rpq, "publish_to_ig", _never_called)
+    monkeypatch.setattr(rpq, "publish_to_threads", _never_called)
+    row = conn.execute(
+        """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
+                  n.og_image_url,n.topic_category
+             FROM drafts d JOIN news_items n ON n.id=d.news_id
+            WHERE d.id='d1'"""
+    ).fetchone()
+
+    outcome = asyncio.run(rpq._publish_one(conn, row, dry_run=False))
+
+    assert outcome == rpq.OUTCOME_QUALITY_BLOCKED
+    assert checked and all("CAROUSEL_ONLY_TRAP" in text for text in checked)
 
 
 def test_publish_queue_lets_healthy_draft_through(monkeypatch):
