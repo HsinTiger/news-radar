@@ -118,6 +118,22 @@ def test_deterministic_market_utility_repair_is_concrete() -> None:
     assert "missing_reader_utility" not in codes
 
 
+def test_deterministic_market_utility_precedes_question_and_hashtags() -> None:
+    body = (
+        "根據證交所統計，加權指數上漲2.3%。\n\n"
+        "對照證交所本週 2.3% 的漲幅，你的投資組合有跑贏嗎？\n\n"
+        "#台股 #投資 #市場分析"
+    )
+
+    repaired = _deterministic_recovery_utility_repair(
+        body,
+        topic="tw_stocks",
+    )
+
+    assert repaired.index("若你的報酬跑輸大盤") < repaired.index("你的投資組合有跑贏嗎？")
+    assert repaired.index("你的投資組合有跑贏嗎？") < repaired.index("#台股")
+
+
 def test_deterministic_market_stat_prune_drops_secondary_stat_paragraph() -> None:
     body = (
         "根據證交所 7 月 24 日公告，加權指數本週上漲2.3%，"

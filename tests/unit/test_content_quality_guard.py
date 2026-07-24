@@ -168,6 +168,17 @@ def test_v25_allows_numeric_headline_when_next_paragraph_names_source() -> None:
     assert "uncited_stat" not in codes
 
 
+def test_v26_rejects_vague_market_watch_headline() -> None:
+    text = (
+        "本週臺股上漲，投資人需關注市場變化！\n\n"
+        "根據證交所公告，加權指數上漲2.3%。"
+    )
+
+    codes = {issue.code for issue in check_quality(text, recovery=True)}
+
+    assert "formulaic_attention_hook" in codes
+
+
 def test_v20_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     text = (
         "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"

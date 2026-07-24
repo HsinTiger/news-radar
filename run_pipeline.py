@@ -320,11 +320,17 @@ def _deterministic_recovery_utility_repair(
         return body
     utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    trailing_hashtags: list[str] = []
+    while paragraphs and all(
+        token.startswith("#") for token in paragraphs[-1].split()
+    ):
+        trailing_hashtags.insert(0, paragraphs.pop())
     insert_at = len(paragraphs)
     if paragraphs and re.search(r"[？?]", paragraphs[-1]):
         insert_at -= 1
     if utility not in paragraphs:
         paragraphs.insert(insert_at, utility)
+    paragraphs.extend(trailing_hashtags)
     return "\n\n".join(paragraphs)
 
 
