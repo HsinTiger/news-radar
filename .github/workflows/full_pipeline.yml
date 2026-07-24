@@ -163,7 +163,8 @@ jobs:
         run: |
           set -o pipefail
           echo "=== Compose Verification (scripts/verify_compose.py) ==="
-          python scripts/verify_compose.py 2>&1
+          python scripts/verify_compose.py --since-minutes 30 \
+            --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" 2>&1
           echo "=== Verdict ==="
 
       # ========== STAGE 3: PUBLISH ==========
@@ -194,7 +195,8 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           echo "=== Publish Verification (scripts/verify_publish.py) ==="
-          python scripts/verify_publish.py --since-minutes 30 --require-attempt 2>&1
+          python scripts/verify_publish.py --since-minutes 30 --require-attempt \
+            --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" 2>&1
           echo "=== Verdict ==="
 
       # ========== STAGE 4: ENGAGEMENT POLLING ==========
