@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -454,7 +454,10 @@ PLATFORM_FETCHERS = {
 # 詳見 data/01_harvest/migrations/2026-04-25_log_scale_engagement.sql。
 
 CANONICAL_BUCKETS = (1, 24, 168)  # hours since first successful publish
-TOLERANCE_HOURS = 0.75            # ±45 min — hourly cron cannot miss any publish minute
+# Never collect a bucket before its nominal age.  The late-only window absorbs
+# GitHub schedule delivery and production-concurrency delay without turning a
+# 15–30 minute snapshot into a falsely precise "1h" observation.
+MAX_LATE_HOURS = 1.25
 
 
 @dataclass(frozen=True)
@@ -465,6 +468,27 @@ class PollTask:
     platform_post_id: str
     bucket: int              # 1, 24, or 168
     posted_at: datetime      # tz-aware UTC
+
+
+def _with_collection_audit(
+    raw: Any,
+    task: PollTask,
+    captured_at: datetime,
+) -> tuple[dict, float]:
+    """Attach the real observation age so a canonical bucket is not false precision."""
+    actual_post_age_hours = round(
+        (captured_at - task.posted_at).total_seconds() / 3600.0,
+        4,
+    )
+    payload = dict(raw) if isinstance(raw, dict) else {"platform_raw": raw}
+    payload["_collector"] = {
+        "scheduled_bucket_hours": task.bucket,
+        "actual_post_age_hours": actual_post_age_hours,
+        "late_by_hours": round(
+            max(0.0, actual_post_age_hours - task.bucket), 4
+        ),
+    }
+    return payload, actual_post_age_hours
 
 
 def _parse_iso_utc(s: str) -> datetime:
@@ -502,9 +526,9 @@ def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
       1. SELECT distinct (draft, platform, MIN(posted_at)) FROM publish_log
          WHERE success=1 AND platform_post_id is non-empty.
       2. For each row: compute age_h = now_utc - posted_at (in hours).
-         - If age_h > 168 + TOLERANCE_HOURS: skip (window expired)
+         - If age_h > 168 + MAX_LATE_HOURS: skip (window expired)
          - For each bucket in CANONICAL_BUCKETS:
-             - If |age_h - bucket| <= TOLERANCE_HOURS:
+             - If bucket <= age_h <= bucket + MAX_LATE_HOURS:
                - If not already polled at this bucket: emit PollTask
 
     now_utc must be tz-aware UTC; naive → ValueError (defensive — every
@@ -529,8 +553,8 @@ def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
     ).fetchall()
 
     tasks: List[PollTask] = []
-    window_max_h = CANONICAL_BUCKETS[-1] + TOLERANCE_HOURS
-    window_min_h = CANONICAL_BUCKETS[0] - TOLERANCE_HOURS
+    window_max_h = CANONICAL_BUCKETS[-1] + MAX_LATE_HOURS
+    window_min_h = CANONICAL_BUCKETS[0]
 
     for r in rows:
         try:
@@ -548,7 +572,7 @@ def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
             continue  # too fresh; first bucket is 1h
 
         for bucket in CANONICAL_BUCKETS:
-            if abs(age_h - bucket) > TOLERANCE_HOURS:
+            if age_h < bucket or age_h - bucket > MAX_LATE_HOURS:
                 continue
             if _bucket_already_polled(conn, r["draft_id"], r["platform"], bucket):
                 continue
@@ -565,7 +589,7 @@ def select_posts_to_poll(conn, now_utc: datetime) -> List[PollTask]:
 
 async def sync_bucket_polls(conn) -> Dict:
     """Hourly cron entry: dispatch bucket polls for (draft, platform) tuples
-    falling within ±45min tolerance of canonical buckets [1, 24, 168] h.
+    at or shortly after canonical buckets [1, 24, 168] h, never before them.
 
     Replaces `sync_all_posts` (uniform 4h polling). Most cron ticks will have
     0 tasks (no bucket alignment) — that's expected and cheap.
@@ -616,10 +640,14 @@ async def sync_bucket_polls(conn) -> Dict:
                 continue
 
             result = await fetcher(client, task.platform_post_id)
-            fetched_at = datetime.now(timezone.utc).isoformat()
+            captured_at = datetime.now(timezone.utc)
+            fetched_at = captured_at.isoformat()
             recent_calls[platform].append(now)
 
             if result.get("ok"):
+                raw, actual_post_age_hours = _with_collection_audit(
+                    result.get("raw"), task, captured_at
+                )
                 dbmod.insert_engagement(
                     conn,
                     draft_id=task.draft_id,
@@ -636,12 +664,12 @@ async def sync_bucket_polls(conn) -> Dict:
                     views=result.get("views", 0),
                     reach=result.get("reach", 0),
                     clicks=result.get("clicks", 0),
-                    raw_json=json.dumps(result.get("raw"), ensure_ascii=False),
+                    raw_json=json.dumps(raw, ensure_ascii=False),
                     post_age_bucket=task.bucket,
                 )
                 ok_count += 1
                 print(f"  ↳ [OK] {platform:9s} bucket={task.bucket:>3d}h "
-                      f"{task.platform_post_id[:14]}… "
+                      f"{task.platform_post_id[:14]}… age={actual_post_age_hours:.2f}h "
                       f"likes={result.get('likes')} views={result.get('views')} "
                       f"reach={result.get('reach', 0)} "
                       f"clicks={result.get('clicks', 0)}")
