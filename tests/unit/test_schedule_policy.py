@@ -98,7 +98,85 @@ def test_recovery_quality_attempt_prevents_same_day_retry() -> None:
     )
     assert "instagram" not in decision.platforms
     assert instagram.quality_attempts_today == 1
+    assert instagram.retryable_queue == 0
     assert "daily_attempt_quota_reached" in instagram.reason
+
+
+def test_recovery_retries_publish_ready_queue_inside_same_slot() -> None:
+    conn = _conn()
+    conn.execute("ALTER TABLE publish_log ADD COLUMN draft_id TEXT")
+    conn.executescript(
+        """
+        CREATE TABLE content_quality_evaluations(
+          draft_id TEXT,platform TEXT,stage TEXT,checked_at TEXT,guard_version TEXT
+        );
+        CREATE TABLE drafts(
+          id TEXT PRIMARY KEY,status TEXT,queue_status TEXT
+        );
+        CREATE TABLE platform_drafts(draft_id TEXT,platform TEXT);
+        CREATE TABLE recovery_experiments(draft_id TEXT,platform TEXT);
+        INSERT INTO content_quality_evaluations VALUES(
+          'ready-draft','threads','compose','2026-07-23T00:09:00+00:00',
+          '2026-07-24.taiwan-daily-v10'
+        );
+        INSERT INTO drafts VALUES('ready-draft','auto_approved','queued');
+        INSERT INTO platform_drafts VALUES('ready-draft','threads');
+        INSERT INTO recovery_experiments VALUES('ready-draft','threads');
+        """
+    )
+
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 23, 0, 22, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    threads = next(
+        item for item in decision.platform_decisions if item.platform == "threads"
+    )
+
+    assert decision.platforms == ["threads"]
+    assert threads.quality_attempts_today == 1
+    assert threads.retryable_queue == 1
+    assert "daily_attempt_quota_reached" not in threads.reason
+
+
+def test_recovery_does_not_retry_queue_after_platform_success() -> None:
+    conn = _conn()
+    conn.execute("ALTER TABLE publish_log ADD COLUMN draft_id TEXT")
+    conn.executescript(
+        """
+        CREATE TABLE content_quality_evaluations(
+          draft_id TEXT,platform TEXT,stage TEXT,checked_at TEXT,guard_version TEXT
+        );
+        CREATE TABLE drafts(id TEXT PRIMARY KEY,status TEXT,queue_status TEXT);
+        CREATE TABLE platform_drafts(draft_id TEXT,platform TEXT);
+        CREATE TABLE recovery_experiments(draft_id TEXT,platform TEXT);
+        INSERT INTO content_quality_evaluations VALUES(
+          'done-draft','threads','compose','2026-07-23T00:09:00+00:00',
+          '2026-07-24.taiwan-daily-v10'
+        );
+        INSERT INTO drafts VALUES('done-draft','auto_approved','queued');
+        INSERT INTO platform_drafts VALUES('done-draft','threads');
+        INSERT INTO recovery_experiments VALUES('done-draft','threads');
+        INSERT INTO publish_log(platform,posted_at,success,draft_id)
+        VALUES('threads','2026-07-23T00:10:00+00:00',1,'done-draft');
+        """
+    )
+
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 23, 0, 22, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    threads = next(
+        item for item in decision.platform_decisions if item.platform == "threads"
+    )
+
+    assert "threads" not in decision.platforms
+    assert threads.retryable_queue == 0
+    assert "daily_quota_reached" in threads.reason
 
 
 def test_recovery_quality_attempt_resets_on_next_local_day() -> None:
