@@ -1,0 +1,60 @@
+name: "Social Automation · Recovery Setup Canary"
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Compose-only platform; never publishes"
+        required: true
+        default: "threads"
+        type: choice
+        options:
+          - threads
+          - facebook
+          - instagram
+
+concurrency:
+  group: news-radar-recovery-setup-canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  setup-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AUTOMATION_MODE: recovery
+      EDITORIAL_MODE: "1"
+      EDITOR_ENFORCE: "1"
+      LITELLM_MODEL: gemini/gemini-2.5-flash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -q
+      - name: Restore canonical state read-only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+      - name: Compose against disposable state copy
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: >-
+          python scripts/recovery_setup_canary.py
+          --platform "${{ inputs.platform }}"
+          --report reports/recovery_setup_canary.json
+      - name: Upload metadata-only evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: recovery-setup-canary-${{ github.run_id }}
+          path: reports/recovery_setup_canary.json
+          retention-days: 30
+          if-no-files-found: warn
