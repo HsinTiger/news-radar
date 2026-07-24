@@ -52,6 +52,27 @@ def _source_current_at_run(published_at: str | None, started_at: str) -> bool:
     return started - timedelta(hours=PRIMARY_FRESHNESS_HOURS) <= published <= started
 
 
+def _eligible_current_primary_rows(
+    rows: list[dict[str, Any]], started_at: str
+) -> list[dict[str, Any]]:
+    """Return unpublished public-primary rows inside the freshness window."""
+
+    return [
+        row
+        for row in rows
+        if row.get("source_status") == "fetched"
+        and _source_current_at_run(row.get("source_published_at"), started_at)
+    ]
+
+
+def _filter_pending_items(
+    rows: list[Any], allowed_news_ids: set[str]
+) -> list[Any]:
+    """Limit a disposable canary run to its reverified source allowlist."""
+
+    return [row for row in rows if row["id"] in allowed_news_ids]
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -268,29 +289,44 @@ async def run_setup_canary(
             primary_after[news_id]
             for news_id in sorted(freshly_harvested_ids)
         ]
-        eligible_fresh_primary_sources = [
-            row
-            for row in fresh_primary_sources
-            if row["source_status"] != "dropped"
-        ]
         current_primary_sources = [
             row
             for row in primary_after.values()
             if row["source_status"] != "dropped"
             and _source_current_at_run(row["source_published_at"], started_at)
         ]
+        eligible_current_primary_sources = _eligible_current_primary_rows(
+            list(primary_after.values()), started_at
+        )
+        eligible_current_ids = {
+            row["news_id"] for row in eligible_current_primary_sources
+        }
+        eligible_fresh_primary_sources = [
+            row
+            for row in fresh_primary_sources
+            if row["news_id"] in eligible_current_ids
+        ]
 
         # Deduplication is not staleness.  A reverified official record remains
         # eligible while its publication timestamp is inside the freshness
-        # window.  Stop before composition only when neither a newly harvested
-        # nor a current public-primary candidate exists.
+        # window.  The disposable pipeline is allowlisted to current,
+        # unpublished primary rows so its normal topic ranking cannot silently
+        # select a secondary-media item instead.
         should_compose = (
             not refresh_primary_sources
-            or bool(eligible_fresh_primary_sources)
-            or bool(current_primary_sources)
+            or bool(eligible_current_primary_sources)
         )
         if should_compose:
             original_argv = sys.argv[:]
+            original_get_pending_items = dbmod.get_pending_items
+
+            def canary_get_pending_items(conn: sqlite3.Connection) -> list[Any]:
+                rows = original_get_pending_items(conn)
+                if not refresh_primary_sources:
+                    return rows
+                return _filter_pending_items(rows, eligible_current_ids)
+
+            dbmod.get_pending_items = canary_get_pending_items
             try:
                 sys.argv = [
                     "run_pipeline.py",
@@ -303,6 +339,7 @@ async def run_setup_canary(
                 await run_pipeline.main()
             finally:
                 sys.argv = original_argv
+                dbmod.get_pending_items = original_get_pending_items
 
         conn = dbmod.get_conn()
         publish_after = conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0]
@@ -336,7 +373,9 @@ async def run_setup_canary(
     fresh_primary_quality = [
         row
         for row in quality
-        if row["harvested_this_run"] and row["source_is_primary_record"]
+        if row["harvested_this_run"]
+        and row["source_is_primary_record"]
+        and row["source_current_at_run"]
     ]
     fresh_primary_ready = any(
         row["decision"] in {"pass", "warn"}
@@ -373,10 +412,8 @@ async def run_setup_canary(
         hold_reason = "state_invariant_failed"
     elif refresh_primary_sources and not primary_harvest_complete:
         hold_reason = "primary_harvest_incomplete"
-    elif refresh_primary_sources and not (
-        eligible_fresh_primary_sources or current_primary_sources
-    ):
-        hold_reason = "no_current_primary_sources"
+    elif refresh_primary_sources and not eligible_current_primary_sources:
+        hold_reason = "no_eligible_current_primary_sources"
     elif not quality:
         hold_reason = "no_current_guard_evaluation"
     elif refresh_primary_sources and not (
@@ -426,6 +463,9 @@ async def run_setup_canary(
             "fresh_source_count": len(fresh_primary_sources),
             "eligible_fresh_source_count": len(eligible_fresh_primary_sources),
             "current_source_count": len(current_primary_sources),
+            "eligible_current_source_count": len(
+                eligible_current_primary_sources
+            ),
             "fresh_sources": fresh_primary_sources,
         },
         "quality": quality,

@@ -30,6 +30,7 @@ jobs:
       EDITORIAL_MODE: "1"
       EDITOR_ENFORCE: "1"
       LITELLM_MODEL: gemini/gemini-2.5-flash
+      GITHUB_MODELS_MODEL: openai/gpt-4.1
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

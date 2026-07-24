@@ -5,6 +5,8 @@ from pathlib import Path
 from scripts.recovery_setup_canary import (
     _all_configured_feeds_healthy,
     _copy_previews,
+    _eligible_current_primary_rows,
+    _filter_pending_items,
     _latest_quality,
     _source_current_at_run,
 )
@@ -45,6 +47,7 @@ def test_setup_canary_workflow_is_read_only_and_has_no_meta_secrets() -> None:
     assert "scripts/recovery_setup_canary.py" in workflow
     assert "--refresh-primary-sources" in workflow
     assert "--include-copy" in workflow
+    assert "GITHUB_MODELS_MODEL: openai/gpt-4.1" in workflow
 
 
 def test_latest_quality_exposes_fresh_primary_source_lineage() -> None:
@@ -126,6 +129,34 @@ def test_source_current_at_run_rejects_stale_and_future_records() -> None:
     assert _source_current_at_run("2026-07-23T23:59:59+00:00", started_at) is False
     assert _source_current_at_run("2026-07-25T12:00:01+00:00", started_at) is False
     assert _source_current_at_run(None, started_at) is False
+
+
+def test_current_primary_allowlist_requires_unpublished_current_rows() -> None:
+    started_at = "2026-07-25T12:00:00+00:00"
+    rows = [
+        {
+            "news_id": "eligible",
+            "source_status": "fetched",
+            "source_published_at": "2026-07-25T10:00:00+00:00",
+        },
+        {
+            "news_id": "already-published",
+            "source_status": "published",
+            "source_published_at": "2026-07-25T10:00:00+00:00",
+        },
+        {
+            "news_id": "stale",
+            "source_status": "fetched",
+            "source_published_at": "2026-07-23T10:00:00+00:00",
+        },
+    ]
+
+    eligible = _eligible_current_primary_rows(rows, started_at)
+
+    assert [row["news_id"] for row in eligible] == ["eligible"]
+    assert _filter_pending_items(
+        [{"id": "secondary"}, {"id": "eligible"}], {"eligible"}
+    ) == [{"id": "eligible"}]
 
 
 def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:
