@@ -229,7 +229,7 @@ feeds:
     feed_added_at: 2026-06-27T00:00:00+00:00
     tags: [taiwan, factcheck, verify]
 
-  # === 台灣官方第一手來源（2026-07-24 · live-verified 200 + parseable XML）===
+  # === 台灣官方第一手來源（2026-07-24 · merge gated by live source canary）===
   # `max_entries` prevents a first harvest from draining years of official archives.
   # `rss_summary` is used only when the feed itself carries enough signed/official body.
   # FDA summaries are title-only, so those two feeds fetch the live official article page;
@@ -281,6 +281,36 @@ feeds:
     language: zh
     feed_added_at: 2026-07-24T00:00:00+00:00
     tags: [taiwan, official, tw-stocks, market, disclosure, primary-record]
+
+  - name: 中央銀行 新聞稿
+    url: https://www.cbc.gov.tw/tw/rss-302-1.xml
+    tier: primary
+    source_type: rss_summary
+    min_word_count: 80
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, economy, monetary-policy, fx, primary-record]
+
+  - name: 金管會 新聞稿
+    url: https://www.fsc.gov.tw/RSS/Messages?serno=201202290009&language=chinese
+    tier: primary
+    source_type: rss_summary
+    min_word_count: 80
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, financial-policy, tw-stocks, regulation, primary-record]
+
+  - name: 金管會 裁罰案件
+    url: https://www.fsc.gov.tw/RSS/Messages?serno=201202290003&language=chinese
+    tier: primary
+    source_type: rss_summary
+    min_word_count: 80
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, financial-regulation, enforcement, accountability, primary-record]
 
 
   # === Phase 8.20 新增：對齊 3 位 KOL 訊號風格 ===

@@ -21,6 +21,9 @@ def test_taiwan_official_feeds_have_bounded_authoritative_content_paths() -> Non
         "食藥署 本署新聞",
         "食藥署 闢謠專區",
         "證交所 官方訊息",
+        "中央銀行 新聞稿",
+        "金管會 新聞稿",
+        "金管會 裁罰案件",
     }
     assert all(row["tier"] == "primary" for row in official.values())
     assert all(row["max_entries"] == 15 for row in official.values())
@@ -28,3 +31,6 @@ def test_taiwan_official_feeds_have_bounded_authoritative_content_paths() -> Non
     assert official["食藥署 闢謠專區"]["source_type"] == "article"
     assert official["食藥署 本署新聞"]["min_word_count"] == 80
     assert official["食藥署 闢謠專區"]["min_word_count"] == 80
+    for name in ("中央銀行 新聞稿", "金管會 新聞稿", "金管會 裁罰案件"):
+        assert official[name]["source_type"] == "rss_summary"
+        assert official[name]["min_word_count"] == 80
