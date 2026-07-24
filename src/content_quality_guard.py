@@ -28,6 +28,7 @@ News Radar · Content Quality Guard（Phase 8.20 附帶品）
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional
 
@@ -35,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v7"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v8"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -637,6 +638,45 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
 )
 
 
+_NUMERIC_CLAIM_PATTERN = re.compile(
+    r"(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>[%％]?)"
+)
+
+
+def _normalized_numeric_claims(text: str) -> set[str]:
+    """Extract material Arabic-number claims in a format-insensitive form.
+
+    Single bare digits are ignored because they are commonly list/card labels.
+    Percentages, decimals, and numbers with at least two digits remain material.
+    """
+
+    claims: set[str] = set()
+    for match in _NUMERIC_CLAIM_PATTERN.finditer(text or ""):
+        raw = match.group("number").replace(",", "")
+        percent = bool(match.group("percent"))
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) < 2 and "." not in raw and not percent:
+            continue
+        try:
+            normalized = format(Decimal(raw).normalize(), "f")
+        except InvalidOperation:
+            normalized = raw
+        claims.add(normalized + ("%" if percent else ""))
+    return claims
+
+
+def _unsupported_numeric_claims(full_text: str, source_text: str) -> Optional[str]:
+    source_claims = _normalized_numeric_claims(source_text)
+    missing = sorted(_normalized_numeric_claims(full_text) - source_claims)
+    return ",".join(missing[:8]) if missing else None
+
+
+def numeric_claim_allowlist(source_text: str) -> list[str]:
+    """Return the material numeric values a Recovery rewrite may reuse."""
+
+    return sorted(_normalized_numeric_claims(source_text))
+
+
 # ---------- 公開 API（呼叫端只用這三個）----------
 
 def check_quality(
@@ -644,6 +684,7 @@ def check_quality(
     title: str = "",
     *,
     recovery: bool = False,
+    source_text: Optional[str] = None,
 ) -> List[QualityIssue]:
     """對『最終要送進 Meta API 的那段字』跑所有規則，回傳命中的 issue 列表。
     full_text = 已經組好、含 hashtag 的完整貼文（platform_drafts.full_text 即是）。
@@ -660,6 +701,17 @@ def check_quality(
                 severity=rule.severity,
                 message=rule.message,
                 evidence=str(evidence)[:120],
+            ))
+    if recovery and source_text is not None:
+        evidence = _unsupported_numeric_claims(ft, source_text)
+        if evidence is not None:
+            issues.append(QualityIssue(
+                code="unsupported_numeric_claim",
+                severity="rewrite",
+                message=(
+                    "Recovery 貼文數字必須能在本輪原始標題、本文或同事件多源脈絡中找到"
+                ),
+                evidence=evidence[:120],
             ))
     return issues
 
@@ -687,6 +739,7 @@ __all__ = [
     "QualityIssue",
     "check_quality",
     "has_blocking_issues",
+    "numeric_claim_allowlist",
     "should_request_rewrite",
     "format_issues",
 ]
