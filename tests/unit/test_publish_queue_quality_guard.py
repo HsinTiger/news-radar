@@ -219,6 +219,191 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
     assert len(call_log) == 3, f"expected 3 publisher calls, got {len(call_log)}"
 
 
+def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
+    """FB/Threads stay native feed posts while IG receives the five cards."""
+    import run_publish_queue as rpq
+    from src.schema import CarouselCards
+
+    monkeypatch.setenv("AUTOMATION_MODE", "recovery")
+    conn = _fresh_memory_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO news_items(
+             id,feed_name,feed_tier,url,title,published_at,fetched_at,
+             og_image_url,topic_category
+           ) VALUES(
+             'n-native','test','primary','https://a.example/native',
+             '食藥署公布產品清單',?,?,
+             'https://example.com/native.jpg','tw_politics'
+           )""",
+        (now, now),
+    )
+    cards = CarouselCards(
+        insight_statement="食藥署公布具體後果",
+        insight_support="食藥署公告說明事件經過",
+        stat_number="19批",
+        stat_caption="食藥署公布的合格批次",
+        takeaways=["消費者先核對產品批號"],
+        key_figures=[
+            {"label": "合格批次", "value": "19批"},
+            {"label": "產品項目", "value": "501項"},
+        ],
+    )
+    conn.execute(
+        """INSERT INTO drafts(
+             id,news_id,persona_version,generated_at,status,confidence_score,
+             queue_status,publish_at,carousel_json
+           ) VALUES(
+             'd-native','n-native','1.1',?,'auto_approved',1.0,
+             'queued',?,?
+           )""",
+        (now, now, cards.model_dump_json()),
+    )
+    for platform in ("facebook", "instagram", "threads"):
+        conn.execute(
+            """INSERT INTO platform_drafts(
+                 draft_id,platform,title,full_text,created_at
+               ) VALUES('d-native',?,'食藥署公布產品清單','合格內文',?)""",
+            (platform, now),
+        )
+        conn.execute(
+            """INSERT INTO recovery_experiments(
+                 id,draft_id,platform,experiment_type,hypothesis,
+                 baseline_primary_metric,baseline_captured_at,content_format,
+                 created_at
+               ) VALUES(?,?,?,?,?,'views',?,?,?)""",
+            (
+                f"rx-{platform}",
+                "d-native",
+                platform,
+                "utility",
+                "native-format-test",
+                now,
+                "carousel" if platform == "instagram" else "feed",
+                now,
+            ),
+        )
+    conn.commit()
+
+    calls: list[str] = []
+
+    async def _feed_ok(*_args, **_kwargs):
+        calls.append("feed")
+        return {"success": True, "id": f"feed-{len(calls)}"}
+
+    async def _ig_carousel_ok(*_args, **_kwargs):
+        calls.append("instagram-carousel")
+        return {"success": True, "id": "ig-carousel"}
+
+    async def _forbidden_carousel(*_args, **_kwargs):
+        raise AssertionError("Recovery FB/Threads must not publish a carousel")
+
+    async def _forbidden_ig_feed(*_args, **_kwargs):
+        raise AssertionError("Recovery Instagram must not fall back to feed")
+
+    async def _prepare(**kwargs):
+        return {"image_url": kwargs.get("original_image_url")}
+
+    monkeypatch.setattr(rpq, "check_quality", lambda *_a, **_kw: [])
+    monkeypatch.setattr(rpq, "prepare_publish_image", _prepare)
+    monkeypatch.setattr(rpq, "render_cards", lambda **_kw: [Path(f"{i}.png") for i in range(5)])
+    monkeypatch.setattr(
+        rpq,
+        "upload_cards",
+        lambda *_a, **_kw: [f"https://example.com/{i}.png" for i in range(5)],
+    )
+    monkeypatch.setattr(rpq, "publish_to_fb", _feed_ok)
+    monkeypatch.setattr(rpq, "publish_to_threads", _feed_ok)
+    monkeypatch.setattr(rpq, "publish_to_ig", _forbidden_ig_feed)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _ig_carousel_ok)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _forbidden_carousel)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _forbidden_carousel)
+
+    row = conn.execute(
+        """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
+                  n.og_image_url,n.topic_category
+             FROM drafts d JOIN news_items n ON n.id=d.news_id
+            WHERE d.id='d-native'"""
+    ).fetchone()
+    outcome = asyncio.run(
+        rpq._publish_one(
+            conn,
+            row,
+            platforms={"facebook", "instagram", "threads"},
+        )
+    )
+
+    assert outcome == rpq.OUTCOME_PUBLISHED
+    assert calls.count("feed") == 2
+    assert calls.count("instagram-carousel") == 1
+    formats = {
+        row["platform"]: row["actual_format"]
+        for row in conn.execute(
+            "SELECT platform,actual_format FROM recovery_experiments"
+        )
+    }
+    assert formats == {
+        "facebook": "feed",
+        "instagram": "carousel",
+        "threads": "feed",
+    }
+
+    # A failed IG carousel must remain queued for retry; Recovery may not
+    # silently substitute a single-image feed post and corrupt the experiment.
+    conn.execute(
+        """INSERT INTO drafts(
+             id,news_id,persona_version,generated_at,status,confidence_score,
+             queue_status,publish_at,carousel_json
+           ) VALUES(
+             'd-native-fail','n-native','1.1',?,'auto_approved',1.0,
+             'queued',?,?
+           )""",
+        (now, now, cards.model_dump_json()),
+    )
+    conn.execute(
+        """INSERT INTO platform_drafts(
+             draft_id,platform,title,full_text,created_at
+           ) VALUES(
+             'd-native-fail','instagram','食藥署公布產品清單','合格內文',?
+           )""",
+        (now,),
+    )
+    conn.execute(
+        """INSERT INTO recovery_experiments(
+             id,draft_id,platform,experiment_type,hypothesis,
+             baseline_primary_metric,baseline_captured_at,content_format,
+             created_at
+           ) VALUES(
+             'rx-instagram-fail','d-native-fail','instagram','utility',
+             'native-format-failure-test','reach',?,'carousel',?
+           )""",
+        (now, now),
+    )
+    conn.commit()
+
+    async def _ig_carousel_fail(*_args, **_kwargs):
+        return {"success": False, "error": {"code": 500}}
+
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _ig_carousel_fail)
+    failed_row = conn.execute(
+        """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
+                  n.og_image_url,n.topic_category
+             FROM drafts d JOIN news_items n ON n.id=d.news_id
+            WHERE d.id='d-native-fail'"""
+    ).fetchone()
+    failed_outcome = asyncio.run(
+        rpq._publish_one(conn, failed_row, platforms={"instagram"})
+    )
+    assert failed_outcome == rpq.OUTCOME_ALL_PLATFORMS_FAILED
+    assert conn.execute(
+        "SELECT queue_status FROM drafts WHERE id='d-native-fail'"
+    ).fetchone()[0] == "queued"
+    assert conn.execute(
+        "SELECT actual_format FROM recovery_experiments "
+        "WHERE draft_id='d-native-fail'"
+    ).fetchone()[0] is None
+
+
 # ---------- Phase 8.20 追加：exit code 語義測試 ----------
 
 def test_publish_queue_all_platforms_fail_returns_all_failed_outcome(monkeypatch):

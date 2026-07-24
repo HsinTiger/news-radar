@@ -13,7 +13,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from src.gather import source_authority
 from src.topic_classifier import classify_topic_keyword, match_disambiguation
@@ -71,6 +71,59 @@ CEREMONIAL_POLITICS_MARKERS = (
 
 def is_recovery_mode() -> bool:
     return os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery"
+
+
+def platform_uses_carousel(
+    platform: str,
+    *,
+    recovery: bool | None = None,
+) -> bool:
+    """Return whether this platform may publish carousel cards.
+
+    Recovery changes one primary variable per platform: Instagram tests visual
+    utility, while Facebook and Threads test native feed posts. Live mode keeps
+    the legacy carousel-first behaviour.
+    """
+
+    if recovery is None:
+        recovery = is_recovery_mode()
+    canonical = {
+        "fb": "facebook",
+        "facebook": "facebook",
+        "ig": "instagram",
+        "instagram": "instagram",
+        "threads": "threads",
+    }.get(str(platform).strip().lower(), str(platform).strip().lower())
+    return not recovery or canonical == "instagram"
+
+
+def visible_carousel_for_platform(
+    platform: str,
+    carousel: Any,
+    *,
+    recovery: bool | None = None,
+) -> Any:
+    """Return only card content that will really be visible on the platform."""
+
+    if carousel is None or not platform_uses_carousel(
+        platform, recovery=recovery
+    ):
+        return None
+    return carousel
+
+
+def content_format_for_platform(
+    platform: str,
+    *,
+    carousel_available: bool,
+    recovery: bool | None = None,
+) -> str:
+    return (
+        "carousel"
+        if carousel_available
+        and platform_uses_carousel(platform, recovery=recovery)
+        else "feed"
+    )
 
 
 def _policy(path: Path = POLICY_PATH) -> dict[str, Any]:
@@ -140,7 +193,7 @@ def record_experiments(
     draft_id: str,
     platforms: Iterable[str],
     topic: str | None,
-    content_format: str,
+    content_format: str | Mapping[str, str],
     created_at: str,
     policy_path: Path = POLICY_PATH,
 ) -> None:
@@ -149,6 +202,16 @@ def record_experiments(
     for platform in sorted(set(platforms)):
         experiment_type = experiment_type_for(platform, topic)
         baseline = baselines[platform]
+        platform_format = (
+            content_format.get(platform, "feed")
+            if isinstance(content_format, Mapping)
+            else content_format
+        )
+        if platform_format not in {"feed", "carousel", "reel"}:
+            raise ValueError(
+                f"Unsupported recovery content format for {platform}: "
+                f"{platform_format}"
+            )
         conn.execute(
             """
             INSERT INTO recovery_experiments(
@@ -176,7 +239,7 @@ def record_experiments(
                 baseline["primary_metric"],
                 baseline["primary_value"],
                 baseline["captured_at"],
-                content_format,
+                platform_format,
                 topic,
                 created_at,
             ),
@@ -343,11 +406,14 @@ def rank_candidates(
 
 
 __all__ = [
+    "content_format_for_platform",
     "EXPERIMENT_TYPES",
     "experiment_type_for",
     "editorial_mandate_for",
     "hypothesis_for",
     "is_recovery_mode",
+    "platform_uses_carousel",
     "rank_candidates",
     "record_experiments",
+    "visible_carousel_for_platform",
 ]

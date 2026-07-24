@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v9"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v10"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -766,6 +766,33 @@ def check_quality(
     return issues
 
 
+def check_platform_format(
+    platform: str,
+    *,
+    carousel_card_count: int,
+    recovery: bool = False,
+) -> List[QualityIssue]:
+    """Validate the visible container shape separately from its prose."""
+
+    canonical = {
+        "fb": "facebook",
+        "facebook": "facebook",
+        "ig": "instagram",
+        "instagram": "instagram",
+        "threads": "threads",
+    }.get(str(platform).strip().lower(), str(platform).strip().lower())
+    if recovery and canonical == "instagram" and carousel_card_count != 5:
+        return [
+            QualityIssue(
+                code="missing_recovery_five_card_carousel",
+                severity="rewrite",
+                message="Recovery Instagram 必須有五張可獨立閱讀的圖卡",
+                evidence=f"rendered_card_count={carousel_card_count}",
+            )
+        ]
+    return []
+
+
 def has_blocking_issues(issues: List[QualityIssue]) -> bool:
     return any(i.severity == "block" for i in issues)
 
@@ -788,6 +815,7 @@ __all__ = [
     "QUALITY_GUARD_VERSION",
     "QualityIssue",
     "check_quality",
+    "check_platform_format",
     "combine_visible_text",
     "has_blocking_issues",
     "numeric_claim_allowlist",

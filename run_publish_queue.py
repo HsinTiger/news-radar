@@ -38,12 +38,17 @@ from src import db as dbmod
 from src import image_manager
 from src.content_quality_guard import (
     check_quality,
+    check_platform_format,
     combine_visible_text,
     format_issues,
     has_blocking_issues,
     should_request_rewrite,
 )
 from src.local_notify import notify_quality_block
+from src.recovery_mode import (
+    platform_uses_carousel,
+    visible_carousel_for_platform,
+)
 from src.publisher import (
     publish_to_fb, publish_to_ig, publish_to_threads,
     publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
@@ -203,11 +208,31 @@ async def _publish_one(
     block_reasons: list[str] = []
     for pd_row in platform_drafts:
         text_to_check = pd_row["final_text"] or pd_row["full_text"] or ""
-        visible_text = combine_visible_text(text_to_check, carousel)
+        visible_carousel = visible_carousel_for_platform(
+            pd_row["platform"], carousel, recovery=recovery_strict
+        )
+        visible_text = combine_visible_text(text_to_check, visible_carousel)
         issues = check_quality(
             visible_text,
             title=guard_news_title,
             recovery=recovery_strict,
+        )
+        if visible_carousel is not None:
+            carousel_card_count = len(
+                build_cards(
+                    title=pd_row["title"] or "",
+                    subtitle="",
+                    carousel=visible_carousel,
+                )
+            )
+        else:
+            carousel_card_count = 0
+        issues.extend(
+            check_platform_format(
+                pd_row["platform"],
+                carousel_card_count=carousel_card_count,
+                recovery=recovery_strict,
+            )
         )
         if not dry_run:
             dbmod.record_quality_evaluation(
@@ -312,9 +337,11 @@ async def _publish_one(
             print(f"   ⚠️ 未知平台 {platform}，跳過")
             continue
 
-        # Phase 10 carousel-first (2026-06-03)：render 2–4 卡 → upload → 發 carousel；
-        # 任何一步失敗都 fall through 到下面的單圖路徑（發文絕不因圖卡失敗中斷）。
-        if carousel is not None:
+        # Phase 10 carousel-first (2026-06-03)：render → upload → 發 carousel。
+        # Live mode 可降級單圖；Recovery IG 失敗必須保留重試，不能污染格式實驗。
+        if carousel is not None and platform_uses_carousel(
+            platform, recovery=recovery_strict
+        ):
             try:
                 cards = build_cards(title=pd_row["title"] or "", subtitle="", carousel=carousel)
                 if len(cards) >= 2:
@@ -346,9 +373,30 @@ async def _publish_one(
                             any_success = True
                             print(f"   ✅ [{platform}] carousel 成功 id={cresult.get('id')}（{len(card_urls)} 卡）")
                             continue
-                        print(f"   ⚠️ [{platform}] carousel 失敗 → 降級單圖：{str(cresult.get('error'))[:160]}")
+                        next_step = (
+                            "保留重試"
+                            if recovery_strict and platform == "instagram"
+                            else "降級單圖"
+                        )
+                        print(
+                            f"   ⚠️ [{platform}] carousel 失敗 → {next_step}："
+                            f"{str(cresult.get('error'))[:160]}"
+                        )
             except Exception as exc:  # noqa: BLE001
-                print(f"   ⚠️ [{platform}] carousel 流程例外 → 降級單圖：{exc}")
+                print(f"   ⚠️ [{platform}] carousel 流程例外：{exc}")
+
+        if recovery_strict and platform == "instagram":
+            msg = "Recovery Instagram 五卡 carousel 發布失敗；禁止降級單圖"
+            dbmod.log_publish(conn, PublishResult(
+                draft_id=draft_id,
+                platform=platform,
+                platform_post_id=None,
+                posted_at=posted_at,
+                success=False,
+                error_message=msg,
+            ))
+            print(f"   ❌ [instagram] {msg}")
+            continue
 
         prep = await prepare_publish_image(
             platform_key=cover_key,

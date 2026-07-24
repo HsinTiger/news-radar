@@ -4,10 +4,45 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from src import db as dbmod
-from src.recovery_mode import editorial_mandate_for, rank_candidates, record_experiments
+from src.recovery_mode import (
+    content_format_for_platform,
+    editorial_mandate_for,
+    platform_uses_carousel,
+    rank_candidates,
+    record_experiments,
+    visible_carousel_for_platform,
+)
 
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def test_recovery_carousel_scope_is_instagram_only() -> None:
+    cards = object()
+    assert platform_uses_carousel("instagram", recovery=True)
+    assert platform_uses_carousel("ig", recovery=True)
+    assert not platform_uses_carousel("facebook", recovery=True)
+    assert not platform_uses_carousel("threads", recovery=True)
+    assert visible_carousel_for_platform(
+        "instagram", cards, recovery=True
+    ) is cards
+    assert visible_carousel_for_platform("facebook", cards, recovery=True) is None
+    assert platform_uses_carousel("facebook", recovery=False)
+
+
+def test_recovery_content_format_is_platform_specific() -> None:
+    assert content_format_for_platform(
+        "instagram", carousel_available=True, recovery=True
+    ) == "carousel"
+    assert content_format_for_platform(
+        "facebook", carousel_available=True, recovery=True
+    ) == "feed"
+    assert content_format_for_platform(
+        "threads", carousel_available=True, recovery=True
+    ) == "feed"
+    assert content_format_for_platform(
+        "facebook", carousel_available=True, recovery=False
+    ) == "carousel"
 
 
 def _conn() -> sqlite3.Connection:
@@ -236,15 +271,16 @@ def test_record_experiments_is_platform_specific() -> None:
         draft_id="draft-1",
         platforms={"threads", "instagram"},
         topic="tech_product_launch",
-        content_format="carousel",
+        content_format={"instagram": "carousel", "threads": "feed"},
         created_at="2026-07-24T00:00:00Z",
     )
     rows = conn.execute(
-        "SELECT platform,experiment_type,baseline_followers FROM recovery_experiments ORDER BY platform"
+        "SELECT platform,experiment_type,baseline_followers,content_format "
+        "FROM recovery_experiments ORDER BY platform"
     ).fetchall()
     assert [tuple(row) for row in rows] == [
-        ("instagram", "utility", 9),
-        ("threads", "utility", 3748),
+        ("instagram", "utility", 9, "carousel"),
+        ("threads", "utility", 3748, "feed"),
     ]
     dbmod.mark_recovery_actual_format(
         conn, "draft-1", "instagram", "feed", "2026-07-24T01:00:00Z"
