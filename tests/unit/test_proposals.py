@@ -174,6 +174,19 @@ def test_write_and_read_proposal_roundtrip(env):
     assert by_week[0]["fire_id"] == fire_id
 
 
+def test_identical_pending_proposal_is_idempotent(env):
+    db_path, base_dir = env
+    proposal = _sample_proposal(fire_at="2026-07-24T00:00:00+00:00")
+    first = write_proposal(proposal, db_path=db_path, base_dir=base_dir)
+    second = write_proposal(proposal, db_path=db_path, base_dir=base_dir)
+    assert second == first
+    assert len(read_proposals(base_dir=base_dir)) == 1
+    with sqlite3.connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM reflector_proposal_lineage"
+        ).fetchone()[0] == 1
+
+
 # ---------------------------------------------------------------------------
 # (c) Validation rejects malformed proposals
 # ---------------------------------------------------------------------------

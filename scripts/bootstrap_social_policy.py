@@ -13,9 +13,61 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.schedule_policy import load_policy
+from src.reflector.proposals import PROPOSALS_DIR, read_proposals, update_decision
 
 
 FIRE_ID = "meta-recovery-topic-policy-v3"
+
+
+def supersede_drifted_topic_proposals(
+    db_path: Path,
+    proposals_dir: Path,
+    *,
+    decided_at: str,
+) -> list[str]:
+    """Retire pre-policy or drifted pending topic proposals."""
+    cutoff = datetime.fromisoformat(decided_at.replace("Z", "+00:00"))
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    cutoff = cutoff.astimezone(timezone.utc)
+    with sqlite3.connect(str(db_path)) as conn:
+        actual = {
+            row[0]: float(row[1])
+            for row in conn.execute("SELECT category_id,weight FROM topic_weights")
+        }
+    superseded: list[str] = []
+    for record in read_proposals(base_dir=proposals_dir):
+        if record.get("hsin_decision") or record.get("deployed_at"):
+            continue
+        action = record.get("action")
+        if not isinstance(action, dict) or action.get("target_config") != "topic_weights":
+            continue
+        field = action.get("field")
+        current = action.get("current_value")
+        if field not in actual or isinstance(current, bool) or not isinstance(
+            current, (int, float)
+        ):
+            continue
+        fire_at = datetime.fromisoformat(
+            str(record.get("fire_at") or decided_at).replace("Z", "+00:00")
+        )
+        if fire_at.tzinfo is None:
+            fire_at = fire_at.replace(tzinfo=timezone.utc)
+        older_than_policy = fire_at.astimezone(timezone.utc) < cutoff
+        drifted = abs(float(current) - actual[field]) > 1e-9
+        if not older_than_policy and not drifted:
+            continue
+        fire_id = str(record["fire_id"])
+        update_decision(
+            fire_id,
+            "amend",
+            f"Superseded by {FIRE_ID}; current {field}={actual[field]:.6f}",
+            decision_at=decided_at,
+            db_path=db_path,
+            base_dir=proposals_dir,
+        )
+        superseded.append(fire_id)
+    return superseded
 
 
 def apply_policy(
@@ -185,6 +237,7 @@ def main() -> int:
     parser.add_argument(
         "--policy", type=Path, default=Path("config/social_automation_policy.json")
     )
+    parser.add_argument("--proposals-dir", type=Path, default=PROPOSALS_DIR)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--decided-at", default="2026-07-24T00:00:00+08:00")
     args = parser.parse_args()
@@ -199,6 +252,15 @@ def main() -> int:
         )
     finally:
         conn.close()
+    result["superseded_proposals"] = (
+        supersede_drifted_topic_proposals(
+            args.db,
+            args.proposals_dir,
+            decided_at=args.decided_at,
+        )
+        if args.apply
+        else []
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

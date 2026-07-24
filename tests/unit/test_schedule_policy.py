@@ -109,11 +109,11 @@ def test_runtime_override_rejects_spacing_violation_across_midnight() -> None:
         )
 
 
-def test_recovery_midday_dispatches_threads_only() -> None:
+def test_recovery_afternoon_dispatches_threads_only() -> None:
     decision = decide_schedule(
         _conn(),
         load_policy(POLICY),
-        datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),  # Friday 12:10 Taipei
+        datetime(2026, 7, 24, 8, 10, tzinfo=timezone.utc),  # Friday 16:10 Taipei
         mode="recovery",
     )
     assert decision.mode == "recovery"
@@ -158,10 +158,20 @@ def test_recovery_ignores_live_runtime_override() -> None:
     decision = decide_schedule(
         conn,
         load_policy(POLICY),
-        datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),
+        datetime(2026, 7, 24, 8, 10, tzinfo=timezone.utc),
         mode="recovery",
     )
     threads = next(item for item in decision.platform_decisions if item.platform == "threads")
     assert threads.target_posts_per_day == 1
-    assert threads.local_slots == [12]
+    assert threads.local_slots == [16]
     assert threads.policy_source == "recovery_policy"
+
+
+def test_recovery_old_noon_slot_is_noop() -> None:
+    decision = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    assert decision.dispatch is False

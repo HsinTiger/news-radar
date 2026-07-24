@@ -31,12 +31,13 @@
   },
   "recovery": {
     "owner_approved_at": "2026-07-24T00:00:00+08:00",
+    "optimization_approved_at": "2026-07-24T14:14:00+08:00",
     "purpose": "Mac-independent, evidence-gated restart that separates interest, trust, utility, and format hypotheses.",
     "platforms": {
       "threads": {
         "target_posts_per_day": 1,
         "minimum_interval_hours": 20,
-        "local_slots": [12],
+        "local_slots": [16],
         "local_days": [0, 1, 2, 3, 4, 5, 6],
         "slot_tolerance_minutes": 50
       },
@@ -77,6 +78,17 @@
         "primary_value": null,
         "metric_note": "Legacy distribution signal is near zero; carousel format experiment first."
       }
+    },
+    "timing_experiment": {
+      "platform": "threads",
+      "from_local_hour": 12,
+      "to_local_hour": 16,
+      "frequency_unchanged": true,
+      "historical_posts_at_target_hour": 5,
+      "historical_median_views_at_target_hour": 625,
+      "first_recovery_post_1h_views": 6,
+      "confidence": "MED",
+      "decision_gate": "keep 1/day until at least 3 Recovery posts complete 168h"
     }
   },
   "reels": {
