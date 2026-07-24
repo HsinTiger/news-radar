@@ -11,7 +11,7 @@ from scripts.verify_publish import verify as verify_publish
 GOOD_THREADS_TEXT = (
     "交通部公告新制下週上路，通勤規則確定改變。\n\n"
     "根據交通部公告，通勤族可能增加轉乘時間；出門前先查詢新班次。\n\n"
-    "哪一段轉乘最需要交通部補上配套？\n\n"
+    "你最希望交通部先替哪一段轉乘補上配套？\n\n"
     "#交通政策"
 )
 

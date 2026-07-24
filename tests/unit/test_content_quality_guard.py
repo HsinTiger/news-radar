@@ -36,7 +36,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v11_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v13_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -85,7 +85,7 @@ def test_v11_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v11_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v13_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -101,6 +101,22 @@ def test_v11_accepts_natural_threads_shape_without_editorial_labels() -> None:
         )
     )
     assert not should_request_rewrite(issues), format_issues(issues)
+
+
+def test_v13_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+    text = (
+        "證交所公告台股本週上漲，這段重複資料很多。" * 14
+        + "\n\n投資人可檢查自己的同期間報酬。"
+        + "\n\n下週產業輪動是否延續？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="台股週報", recovery=True
+        )
+    }
+    assert "platform_copy_too_long" in codes
+    assert "generic_engagement_bait" in codes
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----

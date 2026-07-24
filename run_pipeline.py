@@ -70,6 +70,7 @@ MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
 RECOVERY_MAX_POSTS_PER_SLOT = 3 # 三個受限候選；仍只允許一篇通過並發布
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
+MAX_QUALITY_REWRITE_ATTEMPTS = 2  # 新 issue 可再修一次；仍有問題就 fail-closed
 
 # Harvest 節流：兩次 RSS 抓取最少相隔秒數（1.5 小時）
 HARVEST_THROTTLE_SECONDS = 90 * 60
@@ -1037,15 +1038,20 @@ async def process_item(
         dbmod.update_status(conn, news_id, "dropped")
         return "dropped_quality_block"
 
-    rewrite_requests = [
-        f"{platform}: {format_issues(issues)}"
-        for platform, issues in quality_findings.items()
-        if should_request_rewrite(issues)
-    ]
     rewrite_unresolved = False
-    if rewrite_requests:
+    for rewrite_index in range(1, MAX_QUALITY_REWRITE_ATTEMPTS + 1):
+        rewrite_requests = [
+            f"{platform}: {format_issues(issues)}"
+            for platform, issues in quality_findings.items()
+            if should_request_rewrite(issues)
+        ]
+        if not rewrite_requests:
+            rewrite_unresolved = False
+            break
+        rewrite_unresolved = True
         print(
-            "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行唯一一次重寫："
+            "   ↳ [QualityGuard·rewrite] 命中可修正品質問題，執行受限重寫 "
+            f"{rewrite_index}/{MAX_QUALITY_REWRITE_ATTEMPTS}："
             + " || ".join(rewrite_requests)
         )
         rewrite_codes = {
@@ -1061,9 +1067,10 @@ async def process_item(
         )
         rewrite_note = (
             f"{editorial_mandate}\n\n"
-            "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
-            "variant. Preserve source-backed facts and the core insight. Remove or "
-            "attribute unsupported numeric claims; do not invent citations. Fix these "
+            f"QUALITY REWRITE ({rewrite_index}/{MAX_QUALITY_REWRITE_ATTEMPTS}): "
+            "Rewrite every requested platform variant. Preserve source-backed facts "
+            "and the core insight. Remove or attribute unsupported numeric claims; "
+            "do not invent citations. Fix these "
             f"deterministic findings: {' || '.join(rewrite_requests)}\n\n"
             + "\n".join(targeted_rewrite_guidance)
         )
@@ -1074,36 +1081,37 @@ async def process_item(
             editorial_note=rewrite_note,
             platforms=active_platforms,
         )
-        if retry_bundle:
-            retry_finalized = dict(finalized)
-            for platform_key in active_platforms:
-                raw_variant = getattr(retry_bundle, platform_key)
-                if raw_variant:
-                    retry_finalized[platform_key] = finalize_variant(
-                        raw_variant, platform_key
-                    )
-            finalized = retry_finalized
-            bundle = retry_bundle
-            quality_findings = evaluate_quality(2)
-            retry_blocks = [
-                f"{platform}: {format_issues(issues)}"
-                for platform, issues in quality_findings.items()
-                if has_blocking_issues(issues)
-            ]
-            if retry_blocks:
-                print(
-                    " 🛑 [QualityGuard·rewrite] 重寫後出現 block，skip 本篇："
-                    + " || ".join(retry_blocks)
-                )
-                dbmod.update_status(conn, news_id, "dropped")
-                return "dropped_quality_block"
-            rewrite_unresolved = any(
-                should_request_rewrite(issues)
-                for issues in quality_findings.values()
-            )
-        else:
-            rewrite_unresolved = True
+        if not retry_bundle:
             print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
+            break
+        retry_finalized = dict(finalized)
+        for platform_key in active_platforms:
+            raw_variant = getattr(retry_bundle, platform_key)
+            if raw_variant:
+                retry_finalized[platform_key] = finalize_variant(
+                    raw_variant, platform_key
+                )
+        finalized = retry_finalized
+        bundle = retry_bundle
+        quality_findings = evaluate_quality(rewrite_index + 1)
+        retry_blocks = [
+            f"{platform}: {format_issues(issues)}"
+            for platform, issues in quality_findings.items()
+            if has_blocking_issues(issues)
+        ]
+        if retry_blocks:
+            print(
+                " 🛑 [QualityGuard·rewrite] 重寫後出現 block，skip 本篇："
+                + " || ".join(retry_blocks)
+            )
+            dbmod.update_status(conn, news_id, "dropped")
+            return "dropped_quality_block"
+        rewrite_unresolved = any(
+            should_request_rewrite(issues)
+            for issues in quality_findings.values()
+        )
+        if not rewrite_unresolved:
+            break
 
     # 4. 建立 Draft（舊表相容；若本輪沒有 FB，就用第一個實際目標作 canonical）
     canonical_key = "fb" if "fb" in finalized else active_platforms[0]

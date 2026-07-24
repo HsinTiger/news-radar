@@ -189,7 +189,8 @@ def editorial_mandate_for(platforms: Iterable[str], topic: str | None) -> str:
         lines.extend([
             "- TW stocks: distinguish index performance from any reader's own portfolio; never imply that every investor, holding, or pension gained with the index.",
             "- TW stocks: keep only 2-3 source-backed figures, use their original units, and make the utility a same-period comparison of the reader's return or sector exposure.",
-            "- TW stocks: close with a measurable personal-result or allocation question, not a generic prediction about whether the market will keep rising.",
+            "- TW stocks: the action must be usable now: compare the reader's same-period return or sector exposure with the official figures. Do not tell readers to wait for next week's report.",
+            "- TW stocks: close with a measurable personal-result or allocation question addressed directly to the reader, not a generic prediction about whether the market will keep rising.",
         ])
     for platform in sorted(set(platforms)):
         experiment_type = experiment_type_for(platform, topic)

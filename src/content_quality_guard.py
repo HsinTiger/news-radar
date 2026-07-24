@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v12"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v13"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -250,7 +250,7 @@ _RECOVERY_ACTION_PATTERN = re.compile(
     r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切)?"
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
-    r"關注|採取|納入)"
+    r"關注|採取|納入|參考)"
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
     r"(?:可以|可|應該|應)(?:依|依據|根據)[^。！？\n]{1,24}"
     r"(?:查詢|確認|檢查|比較|比對|追蹤|檢視|留意|調整)"
@@ -857,8 +857,8 @@ def check_platform_style(
     }.get(str(platform).strip().lower(), str(platform).strip().lower())
     limits = {
         "threads": {
-            "max_chars": 320,
-            "max_paragraph": 180,
+            "max_chars": 260,
+            "max_paragraph": 120,
             "min_paragraphs": 2,
             "hashtags": 1,
         },
@@ -951,11 +951,11 @@ def check_platform_style(
     elif any(
         generic in closing
         for generic in ("你怎麼看", "大家怎麼看", "你認為呢")
-    ):
+    ) or not re.search(r"你|您的|你家|你們|自己|自身", closing):
         issues.append(QualityIssue(
             code="generic_engagement_bait",
             severity="rewrite",
-            message="結尾問題必須可具體回答，不得使用泛用互動誘餌",
+            message="結尾問題必須直接問讀者可具體回答的經驗、數字或取捨",
             evidence=closing[-80:],
         ))
     return issues
