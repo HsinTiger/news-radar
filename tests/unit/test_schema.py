@@ -60,3 +60,25 @@ def test_multi_platform_draft_all_optional():
     assert d.fb is None
     assert d.ig is None
     assert d.threads is None
+
+
+def test_multi_platform_draft_drops_unsolicited_partial_variant_only():
+    draft = MultiPlatformDraft.model_validate(
+        {
+            "threads": {
+                "title": "t",
+                "body": "complete",
+                "hashtags": ["#台灣"],
+                "char_count": 8,
+            },
+            "ig": {
+                "title": "unrequested partial",
+                "hashtags": ["#台灣"],
+                "char_count": 20,
+            },
+        }
+    )
+
+    assert draft.threads is not None
+    assert draft.threads.body == "complete"
+    assert draft.ig is None
