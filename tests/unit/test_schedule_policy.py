@@ -61,6 +61,76 @@ def test_daily_quota_prevents_duplicate_dispatch() -> None:
     assert "daily_quota_reached" in fb.reason
 
 
+def test_recovery_quality_attempt_prevents_same_day_retry() -> None:
+    conn = _conn()
+    conn.execute(
+        """CREATE TABLE content_quality_evaluations(
+        draft_id TEXT,platform TEXT,stage TEXT,checked_at TEXT,guard_version TEXT)"""
+    )
+    conn.executemany(
+        "INSERT INTO content_quality_evaluations VALUES(?,?,?,?,?)",
+        [
+            (
+                "held-draft",
+                "instagram",
+                "compose",
+                "2026-07-23T12:02:00+00:00",
+                "2026-07-23.taiwan-daily-v6",
+            ),
+            (
+                "held-draft",
+                "instagram",
+                "compose",
+                "2026-07-23T12:03:00+00:00",
+                "2026-07-23.taiwan-daily-v6",
+            ),
+        ],
+    )
+
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 23, 12, 22, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    instagram = next(
+        item for item in decision.platform_decisions if item.platform == "instagram"
+    )
+    assert "instagram" not in decision.platforms
+    assert instagram.quality_attempts_today == 1
+    assert "daily_attempt_quota_reached" in instagram.reason
+
+
+def test_recovery_quality_attempt_resets_on_next_local_day() -> None:
+    conn = _conn()
+    conn.execute(
+        """CREATE TABLE content_quality_evaluations(
+        draft_id TEXT,platform TEXT,stage TEXT,checked_at TEXT,guard_version TEXT)"""
+    )
+    conn.execute(
+        "INSERT INTO content_quality_evaluations VALUES(?,?,?,?,?)",
+        (
+            "yesterday-held",
+            "instagram",
+            "compose",
+            "2026-07-23T12:02:00+00:00",
+            "2026-07-23.taiwan-daily-v6",
+        ),
+    )
+
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 24, 12, 22, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    instagram = next(
+        item for item in decision.platform_decisions if item.platform == "instagram"
+    )
+    assert decision.platforms == ["instagram"]
+    assert instagram.quality_attempts_today == 0
+
+
 def test_outside_slot_is_noop() -> None:
     decision = decide_schedule(
         _conn(), load_policy(POLICY), datetime(2026, 7, 23, 4, 0, tzinfo=timezone.utc)
