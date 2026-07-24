@@ -323,6 +323,28 @@ def test_taiwan_daily_rewrites_legacy_formulaic_hook():
     }
 
 
+def test_taiwan_daily_rewrites_background_first_hook():
+    text = (
+        "這件事情背後其實有很多複雜原因與長期背景，值得每一個台灣人花時間慢慢理解其中脈絡。"
+        "根據行政院公告，食安法修正草案今天通過。"
+        "對消費者的具體影響是通報責任改變；消費者可以先查詢公告。"
+    )
+    issues = check_quality(text, title="食安法修正", recovery=True)
+    assert ("weak_recovery_hook", "rewrite") in {
+        (item.code, item.severity) for item in issues
+    }
+
+
+def test_taiwan_daily_accepts_actor_and_consequence_in_first_45_chars():
+    text = (
+        "行政院通過食安法修法，業者未通報最高可罰 2 億元。"
+        "根據行政院 7 月 24 日公告，修法草案將送立法院審議。"
+        "對消費者的具體影響是異常通報時間縮短；消費者可以先查詢修法進度。"
+    )
+    codes = {item.code for item in check_quality(text, title="食安法修正", recovery=True)}
+    assert "weak_recovery_hook" not in codes
+
+
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----
 
 def test_corporate_fluff_pileup_warns():
