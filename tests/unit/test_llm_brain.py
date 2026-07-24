@@ -298,6 +298,7 @@ async def test_default_quota_circuit_skips_shared_gemini_wrappers(monkeypatch):
     )
     monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
     monkeypatch.setenv("OPENCODE_API_KEY", "fake-opencode")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
     first = await call_for_json(system="sys", prompt="p", response_model=_Demo)
     second = await call_for_json(system="sys", prompt="p2", response_model=_Demo)
@@ -305,6 +306,53 @@ async def test_default_quota_circuit_skips_shared_gemini_wrappers(monkeypatch):
     assert first.data == second.data == expected
     assert calls == {"litellm": 1, "gemini": 0, "opencode": 2}
     assert llm_brain._QUOTA_EXHAUSTED_BACKENDS == {"litellm", "gemini"}
+
+
+@pytest.mark.asyncio
+async def test_default_cloud_falls_back_to_github_models(monkeypatch):
+    expected = _Demo(name="github", score=0.95)
+    providers = []
+
+    async def fake_litellm(**kwargs):
+        return LLMResult(
+            data=None,
+            provider="litellm",
+            raw_error="429 RESOURCE_EXHAUSTED quota",
+        )
+
+    async def fake_gemini(**kwargs):
+        raise AssertionError("direct Gemini shares the exhausted LiteLLM quota")
+
+    async def fake_openai_compatible(*, provider, **kwargs):
+        providers.append(provider.name)
+        return LLMResult(
+            data=expected,
+            provider=provider.name,
+            model=provider.model_default,
+        )
+
+    monkeypatch.setattr(llm_brain, "_QUOTA_EXHAUSTED_BACKENDS", set())
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: False)
+    monkeypatch.setattr(llm_brain, "_litellm_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "_try_litellm", fake_litellm)
+    monkeypatch.setattr(llm_brain, "_try_gemini", fake_gemini)
+    monkeypatch.setattr(
+        llm_brain,
+        "_try_openai_compatible",
+        fake_openai_compatible,
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    monkeypatch.setenv("GITHUB_TOKEN", "short-lived-actions-token")
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+
+    result = await call_for_json(system="sys", prompt="p", response_model=_Demo)
+
+    assert result.data == expected
+    assert result.provider == "github_models"
+    assert result.model == "openai/gpt-4.1-mini"
+    assert providers == ["github_models"]
 
 
 # ----------------------------------------------------------------------

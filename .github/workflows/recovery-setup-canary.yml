@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: read
+  models: read
 
 jobs:
   setup-only:
@@ -46,6 +47,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
           python scripts/recovery_setup_canary.py
           --platform "${{ inputs.platform }}"

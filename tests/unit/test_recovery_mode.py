@@ -139,6 +139,34 @@ def test_public_consequence_outranks_ceremonial_politics() -> None:
     assert rank_candidates(conn, rows, now=NOW)[0]["title"] == "食安不合格產品回收批號公布"
 
 
+def test_public_consequence_outranks_promotional_events_and_rally_headcount() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "國防部空氣軟槍射擊賽25日登場",
+            "topic_category": "tw_politics",
+            "feed_tier": "primary",
+            "published_at": "2026-07-24T11:00:00Z",
+        },
+        {
+            "title": "凱道集會至少12位縣市首長到場",
+            "topic_category": "tw_politics",
+            "feed_tier": "primary",
+            "published_at": "2026-07-24T10:30:00Z",
+        },
+        {
+            "title": "台中油品抽驗次數各說各話",
+            "topic_category": "tw_politics",
+            "feed_tier": "secondary",
+            "published_at": "2026-07-24T10:00:00Z",
+        },
+    ]
+
+    ranked = rank_candidates(conn, rows, now=NOW)
+
+    assert ranked[0]["title"] == "台中油品抽驗次數各說各話"
+
+
 def test_future_dated_row_cannot_evict_current_taiwan_candidates() -> None:
     conn = _conn()
     rows = [

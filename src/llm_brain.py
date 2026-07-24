@@ -1,7 +1,8 @@
 """
 News Radar · LLM Brain (Phase 8.19)
 ====================================
-統一的 LLM 呼叫層：claude_cli → gemini → opencode → groq → cerebras → None（依能力排序）。
+統一的 LLM 呼叫層：claude_cli → gemini → GitHub Models → opencode →
+groq → cerebras → None（依能力排序）。
 
 為什麼獨立一個模組：
 - scorer.py / composer.py 都各自呼叫 Gemini；現在要加 Claude CLI fallback
@@ -59,7 +60,7 @@ T = TypeVar("T", bound=BaseModel)
 
 @dataclass
 class LLMResult(Generic[T]):
-    """LLM 呼叫結果。data=None 表示兩條路都失敗（呼叫端要 skip）。"""
+    """LLM 呼叫結果。data=None 表示所有指定路徑都失敗。"""
     data: Optional[T]
     provider: str  # "gemini" | "claude_cli" | "none"
     model: str = ""
@@ -828,14 +829,14 @@ async def _try_claude_cli_once(
 
 
 # --------------------------------------------------------------------------
-# OpenAI-compatible path（Groq / Cerebras / 任意 OpenAI-format 免費端點）
+# OpenAI-compatible path（GitHub Models / Groq / Cerebras / 其他相容端點）
 # --------------------------------------------------------------------------
 # 為什麼 Gemini 走 SDK、這兩家走這個泛用函式：
 # - Gemini 有 google-genai 的 structured output（response_schema），品質最穩，留原路。
 # - Groq / Cerebras 都是 OpenAI-compatible 的 /chat/completions，差別只有 base_url +
 #   key + model → 一個函式覆蓋，多一家只要在 _OPENAI_COMPAT 加一筆 config。
 #
-# ⚠️ 能力 / 可靠度排序（fallback 觸發順序）：claude_cli → gemini → groq → cerebras。
+# ⚠️ 能力 / 可靠度排序由 call_for_json 的預設鏈決定。
 #   2026-05 免費 tier 實測限制（務必知道，否則會誤判「為什麼長文 fallback 沒生效」）：
 #   - Groq free：30 RPM / 6,000 TPM / 1,000 req/day。soul bundle(~17KB) 當 system 的
 #     composer 容易撞 TPM；scorer / classifier 這種短 call 沒問題。
@@ -856,6 +857,18 @@ class _OpenAICompatProvider:
 
 
 _OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
+    # GitHub Actions can mint a short-lived GITHUB_TOKEN with ``models: read``.
+    # This gives the cloud pipeline a governed fallback without another
+    # long-lived third-party secret.  It still returns through the same
+    # Pydantic contract and all downstream editorial/source-quality gates.
+    "github_models": _OpenAICompatProvider(
+        name="github_models",
+        key_env="GITHUB_TOKEN",
+        base_url_env="GITHUB_MODELS_BASE_URL",
+        base_url_default="https://models.github.ai/inference",
+        model_env="GITHUB_MODELS_MODEL",
+        model_default="openai/gpt-4.1-mini",
+    ),
     "groq": _OpenAICompatProvider(
         name="groq",
         key_env="GROQ_API_KEY",
@@ -1162,11 +1175,12 @@ async def call_for_json(
 ) -> LLMResult[T]:
     """核心 API：依能力 / 可靠度排序逐一嘗試 backend，第一個成功即交付。
 
-    預設鏈（2026-05-31 擴充）：claude_cli (Max 主腦) → gemini (SDK structured, 1M
-        context) → opencode (big-pickle = GLM-4.6, 200k) → groq → cerebras。
-        前兩條維持原行為；後三條是「Claude + Gemini 同時不可用」時的免費雲端兜底，
-        需設對應 key（OPENCODE_API_KEY / GROQ_API_KEY / CEREBRAS_API_KEY）才會啟用，
-        沒設就自動略過（對既有部署零影響）。排序即「能力 / 可靠度 + 可用 context」：
+    預設鏈（2026-07-24 擴充）：claude_cli (Max 主腦) → gemini (SDK structured,
+        1M context) → GitHub Models (gpt-4.1-mini, 1M) → opencode
+        (big-pickle = GLM-4.6, 200k) → groq → cerebras。
+        GitHub Models 使用 Actions 短效 GITHUB_TOKEN；其餘免費兜底需設對應 key
+        （OPENCODE_API_KEY / GROQ_API_KEY / CEREBRAS_API_KEY）才會啟用，沒設就自動
+        略過。排序綜合能力、可靠度與可用 context：
         長文兜底優先走 context 大的（gemini 1M → opencode 200k），groq(6K TPM)、
         cerebras(8K context) 殿後。各家限制見 _OPENAI_COMPAT 區塊註解。
 
@@ -1197,7 +1211,8 @@ async def call_for_json(
         temperature: 僅 Gemini 使用（Claude CLI 用系統預設）
         timeout_s: Claude CLI subprocess 硬上限
         backends: 可指定的 backend 順序與白名單（tuple，按序嘗試）。
-            None = 預設 ("claude_cli","gemini_cli","gemini","opencode","groq","cerebras")。
+            None = 預設 ("claude_cli","gemini_cli","gemini","github_models",
+            "opencode","groq","cerebras")。
             例：("claude_cli",) 只試 Claude；("gemini","groq") 跳過 Claude、
             先 Gemini 再 Groq。未知名稱會被略過。
         disallowed_tools: 傳給 Claude CLI 的 `--disallowedTools`（例：
@@ -1212,9 +1227,15 @@ async def call_for_json(
         # Mac (有 Claude CLI) → claude_cli → gemini → litellm。
         # 由 CLAUDE_CLI_BIN 是否在 PATH 決定——GitHub Actions runner 上沒有 claude CLI。
         if _claude_cli_available():
-            backends = ("claude_cli", "litellm", "gemini", "gemini_cli", "opencode", "groq", "cerebras")
+            backends = (
+                "claude_cli", "litellm", "gemini", "gemini_cli",
+                "github_models", "opencode", "groq", "cerebras",
+            )
         else:
-            backends = ("litellm", "gemini", "opencode", "groq", "cerebras")
+            backends = (
+                "litellm", "gemini", "github_models", "opencode", "groq",
+                "cerebras",
+            )
     allowed = backends
     primary = allowed[0] if allowed else None
     last_error: Optional[str] = None

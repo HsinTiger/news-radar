@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -79,6 +80,13 @@ async def run_setup_canary(
     platform: str,
     report_path: Path,
 ) -> dict[str, Any]:
+    # The script name is a runtime contract, not a suggestion.  Lock the
+    # canary to the same Recovery/editorial path as the production workflow so
+    # a local invocation cannot accidentally exercise the legacy long prompt
+    # and report misleading evidence.
+    os.environ["AUTOMATION_MODE"] = "recovery"
+    os.environ["EDITORIAL_MODE"] = "1"
+    os.environ["EDITOR_ENFORCE"] = "1"
     if platform not in PLATFORMS:
         raise ValueError(f"unsupported platform: {platform}")
     if not source_db.is_file():
@@ -162,9 +170,23 @@ async def run_setup_canary(
         and queued_after > queued_before
         else "held"
     )
+    if not canonical_unchanged or not publish_unchanged:
+        hold_reason = "state_invariant_failed"
+    elif not quality:
+        hold_reason = "no_current_guard_evaluation"
+    elif not publish_ready:
+        hold_reason = "quality_held"
+    elif experiments <= 0:
+        hold_reason = "missing_recovery_experiment"
+    elif queued_after <= queued_before:
+        hold_reason = "queue_not_advanced"
+    else:
+        hold_reason = "ready"
     report = {
         "status": status,
+        "hold_reason": hold_reason,
         "setup_only": True,
+        "automation_mode": os.environ["AUTOMATION_MODE"],
         "platform": platform,
         "started_at": started_at,
         "guard_version": QUALITY_GUARD_VERSION,
