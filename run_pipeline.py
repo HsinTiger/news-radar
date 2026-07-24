@@ -30,6 +30,7 @@ from src.scorer import score_news
 from src.composer import compose_multi_platform, finalize_variant
 from src.content_quality_guard import (
     check_quality,
+    check_platform_format,
     combine_visible_text,
     format_issues,
     has_blocking_issues,
@@ -38,10 +39,13 @@ from src.content_quality_guard import (
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.recovery_mode import (
+    content_format_for_platform,
     editorial_mandate_for,
     is_recovery_mode,
+    platform_uses_carousel,
     rank_candidates,
     record_experiments,
+    visible_carousel_for_platform,
 )
 from src.publisher import (
     publish_to_fb, publish_to_threads, publish_to_ig,
@@ -399,10 +403,11 @@ async def _publish_platform(
         return True
 
     # --- Phase 10 (2026-06-02): 2–4 圖卡 carousel（有蒸餾卡片內容時優先）。
-    # 任何一步失敗都 fall through 到下面的單圖流程，發文絕不因圖卡失敗而中斷。 ---
+    # Live mode 失敗可降級單圖；Recovery IG 必須維持五卡實驗，失敗則保留重試。 ---
     # Phase 10 carousel: try structured carousel first, then auto-generate from text.
-    _carousel_to_use = carousel
-    if _carousel_to_use is None and variant.body:
+    carousel_enabled = platform_uses_carousel(platform_key)
+    _carousel_to_use = carousel if carousel_enabled else None
+    if _carousel_to_use is None and variant.body and not is_recovery_mode():
         # Auto-generate 4 cards from the platform text (split by paragraphs)
         from src.schema import CarouselCards
         paras = [p.strip() for p in variant.body.split("\n") if p.strip() and len(p.strip()) > 10][:4]
@@ -442,17 +447,37 @@ async def _publish_platform(
                     else:  # fb
                         result = await publish_fb_carousel(card_urls, full_text)
                     if result.get("success"):
+                        format_at = datetime.now(timezone.utc).isoformat()
                         dbmod.log_publish(conn, PublishResult(
                             draft_id=draft_id, platform=db_name,
                             platform_post_id=result.get("id"),
-                            posted_at=datetime.now(timezone.utc).isoformat(),
+                            posted_at=format_at,
                             success=True, error_message=None,
                         ))
+                        dbmod.mark_recovery_actual_format(
+                            conn, draft_id, db_name, "carousel", format_at
+                        )
                         print(f"   ✅ [{label}] carousel 成功 id={result.get('id')}")
                         return True
-                    print(f"   ⚠️ [{label}] carousel 失敗 → 降級單圖：{str(result.get('error'))[:160]}")
+                    next_step = (
+                        "保留重試" if is_recovery_mode() and platform_key == "ig"
+                        else "降級單圖"
+                    )
+                    print(
+                        f"   ⚠️ [{label}] carousel 失敗 → {next_step}："
+                        f"{str(result.get('error'))[:160]}"
+                    )
         except Exception as exc:
-            print(f"   ⚠️ carousel 流程例外 → 降級單圖：{exc}")
+            print(f"   ⚠️ carousel 流程例外：{exc}")
+
+    if is_recovery_mode() and platform_key == "ig":
+        msg = "Recovery Instagram 五卡 carousel 發布失敗；禁止降級單圖"
+        print(f"   ❌ [📸 IG] {msg}")
+        dbmod.log_publish(conn, PublishResult(
+            draft_id=draft_id, platform=db_name, platform_post_id=None,
+            posted_at=posted_at, success=False, error_message=msg,
+        ))
+        return False
 
     # Phase 2: FB and IG both go through render → upload → URL.
     # prep["image_url"] is the cover-cdn raw URL (when render+upload
@@ -527,6 +552,14 @@ async def _publish_platform(
         success=bool(result.get("success")),
         error_message=str(result.get("error", "")) if not result.get("success") else None,
     ))
+    if result.get("success"):
+        dbmod.mark_recovery_actual_format(
+            conn,
+            draft_id,
+            db_name,
+            "feed",
+            datetime.now(timezone.utc).isoformat(),
+        )
     return bool(result.get("success"))
 
 
@@ -819,12 +852,36 @@ async def process_item(
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
         for platform_key, (_variant, ftext, _ok) in finalized.items():
-            visible_text = combine_visible_text(ftext, bundle.carousel)
+            visible_carousel = visible_carousel_for_platform(
+                platform_key,
+                bundle.carousel,
+                recovery=is_recovery_mode(),
+            )
+            visible_text = combine_visible_text(ftext, visible_carousel)
             issues = check_quality(
                 visible_text,
                 title=title,
                 recovery=is_recovery_mode(),
                 source_text=source_evidence_text if is_recovery_mode() else None,
+            )
+            if visible_carousel is not None:
+                from substack_radar.cards import build_cards
+
+                carousel_card_count = len(
+                    build_cards(
+                        title=_variant.title or "",
+                        subtitle="",
+                        carousel=visible_carousel,
+                    )
+                )
+            else:
+                carousel_card_count = 0
+            issues.extend(
+                check_platform_format(
+                    platform_key,
+                    carousel_card_count=carousel_card_count,
+                    recovery=is_recovery_mode(),
+                )
             )
             findings[platform_key] = issues
             dbmod.record_quality_evaluation(
@@ -886,6 +943,13 @@ async def process_item(
                 "by the supplied evidence are only: "
                 + (", ".join(allowed_numbers) if allowed_numbers else "none")
                 + ". Bare single-digit list labels are not factual support."
+            )
+        if "missing_recovery_five_card_carousel" in rewrite_codes:
+            targeted_rewrite_guidance.append(
+                "INSTAGRAM FORMAT: Return all five standalone carousel jobs: "
+                "verified consequence, what happened, primary-source number, "
+                "who pays or benefits, and the exact next check. Populate the "
+                "structured carousel fields so the renderer produces five cards."
             )
         if rewrite_codes & {
             "uncited_stat",
@@ -1025,7 +1089,14 @@ async def process_item(
                 for platform_key in finalized
             },
             topic=topic_cls.category_id,
-            content_format="carousel" if bundle.carousel is not None else "feed",
+            content_format={
+                dbmod.PLATFORM_DB_NAME[platform_key]: content_format_for_platform(
+                    platform_key,
+                    carousel_available=bundle.carousel is not None,
+                    recovery=True,
+                )
+                for platform_key in finalized
+            },
             created_at=created_at,
         )
         print("   ↳ [Recovery] 已保存平台實驗 lineage；publisher 只會取本輪新稿")

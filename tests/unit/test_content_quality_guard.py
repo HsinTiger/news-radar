@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from src.content_quality_guard import (
     _RULES,
+    check_platform_format,
     check_quality,
     combine_visible_text,
     format_issues,
@@ -13,6 +14,25 @@ from src.content_quality_guard import (
     numeric_claim_allowlist,
     should_request_rewrite,
 )
+
+
+def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
+    issues = check_platform_format(
+        "instagram", carousel_card_count=4, recovery=True
+    )
+    assert [issue.code for issue in issues] == [
+        "missing_recovery_five_card_carousel"
+    ]
+    assert should_request_rewrite(issues)
+    assert not check_platform_format(
+        "instagram", carousel_card_count=5, recovery=True
+    )
+    assert not check_platform_format(
+        "facebook", carousel_card_count=0, recovery=True
+    )
+    assert not check_platform_format(
+        "instagram", carousel_card_count=0, recovery=False
+    )
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----
