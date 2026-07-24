@@ -44,6 +44,26 @@ SUBSTACK_TAG = "substack_source"
 SUBSTACK_FEED = "user_substack"
 
 
+def _submission_url(conn, url: str | None, news_id: str) -> str | None:
+    """Keep a Substack submission separate when harvest already owns the URL.
+
+    ``news_items.url`` is globally unique, while a harvested article and an
+    owner-requested Substack draft are different workflow objects.  A URL
+    fragment is browser-safe (it is not sent to the source server), stable for
+    idempotency, and preserves a clickable link to the original source.
+    """
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return url
+    owner = conn.execute(
+        "SELECT id FROM news_items WHERE url=? LIMIT 1",
+        (url,),
+    ).fetchone()
+    if not owner or owner["id"] == news_id:
+        return url
+    separator = "&" if "#" in url else "#"
+    return f"{url}{separator}news-radar-substack={news_id}"
+
+
 def _save_substack_item(news_id: str, *, url: str | None, title: str,
                         body: str, source_type: str, extra_tags: list[str],
                         immediate: bool = False,
@@ -77,13 +97,14 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
             conn.commit()
         conn.close()
         return {"status": "already_exists", "id": news_id}
+    stored_url = _submission_url(conn, url, news_id)
     now = datetime.now(timezone.utc).isoformat()
     item = NewsItem(
         id=news_id,
         feed_name=SUBSTACK_FEED,
         feed_tier="primary",
         source_type=source_type,
-        url=url,
+        url=stored_url,
         title=title[:120] or "Substack submission",
         published_at=now,
         fetched_at=now,

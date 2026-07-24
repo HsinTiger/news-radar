@@ -1,6 +1,7 @@
 import json
 
 from scripts import drain_substack, submit_substack
+from src.schema import NewsItem
 
 
 def test_duplicate_substack_source_merges_priority_and_submission_tags(
@@ -60,6 +61,80 @@ def test_unreadable_url_fails_before_false_source_queue(monkeypatch, tmp_path) -
         assert conn.execute("SELECT COUNT(*) FROM news_items").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_harvested_url_can_be_submitted_without_stealing_the_source_row(
+    monkeypatch, tmp_path
+) -> None:
+    db_path = tmp_path / "news_radar.db"
+    monkeypatch.setattr(submit_substack.dbmod, "DB_PATH", db_path)
+    monkeypatch.setattr(drain_substack, "DB", db_path)
+    submit_substack.dbmod.init_db()
+    source_url = "https://example.com/official-release"
+    conn = submit_substack.dbmod.get_conn()
+    try:
+        submit_substack.dbmod.upsert_news(
+            conn,
+            NewsItem(
+                id="harvested-source",
+                feed_name="official_feed",
+                feed_tier="primary",
+                source_type="article",
+                url=source_url,
+                title="Official release",
+                published_at="2099-01-01T00:00:00+00:00",
+                fetched_at="2099-01-01T00:00:00+00:00",
+                clean_markdown="Original harvest row",
+                word_count=3,
+                tags=[],
+                status="fetched",
+            ),
+        )
+    finally:
+        conn.close()
+    monkeypatch.setattr(
+        submit_substack,
+        "_fetch_page_text",
+        lambda _url: "Official evidence " * 20,
+    )
+
+    first = submit_substack.process_url(
+        source_url,
+        note="Owner long-form angle",
+        immediate=True,
+        submission_id="substack-submit-005",
+    )
+    second = submit_substack.process_url(
+        source_url,
+        note="Owner long-form angle",
+        immediate=True,
+        submission_id="substack-submit-006",
+    )
+
+    assert first["status"] == "created"
+    assert second["status"] == "already_exists"
+    conn = submit_substack.dbmod.get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id,feed_name,url,tags FROM news_items ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    harvested = next(row for row in rows if row["id"] == "harvested-source")
+    submitted = next(row for row in rows if row["id"] == first["id"])
+    assert harvested["feed_name"] == "official_feed"
+    assert harvested["url"] == source_url
+    assert submitted["feed_name"] == "user_substack"
+    assert submitted["url"].startswith(source_url + "#news-radar-substack=")
+    assert set(json.loads(submitted["tags"])) >= {
+        "substack_source",
+        "immediate",
+        "control_submission:substack-submit-005",
+        "control_submission:substack-submit-006",
+    }
+    assert [row[0] for row in drain_substack._candidates(only_immediate=True)] == [
+        first["id"]
+    ]
 
 
 def test_short_owner_view_is_still_a_substack_compose_candidate(
