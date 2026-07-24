@@ -314,6 +314,34 @@ def _deterministic_recovery_utility_repair(
     return "\n\n".join(paragraphs)
 
 
+def _deterministic_recovery_stat_prune(
+    body: str,
+    *,
+    topic: str | None,
+    source_evidence_text: str,
+) -> str:
+    """Drop whole stock paragraphs that introduce secondary statistical values."""
+
+    if topic != "tw_stocks":
+        return body
+    allowed = set(statistical_quantity_allowlist(source_evidence_text, limit=2))
+    if not allowed:
+        return body
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    kept: list[str] = []
+    kept_allowed_stat = False
+    for paragraph in paragraphs:
+        statistics = set(statistical_quantity_allowlist(paragraph))
+        if statistics and not statistics <= allowed:
+            continue
+        if statistics & allowed:
+            kept_allowed_stat = True
+        kept.append(paragraph)
+    if not kept or not kept_allowed_stat:
+        return body
+    return "\n\n".join(kept)
+
+
 def _quality_rewrite_penalty(findings: dict[str, list]) -> int:
     """Lower is better; blocks dominate, then rewrite issues, then warnings."""
 
@@ -1265,7 +1293,10 @@ async def process_item(
             "multiple_closing_questions",
             "generic_engagement_bait",
         }
-        deterministic_codes = closing_codes | {"missing_reader_utility"}
+        deterministic_codes = closing_codes | {
+            "missing_reader_utility",
+            "platform_stat_overload",
+        }
         if remaining_codes and remaining_codes <= deterministic_codes:
             repaired_finalized = dict(finalized)
             for platform_key, (variant, _full_text, _ok) in finalized.items():
@@ -1275,6 +1306,12 @@ async def process_item(
                     if issue.severity == "rewrite"
                 }
                 repaired_body = variant.body
+                if "platform_stat_overload" in platform_codes:
+                    repaired_body = _deterministic_recovery_stat_prune(
+                        repaired_body,
+                        topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
+                    )
                 if "missing_reader_utility" in platform_codes:
                     repaired_body = _deterministic_recovery_utility_repair(
                         repaired_body,
@@ -1301,7 +1338,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 utility/closing；"
+                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 stats/utility/closing；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 

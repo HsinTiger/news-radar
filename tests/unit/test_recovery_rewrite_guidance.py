@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from run_pipeline import (
     _deterministic_recovery_closing_repair,
+    _deterministic_recovery_stat_prune,
     _deterministic_recovery_utility_repair,
     _quality_rewrite_penalty,
     _recovery_rewrite_guidance,
 )
-from src.content_quality_guard import QualityIssue, check_quality
+from src.content_quality_guard import QualityIssue, check_platform_style, check_quality
 
 
 def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
@@ -113,6 +114,45 @@ def test_deterministic_market_utility_repair_is_concrete() -> None:
 
     assert "若你的報酬跑輸大盤，先比較產業配置與個股選擇" in repaired
     assert "missing_reader_utility" not in codes
+
+
+def test_deterministic_market_stat_prune_drops_secondary_stat_paragraph() -> None:
+    body = (
+        "根據證交所 7 月 24 日公告，加權指數本週上漲2.3%，"
+        "上市股票總市值達142.58兆元。\n\n"
+        "電腦週邊上漲10.29%，綠能下跌9.04%，半導體成交占比37.64%。\n\n"
+        "若你的報酬跑輸大盤，先比較產業配置與個股選擇。\n\n"
+        "下週哪些產業會延續漲勢？"
+    )
+    source = "加權指數上漲2.30%，上市股票總市值達142.58兆元。"
+
+    pruned = _deterministic_recovery_stat_prune(
+        body,
+        topic="tw_stocks",
+        source_evidence_text=source,
+    )
+    repaired = _deterministic_recovery_closing_repair(
+        pruned,
+        platform="threads",
+        topic="tw_stocks",
+        source_evidence_text=source,
+        source_label="證交所 官方訊息",
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads",
+            repaired,
+            title="台股週報",
+            recovery=True,
+        )
+    }
+
+    assert "10.29%" not in repaired
+    assert "9.04%" not in repaired
+    assert "37.64%" not in repaired
+    assert "platform_stat_overload" not in codes
+    assert "generic_engagement_bait" not in codes
 
 
 def test_best_of_repair_penalty_prefers_fewer_rewrite_issues() -> None:
