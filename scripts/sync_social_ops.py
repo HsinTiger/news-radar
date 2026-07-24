@@ -21,6 +21,8 @@ from typing import Any
 
 import httpx
 
+from src.content_quality_guard import QUALITY_GUARD_VERSION
+
 
 PLATFORMS = {"facebook", "instagram", "threads"}
 CONTROL_SUBMISSION_PREFIX = "control_submission:"
@@ -198,7 +200,7 @@ def build_engagement(conn: sqlite3.Connection, *, full: bool = False) -> list[di
 
 
 def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[str, Any]]:
-    """Aggregate latest per-draft quality evidence without exporting content."""
+    """Aggregate the current guard cohort without exporting content."""
     now = datetime.now(timezone.utc).isoformat()
     window_days = 0 if full else 45
     tables = {
@@ -221,7 +223,8 @@ def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[
                 "block_count": 0,
                 "publish_ready_count": 0,
                 "top_issue_codes": [],
-                "guard_version": "unknown",
+                "guard_version": QUALITY_GUARD_VERSION,
+                "legacy_excluded_count": 0,
             }
             for platform in sorted(PLATFORMS)
         ]
@@ -260,14 +263,19 @@ def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[
 
     result: list[dict[str, Any]] = []
     for platform in sorted(PLATFORMS):
-        platform_rows = [row for (_draft, p), row in latest.items() if p == platform]
+        latest_platform_rows = [
+            row for (_draft, p), row in latest.items() if p == platform
+        ]
+        platform_rows = [
+            row
+            for row in latest_platform_rows
+            if row["guard_version"] == QUALITY_GUARD_VERSION
+        ]
+        legacy_excluded_count = len(latest_platform_rows) - len(platform_rows)
         decisions = Counter(row["decision"] for row in platform_rows)
         codes: Counter[str] = Counter()
-        versions: list[str] = []
         for row in platform_rows:
             codes.update(_json(row["issue_codes_json"], []))
-            if row["guard_version"]:
-                versions.append(row["guard_version"])
         candidate_count = len(candidates[platform])
         evaluated = len(platform_rows)
         result.append(
@@ -287,7 +295,8 @@ def build_quality(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[
                     {"code": code, "count": count}
                     for code, count in codes.most_common(5)
                 ],
-                "guard_version": versions[-1] if versions else "unknown",
+                "guard_version": QUALITY_GUARD_VERSION,
+                "legacy_excluded_count": legacy_excluded_count,
             }
         )
     return result

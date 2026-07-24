@@ -226,6 +226,11 @@
       const qualityRate = n(q.evaluated)>0
         ? `${(n(q.publish_ready_count)/n(q.evaluated)*100).toFixed(0)}%`
         : "UNKNOWN";
+      const qualityNote = n(q.evaluated)>0
+        ? `${fmt(q.rewrite_count)} rewrite · ${fmt(q.block_count)} block · ${(n(q.evidence_coverage)*100).toFixed(0)}% coverage · ${fmt(q.legacy_excluded_count)} legacy excluded`
+        : n(q.legacy_excluded_count)>0
+          ? `現行 ${q.guard_version || "guard"} 尚無 evidence · ${fmt(q.legacy_excluded_count)} legacy excluded`
+          : "尚無現行品質 evidence";
       metrics.append(
         metric("已發布",fmt(published),`${fmt(total)} total records`),
         ...nativeMetrics,
@@ -233,9 +238,7 @@
         metric(
           "規則直通率",
           qualityRate,
-          n(q.evaluated)>0
-            ? `${fmt(q.rewrite_count)} rewrite · ${fmt(q.block_count)} block · coverage ${(n(q.evidence_coverage)*100).toFixed(0)}%`
-            : "尚無品質 evidence",
+          qualityNote,
         )
       );
       const foot=node("div","platform-foot"); foot.append(node("span","",`最後發布 ${when(lastPosted)}`),node("span","",`資料 ${when(eng.last_captured_at)}`));

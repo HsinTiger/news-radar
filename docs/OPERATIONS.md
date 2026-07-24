@@ -83,7 +83,7 @@ npx wrangler d1 execute hsintiger-social-ops --remote --command \
 npx wrangler d1 execute hsintiger-social-ops --remote --command \
   "SELECT platform,metric,status,detail,captured_at FROM data_health_snapshots ORDER BY captured_at DESC LIMIT 20;"
 npx wrangler d1 execute hsintiger-social-ops --remote --command \
-  "SELECT platform,evaluated,evidence_coverage,rewrite_count,block_count,captured_at FROM content_quality_snapshots ORDER BY captured_at DESC LIMIT 9;"
+  "SELECT platform,guard_version,evaluated,evidence_coverage,rewrite_count,block_count,legacy_excluded_count,captured_at FROM content_quality_snapshots ORDER BY captured_at DESC LIMIT 9;"
 ```
 
 Follower health is owned by `audience-monitor.yml`. Engagement sync must not

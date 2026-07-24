@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.content_quality_guard import QUALITY_GUARD_VERSION
 from scripts.sync_social_ops import (
     build_automation_state,
     build_engagement,
@@ -82,6 +83,10 @@ def _db() -> sqlite3.Connection:
         );
         """
     )
+    conn.execute(
+        "UPDATE content_quality_evaluations SET guard_version=? WHERE draft_id='d1'",
+        (QUALITY_GUARD_VERSION,),
+    )
     return conn
 
 
@@ -106,10 +111,64 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert threads_quality["top_issue_codes"] == [
         {"code": "uncited_stat", "count": 1}
     ]
+    assert threads_quality["guard_version"] == QUALITY_GUARD_VERSION
+    assert threads_quality["legacy_excluded_count"] == 0
     experiments = build_recovery_experiments(conn)
     assert experiments[0]["id"] == "rx"
     assert experiments[0]["content_format"] == "carousel"
     assert experiments[0]["actual_format"] is None
+
+
+def test_quality_snapshot_excludes_legacy_guard_versions() -> None:
+    conn = _db()
+    conn.executemany(
+        "INSERT INTO drafts VALUES(?,?,?,?)",
+        [
+            ("d-legacy", "n1", "Legacy", "2099-01-02T00:00:00Z"),
+            ("d-current", "n1", "Current", "2099-01-02T00:00:00Z"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO platform_drafts VALUES(?,?,?,NULL)",
+        [
+            ("d-legacy", "threads", "Legacy post"),
+            ("d-current", "threads", "Current post"),
+        ],
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-legacy','n1','threads','backfill',1,
+             '2099-01-02T01:01:00Z','legacy-v1','legacy-sha','pass',0,0,0,'[]','[]')"""
+    )
+    conn.execute(
+        """INSERT INTO content_quality_evaluations(
+             draft_id,news_id,platform,stage,attempt,checked_at,guard_version,
+             text_sha256,decision,block_count,rewrite_count,warn_count,
+             issue_codes_json,issues_json
+           ) VALUES('d-current','n1','threads','backfill',1,
+             '2099-01-02T01:02:00Z',?,'current-sha','block',1,0,0,
+             '["missing_source_attribution"]','[]')""",
+        (QUALITY_GUARD_VERSION,),
+    )
+
+    row = next(
+        item for item in build_quality(conn, full=True)
+        if item["platform"] == "threads"
+    )
+    assert row["candidates"] == 3
+    assert row["evaluated"] == 2
+    assert row["evidence_coverage"] == 0.666667
+    assert row["rewrite_count"] == 1
+    assert row["block_count"] == 1
+    assert row["pass_count"] == 0
+    assert row["legacy_excluded_count"] == 1
+    assert row["top_issue_codes"] == [
+        {"code": "uncited_stat", "count": 1},
+        {"code": "missing_source_attribution", "count": 1},
+    ]
 
 
 def test_post_sync_uses_proven_actual_recovery_format() -> None:
