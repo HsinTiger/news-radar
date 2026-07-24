@@ -6,12 +6,32 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-24.recovery-v7";
+const API_VERSION = "2026-07-24.recovery-v8";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
 const META_MODES = new Set(["publish_now", "queue"]);
 const PLATFORMS = new Set(["facebook", "instagram", "threads"]);
+
+const LATEST_AUDIENCE_SQL = `WITH ranked AS (
+  SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
+  FROM audience_snapshots
+)
+SELECT latest.platform,latest.captured_at,latest.followers,
+  CASE
+    WHEN latest.followers_delta_7d IS NOT NULL THEN latest.followers_delta_7d
+    ELSE latest.followers - (
+      SELECT older.followers
+      FROM audience_snapshots older
+      WHERE older.platform=latest.platform
+        AND datetime(older.captured_at) <= datetime(latest.captured_at,'-7 day')
+      ORDER BY datetime(older.captured_at) DESC
+      LIMIT 1
+    )
+  END AS followers_delta_7d,
+  latest.metric_status
+FROM ranked latest
+WHERE latest.rn=1`;
 
 class HTTPError extends Error {
   constructor(status, message, code = "request_error") {
@@ -930,10 +950,7 @@ async function dashboard(env, cors) {
     FROM daily_post d JOIN engagement_snapshots e
       ON e.platform=d.platform AND e.platform_post_id=d.platform_post_id AND e.captured_at=d.captured_at
     GROUP BY e.platform,d.day ORDER BY d.day`),
-    env.DB.prepare(`WITH ranked AS (
-      SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
-      FROM audience_snapshots
-    ) SELECT platform,captured_at,followers,followers_delta_7d,metric_status FROM ranked WHERE rn=1`),
+    env.DB.prepare(LATEST_AUDIENCE_SQL),
     env.DB.prepare(`WITH ranked AS (
       SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
       FROM content_quality_snapshots
