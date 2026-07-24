@@ -690,9 +690,15 @@ async def process_item(
             "fallback 背景渲染封面（不再 skip）"
         )
 
-    # Phase 2 搜集：compose 前補「多源脈絡」增厚度（EDITORIAL_MODE 才跑；找不到/出錯就略過）。
+    # Phase 2 搜集：compose 前補「多源脈絡」增厚度。
+    #
+    # Recovery 的高風險佐證閘必須 fail-closed，而且必須把權威來源的
+    # 可讀內容實際交給 composer。只有另一篇標題存在、卻沒有本文可供交叉
+    # 核對，不足以證明政治／食安／法律指控可發布。一般背景搜集仍可降級，
+    # 但不能讓背景搜集的舊 fail-open 行為吞掉 evidence gate 例外。
     from src.slot_routing import editorial_mode as _ed_mode
     if _ed_mode() or is_recovery_mode():
+        recovery_requires_corroboration = False
         try:
             from src.gather import (
                 gather_brief,
@@ -700,25 +706,55 @@ async def process_item(
                 requires_authoritative_corroboration,
             )
             _tc = getattr(topic_cls, "category_id", None)
-            _brief = gather_brief(conn, news_id, title, topic_category=_tc)
-            if is_recovery_mode() and requires_authoritative_corroboration(
-                title=title,
-                content=content,
-                feed_name=row["feed_name"] or "",
-                tags=str(tags_raw or ""),
-                feed_tier=row["feed_tier"] or "",
-            ) and not has_authoritative_corroboration(conn, news_id, title):
+        except Exception as _exc:  # noqa: BLE001
+            if is_recovery_mode():
                 print(
-                    " 🛑 [EvidenceGate] 高風險政治／食安／法律指控來自一般媒體，"
-                    "但找不到同事件的官方、交易所、公共媒體或獨立查核佐證；"
-                    "本輪跳過，改選下一題"
+                    " 🛑 [EvidenceGate] Recovery 無法載入佐證檢查；"
+                    f"為避免單一來源誤發，本輪 fail-closed：{_exc}"
+                )
+                return "skipped_insufficient_evidence"
+            print(f"   ⚠️ [Gather] 例外，用原素材續寫：{_exc}")
+        else:
+            if is_recovery_mode():
+                try:
+                    recovery_requires_corroboration = requires_authoritative_corroboration(
+                        title=title,
+                        content=content,
+                        feed_name=row["feed_name"] or "",
+                        tags=str(tags_raw or ""),
+                        feed_tier=row["feed_tier"] or "",
+                    )
+                    if recovery_requires_corroboration and not has_authoritative_corroboration(
+                        conn, news_id, title
+                    ):
+                        print(
+                            " 🛑 [EvidenceGate] 高風險政治／食安／法律指控來自一般媒體，"
+                            "但找不到同事件且有可讀本文的官方、交易所、"
+                            "公共媒體或獨立查核佐證；本輪跳過，改選下一題"
+                        )
+                        return "skipped_insufficient_evidence"
+                except Exception as _exc:  # noqa: BLE001
+                    print(
+                        " 🛑 [EvidenceGate] 高風險佐證檢查異常；"
+                        f"本輪 fail-closed：{_exc}"
+                    )
+                    return "skipped_insufficient_evidence"
+
+            try:
+                _brief = gather_brief(conn, news_id, title, topic_category=_tc)
+            except Exception as _exc:  # noqa: BLE001
+                _brief = ""
+                print(f"   ⚠️ [Gather] 例外：{_exc}")
+
+            if recovery_requires_corroboration and not _brief:
+                print(
+                    " 🛑 [EvidenceGate] 找到佐證標題，但沒有可供 composer "
+                    "交叉核對的權威來源本文；本輪 fail-closed"
                 )
                 return "skipped_insufficient_evidence"
             if _brief:
                 content = content + "\n\n" + _brief
                 print(f"   📚 [Gather] 補入多源脈絡（{_brief.count(chr(10))} 行同主題來源）")
-        except Exception as _exc:  # noqa: BLE001 — 搜集失敗用原素材續寫，不擋出稿（活下去）
-            print(f"   ⚠️ [Gather] 例外，用原素材續寫：{_exc}")
 
     editorial_mandate = score_data.editorial_note
     if is_recovery_mode():
