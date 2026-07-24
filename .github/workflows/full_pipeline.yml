@@ -206,6 +206,20 @@ jobs:
             --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" 2>&1
           echo "=== Verdict ==="
 
+      - name: "🌐 [VERIFY] Meta remote readback — independent verifier"
+        if: always()
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== Remote Publish Readback (scripts/verify_remote_publish.py) ==="
+          python scripts/verify_remote_publish.py --since-minutes 30 \
+            --platforms "${{ inputs.platforms || 'facebook,instagram,threads' }}" 2>&1
+          echo "=== Verdict ==="
+
       # ========== STAGE 4: ENGAGEMENT POLLING ==========
       - name: "📊 [STAGE] Poll engagement data"
         id: engagement
