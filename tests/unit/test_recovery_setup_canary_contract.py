@@ -6,6 +6,7 @@ from scripts.recovery_setup_canary import (
     _all_configured_feeds_healthy,
     _copy_previews,
     _latest_quality,
+    _source_current_at_run,
 )
 from src.content_quality_guard import QUALITY_GUARD_VERSION
 
@@ -58,17 +59,19 @@ def test_latest_quality_exposes_fresh_primary_source_lineage() -> None:
         );
         CREATE TABLE drafts(id TEXT PRIMARY KEY,news_id TEXT);
         CREATE TABLE news_items(
-          id TEXT PRIMARY KEY,feed_name TEXT,url TEXT,fetched_at TEXT,tags TEXT
+          id TEXT PRIMARY KEY,feed_name TEXT,url TEXT,published_at TEXT,
+          fetched_at TEXT,tags TEXT
         );
         """
     )
     conn.execute("INSERT INTO drafts VALUES('draft-1','news-1')")
     conn.execute(
-        "INSERT INTO news_items VALUES(?,?,?,?,?)",
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?)",
         (
             "news-1",
             "行政院 本院新聞",
             "https://example.gov.tw/news-1",
+            "2026-07-24T12:00:00+00:00",
             "2026-07-25T00:00:00+00:00",
             json.dumps(["official", "primary-record"]),
         ),
@@ -106,12 +109,23 @@ def test_latest_quality_exposes_fresh_primary_source_lineage() -> None:
             "issue_codes": [],
             "source_feed": "行政院 本院新聞",
             "source_url": "https://example.gov.tw/news-1",
+            "source_published_at": "2026-07-24T12:00:00+00:00",
             "source_fetched_at": "2026-07-25T00:00:00+00:00",
             "source_tags": ["official", "primary-record"],
             "source_is_primary_record": True,
             "harvested_this_run": True,
+            "source_current_at_run": True,
         }
     ]
+
+
+def test_source_current_at_run_rejects_stale_and_future_records() -> None:
+    started_at = "2026-07-25T12:00:00+00:00"
+
+    assert _source_current_at_run("2026-07-24T00:00:00+00:00", started_at) is True
+    assert _source_current_at_run("2026-07-23T23:59:59+00:00", started_at) is False
+    assert _source_current_at_run("2026-07-25T12:00:01+00:00", started_at) is False
+    assert _source_current_at_run(None, started_at) is False
 
 
 def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:
@@ -128,7 +142,7 @@ def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:
     assert _all_configured_feeds_healthy(report) is True
 
 
-def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
+def test_copy_preview_exports_only_fresh_or_current_public_primary_copy() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
@@ -141,11 +155,15 @@ def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
           'draft-primary','{"takeaways":["查核公告"]}'
         );
         INSERT INTO drafts VALUES('draft-private',NULL);
+        INSERT INTO drafts VALUES('draft-current',NULL);
         INSERT INTO platform_drafts VALUES(
           'draft-primary','threads','公共政策','自然文案'
         );
         INSERT INTO platform_drafts VALUES(
           'draft-private','threads','Owner seed','不得輸出'
+        );
+        INSERT INTO platform_drafts VALUES(
+          'draft-current','threads','即時政策','目前仍具時效的自然文案'
         );
         """
     )
@@ -157,6 +175,7 @@ def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
             "source_url": "https://example.gov.tw/record",
             "source_is_primary_record": True,
             "harvested_this_run": True,
+            "source_current_at_run": True,
         },
         {
             "draft_id": "draft-private",
@@ -165,6 +184,16 @@ def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
             "source_url": "manual-text://private",
             "source_is_primary_record": False,
             "harvested_this_run": True,
+            "source_current_at_run": True,
+        },
+        {
+            "draft_id": "draft-current",
+            "platform": "threads",
+            "source_feed": "金管會新聞稿",
+            "source_url": "https://example.gov.tw/current-record",
+            "source_is_primary_record": True,
+            "harvested_this_run": False,
+            "source_current_at_run": True,
         },
     ]
 
@@ -177,5 +206,14 @@ def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
             "title": "公共政策",
             "full_text": "自然文案",
             "carousel": {"takeaways": ["查核公告"]},
-        }
+        },
+        {
+            "draft_id": "draft-current",
+            "platform": "threads",
+            "source_feed": "金管會新聞稿",
+            "source_url": "https://example.gov.tw/current-record",
+            "title": "即時政策",
+            "full_text": "目前仍具時效的自然文案",
+            "carousel": None,
+        },
     ]

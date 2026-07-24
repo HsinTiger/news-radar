@@ -17,7 +17,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,27 @@ from src.content_quality_guard import QUALITY_GUARD_VERSION  # noqa: E402
 
 
 PLATFORMS = {"facebook", "instagram", "threads"}
+PRIMARY_FRESHNESS_HOURS = 36
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _source_current_at_run(published_at: str | None, started_at: str) -> bool:
+    published = _parse_iso(published_at)
+    started = _parse_iso(started_at)
+    if published is None or started is None:
+        return False
+    return started - timedelta(hours=PRIMARY_FRESHNESS_HOURS) <= published <= started
 
 
 def _sha256(path: Path) -> str:
@@ -61,7 +82,7 @@ def _latest_quality(
         SELECT q.draft_id,COALESCE(q.news_id,d.news_id) AS news_id,
                q.platform,q.decision,q.attempt,
                q.guard_version,q.issue_codes_json,
-               n.feed_name,n.url,n.fetched_at,n.tags
+               n.feed_name,n.url,n.published_at,n.fetched_at,n.tags
           FROM ranked q
           LEFT JOIN drafts d ON d.id=q.draft_id
           LEFT JOIN news_items n ON n.id=COALESCE(q.news_id,d.news_id)
@@ -86,10 +107,14 @@ def _latest_quality(
             "issue_codes": json.loads(row["issue_codes_json"] or "[]"),
             "source_feed": row["feed_name"],
             "source_url": row["url"],
+            "source_published_at": row["published_at"],
             "source_fetched_at": row["fetched_at"],
             "source_tags": tags,
             "source_is_primary_record": "primary-record" in tags,
             "harvested_this_run": news_id in freshly_harvested_ids,
+            "source_current_at_run": _source_current_at_run(
+                row["published_at"], since_iso
+            ),
         })
     return result
 
@@ -97,7 +122,7 @@ def _latest_quality(
 def _primary_source_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id,feed_name,url,fetched_at,tags,status,drop_reason
+        SELECT id,feed_name,url,published_at,fetched_at,tags,status,drop_reason
           FROM news_items
          WHERE COALESCE(tags,'') LIKE '%"primary-record"%'
         """
@@ -114,6 +139,7 @@ def _primary_source_rows(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
             "news_id": row["id"],
             "source_feed": row["feed_name"],
             "source_url": row["url"],
+            "source_published_at": row["published_at"],
             "source_fetched_at": row["fetched_at"],
             "source_tags": tags,
             "source_status": row["status"],
@@ -139,13 +165,13 @@ def _copy_previews(
     conn: sqlite3.Connection,
     quality: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Export only fresh public-primary canary copy for owner editorial audit."""
+    """Export only fresh or current public-primary copy for editorial audit."""
 
     previews: list[dict[str, Any]] = []
     for evidence in quality:
-        if not (
+        if not evidence.get("source_is_primary_record") or not (
             evidence.get("harvested_this_run")
-            and evidence.get("source_is_primary_record")
+            or evidence.get("source_current_at_run")
         ):
             continue
         row = conn.execute(
@@ -247,13 +273,21 @@ async def run_setup_canary(
             for row in fresh_primary_sources
             if row["source_status"] != "dropped"
         ]
+        current_primary_sources = [
+            row
+            for row in primary_after.values()
+            if row["source_status"] != "dropped"
+            and _source_current_at_run(row["source_published_at"], started_at)
+        ]
 
-        # If a requested live refresh found no new official record, there is no
-        # valid source candidate to prove.  Stop before spending an LLM call on
-        # an unrelated legacy item and report a truthful held result instead.
+        # Deduplication is not staleness.  A reverified official record remains
+        # eligible while its publication timestamp is inside the freshness
+        # window.  Stop before composition only when neither a newly harvested
+        # nor a current public-primary candidate exists.
         should_compose = (
             not refresh_primary_sources
             or bool(eligible_fresh_primary_sources)
+            or bool(current_primary_sources)
         )
         if should_compose:
             original_argv = sys.argv[:]
@@ -308,12 +342,21 @@ async def run_setup_canary(
         row["decision"] in {"pass", "warn"}
         for row in fresh_primary_quality
     )
+    current_primary_quality = [
+        row
+        for row in quality
+        if row["source_is_primary_record"] and row["source_current_at_run"]
+    ]
+    current_primary_ready = any(
+        row["decision"] in {"pass", "warn"}
+        for row in current_primary_quality
+    )
     primary_harvest_complete = (
         not refresh_primary_sources
         or _all_configured_feeds_healthy(harvest_report)
     )
     source_gate_ready = (
-        fresh_primary_ready and primary_harvest_complete
+        (fresh_primary_ready or current_primary_ready) and primary_harvest_complete
         if refresh_primary_sources
         else publish_ready
     )
@@ -330,16 +373,20 @@ async def run_setup_canary(
         hold_reason = "state_invariant_failed"
     elif refresh_primary_sources and not primary_harvest_complete:
         hold_reason = "primary_harvest_incomplete"
-    elif refresh_primary_sources and not fresh_primary_sources:
-        hold_reason = "no_fresh_primary_sources"
-    elif refresh_primary_sources and not eligible_fresh_primary_sources:
-        hold_reason = "no_eligible_fresh_primary_sources"
+    elif refresh_primary_sources and not (
+        eligible_fresh_primary_sources or current_primary_sources
+    ):
+        hold_reason = "no_current_primary_sources"
     elif not quality:
         hold_reason = "no_current_guard_evaluation"
-    elif refresh_primary_sources and not fresh_primary_quality:
-        hold_reason = "fresh_primary_not_selected"
-    elif refresh_primary_sources and not fresh_primary_ready:
-        hold_reason = "fresh_primary_quality_held"
+    elif refresh_primary_sources and not (
+        fresh_primary_quality or current_primary_quality
+    ):
+        hold_reason = "current_primary_not_selected"
+    elif refresh_primary_sources and not (
+        fresh_primary_ready or current_primary_ready
+    ):
+        hold_reason = "current_primary_quality_held"
     elif not publish_ready:
         hold_reason = "quality_held"
     elif experiments <= 0:
@@ -366,12 +413,19 @@ async def run_setup_canary(
         "primary_source_gate_required": refresh_primary_sources,
         "primary_source_gate_ready": source_gate_ready,
         "fresh_primary_quality_ready": fresh_primary_ready,
+        "current_primary_quality_ready": current_primary_ready,
+        "source_gate_mode": (
+            "fresh_primary"
+            if fresh_primary_ready
+            else "current_primary" if current_primary_ready else "none"
+        ),
         "primary_refresh": {
             "requested": refresh_primary_sources,
             "all_configured_feeds_healthy": primary_harvest_complete,
             "harvest_report": harvest_report,
             "fresh_source_count": len(fresh_primary_sources),
             "eligible_fresh_source_count": len(eligible_fresh_primary_sources),
+            "current_source_count": len(current_primary_sources),
             "fresh_sources": fresh_primary_sources,
         },
         "quality": quality,
@@ -404,15 +458,16 @@ def main() -> int:
         action="store_true",
         help=(
             "harvest configured primary-record feeds into the disposable DB "
-            "and require a newly fetched source to pass the current guard"
+            "and require a newly fetched or 36-hour current source to pass "
+            "the current guard"
         ),
     )
     parser.add_argument(
         "--include-copy",
         action="store_true",
         help=(
-            "include only fresh public-primary generated copy in the short-lived "
-            "Actions report for owner editorial audit"
+            "include only fresh or current public-primary generated copy in the "
+            "short-lived Actions report for owner editorial audit"
         ),
     )
     args = parser.parse_args()
