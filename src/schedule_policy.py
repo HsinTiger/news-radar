@@ -59,8 +59,18 @@ def _parse_timestamp(value: str | None) -> datetime | None:
 
 
 def _inside_slot(now_local: datetime, hours: list[int], tolerance: int) -> bool:
+    """Accept a delayed scheduler tick, never a pre-slot tick.
+
+    The governed scheduler runs hourly around ``:12``.  A symmetric ±50 minute
+    window made 17:12 qualify for an 18:00 commute slot, silently publishing 48
+    minutes early.  GitHub delay tolerance is therefore directional: the target
+    hour through ``tolerance`` minutes after it.
+    """
     minute_of_day = now_local.hour * 60 + now_local.minute
-    return any(abs(minute_of_day - hour * 60) <= tolerance for hour in hours)
+    return any(
+        0 <= minute_of_day - hour * 60 <= tolerance
+        for hour in hours
+    )
 
 
 def _effective_platform_config(
