@@ -541,6 +541,7 @@ async def process_item(
     - "skipped_no_llm"：（Phase 8.19）Gemini + Claude CLI 兩條路都失敗，主動 skip
     - "skipped_platform_scope"：素材指定平台與本次 scheduler scope 無交集
     - "skipped_target_scope"：Substack-only 素材不可進 Meta pipeline
+    - "skipped_insufficient_evidence"：Recovery 高風險二手指控缺少權威佐證
 
     publish_threshold: 自動發布門檻，預設用全域 AUTO_PUBLISH_THRESHOLD。
     main loop 會依 cadence 動態傳入（例：Rescue Mode 傳 0.8）。
@@ -686,9 +687,26 @@ async def process_item(
     from src.slot_routing import editorial_mode as _ed_mode
     if _ed_mode() or is_recovery_mode():
         try:
-            from src.gather import gather_brief
+            from src.gather import (
+                gather_brief,
+                has_authoritative_corroboration,
+                requires_authoritative_corroboration,
+            )
             _tc = getattr(topic_cls, "category_id", None)
             _brief = gather_brief(conn, news_id, title, topic_category=_tc)
+            if is_recovery_mode() and requires_authoritative_corroboration(
+                title=title,
+                content=content,
+                feed_name=row["feed_name"] or "",
+                tags=str(tags_raw or ""),
+                feed_tier=row["feed_tier"] or "",
+            ) and not has_authoritative_corroboration(conn, news_id, title):
+                print(
+                    " 🛑 [EvidenceGate] 高風險政治／食安／法律指控來自一般媒體，"
+                    "但找不到同事件的官方、交易所、公共媒體或獨立查核佐證；"
+                    "本輪跳過，改選下一題"
+                )
+                return "skipped_insufficient_evidence"
             if _brief:
                 content = content + "\n\n" + _brief
                 print(f"   📚 [Gather] 補入多源脈絡（{_brief.count(chr(10))} 行同主題來源）")
