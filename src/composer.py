@@ -57,6 +57,7 @@ from typing import List, Optional, Tuple, Dict
 from dotenv import load_dotenv
 
 from src.llm_brain import call_for_json
+from src.content_quality_guard import numeric_claim_allowlist
 from src.schema import MultiPlatformDraft, PlatformVariant
 from src.cta_pool import decide_cta, get_cta_prompt_fragment
 from src.locale_tw import fix_mainland_text, to_traditional
@@ -426,6 +427,51 @@ def _build_recovery_system_instruction(
 """
 
 
+def _build_recovery_generation_contract(
+    title: str,
+    content: str,
+    platforms: List[str],
+) -> str:
+    """Compile source facts and requested keys into a fail-closed LLM contract."""
+
+    requested = list(dict.fromkeys(platforms))
+    invalid = sorted(set(requested) - {"fb", "ig", "threads"})
+    if invalid:
+        raise ValueError(f"Unsupported recovery platforms: {','.join(invalid)}")
+    omitted = [platform for platform in ("fb", "ig", "threads") if platform not in requested]
+    allowed_numbers = numeric_claim_allowlist(f"{title}\n{content}")
+    number_list = ", ".join(allowed_numbers) if allowed_numbers else "NONE"
+    carousel_contract = (
+        """
+INSTAGRAM FIVE-CARD CONTRACT (required because ig was requested):
+- `carousel` must be non-null and render exactly five cards.
+- Card 1 comes from the IG title: a verified actor plus consequence, <=20 Chinese characters.
+- Card 2 requires non-empty insight_statement and insight_support; name the source on the card.
+- Card 3 requires stat_number from the numeric allowlist and stat_caption naming its source.
+- Card 4 requires 2-3 concrete takeaways including who pays/benefits and the next check.
+- Card 5 requires 2-4 key_figures; include the source institution in each short label.
+- Never return an incomplete carousel and never substitute facts from another event.
+"""
+        if "ig" in requested
+        else "`carousel` MUST be null because Instagram was not requested."
+    )
+    return f"""
+EXACT REQUESTED-PLATFORM CONTRACT (overrides every generic legacy example):
+- REQUIRED NON-NULL variants: {', '.join(requested)}.
+- REQUIRED NULL variants: {', '.join(omitted) if omitted else 'none'}.
+- A required variant may not be omitted. If evidence is thin, shorten the post and omit unsupported claims; do not return null or an incomplete object.
+- Every non-null PlatformVariant must include title, body, hashtags, primary_topic_tag, and char_count.
+
+NUMERIC GROUNDING BEFORE WRITING:
+- Allowed material Arabic-number values, normalized from this source only: {number_list}.
+- Every date, amount, count, percentage, deadline, title, caption, card, and key figure must use only those values with the original source unit.
+- Do not add today's date, a guessed year, rankings, round numbers, or example numbers from the JSON schema.
+- If the allowlist is NONE, use a verified nonnumeric consequence and do not write Arabic-number claims.
+
+{carousel_contract}
+"""
+
+
 # 2026-05 實測：gemini-2.0-flash-lite 免費 tier 額度已歸零（429 limit:0），
 # 故預設改用仍有免費額度的 gemini-2.5-flash。可用 NEWS_RADAR_COMPOSER_MODEL 覆寫。
 DEFAULT_COMPOSER_MODEL = os.getenv("NEWS_RADAR_COMPOSER_MODEL", "gemini-2.5-flash")
@@ -458,6 +504,11 @@ async def compose_multi_platform(
             recovery_contract,
             platforms,
         )
+        system_instruction += _build_recovery_generation_contract(
+            title,
+            content,
+            platforms,
+        )
     else:
         main_soul, appendices = load_soul_bundle()
         # 只保留被選中的平台指令
@@ -481,6 +532,26 @@ async def compose_multi_platform(
         else:
             print(f"   ↳ [CTA] 本篇 Threads 不注入 CTA（保持純內容篇）")
 
+    if recovery_mode:
+        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2單句\",\n     \"insight_support\": \"卡2具名來源支撐\",\n     \"stat_number\": \"卡3白名單數值\",\n     \"stat_caption\": \"卡3具名來源說明\",\n     \"takeaways\": [\"卡4具體判斷或行動\"],\n     \"key_figures\": [{\"label\": \"卡5來源與欄名\", \"value\": \"白名單數值與原單位\"}]\n  } or null"""
+        carousel_prompt = """Recovery 輸出不得套用舊版 2-4 卡範例。若要求 IG，嚴格遵守 system 中的五卡契約；若未要求 IG，carousel 必須為 null。不要複製本 JSON 欄位說明中的示意文字。"""
+    else:
+        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2 核心洞察：一句最反直覺的判斷(so-what)。單一陳述句、非條列。**≤30 字**。自己長、禁套範例。\",\n     \"insight_support\": \"支撐那句的一句話。**≤40 字**。\",\n     \"stat_number\": \"卡3 的主角數字/型號，如 $329 / 9 億 / 18%。**≤8 字元**。沒有夠力的數字就填 null（這張卡會自動省略）。\",\n     \"stat_caption\": \"那個數字代表什麼，一句。**≤24 字**。\",\n     \"takeaways\": [\"卡4：2-3 條、**每條 ≤18 字**、條列式、可帶走的行動或判斷\"],\n     \"key_figures\": [{\"label\": \"這是什麼(≤8字，如『第三季營收』)\", \"value\": \"帶單位數值(≤10字元，如 $351億 / 94% / 3 倍)\"}]\n  }"""
+        carousel_prompt = """**carousel 欄位（必填）= 2-4 張可滑動圖卡的蒸餾內容。每張卡有固定任務，務必遵守字數上限**
+（圖卡字一多就擠成小字、沒人看完）：
+  · 卡1 封面 = 直接用該平台 variant 的 title 當鉤子（≤20 字，別照抄新聞標題）。
+  · 卡2 核心洞察 = insight_statement(≤30 字、單句、不條列、不放數字) + insight_support(≤40 字)。
+  · 卡3 一個數字 = stat_number(≤8 字元) + stat_caption(≤24 字)。**數字集中在這張**；沒有夠力數字就 stat_number=null。
+  · 卡4 帶走的判斷 = takeaways 2-3 條、每條 ≤18 字、條列式。
+  · 卡5 關鍵數據 = key_figures 3-4 個 {{label, value}}。從原文挑**最有力的具體數據**（營收、年增、市佔、估值、毛利、產能…），label≤8字、value 帶單位/符號≤10字元。**數字一定要實、不可瞎掰**；原文沒有足夠數據就回空陣列 []。這張卡讓貼文「有料」，不再只有一句句空話。
+  讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。
+  **每一格都必須是「完整句子」、在字數上限內把話講完**——絕不可以寫超過上限、也不可以用破折號或逗號殘缺收尾（圖卡會被截斷成殘句）。寧可短而完整，不要長而被切。
+  **卡2-4 每格文字自測**：寫完問自己「這句話脫離上下文、單獨在圖卡上，讀者看得懂嗎？」不可用代名詞開頭（這、它、其），不可省略主語。每句要有主詞+動詞+受詞。
+  **卡2 insight_statement 禁止**以「這說明」「這代表」「這意味著」「這顯示」開頭。用主動句指名道姓。
+  **卡4 takeaways 每條必須是具體判斷**：❌「留意供應鏈風險」→ ✅「台積電CoWoS產能已吃緊到2027」。
+  **觀點優先（借股癌式精華筆記邏輯，禁照抄句型）**：蒸餾的是「判斷」不是中性事實——明說誰受惠、誰危險、下一步該看什麼，像分析師下結論（例：台積電恐當這波多頭的「最後一棒」補漲）。這是推理方向、不是模板。
+  **巨人之聲・短打（見 soul §Ⅵ.7，題目夠硬時啟動）**：卡1 封面用反共識 reframe（「大家以為 X，真正的賽局在 Y」）；卡2 insight_statement 盡量是**照妖鏡穿透線**——這件事照出的一條更大法則，而非只講本產業誰贏誰輸；卡3 stat_caption / 卡5 key_figures 的關鍵數字補一句**「換算成什麼」的人話**（如「35,000 英畝，比整個舊金山還大」）；卡4 takeaways 至少含一條**跨域類比**或一個**敢下的判斷**。素材不夠硬就回 §Ⅰ–Ⅵ 冷靜播報、別硬套。)"""
+
     # 組裝 Prompt
     prompt = f"""
 以下是今日要處理的新聞，以及初審編輯 (Reviewer Agent) 指定的戰略方向。
@@ -499,30 +570,10 @@ async def compose_multi_platform(
   "ig": {{...PlatformVariant}} or null,
   "threads": {{...PlatformVariant}} or null,
   "image_url": "...",
-  "carousel": {{
-     "insight_statement": "卡2 核心洞察：一句最反直覺的判斷(so-what)。單一陳述句、非條列。**≤30 字**。自己長、禁套範例。",
-     "insight_support": "支撐那句的一句話。**≤40 字**。",
-     "stat_number": "卡3 的主角數字/型號，如 $329 / 9 億 / 18%。**≤8 字元**。沒有夠力的數字就填 null（這張卡會自動省略）。",
-     "stat_caption": "那個數字代表什麼，一句。**≤24 字**。",
-     "takeaways": ["卡4：2-3 條、**每條 ≤18 字**、條列式、可帶走的行動或判斷"],
-     "key_figures": [{{"label": "這是什麼(≤8字，如『第三季營收』)", "value": "帶單位數值(≤10字元，如 $351億 / 94% / 3 倍)"}}]
-  }}
+{carousel_schema}
 }}
 每個 PlatformVariant 必要欄位：title, body, hashtags (list of str with #), primary_topic_tag, char_count
-**carousel 欄位（必填）= 2-4 張可滑動圖卡的蒸餾內容。每張卡有固定任務，務必遵守字數上限**
-（圖卡字一多就擠成小字、沒人看完）：
-  · 卡1 封面 = 直接用該平台 variant 的 title 當鉤子（≤20 字，別照抄新聞標題）。
-  · 卡2 核心洞察 = insight_statement(≤30 字、單句、不條列、不放數字) + insight_support(≤40 字)。
-  · 卡3 一個數字 = stat_number(≤8 字元) + stat_caption(≤24 字)。**數字集中在這張**；沒有夠力數字就 stat_number=null。
-  · 卡4 帶走的判斷 = takeaways 2-3 條、每條 ≤18 字、條列式。
-  · 卡5 關鍵數據 = key_figures 3-4 個 {{label, value}}。從原文挑**最有力的具體數據**（營收、年增、市佔、估值、毛利、產能…），label≤8字、value 帶單位/符號≤10字元。**數字一定要實、不可瞎掰**；原文沒有足夠數據就回空陣列 []。這張卡讓貼文「有料」，不再只有一句句空話。
-  讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。
-  **每一格都必須是「完整句子」、在字數上限內把話講完**——絕不可以寫超過上限、也不可以用破折號或逗號殘缺收尾（圖卡會被截斷成殘句）。寧可短而完整，不要長而被切。
-  **卡2-4 每格文字自測**：寫完問自己「這句話脫離上下文、單獨在圖卡上，讀者看得懂嗎？」不可用代名詞開頭（這、它、其），不可省略主語。每句要有主詞+動詞+受詞。
-  **卡2 insight_statement 禁止**以「這說明」「這代表」「這意味著」「這顯示」開頭。用主動句指名道姓。
-  **卡4 takeaways 每條必須是具體判斷**：❌「留意供應鏈風險」→ ✅「台積電CoWoS產能已吃緊到2027」。
-  **觀點優先（借股癌式精華筆記邏輯，禁照抄句型）**：蒸餾的是「判斷」不是中性事實——明說誰受惠、誰危險、下一步該看什麼，像分析師下結論（例：台積電恐當這波多頭的「最後一棒」補漲）。這是推理方向、不是模板。
-  **巨人之聲・短打（見 soul §Ⅵ.7，題目夠硬時啟動）**：卡1 封面用反共識 reframe（「大家以為 X，真正的賽局在 Y」）；卡2 insight_statement 盡量是**照妖鏡穿透線**——這件事照出的一條更大法則，而非只講本產業誰贏誰輸；卡3 stat_caption / 卡5 key_figures 的關鍵數字補一句**「換算成什麼」的人話**（如「35,000 英畝，比整個舊金山還大」）；卡4 takeaways 至少含一條**跨域類比**或一個**敢下的判斷**。素材不夠硬就回 §Ⅰ–Ⅵ 冷靜播報、別硬套。)
+{carousel_prompt}
 """
 
     chosen_model = model or DEFAULT_COMPOSER_MODEL
