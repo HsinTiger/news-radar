@@ -13,19 +13,37 @@ sys.path.insert(0, str(_HERE))
 from src import db as dbmod
 
 
-def verify(since_minutes: int, require_attempt: bool) -> int:
-    conn = dbmod.get_conn()
+PLATFORMS = {"facebook", "instagram", "threads"}
+
+
+def verify(
+    since_minutes: int,
+    require_attempt: bool,
+    platforms: set[str] | None = None,
+    *,
+    conn=None,
+) -> int:
+    owns_conn = conn is None
+    if conn is None:
+        conn = dbmod.get_conn()
     failures: list[str] = []
     try:
+        targets = sorted(platforms or [])
+        platform_sql = ""
+        params: list[object] = [f"-{since_minutes} minutes"]
+        if targets:
+            platform_sql = f" AND p.platform IN ({','.join('?' * len(targets))})"
+            params.extend(targets)
         recent = conn.execute(
             """
             SELECT p.id, p.draft_id, p.platform, p.platform_post_id,
                    p.posted_at, p.success, p.error_message
               FROM publish_log p
-             WHERE p.posted_at >= datetime('now', ?)
+             WHERE datetime(p.posted_at) >= datetime('now', ?)
+             """ + platform_sql + """
              ORDER BY p.posted_at DESC
             """,
-            (f"-{since_minutes} minutes",),
+            tuple(params),
         ).fetchall()
         successes = [row for row in recent if row["success"]]
         failed = [row for row in recent if not row["success"]]
@@ -35,6 +53,13 @@ def verify(since_minutes: int, require_attempt: bool) -> int:
         )
         if require_attempt and not recent:
             failures.append("no_attempt_in_verification_window")
+        if require_attempt and targets:
+            attempted_platforms = {row["platform"] for row in recent}
+            successful_platforms = {row["platform"] for row in successes}
+            for platform in sorted(set(targets) - attempted_platforms):
+                failures.append(f"missing_platform_attempt:{platform}")
+            for platform in sorted(set(targets) - successful_platforms):
+                failures.append(f"missing_platform_success:{platform}")
         for row in successes:
             if not row["platform_post_id"]:
                 failures.append(
@@ -77,17 +102,22 @@ def verify(since_minutes: int, require_attempt: bool) -> int:
         print("✅ [Verify:Publish] PASS")
         return 0
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--since-minutes", type=int, default=30)
     parser.add_argument("--require-attempt", action="store_true")
+    parser.add_argument("--platforms", default="")
     args = parser.parse_args()
     if args.since_minutes <= 0:
         parser.error("--since-minutes must be positive")
-    return verify(args.since_minutes, args.require_attempt)
+    platforms = {value.strip() for value in args.platforms.split(",") if value.strip()}
+    if not platforms <= PLATFORMS:
+        parser.error("--platforms must contain only facebook,instagram,threads")
+    return verify(args.since_minutes, args.require_attempt, platforms or None)
 
 
 if __name__ == "__main__":

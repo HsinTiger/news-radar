@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""
-Verify composed drafts — run AFTER run_pipeline.py.
-Checks: drafts exist, all 3 platforms have content, quality passes, no placeholder text.
-Exits non-zero on failure.
-"""
+"""Fail-closed verification of the exact platform-scoped compose release."""
+import argparse
+import os
 import sys
 from pathlib import Path
 _HERE = Path(__file__).resolve().parent.parent
@@ -11,80 +9,138 @@ sys.path.insert(0, str(_HERE))
 
 import json
 from src import db as dbmod
-from src.content_quality_guard import check_quality, has_blocking_issues
+from src.content_quality_guard import (
+    check_quality,
+    has_blocking_issues,
+    should_request_rewrite,
+)
 
-def main():
-    conn = dbmod.get_conn()
+
+PLATFORMS = {"facebook", "instagram", "threads"}
+
+
+def verify_compose(
+    conn,
+    *,
+    expected_platforms: set[str],
+    since_minutes: int,
+    recovery: bool,
+) -> int:
     failures = []
-    try:
-        # 1. Count drafts in last 24h
-        recent = conn.execute("""
+    # 1. Limit evidence to this release window, not every draft from the day.
+    recent = conn.execute("""
             SELECT d.id, d.title, d.confidence_score, d.status, d.queue_status,
                    d.generated_at, d.news_id
             FROM drafts d
-            WHERE d.generated_at >= datetime('now', '-1 day')
+            WHERE datetime(d.generated_at) >= datetime('now', ?)
             ORDER BY d.generated_at DESC
-        """).fetchall()
-        print(f"[Verify:Compose] recent_drafts_24h={len(recent)}")
+        """, (f"-{since_minutes} minutes",)).fetchall()
+    print(
+        f"[Verify:Compose] window_minutes={since_minutes} "
+        f"expected={sorted(expected_platforms)} recent_drafts={len(recent)}"
+    )
 
-        if len(recent) == 0:
-            print("❌ [Verify:Compose] No drafts created in last 24h")
-            failures.append("no_recent_draft")
+    if len(recent) == 0:
+        print("❌ [Verify:Compose] No draft created in verification window")
+        failures.append("no_recent_draft")
 
-        # 2. For each draft, check platform_drafts exist
-        for draft in recent:
-            draft_id = draft["id"]
-            platforms = conn.execute(
-                "SELECT platform, char_count, full_text FROM platform_drafts WHERE draft_id=?",
-                (draft_id,)
-            ).fetchall()
-            found_platforms = {p["platform"]: p for p in platforms}
+    # 2. For each release draft, check the exact requested platform set.
+    for draft in recent:
+        draft_id = draft["id"]
+        platforms = conn.execute(
+            "SELECT platform, char_count, full_text FROM platform_drafts WHERE draft_id=?",
+            (draft_id,)
+        ).fetchall()
+        found_platforms = {p["platform"]: p for p in platforms}
 
-            missing = []
-            for expected in ("facebook", "instagram", "threads"):
-                if expected not in found_platforms:
-                    missing.append(expected)
+        missing = sorted(expected_platforms - set(found_platforms))
+        unexpected = sorted(set(found_platforms) - expected_platforms)
 
-            if missing:
-                print(f"❌ [Verify:Compose] draft={draft_id[:12]} missing platforms: {missing}")
-                failures.append(f"missing_platforms:{draft_id[:12]}")
+        if missing:
+            print(f"❌ [Verify:Compose] draft={draft_id[:12]} missing platforms: {missing}")
+            failures.append(f"missing_platforms:{draft_id[:12]}")
+        if unexpected:
+            print(f"❌ [Verify:Compose] draft={draft_id[:12]} unexpected platforms: {unexpected}")
+            failures.append(f"unexpected_platforms:{draft_id[:12]}")
 
-            # 3. Quality guard check on each platform
-            for plat, pd_data in found_platforms.items():
-                text = pd_data["full_text"] or ""
-                issues = check_quality(text, title=draft["title"] or "")
-                if has_blocking_issues(issues):
-                    print(f"❌ [Verify:Compose] draft={draft_id[:12]} {plat}: quality BLOCKED")
-                    failures.append(f"quality_blocked:{draft_id[:12]}:{plat}")
-                else:
-                    char_count = pd_data["char_count"] or len(text)
-                    print(f"  ✓ {plat}: {char_count} chars")
+        # 3. Quality guard check on the requested release scope.
+        for plat in sorted(expected_platforms & set(found_platforms)):
+            pd_data = found_platforms[plat]
+            text = pd_data["full_text"] or ""
+            issues = check_quality(
+                text,
+                title=draft["title"] or "",
+                recovery=recovery,
+            )
+            quality_failed = has_blocking_issues(issues) or (
+                recovery and should_request_rewrite(issues)
+            )
+            if quality_failed:
+                print(f"❌ [Verify:Compose] draft={draft_id[:12]} {plat}: quality held")
+                failures.append(f"quality_held:{draft_id[:12]}:{plat}")
+            else:
+                char_count = pd_data["char_count"] or len(text)
+                print(f"  ✓ {plat}: {char_count} chars")
 
-            # 4. Check for placeholder / AI味 fingerprints
-            for plat, pd_data in found_platforms.items():
-                text = pd_data["full_text"] or ""
-                ai_flags = []
-                if "這說明兩件事" in text or "拆解兩層邏輯" in text:
-                    ai_flags.append("八股條列結構")
-                if "總結來說" in text or "總而言之" in text:
-                    ai_flags.append("總結式收尾")
-                if text.count("—") > 3:
-                    ai_flags.append(f"破折號過多({text.count('—')})")
-                if ai_flags:
-                    print(f"⚠️ [Verify:Compose] draft={draft_id[:12]} {plat}: AI味指紋={ai_flags}")
+            # 4. Advisory style fingerprints remain visible but are not truth gates.
+            ai_flags = []
+            if "這說明兩件事" in text or "拆解兩層邏輯" in text:
+                ai_flags.append("八股條列結構")
+            if "總結來說" in text or "總而言之" in text:
+                ai_flags.append("總結式收尾")
+            if text.count("—") > 3:
+                ai_flags.append(f"破折號過多({text.count('—')})")
+            if ai_flags:
+                print(f"⚠️ [Verify:Compose] draft={draft_id[:12]} {plat}: AI味指紋={ai_flags}")
 
-        # 5. Overall health
-        total_drafts = conn.execute("SELECT COUNT(*) as c FROM drafts").fetchone()["c"]
-        pending = conn.execute(
-            "SELECT COUNT(*) as c FROM drafts WHERE queue_status='queued'"
-        ).fetchone()["c"]
-        print(f"[Verify:Compose] total_drafts={total_drafts} pending_queue={pending}")
+        if recovery:
+            experiment_platforms = {
+                row["platform"]
+                for row in conn.execute(
+                    "SELECT platform FROM recovery_experiments WHERE draft_id=?",
+                    (draft_id,),
+                )
+            }
+            missing_lineage = sorted(expected_platforms - experiment_platforms)
+            if missing_lineage:
+                failures.append(f"missing_recovery_lineage:{draft_id[:12]}")
+                print(
+                    f"❌ [Verify:Compose] draft={draft_id[:12]} "
+                    f"missing recovery lineage: {missing_lineage}"
+                )
 
-        if failures:
-            print(f"❌ [Verify:Compose] FAIL reasons={failures}")
-            return 1
-        print("✅ [Verify:Compose] PASS")
-        return 0
+    # 5. Overall health
+    total_drafts = conn.execute("SELECT COUNT(*) as c FROM drafts").fetchone()["c"]
+    pending = conn.execute(
+        "SELECT COUNT(*) as c FROM drafts WHERE queue_status='queued'"
+    ).fetchone()["c"]
+    print(f"[Verify:Compose] total_drafts={total_drafts} pending_queue={pending}")
+
+    if failures:
+        print(f"❌ [Verify:Compose] FAIL reasons={failures}")
+        return 1
+    print("✅ [Verify:Compose] PASS")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--platforms", default="facebook,instagram,threads")
+    parser.add_argument("--since-minutes", type=int, default=1440)
+    args = parser.parse_args()
+    expected = {value.strip() for value in args.platforms.split(",") if value.strip()}
+    if not expected or not expected <= PLATFORMS:
+        parser.error("--platforms must contain only facebook,instagram,threads")
+    if args.since_minutes <= 0:
+        parser.error("--since-minutes must be positive")
+    conn = dbmod.get_conn()
+    try:
+        return verify_compose(
+            conn,
+            expected_platforms=expected,
+            since_minutes=args.since_minutes,
+            recovery=os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery",
+        )
     finally:
         conn.close()
 
