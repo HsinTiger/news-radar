@@ -26,6 +26,12 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 | Facebook | Daily at 18:00 Asia/Taipei | Evening-commute evidence explainer; measurement-first |
 | Instagram | Daily at 20:00 Asia/Taipei | Post-commute native carousel; format-first cold-start test |
 
+GitHub schedule delivery is best-effort. The governed scheduler has four
+off-peak opportunities inside each approved local window (`:07`, `:22`, `:37`,
+`:47`) and does not wake during unrelated hours. The per-platform daily quota
+and 20-hour interval remain the duplicate-prevention authority; redundant
+scheduler runs never widen the publishing envelope.
+
 Every recovery post has exactly one experiment type: `interest`, `trust`, `utility`, or `format`. It records the hypothesis, topic, format, follower baseline, primary-metric baseline, real platform post ID, and the latest 1h/24h/168h result.
 
 Recovery safeguards:
