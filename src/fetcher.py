@@ -29,6 +29,27 @@ def make_news_id(url: str) -> str:
     return hashlib.sha1(url.encode("utf-8")).hexdigest()
 
 
+def _limited_entries(entries: List[Any], configured_limit: Any) -> List[Any]:
+    """Bound archive-heavy feeds without changing existing feed behavior.
+
+    Several Taiwan official RSS endpoints expose hundreds of historical rows.
+    Fetching every linked page on first enablement would bury current public-
+    interest signals and create an avoidable traffic spike.  Missing limits keep
+    the legacy behavior; malformed limits fail closed instead of silently
+    truncating a feed.
+    """
+    if configured_limit is None:
+        return list(entries)
+    if (
+        isinstance(configured_limit, bool)
+        or not isinstance(configured_limit, int)
+        or configured_limit < 1
+        or configured_limit > 100
+    ):
+        raise ValueError("feed max_entries must be an integer in 1..100")
+    return list(entries[:configured_limit])
+
+
 # ---------- URL rewriters（deterministic，易測、易回放）----------
 
 def _rewrite_url_for_extraction(url: str) -> str:
@@ -118,7 +139,13 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
     skipped_no_link = 0
     skipped_no_title = 0
 
-    for entry in parsed.entries:
+    try:
+        entries = _limited_entries(parsed.entries, feed_cfg.get("max_entries"))
+    except ValueError as exc:
+        print(f"[Module 1]  ↳ ⚠️ 設定錯誤：{exc}")
+        return []
+
+    for entry in entries:
         # Phase 8.10-d：art19 的 podcast RSS 有些 entry 的 <link> 標籤缺失，
         # feedparser 解到的 entry.link 是空字串。podcast 另有 enclosure (MP3 URL)
         # 與 id (art19 GUID)，fallback 到這些 URL 仍是可穩定 hash 的 identifier；
@@ -229,11 +256,17 @@ async def fetch_feed(client: httpx.AsyncClient, feed_cfg: Dict[str, Any]) -> Lis
     # "raw=77 kept=0 skip_no_link=77" 就是 link fallback 沒救到；
     # "raw=0" 就是 feedparser 完全解不到（content-negotiation 或 body truncation）。
     raw = len(parsed.entries)
+    limited_note = (
+        f" limited={len(entries)}" if len(entries) != raw else ""
+    )
     skip_note = ""
     if skipped_no_link or skipped_no_title:
         skip_note = f"  [skipped: no_link={skipped_no_link}, no_title={skipped_no_title}]"
     prefilled_note = f"（其中 {prefilled} 篇已從 RSS 預填內容）" if prefilled else ""
-    print(f"[Module 1]  ↳ RSS entry 數 raw={raw} kept={len(items)}{prefilled_note}{skip_note}")
+    print(
+        f"[Module 1]  ↳ RSS entry 數 raw={raw}{limited_note} "
+        f"kept={len(items)}{prefilled_note}{skip_note}"
+    )
     return items
 
 

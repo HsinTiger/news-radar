@@ -30,11 +30,22 @@ def test_morning_slot_dispatches_threads_only() -> None:
     assert decision.platforms == ["threads"]
 
 
-def test_evening_slot_dispatches_all_due_platforms() -> None:
+def test_evening_slots_are_platform_native() -> None:
+    facebook = decide_schedule(
+        _conn(), load_policy(POLICY), datetime(2026, 7, 23, 10, 10, tzinfo=timezone.utc)
+    )
+    instagram = decide_schedule(
+        _conn(), load_policy(POLICY), datetime(2026, 7, 23, 12, 10, tzinfo=timezone.utc)
+    )
+    assert facebook.platforms == ["facebook"]
+    assert instagram.platforms == ["instagram"]
+
+
+def test_live_policy_is_one_post_per_platform_per_day() -> None:
     decision = decide_schedule(
         _conn(), load_policy(POLICY), datetime(2026, 7, 23, 12, 10, tzinfo=timezone.utc)
     )
-    assert set(decision.platforms) == {"threads", "facebook", "instagram"}
+    assert all(item.target_posts_per_day == 1 for item in decision.platform_decisions)
 
 
 def test_daily_quota_prevents_duplicate_dispatch() -> None:
@@ -109,11 +120,11 @@ def test_runtime_override_rejects_spacing_violation_across_midnight() -> None:
         )
 
 
-def test_recovery_afternoon_dispatches_threads_only() -> None:
+def test_recovery_morning_commute_dispatches_threads_only() -> None:
     decision = decide_schedule(
         _conn(),
         load_policy(POLICY),
-        datetime(2026, 7, 24, 8, 10, tzinfo=timezone.utc),  # Friday 16:10 Taipei
+        datetime(2026, 7, 24, 0, 10, tzinfo=timezone.utc),  # Friday 08:10 Taipei
         mode="recovery",
     )
     assert decision.mode == "recovery"
@@ -123,21 +134,21 @@ def test_recovery_afternoon_dispatches_threads_only() -> None:
     assert threads.policy_source == "recovery_policy"
 
 
-def test_recovery_weekly_days_separate_facebook_and_instagram() -> None:
-    friday = decide_schedule(
+def test_recovery_daily_evening_slots_separate_facebook_and_instagram() -> None:
+    facebook = decide_schedule(
         _conn(),
         load_policy(POLICY),
-        datetime(2026, 7, 24, 12, 10, tzinfo=timezone.utc),  # Friday 20:10
+        datetime(2026, 7, 27, 10, 10, tzinfo=timezone.utc),  # Monday 18:10
         mode="recovery",
     )
-    saturday = decide_schedule(
+    instagram = decide_schedule(
         _conn(),
         load_policy(POLICY),
-        datetime(2026, 7, 25, 12, 10, tzinfo=timezone.utc),  # Saturday 20:10
+        datetime(2026, 7, 27, 12, 10, tzinfo=timezone.utc),  # Monday 20:10
         mode="recovery",
     )
-    assert friday.platforms == ["facebook"]
-    assert saturday.platforms == ["instagram"]
+    assert facebook.platforms == ["facebook"]
+    assert instagram.platforms == ["instagram"]
 
 
 def test_recovery_ignores_live_runtime_override() -> None:
@@ -158,12 +169,12 @@ def test_recovery_ignores_live_runtime_override() -> None:
     decision = decide_schedule(
         conn,
         load_policy(POLICY),
-        datetime(2026, 7, 24, 8, 10, tzinfo=timezone.utc),
+        datetime(2026, 7, 24, 0, 10, tzinfo=timezone.utc),
         mode="recovery",
     )
     threads = next(item for item in decision.platform_decisions if item.platform == "threads")
     assert threads.target_posts_per_day == 1
-    assert threads.local_slots == [16]
+    assert threads.local_slots == [8]
     assert threads.policy_source == "recovery_policy"
 
 

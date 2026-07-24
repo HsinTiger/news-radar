@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
   "timezone": "Asia/Taipei",
-  "product_goal": "Publish helpful, evidence-backed content that earns qualified attention on each Meta platform.",
+  "product_goal": "Publish one accurate, source-grounded, attention-efficient daily Taiwan public-interest story per Meta platform.",
   "automation_mode_default": "paused",
   "platforms": {
     "threads": {
-      "target_posts_per_day": 2,
-      "minimum_interval_hours": 8,
-      "local_slots": [8, 20],
+      "target_posts_per_day": 1,
+      "minimum_interval_hours": 20,
+      "local_slots": [8],
       "slot_tolerance_minutes": 50,
       "primary_metrics": ["views", "replies", "reposts", "quotes"],
       "metric_health": "usable"
@@ -15,7 +15,7 @@
     "facebook": {
       "target_posts_per_day": 1,
       "minimum_interval_hours": 20,
-      "local_slots": [20],
+      "local_slots": [18],
       "slot_tolerance_minutes": 50,
       "primary_metrics": ["clicks", "reactions", "comments"],
       "metric_health": "contract_healthy_low_signal"
@@ -32,27 +32,27 @@
   "recovery": {
     "owner_approved_at": "2026-07-24T00:00:00+08:00",
     "optimization_approved_at": "2026-07-24T14:14:00+08:00",
-    "purpose": "Mac-independent, evidence-gated restart that separates interest, trust, utility, and format hypotheses.",
+    "purpose": "Mac-independent Taiwan public-interest daily that earns attention with a verified consequence, then earns trust with named evidence and an explicit fact-versus-interpretation boundary.",
     "platforms": {
       "threads": {
         "target_posts_per_day": 1,
         "minimum_interval_hours": 20,
-        "local_slots": [16],
+        "local_slots": [8],
         "local_days": [0, 1, 2, 3, 4, 5, 6],
         "slot_tolerance_minutes": 50
       },
       "facebook": {
         "target_posts_per_day": 1,
-        "minimum_interval_hours": 60,
-        "local_slots": [20],
-        "local_days": [1, 4],
+        "minimum_interval_hours": 20,
+        "local_slots": [18],
+        "local_days": [0, 1, 2, 3, 4, 5, 6],
         "slot_tolerance_minutes": 50
       },
       "instagram": {
         "target_posts_per_day": 1,
-        "minimum_interval_hours": 60,
+        "minimum_interval_hours": 20,
         "local_slots": [20],
-        "local_days": [2, 5],
+        "local_days": [0, 1, 2, 3, 4, 5, 6],
         "slot_tolerance_minutes": 50
       }
     },
@@ -79,16 +79,46 @@
         "metric_note": "Legacy distribution signal is near zero; carousel format experiment first."
       }
     },
-    "timing_experiment": {
-      "platform": "threads",
-      "from_local_hour": 12,
-      "to_local_hour": 16,
-      "frequency_unchanged": true,
-      "historical_posts_at_target_hour": 5,
-      "historical_median_views_at_target_hour": 625,
-      "first_recovery_post_1h_views": 6,
-      "confidence": "MED",
-      "decision_gate": "keep 1/day until at least 3 Recovery posts complete 168h"
+    "editorial_policy": {
+      "audience": "People in Taiwan who need to understand how politics, food safety, public policy, markets, and the economy affect their money, safety, rights, and daily life.",
+      "allowed_topics": [
+        "current_affairs",
+        "tw_politics",
+        "tw_stocks",
+        "policy_geopolitics",
+        "earnings",
+        "supply_chain",
+        "military_defense",
+        "us_stocks"
+      ],
+      "required_relevance": "The source or proposed post must make a concrete Taiwan connection. Owner submissions remain eligible but still pass every quality gate.",
+      "max_source_age_hours": 36,
+      "source_order": ["official_primary", "company_filing", "public_broadcaster_or_wire", "independent_factcheck", "named_secondary_media"],
+      "political_standard": "Apply the same evidence, attribution, response, and correction standard to every party and public official.",
+      "no_scope_fallback": true
+    },
+    "timing_experiments": {
+      "threads": {
+        "local_hour": 8,
+        "attention_window": "morning_commute",
+        "confidence": "LOW",
+        "evidence": "Historical morning samples are confounded by prior high cadence; test as a new one-post daily cohort."
+      },
+      "facebook": {
+        "local_hour": 18,
+        "attention_window": "evening_commute",
+        "confidence": "LOW",
+        "evidence": "Legacy Facebook Insights are invalid for 126 of 127 samples; measurement-first experiment."
+      },
+      "instagram": {
+        "local_hour": 20,
+        "attention_window": "post_commute_visual",
+        "confidence": "LOW",
+        "evidence": "Legacy reach is near zero; test platform-native evidence cards after the evening commute."
+      },
+      "frequency_unchanged": false,
+      "frequency_change": "Facebook and Instagram move from two posts per week to one post per day by explicit owner direction; Threads remains one per day.",
+      "decision_gate": "Do not change a platform slot or exceed one post per day until at least 7 posts on that platform complete 168h measurement."
     }
   },
   "reels": {
@@ -102,24 +132,24 @@
     "minimum_metric_coverage": 0.8,
     "maximum_frequency_change_per_week": 1,
     "frequency_floor_per_day": 0,
-    "frequency_ceiling_per_day": 4,
+    "frequency_ceiling_per_day": 1,
     "degraded_metrics_are_proposal_only": true,
     "owner_approval_required_for_frequency_increase": true
   },
   "initial_topic_weights": {
-    "current_affairs": 1.0,
-    "tech_product_launch": 1.1,
+    "current_affairs": 1.7,
+    "tech_product_launch": 0.35,
     "military_defense": 1.0,
-    "ai_application": 1.15,
-    "ai_model": 0.75,
-    "supply_chain": 1.4,
-    "policy_geopolitics": 1.05,
-    "earnings": 1.35,
-    "us_stocks": 1.0,
-    "tw_stocks": 0.9,
-    "tw_politics": 0.7,
-    "ai_agent": 0.75,
-    "other": 0.7
+    "ai_application": 0.35,
+    "ai_model": 0.3,
+    "supply_chain": 1.2,
+    "policy_geopolitics": 1.35,
+    "earnings": 1.3,
+    "us_stocks": 0.8,
+    "tw_stocks": 1.55,
+    "tw_politics": 1.65,
+    "ai_agent": 0.3,
+    "other": 0.3
   },
   "substack": {
     "auto_publish": false,

@@ -118,9 +118,13 @@ def test_only_healthy_threads_evidence_creates_cadence_proposal(tmp_path: Path) 
         current_score=0,
     )
 
+    policy = load_policy(POLICY)
+    # This test exercises the proposal machinery itself. Production Taiwan
+    # Daily is hard-capped at 1/day; lift only the isolated test ceiling.
+    policy["adaptation"]["frequency_ceiling_per_day"] = 2
     reviews = run_review(
         conn,
-        load_policy(POLICY),
+        policy,
         now=now,
         proposals_db_path=db_path,
         proposals_dir=proposals_dir,
@@ -141,17 +145,17 @@ def test_only_healthy_threads_evidence_creates_cadence_proposal(tmp_path: Path) 
         "target_config": "social_schedule",
         "field": "threads.cadence",
         "current_value": {
-            "target_posts_per_day": 2,
-            "minimum_interval_hours": 8.0,
-            "local_slots": [8, 20],
+            "target_posts_per_day": 1,
+            "minimum_interval_hours": 20.0,
+            "local_slots": [8],
         },
-        "proposed_value": cadence_for_target(3),
+        "proposed_value": cadence_for_target(2),
     }
     assert proposal["boss_attention_required"] is True
 
     second = run_review(
         conn,
-        load_policy(POLICY),
+        policy,
         now=now,
         proposals_db_path=db_path,
         proposals_dir=proposals_dir,

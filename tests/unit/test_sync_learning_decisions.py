@@ -107,11 +107,11 @@ def _cadence_environment(
         conn.commit()
     fire_id = "cadence-proposal-0001"
     current = {
-        "target_posts_per_day": 2,
-        "minimum_interval_hours": 8.0,
-        "local_slots": [8, 20],
+        "target_posts_per_day": 1,
+        "minimum_interval_hours": 20.0,
+        "local_slots": [8],
     }
-    proposed = cadence_for_target(3)
+    proposed = cadence_for_target(2)
     write_proposal(
         {
             "fire_id": fire_id,
@@ -327,11 +327,11 @@ def test_approved_platform_cadence_changes_scheduler_only_after_execution(
         decision = decide_schedule(
             conn,
             load_policy(POLICY),
-            datetime(2026, 7, 23, 6, 10, tzinfo=timezone.utc),
+            datetime(2026, 7, 23, 12, 10, tzinfo=timezone.utc),
         )
-    assert row["target_posts_per_day"] == 3
-    assert row["minimum_interval_hours"] == 6.0
-    assert json.loads(row["local_slots_json"]) == [8, 14, 20]
+    assert row["target_posts_per_day"] == 2
+    assert row["minimum_interval_hours"] == 12.0
+    assert json.loads(row["local_slots_json"]) == [8, 20]
     assert row["source_proposal_id"] == fire_id
     assert history == 1
     threads = next(item for item in decision.platform_decisions if item.platform == "threads")

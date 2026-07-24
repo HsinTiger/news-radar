@@ -292,6 +292,37 @@ def test_recovery_accepts_attributed_fact_impact_and_action():
     } & codes
 
 
+def test_taiwan_daily_rejects_unrelated_overseas_story():
+    text = (
+        "根據路透社報導，法國政府公布新法案。"
+        "對旅客的具體影響是部分景點改採預約；旅客可以先查詢開放時間。"
+    )
+    codes = {item.code for item in check_quality(text, title="法國新法", recovery=True)}
+    assert "missing_taiwan_relevance" in codes
+
+
+def test_taiwan_daily_accepts_official_food_safety_record():
+    text = (
+        "根據食藥署 7 月 24 日公告，台灣一批苦茶油啟動回收。"
+        "對消費者的具體影響是特定批號不得食用；消費者可以先確認瓶身批號。"
+    )
+    codes = {item.code for item in check_quality(text, title="苦茶油回收", recovery=True)}
+    assert "missing_source_attribution" not in codes
+    assert "missing_taiwan_relevance" not in codes
+
+
+def test_taiwan_daily_rewrites_legacy_formulaic_hook():
+    text = (
+        "市場以為這只是台股震盪，真正的賽局是護城河。"
+        "根據證交所公告，台股今日成交量增加 20%。"
+        "對投資人的具體影響是波動擴大；投資人可以先檢查持倉集中度。"
+    )
+    issues = check_quality(text, title="台股震盪", recovery=True)
+    assert ("formulaic_attention_hook", "rewrite") in {
+        (item.code, item.severity) for item in issues
+    }
+
+
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----
 
 def test_corporate_fluff_pileup_warns():

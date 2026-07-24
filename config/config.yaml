@@ -229,6 +229,57 @@ feeds:
     feed_added_at: 2026-06-27T00:00:00+00:00
     tags: [taiwan, factcheck, verify]
 
+  # === 台灣官方第一手來源（2026-07-24 · live-verified 200 + parseable XML）===
+  # `max_entries` prevents a first harvest from draining years of official archives.
+  # `rss_summary` keeps the signed/official feed body as the evidence input and avoids
+  # fragile article-page scraping. Secondary media may add context but cannot outrank
+  # these records on the same event.
+  - name: 行政院 本院新聞
+    url: https://www.ey.gov.tw/RSS_Content.aspx?ModuleType=3
+    tier: primary
+    source_type: rss_summary
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, government, policy, primary-record]
+
+  - name: 行政院 消費警訊
+    url: https://www.ey.gov.tw/RSS_Content.aspx?ModuleType=1
+    tier: primary
+    source_type: rss_summary
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, consumer-protection, food-safety, primary-record]
+
+  - name: 食藥署 本署新聞
+    url: https://www.fda.gov.tw/TC/rssNews.ashx
+    tier: primary
+    source_type: rss_summary
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, food-safety, health, recall, primary-record]
+
+  - name: 食藥署 闢謠專區
+    url: https://www.fda.gov.tw/TC/rssNewsAboutRumor.ashx
+    tier: primary
+    source_type: rss_summary
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, food-safety, factcheck, primary-record]
+
+  - name: 證交所 官方訊息
+    url: https://www.twse.com.tw/rwd/zh/news/feed?type=rss
+    tier: primary
+    source_type: rss_summary
+    max_entries: 15
+    language: zh
+    feed_added_at: 2026-07-24T00:00:00+00:00
+    tags: [taiwan, official, tw-stocks, market, disclosure, primary-record]
+
+
   # === Phase 8.20 新增：對齊 3 位 KOL 訊號風格 ===
   # 新加 feed 都標 `# UNVERIFIED` 附註。Hsin 首次跑 scripts/audit_feeds.py --urls-only
   # 後，把驗證 OK 的註解改成 `# VERIFIED YYYY-MM-DD`，驗失敗的整條移除或改路徑。
