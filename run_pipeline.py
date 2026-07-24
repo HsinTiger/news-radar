@@ -124,6 +124,13 @@ def _recovery_rewrite_guidance(
             "list labels are not factual support. Do not round, abbreviate, "
             "convert units, or derive mathematically equivalent new values."
         )
+    if "unsupported_audience_extension" in rewrite_codes:
+        guidance.append(
+            "AUDIENCE GROUNDING: Delete claims about retirement funds, corporate "
+            "asset allocation, all investors, or any other affected group not "
+            "explicitly named in the supplied source. Address the reader without "
+            "inventing institutional impact."
+        )
     if "missing_recovery_five_card_carousel" in rewrite_codes:
         guidance.append(
             "INSTAGRAM FORMAT: Return all five standalone carousel jobs: "
@@ -173,6 +180,7 @@ def _recovery_rewrite_guidance(
     if rewrite_codes & {
         "platform_hashtag_overload",
         "platform_copy_too_long",
+        "platform_stat_overload",
         "platform_wall_of_text",
         "platform_paragraph_too_long",
     }:
@@ -959,10 +967,10 @@ async def process_item(
         )
         return "skipped_no_llm"
 
-    # 3.5 品質證據 + 一次受限重寫。
-    # block 仍 fail-closed；rewrite 只給 composer 一次修正機會。第二次仍命中
-    # rewrite 時保留草稿供人工看，但絕不進自動發布 queue。每次判定只保存規則
-    # 與文字 hash，不保存另一份全文。
+    # 3.5 品質證據 + 最多兩次受限重寫。
+    # block 仍 fail-closed；第一次修復若引入新 rewrite issue，可再針對新證據
+    # 修一次。第三版仍命中就保留人工看，絕不進自動發布 queue。每次判定只保存
+    # 規則與文字 hash，不保存另一份全文。
     draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
     source_evidence_text = (
         f"{title}\n{content}\n"

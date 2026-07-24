@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v13"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v14"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -685,6 +685,19 @@ _RECOVERY_RULES: tuple[_Rule, ...] = (
 _NUMERIC_CLAIM_PATTERN = re.compile(
     r"(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>[%％]?)"
 )
+_MATERIAL_QUANTITY_PATTERN = re.compile(
+    r"\d[\d,]*(?:\.\d+)?"
+    r"(?:兆\d[\d,]*(?:\.\d+)?億|兆|億|萬)?"
+    r"(?:%|％|元|點|年|月|日|件|人|家|批|項|公里|公尺|噸|股|檔|倍|"
+    r"條|期|天|小時|分鐘|秒|GB|TB|MW|GW)",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_AUDIENCE_EXTENSIONS = (
+    "退休基金",
+    "企業資產配置",
+    "所有投資人",
+    "全體投資人",
+)
 
 
 def _normalized_numeric_claims(text: str) -> set[str]:
@@ -709,16 +722,53 @@ def _normalized_numeric_claims(text: str) -> set[str]:
     return claims
 
 
+def _normalized_quantity_claims(text: str) -> set[str]:
+    """Extract exact number-plus-unit spans, including compound Taiwan amounts."""
+
+    def normalize_number(match: re.Match[str]) -> str:
+        try:
+            return format(Decimal(match.group(0)).normalize(), "f")
+        except InvalidOperation:
+            return match.group(0)
+
+    claims: set[str] = set()
+    for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
+        raw = match.group(0).replace(",", "").replace("％", "%")
+        claims.add(re.sub(r"\d+(?:\.\d+)?", normalize_number, raw))
+    return claims
+
+
 def _unsupported_numeric_claims(full_text: str, source_text: str) -> Optional[str]:
     source_claims = _normalized_numeric_claims(source_text)
-    missing = sorted(_normalized_numeric_claims(full_text) - source_claims)
+    missing_numbers = sorted(_normalized_numeric_claims(full_text) - source_claims)
+    source_quantities = _normalized_quantity_claims(source_text)
+    missing_quantities = sorted(
+        _normalized_quantity_claims(full_text) - source_quantities
+    )
+    missing = missing_numbers + [
+        f"quantity:{value}" for value in missing_quantities
+    ]
     return ",".join(missing[:8]) if missing else None
+
+
+def _unsupported_audience_extensions(
+    full_text: str, source_text: str
+) -> Optional[str]:
+    missing = [
+        term
+        for term in _UNSUPPORTED_AUDIENCE_EXTENSIONS
+        if term in full_text and term not in source_text
+    ]
+    return ",".join(missing) if missing else None
 
 
 def numeric_claim_allowlist(source_text: str) -> list[str]:
     """Return the material numeric values a Recovery rewrite may reuse."""
 
-    return sorted(_normalized_numeric_claims(source_text))
+    return sorted(
+        _normalized_numeric_claims(source_text)
+        | _normalized_quantity_claims(source_text)
+    )
 
 
 def combine_visible_text(full_text: str, carousel: Any = None) -> str:
@@ -804,6 +854,16 @@ def check_quality(
                 severity="rewrite",
                 message=(
                     "Recovery 貼文數字必須能在本輪原始標題、本文或同事件多源脈絡中找到"
+                ),
+                evidence=evidence[:120],
+            ))
+        evidence = _unsupported_audience_extensions(ft, source_text)
+        if evidence is not None:
+            issues.append(QualityIssue(
+                code="unsupported_audience_extension",
+                severity="rewrite",
+                message=(
+                    "Recovery 貼文不得把來源未提及的基金、機構或全體投資人擴寫成受影響對象"
                 ),
                 evidence=evidence[:120],
             ))
@@ -916,6 +976,14 @@ def check_platform_style(
                 f"max={config['max_chars']}"
             ),
         ))
+    quantity_count = len(_normalized_quantity_claims(text))
+    if canonical == "threads" and quantity_count > 3:
+        issues.append(QualityIssue(
+            code="platform_stat_overload",
+            severity="rewrite",
+            message="Threads 最多保留三個具單位數字，避免把貼文寫成統計公報",
+            evidence=f"platform=threads;quantity_count={quantity_count};max=3",
+        ))
     if len(content_paragraphs) < config["min_paragraphs"]:
         issues.append(QualityIssue(
             code="platform_wall_of_text",
@@ -950,7 +1018,15 @@ def check_platform_style(
         ))
     elif any(
         generic in closing
-        for generic in ("你怎麼看", "大家怎麼看", "你認為呢")
+        for generic in (
+            "你怎麼看",
+            "大家怎麼看",
+            "你認為呢",
+            "是否跟上",
+            "是否延續",
+            "會否延續",
+            "哪些族群會受益或受損",
+        )
     ) or not re.search(r"你|您的|你家|你們|自己|自身", closing):
         issues.append(QualityIssue(
             code="generic_engagement_bait",
@@ -958,6 +1034,20 @@ def check_platform_style(
             message="結尾問題必須直接問讀者可具體回答的經驗、數字或取捨",
             evidence=closing[-80:],
         ))
+    stock_context = re.search(
+        r"台股|臺股|加權指數|上市股票|持股|股票|基金",
+        f"{title}\n{text}",
+    )
+    if stock_context and not re.search(
+        r"\d|哪一|哪個|多少|跑贏|跑輸|報酬|持股", closing
+    ):
+        if not any(issue.code == "generic_engagement_bait" for issue in issues):
+            issues.append(QualityIssue(
+                code="generic_engagement_bait",
+                severity="rewrite",
+                message="台股結尾必須讓讀者回答報酬、持股、產業或明確數字",
+                evidence=closing[-80:],
+            ))
     return issues
 
 

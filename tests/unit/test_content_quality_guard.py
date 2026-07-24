@@ -36,7 +36,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v13_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v14_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -85,7 +85,7 @@ def test_v13_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v13_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v14_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -103,7 +103,7 @@ def test_v13_accepts_natural_threads_shape_without_editorial_labels() -> None:
     assert not should_request_rewrite(issues), format_issues(issues)
 
 
-def test_v13_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+def test_v14_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     text = (
         "證交所公告台股本週上漲，這段重複資料很多。" * 14
         + "\n\n投資人可檢查自己的同期間報酬。"
@@ -116,6 +116,23 @@ def test_v13_threads_rejects_oversized_copy_and_impersonal_question() -> None:
         )
     }
     assert "platform_copy_too_long" in codes
+    assert "generic_engagement_bait" in codes
+
+
+def test_v14_threads_rejects_stat_dump_and_vague_stock_question() -> None:
+    text = (
+        "證交所本週統計顯示，加權指數上漲2.30%，收43,654.84點。\n\n"
+        "電腦週邊上漲10.29%，綠能下跌9.04%。\n\n"
+        "投資人可以檢查自己的持股。\n\n"
+        "你的配置是否跟上本週產業變化？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="台股週報", recovery=True
+        )
+    }
+    assert "platform_stat_overload" in codes
     assert "generic_engagement_bait" in codes
 
 
@@ -545,9 +562,10 @@ def test_recovery_numeric_claims_must_exist_in_supplied_source_text():
     )
 
     assert "unsupported_numeric_claim" not in grounded_codes
-    assert ("unsupported_numeric_claim", "599") in {
-        (item.code, item.evidence) for item in fabricated_issues
-    }
+    assert any(
+        item.code == "unsupported_numeric_claim" and "599" in item.evidence
+        for item in fabricated_issues
+    )
 
 
 def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages():
@@ -565,7 +583,40 @@ def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages()
     }
 
     assert "unsupported_numeric_claim" not in codes
-    assert numeric_claim_allowlist(source) == ["10%", "3.5", "3521"]
+    assert numeric_claim_allowlist(source) == [
+        "10%",
+        "3.5",
+        "3.5倍",
+        "3521",
+        "3521億元",
+    ]
+
+
+def test_recovery_numeric_grounding_rejects_rounded_compound_amount():
+    source = "證交所公告市值增加3兆2,168.61億元。"
+    rounded = "證交所公告市值增加3兆元。"
+    exact = "證交所公告市值增加3兆2,168.61億元。"
+
+    rounded_codes = {
+        item.code
+        for item in check_quality(
+            rounded, recovery=True, source_text=source
+        )
+    }
+    exact_codes = {
+        item.code
+        for item in check_quality(exact, recovery=True, source_text=source)
+    }
+    assert "unsupported_numeric_claim" in rounded_codes
+    assert "unsupported_numeric_claim" not in exact_codes
+
+
+def test_recovery_rejects_source_free_institutional_audience_extension():
+    source = "證交所公告本週產業指數變化。"
+    text = "證交所公告本週產業指數變化，退休基金與企業資產配置也會受影響。"
+    issues = check_quality(text, recovery=True, source_text=source)
+
+    assert "unsupported_audience_extension" in {item.code for item in issues}
 
 
 def test_recovery_numeric_grounding_includes_rendered_carousel_text():
@@ -584,9 +635,10 @@ def test_recovery_numeric_grounding_includes_rendered_carousel_text():
         recovery=True,
         source_text="食藥署公告商品回收，未提供金額。",
     )
-    assert ("unsupported_numeric_claim", "9999") in {
-        (item.code, item.evidence) for item in issues
-    }
+    assert any(
+        item.code == "unsupported_numeric_claim" and "9999" in item.evidence
+        for item in issues
+    )
 
 
 # ---- Pattern 6：corporate_fluff_pileup（warn, count≥3）----

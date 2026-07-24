@@ -11,6 +11,8 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
                 "unsupported_numeric_claim",
                 "uncited_stat",
                 "missing_reader_utility",
+                "unsupported_audience_extension",
+                "platform_stat_overload",
             },
             source_evidence_text=(
                 "食藥署 7 月 24 日公告，19 批油品合格，涉及 501 項產品。"
@@ -29,6 +31,8 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "specific Taiwan reader" in guidance
     assert "Do not round, abbreviate" in guidance
     assert "One immediately adjacent paragraph may continue" in guidance
+    assert "Delete claims about retirement funds" in guidance
+    assert "Remove repeated facts and secondary numbers" in guidance
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 
