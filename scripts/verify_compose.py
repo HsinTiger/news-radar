@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
@@ -25,18 +26,32 @@ def verify_compose(
     expected_platforms: set[str],
     since_minutes: int,
     recovery: bool,
+    since_iso: str | None = None,
 ) -> int:
     failures = []
-    # 1. Limit evidence to this release window, not every draft from the day.
-    recent = conn.execute("""
+    # 1. Limit evidence to this exact compose release.  A rolling window is a
+    # compatibility fallback only: it can accidentally import held drafts from
+    # an earlier run and create a false FAIL for a healthy new release.
+    if since_iso:
+        recent = conn.execute("""
+            SELECT d.id, d.title, d.confidence_score, d.status, d.queue_status,
+                   d.generated_at, d.news_id
+            FROM drafts d
+            WHERE datetime(d.generated_at) >= datetime(?)
+            ORDER BY d.generated_at DESC
+        """, (since_iso,)).fetchall()
+        boundary = f"since_iso={since_iso}"
+    else:
+        recent = conn.execute("""
             SELECT d.id, d.title, d.confidence_score, d.status, d.queue_status,
                    d.generated_at, d.news_id
             FROM drafts d
             WHERE datetime(d.generated_at) >= datetime('now', ?)
             ORDER BY d.generated_at DESC
         """, (f"-{since_minutes} minutes",)).fetchall()
+        boundary = f"window_minutes={since_minutes}"
     print(
-        f"[Verify:Compose] window_minutes={since_minutes} "
+        f"[Verify:Compose] {boundary} "
         f"expected={sorted(expected_platforms)} recent_drafts={len(recent)}"
     )
 
@@ -127,12 +142,23 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--platforms", default="facebook,instagram,threads")
     parser.add_argument("--since-minutes", type=int, default=1440)
+    parser.add_argument(
+        "--since-iso",
+        default="",
+        help="Exact UTC compose boundary; preferred over the rolling window",
+    )
     args = parser.parse_args()
     expected = {value.strip() for value in args.platforms.split(",") if value.strip()}
     if not expected or not expected <= PLATFORMS:
         parser.error("--platforms must contain only facebook,instagram,threads")
     if args.since_minutes <= 0:
         parser.error("--since-minutes must be positive")
+    since_iso = args.since_iso.strip() or None
+    if since_iso:
+        try:
+            datetime.fromisoformat(since_iso.replace("Z", "+00:00"))
+        except ValueError:
+            parser.error("--since-iso must be an ISO-8601 timestamp")
     conn = dbmod.get_conn()
     try:
         return verify_compose(
@@ -140,6 +166,7 @@ def main() -> int:
             expected_platforms=expected,
             since_minutes=args.since_minutes,
             recovery=os.environ.get("AUTOMATION_MODE", "").strip().lower() == "recovery",
+            since_iso=since_iso,
         )
     finally:
         conn.close()
