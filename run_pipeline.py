@@ -21,6 +21,7 @@ from typing import Dict, Tuple, Optional
 from src import db as dbmod
 from src import image_manager
 from src.schema import (
+    CarouselCards,
     Draft,
     DraftContent,
     PlatformVariant,
@@ -114,6 +115,93 @@ def _is_recovery_market_benchmark(
         marker in evidence for marker in ("總市值", "全市場", "整體市場")
     )
     return has_market_index and has_market_scope
+
+
+def _deterministic_market_benchmark_variant(
+    variant: PlatformVariant,
+    *,
+    platform: str,
+    source_evidence_text: str,
+) -> PlatformVariant:
+    """Build a source-bounded market benchmark explainer without LLM inference."""
+
+    statistics = statistical_quantity_allowlist(source_evidence_text)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    market_cap = next(
+        (value for value in statistics if "兆" in value or "億" in value),
+        None,
+    )
+    if not benchmark or not market_cap:
+        return variant
+    titles = {
+        "threads": f"證交所本週：加權指數上漲 {benchmark}",
+        "fb": f"證交所本週：加權指數上漲 {benchmark}，上市股票總市值達 {market_cap}",
+        "ig": f"大盤上漲 {benchmark}，你的持股呢？",
+    }
+    bodies = {
+        "threads": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "這兩個數字描述整體市場，不代表每檔股票或每個投資組合都取得相同報酬。"
+            "先比較你的同期間報酬，再拆解產業配置與個股選擇。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的持股有跑贏嗎？"
+        ),
+        "fb": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "大盤上漲不等於每檔股票都上漲，也不等於每個投資組合都取得相同報酬。"
+            "判斷自己的結果，應比較同一期間的報酬，再拆成產業配置與個股選擇。\n\n"
+            "若你的報酬跑輸大盤，先比較證交所產業指數與持股產業權重，確認差距主要來自持股集中度還是選股。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？"
+        ),
+        "ig": (
+            f"根據臺灣證券交易所本週統計，加權股價指數上漲 {benchmark}，"
+            f"上市股票總市值達 {market_cap}。\n\n"
+            "大盤漲幅不是你的報酬。先比較同一期間，再檢查產業配置與個股選擇。\n\n"
+            f"對照證交所本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？"
+        ),
+    }
+    hashtags = {
+        "threads": ["#台股"],
+        "fb": ["#台股", "#證交所", "#投資組合"],
+        "ig": ["#台股", "#證交所", "#投資組合", "#產業配置", "#投資筆記"],
+    }
+    return variant.model_copy(
+        update={
+            "title": titles[platform],
+            "body": bodies[platform],
+            "hashtags": hashtags[platform],
+            "primary_topic_tag": "#台股",
+        }
+    )
+
+
+def _deterministic_market_benchmark_carousel(
+    source_evidence_text: str,
+) -> CarouselCards | None:
+    statistics = statistical_quantity_allowlist(source_evidence_text)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    market_cap = next(
+        (value for value in statistics if "兆" in value or "億" in value),
+        None,
+    )
+    if not benchmark or not market_cap:
+        return None
+    return CarouselCards(
+        insight_statement="大盤上漲，不等於你的持股都上漲",
+        insight_support="先比較同期間報酬，再拆解產業配置與個股選擇。",
+        stat_number=benchmark,
+        stat_caption="證交所本週加權指數漲幅",
+        takeaways=[
+            "比較同期間報酬",
+            "拆解產業配置",
+            "檢查個股選擇",
+        ],
+        key_figures=[
+            {"label": "證交所漲幅", "value": benchmark},
+            {"label": "證交所總市值", "value": market_cap},
+        ],
+    )
 
 
 def _recovery_rewrite_guidance(
@@ -1188,6 +1276,23 @@ async def process_item(
         print(" ⚠️  [Pipeline] 寫作 LLM 雙路徑皆失敗 → skip 本篇（不入 queue）")
         return "skipped_no_llm"
 
+    source_evidence_text = (
+        f"{title}\n{content}\n"
+        f"{row['published_at'] if 'published_at' in row.keys() else ''}"
+    )
+    market_benchmark = is_recovery_mode() and _is_recovery_market_benchmark(
+        topic=topic_cls.category_id,
+        source_label=str(row["feed_name"] or ""),
+        title=title,
+        content=content,
+    )
+    if market_benchmark and "ig" in active_platforms:
+        benchmark_carousel = _deterministic_market_benchmark_carousel(
+            source_evidence_text
+        )
+        if benchmark_carousel is not None:
+            bundle = bundle.model_copy(update={"carousel": benchmark_carousel})
+
     # 3. 逐平台 finalize（修 hashtag、壓字數）
     finalized: Dict[str, Tuple[PlatformVariant, str, bool]] = {}
     # 3. 逐一處理有生成的平台變體
@@ -1195,6 +1300,12 @@ async def process_item(
         raw_variant = getattr(bundle, platform_key)
         if not raw_variant:
             continue
+        if market_benchmark:
+            raw_variant = _deterministic_market_benchmark_variant(
+                raw_variant,
+                platform=platform_key,
+                source_evidence_text=source_evidence_text,
+            )
 
         variant, full_text, ok = finalize_variant(raw_variant, platform_key)
         finalized[platform_key] = (variant, full_text, ok)
@@ -1215,11 +1326,6 @@ async def process_item(
     # 修一次。第三版仍命中就保留人工看，絕不進自動發布 queue。每次判定只保存
     # 規則與文字 hash，不保存另一份全文。
     draft_id = hashlib.sha1(f"{news_id}_v1".encode()).hexdigest()
-    source_evidence_text = (
-        f"{title}\n{content}\n"
-        f"{row['published_at'] if 'published_at' in row.keys() else ''}"
-    )
-
     def evaluate_quality(attempt: int) -> dict[str, list]:
         findings: dict[str, list] = {}
         for platform_key, (_variant, ftext, _ok) in finalized.items():
@@ -1338,10 +1444,24 @@ async def process_item(
         if not retry_bundle:
             print("   ⚠️ [QualityGuard·rewrite] 重寫 LLM 失敗，原稿只存人工複核")
             break
+        if market_benchmark and "ig" in active_platforms:
+            benchmark_carousel = _deterministic_market_benchmark_carousel(
+                source_evidence_text
+            )
+            if benchmark_carousel is not None:
+                retry_bundle = retry_bundle.model_copy(
+                    update={"carousel": benchmark_carousel}
+                )
         retry_finalized = dict(finalized)
         for platform_key in active_platforms:
             raw_variant = getattr(retry_bundle, platform_key)
             if raw_variant:
+                if market_benchmark:
+                    raw_variant = _deterministic_market_benchmark_variant(
+                        raw_variant,
+                        platform=platform_key,
+                        source_evidence_text=source_evidence_text,
+                    )
                 retry_finalized[platform_key] = finalize_variant(
                     raw_variant, platform_key
                 )
@@ -1486,12 +1606,6 @@ async def process_item(
         status="pending_review",
     )
 
-    market_benchmark = is_recovery_mode() and _is_recovery_market_benchmark(
-        topic=topic_cls.category_id,
-        source_label=str(row["feed_name"] or ""),
-        title=title,
-        content=content,
-    )
     auto_publish = (
         (owner_submitted or score >= publish_threshold or market_benchmark)
         and not rewrite_unresolved

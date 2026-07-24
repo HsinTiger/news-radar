@@ -6,12 +6,17 @@ from run_pipeline import (
     _deterministic_recovery_inference_prune,
     _deterministic_recovery_stat_prune,
     _deterministic_recovery_title_prune,
+    _deterministic_market_benchmark_carousel,
+    _deterministic_market_benchmark_variant,
     _deterministic_recovery_utility_repair,
     _is_recovery_market_benchmark,
     _quality_rewrite_penalty,
     _recovery_rewrite_guidance,
 )
 from src.content_quality_guard import QualityIssue, check_platform_style, check_quality
+from src.composer import finalize_variant
+from src.schema import PlatformVariant
+from substack_radar.cards import build_cards
 
 
 def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
@@ -281,3 +286,42 @@ def test_recovery_market_benchmark_excludes_company_procedure_notice() -> None:
         title="英柏得科技申請股票上市",
         content="公司送件申請上市，公告資本額與產品。",
     )
+
+
+def test_deterministic_market_benchmark_copy_is_source_bounded() -> None:
+    source = (
+        "本週發行量加權股價指數漲幅約為2.30%，"
+        "上市股票總市值達142.58兆元。"
+    )
+    seed = PlatformVariant(
+        title="LLM title",
+        body="LLM body",
+        hashtags=[],
+        char_count=0,
+    )
+    rewritten = _deterministic_market_benchmark_variant(
+        seed,
+        platform="fb",
+        source_evidence_text=source,
+    )
+    _variant, full_text, _ok = finalize_variant(rewritten, "fb")
+    issues = check_quality(
+        full_text,
+        title="台股週報",
+        recovery=True,
+        source_text=source,
+    ) + check_platform_style(
+        "facebook",
+        full_text,
+        title="台股週報",
+        recovery=True,
+    )
+
+    assert "市場正在改善" not in full_text
+    assert "所有持有" not in full_text
+    assert "不等於每個投資組合" in full_text
+    assert not [issue for issue in issues if issue.severity == "rewrite"]
+
+    carousel = _deterministic_market_benchmark_carousel(source)
+    assert carousel is not None
+    assert len(build_cards(title="台股週報", subtitle="", carousel=carousel)) == 5
