@@ -173,6 +173,19 @@ def test_recovery_picker_excludes_legacy_queue_entries(tmp_db):
         assert dbmod.pick_freshest_queued(conn, platforms={"threads"})["id"] == "d_legacy"
         assert dbmod.pick_freshest_queued(
             conn, platforms={"threads"}, recovery_only=True
+        ) is None
+        dbmod.record_quality_evaluation(
+            conn,
+            draft_id="d_recovery",
+            news_id="recovery-old",
+            platform="threads",
+            stage="compose",
+            attempt=1,
+            full_text="具名來源與讀者用途均已通過 current guard",
+            issues=[],
+        )
+        assert dbmod.pick_freshest_queued(
+            conn, platforms={"threads"}, recovery_only=True
         )["id"] == "d_recovery"
 
 

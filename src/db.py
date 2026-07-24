@@ -938,21 +938,38 @@ def _recovery_experiment_clause(
 ) -> tuple[str, list[str]]:
     if not recovery_only:
         return "", []
+    from .content_quality_guard import QUALITY_GUARD_VERSION
+
     targets = sorted({str(value) for value in (platforms or []) if value})
-    if not targets:
-        return (
-            " AND EXISTS (SELECT 1 FROM recovery_experiments rx WHERE rx.draft_id=d.id)",
-            [],
-        )
-    placeholders = ",".join("?" * len(targets))
+    platform_sql = ""
+    params: list[str] = []
+    if targets:
+        placeholders = ",".join("?" * len(targets))
+        platform_sql = f" AND rx.platform IN ({placeholders})"
+        params.extend(targets)
+    params.append(QUALITY_GUARD_VERSION)
     return (
         f"""
           AND EXISTS (
             SELECT 1 FROM recovery_experiments rx
-             WHERE rx.draft_id=d.id AND rx.platform IN ({placeholders})
+            JOIN content_quality_evaluations q
+              ON q.draft_id=rx.draft_id AND q.platform=rx.platform
+             WHERE rx.draft_id=d.id
+               {platform_sql}
+               AND q.stage='compose'
+               AND q.guard_version=?
+               AND q.id=(
+                 SELECT MAX(q2.id)
+                   FROM content_quality_evaluations q2
+                  WHERE q2.draft_id=q.draft_id
+                    AND q2.platform=q.platform
+                    AND q2.stage='compose'
+                    AND q2.guard_version=q.guard_version
+               )
+               AND q.decision IN ('pass','warn')
           )
         """,
-        targets,
+        params,
     )
 
 
