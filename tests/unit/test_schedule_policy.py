@@ -151,6 +151,30 @@ def test_recovery_daily_evening_slots_separate_facebook_and_instagram() -> None:
     assert instagram.platforms == ["instagram"]
 
 
+def test_scheduler_tolerance_never_dispatches_before_commute_slot() -> None:
+    before = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 27, 9, 12, tzinfo=timezone.utc),  # 17:12 Taipei
+        mode="recovery",
+    )
+    delayed_ok = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 27, 10, 50, tzinfo=timezone.utc),  # 18:50 Taipei
+        mode="recovery",
+    )
+    too_late = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 27, 10, 51, tzinfo=timezone.utc),  # 18:51 Taipei
+        mode="recovery",
+    )
+    assert "facebook" not in before.platforms
+    assert delayed_ok.platforms == ["facebook"]
+    assert "facebook" not in too_late.platforms
+
+
 def test_recovery_ignores_live_runtime_override() -> None:
     conn = _conn()
     conn.execute(
