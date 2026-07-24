@@ -288,6 +288,33 @@ def write_proposal(
     # 3. Resolve paths.
     proposals_dir = _resolve_proposals_dir(base_dir)
     proposals_dir.mkdir(parents=True, exist_ok=True)
+    identity = (
+        out["analyzer"],
+        out["platform"],
+        out["proposal_type"],
+        out["action"]["target_config"],
+        out["action"]["field"],
+        out["action"]["current_value"],
+        out["action"]["proposed_value"],
+    )
+    for existing in read_proposals(base_dir=proposals_dir):
+        action = existing.get("action")
+        if (
+            existing.get("hsin_decision") is None
+            and not existing.get("deployed_at")
+            and isinstance(action, dict)
+            and (
+                existing.get("analyzer"),
+                existing.get("platform"),
+                existing.get("proposal_type"),
+                action.get("target_config"),
+                action.get("field"),
+                action.get("current_value"),
+                action.get("proposed_value"),
+            )
+            == identity
+        ):
+            return str(existing["fire_id"])
     week = _iso_week_for(out["fire_at"])
     target_path = _proposals_path_for_week(week, base_dir=proposals_dir)
 

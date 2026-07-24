@@ -248,6 +248,12 @@ def test_two_approved_proposals_for_same_topic_fail_closed(tmp_path: Path) -> No
     second = dict(first)
     second["fire_id"] = second_id
     second["fire_at"] = "2026-07-23T00:01:00+00:00"
+    second["action"] = dict(first["action"])
+    second["action"]["proposed_value"] = 1.12
+    second["evidence"] = dict(first["evidence"])
+    second["evidence"]["metrics"] = dict(first["evidence"]["metrics"])
+    second["evidence"]["metrics"]["new_weight"] = 1.12
+    second["evidence"]["metrics"]["applied_delta"] = 0.12
     second.pop("hsin_decision", None)
     second.pop("hsin_decision_at", None)
     second.pop("hsin_decision_comment", None)

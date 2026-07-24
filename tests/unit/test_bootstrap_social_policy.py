@@ -4,7 +4,12 @@ import json
 import sqlite3
 from pathlib import Path
 
-from scripts.bootstrap_social_policy import FIRE_ID, apply_policy
+from scripts.bootstrap_social_policy import (
+    FIRE_ID,
+    apply_policy,
+    supersede_drifted_topic_proposals,
+)
+from src.reflector.proposals import read_proposals, write_proposal
 
 
 def _conn() -> sqlite3.Connection:
@@ -71,7 +76,8 @@ def test_apply_is_audited_and_idempotent() -> None:
     ).fetchone()[0] == 1.4
     assert conn.execute("SELECT COUNT(*) FROM topic_weight_history").fetchone()[0] == 2
     lineage = conn.execute(
-        "SELECT hsin_decision,deployed_at,evidence_json FROM reflector_proposal_lineage WHERE fire_id=?",
+        "SELECT hsin_decision,deployed_at,evidence_json "
+        "FROM reflector_proposal_lineage WHERE fire_id=?",
         (FIRE_ID,),
     ).fetchone()
     assert lineage["hsin_decision"] == "approved"
@@ -85,3 +91,50 @@ def test_apply_is_audited_and_idempotent() -> None:
     )
     assert second["changes"] == []
     assert conn.execute("SELECT COUNT(*) FROM topic_weight_history").fetchone()[0] == 2
+
+
+def test_supersede_drifted_pending_topic_proposal(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    proposals_dir = tmp_path / "proposals"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE topic_weights(category_id TEXT PRIMARY KEY,weight REAL);
+            INSERT INTO topic_weights VALUES('earnings',1.35);
+            CREATE TABLE reflector_proposal_lineage(
+              fire_id TEXT PRIMARY KEY,fire_at TEXT,analyzer TEXT,
+              proposal_type TEXT,target_config TEXT,hsin_decision TEXT,
+              hsin_decision_at TEXT,deployed_at TEXT,evidence_json TEXT
+            );
+            """
+        )
+    fire_id = write_proposal(
+        {
+            "analyzer": "topic",
+            "platform": "all",
+            "proposal_type": "adjust_weight",
+            "evidence": {"sample_ids": [], "metrics": {}, "confidence": "MED"},
+            "action": {
+                "target_config": "topic_weights",
+                "field": "earnings",
+                "current_value": 1.35,
+                "proposed_value": 1.5,
+            },
+            "boss_attention_required": True,
+            "fire_at": "2026-07-23T14:00:00+00:00",
+        },
+        db_path=db_path,
+        base_dir=proposals_dir,
+    )
+    changed = supersede_drifted_topic_proposals(
+        db_path,
+        proposals_dir,
+        decided_at="2026-07-24T14:14:00+08:00",
+    )
+    assert changed == [fire_id]
+    assert read_proposals(base_dir=proposals_dir)[0]["hsin_decision"] == "amend"
+    with sqlite3.connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT hsin_decision FROM reflector_proposal_lineage WHERE fire_id=?",
+            (fire_id,),
+        ).fetchone()[0] == "amend"

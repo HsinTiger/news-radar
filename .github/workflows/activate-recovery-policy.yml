@@ -1,0 +1,67 @@
+name: "Social Automation · Activate Recovery Policy"
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: news-radar-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -q
+      - name: Acquire canonical state write lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+      - name: Apply owner-approved content policy
+        run: |
+          python scripts/bootstrap_social_policy.py --apply \
+            --proposals-dir data/05_reflect/proposals
+      - name: Apply owner-approved timing experiment
+        run: |
+          python scripts/activate_recovery_timing.py --apply \
+            --proposals-dir data/05_reflect/proposals
+      - name: Persist verified policy state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "recovery_policy_activation:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+      - name: Sync applied proposals to Social Ops
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}
+          SUBMISSION_PROCESSOR_MODE: ${{ vars.SUBMISSION_PROCESSOR_MODE }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 500
+      - name: Release canonical state write lease
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json

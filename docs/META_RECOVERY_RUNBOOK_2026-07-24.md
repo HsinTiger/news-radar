@@ -21,7 +21,7 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 
 | Platform | Initial cadence | Purpose |
 |---|---:|---|
-| Threads | 1/day at 12:00 Asia/Taipei | Source-backed practical consequence; usable historical baseline |
+| Threads | 1/day at 16:00 Asia/Taipei | Timing experiment: historical 16:00 median 625 views over 5 posts; frequency unchanged |
 | Facebook | Tue/Fri 20:00 | Evidence-backed explainer; measurement-first |
 | Instagram | Wed/Sat 20:00 | Native carousel; format-first cold-start test |
 
@@ -37,6 +37,10 @@ Recovery safeguards:
 6. Unsupported statistics trigger one rewrite; unresolved drafts are held.
 7. Recovery cadence ignores old live-mode frequency overrides.
 8. No recommendation may increase frequency before 168h evidence.
+
+The 16:00 Threads slot is a bounded timing hypothesis, not a proven optimum.
+Keep it only after at least three Recovery posts complete their 168h windows;
+topic, format, and source-quality effects remain possible confounders.
 
 ## Activation sequence
 
