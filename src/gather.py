@@ -23,6 +23,7 @@ def _tokens(s: str) -> Set[str]:
 
 
 _FACTCHECK_LIKE = ("%查核%", "%TFC%", "%MyGoPen%", "%事實查核%")
+_RELATED_SOURCE_SCAN_LIMIT = 1000
 
 
 def _same_story(seed: Set[str], candidate: Set[str], min_overlap: int) -> bool:
@@ -106,9 +107,9 @@ def has_authoritative_corroboration(
                AND datetime(published_at) > datetime('now', ?)
                AND datetime(published_at) <= datetime('now', '+6 hours')
              ORDER BY datetime(published_at) DESC
-             LIMIT 120
+             LIMIT ?
             """,
-            (news_id, f"-{days} day"),
+            (news_id, f"-{days} day", _RELATED_SOURCE_SCAN_LIMIT),
         ).fetchall()
     except Exception:
         return False
@@ -182,9 +183,9 @@ def gather_brief(
               AND datetime(published_at) <= datetime('now', '+6 hours')
               AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 120
             ORDER BY datetime(published_at) DESC
-            LIMIT 80
+            LIMIT ?
             """,
-            (news_id, f"-{days} day"),
+            (news_id, f"-{days} day", _RELATED_SOURCE_SCAN_LIMIT),
         ).fetchall()
     except Exception:
         return ""
