@@ -107,6 +107,8 @@ def has_authoritative_corroboration(
              WHERE id != ?
                AND datetime(published_at) > datetime('now', ?)
                AND datetime(published_at) <= datetime('now', '+6 hours')
+               AND clean_markdown IS NOT NULL
+               AND LENGTH(clean_markdown) > 120
              ORDER BY datetime(published_at) DESC
              LIMIT ?
             """,

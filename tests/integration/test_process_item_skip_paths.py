@@ -314,6 +314,51 @@ def test_missing_requested_variant_fails_closed_without_draft(tmp_db, monkeypatc
         ).fetchone()[0] == 0
 
 
+def test_recovery_high_risk_claim_requires_readable_corroboration_brief(
+    tmp_db, monkeypatch
+):
+    asyncio.run(_fake_make_passthrough_score(monkeypatch))
+    calls = _patch_composable_path(
+        monkeypatch,
+        [_bundle("這段不應被撰寫，因為權威佐證本文沒有進入 brief。")],
+    )
+    monkeypatch.setenv("AUTOMATION_MODE", "recovery")
+
+    import src.gather as gather
+
+    monkeypatch.setattr(gather, "has_authoritative_corroboration", lambda *_a, **_k: True)
+    monkeypatch.setattr(gather, "gather_brief", lambda *_a, **_k: "")
+
+    with dbmod.get_conn() as conn:
+        _seed_fetched_news(conn, "n_missing_corroboration_body")
+        conn.execute(
+            """UPDATE news_items
+                  SET feed_name='某新聞網',feed_tier='secondary',
+                      title='市長被控隱匿問題食品回收資料',
+                      clean_markdown='食安事件涉及不合格食品與回收範圍。'
+                WHERE id='n_missing_corroboration_body'"""
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM news_items WHERE id='n_missing_corroboration_body'"
+        ).fetchone()
+
+        result = asyncio.run(
+            run_pipeline.process_item(
+                conn,
+                row,
+                compose_only=True,
+                requested_platforms={"threads"},
+            )
+        )
+
+        assert result == "skipped_insufficient_evidence"
+        assert calls == []
+        assert conn.execute(
+            "SELECT COUNT(*) FROM drafts WHERE news_id='n_missing_corroboration_body'"
+        ).fetchone()[0] == 0
+
+
 def test_submission_platform_tags_cannot_be_broadened_by_scheduler(tmp_db, monkeypatch):
     asyncio.run(_fake_make_passthrough_score(monkeypatch))
     calls = _patch_composable_path(

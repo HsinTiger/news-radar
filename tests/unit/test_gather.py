@@ -35,6 +35,7 @@ def _insert(
     tags: str = "[]",
     feed_tier: str = "secondary",
     days_old: int = 0,
+    content: str | None = None,
 ) -> None:
     conn.execute(
         """
@@ -47,7 +48,7 @@ def _insert(
             title,
             feed_name,
             f"https://example.test/{item_id}",
-            "這是足夠長的來源本文摘要。" * 20,
+            content if content is not None else "這是足夠長的來源本文摘要。" * 20,
             "current_affairs",
             tags,
             feed_tier,
@@ -168,6 +169,24 @@ def test_official_primary_record_does_not_need_secondary_corroboration() -> None
         feed_name="食藥署 本署新聞",
         tags='["official","primary-record"]',
         feed_tier="primary",
+    )
+
+
+def test_title_only_authority_is_not_publishable_corroboration() -> None:
+    conn = _conn()
+    _insert(
+        conn,
+        item_id="official-title-only",
+        title="問題食品苯駢苘超標 食藥署公布調查",
+        feed_name="食藥署 本署新聞",
+        tags='["official","primary-record"]',
+        feed_tier="primary",
+        content="只有標題",
+    )
+    assert not has_authoritative_corroboration(
+        conn,
+        "seed",
+        "問題食品苯駢苘超標 調查公布",
     )
 
 
