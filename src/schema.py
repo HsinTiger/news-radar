@@ -198,4 +198,5 @@ class HarvestReport(BaseModel):
     items_new: int = 0
     items_dropped: int = 0
     drop_reasons: dict = Field(default_factory=dict)
+    feed_results: dict = Field(default_factory=dict)
     errors: List[str] = Field(default_factory=list)

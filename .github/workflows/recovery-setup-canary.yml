@@ -51,6 +51,7 @@ jobs:
         run: >-
           python scripts/recovery_setup_canary.py
           --platform "${{ inputs.platform }}"
+          --refresh-primary-sources
           --report reports/recovery_setup_canary.json
       - name: Upload metadata-only evidence
         if: always()

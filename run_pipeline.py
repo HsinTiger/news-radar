@@ -111,6 +111,9 @@ def _recovery_rewrite_guidance(
             "READER UTILITY: End with exactly two factual sentences shaped as "
             "`對[具體讀者]的具體影響是...。` and "
             "`[同一讀者]可以先[查詢/確認/比對/保留/避開/追蹤]...。` "
+            "Replace both bracketed placeholders with real words. In the actual "
+            "requested platform body/caption (not title or metadata), the literal "
+            "Chinese substrings `的具體影響是` and `可以先` must both appear. "
             "The action must name a real list, batch, date, document, authority, "
             "or risk signal from the supplied source."
         )
@@ -170,8 +173,9 @@ def _recovery_rewrite_guidance(
         "FINAL SELF-CHECK BEFORE JSON: (1) every material Arabic number appears "
         f"in this allowlist: {allowed_text}; (2) every factual paragraph/card names "
         "its exact supplied source; (3) the first 45 characters contain actor plus "
-        "verifiable consequence; (4) the final two sentences contain concrete "
-        "reader impact plus action. Return only the requested platform JSON."
+        "verifiable consequence; (4) the final two body/caption sentences literally "
+        "contain `的具體影響是` and `可以先`, with a real reader and source-backed "
+        "action. Return only the requested platform JSON."
     )
     return guidance
 
