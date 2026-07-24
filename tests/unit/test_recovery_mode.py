@@ -35,10 +35,10 @@ def test_rank_candidates_applies_weight_before_freshness() -> None:
     conn = _conn()
     rows = [
         {"title": "一般消息", "clean_markdown": "沒有特定分類", "published_at": "2026-07-24T10:00:00Z"},
-        {"title": "食安事件擴大", "clean_markdown": "食安與產品召回", "published_at": "2026-07-24T09:00:00Z"},
+        {"title": "台灣食安事件擴大", "clean_markdown": "食安與產品召回", "published_at": "2026-07-24T09:00:00Z"},
     ]
     ranked = rank_candidates(conn, rows, now=NOW)
-    assert ranked[0]["title"] == "食安事件擴大"
+    assert ranked[0]["title"] == "台灣食安事件擴大"
 
 
 def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
@@ -120,6 +120,21 @@ def test_global_disaster_from_taiwan_media_is_not_automatically_taiwan_relevant(
     assert rank_candidates(conn, [row], now=NOW) == []
 
 
+def test_foreign_leverage_story_cannot_enter_via_tw_stocks_keyword() -> None:
+    conn = _conn()
+    row = {
+        "title": "南韓大學生5倍槓桿炒股 行情反轉暴跌血本無歸",
+        "clean_markdown": (
+            "南韓年輕人以韓元高槓桿投資，融資餘額創新高，"
+            "報導只將金額換算成台幣，並無其他市場關聯。"
+        ),
+        "feed_name": "公視新聞 PTS",
+        "tags": '["taiwan","news","public-broadcast"]',
+        "published_at": "2026-07-24T10:00:00Z",
+    }
+    assert rank_candidates(conn, [row], now=NOW) == []
+
+
 def test_public_consequence_outranks_ceremonial_politics() -> None:
     conn = _conn()
     rows = [
@@ -130,13 +145,13 @@ def test_public_consequence_outranks_ceremonial_politics() -> None:
             "published_at": "2026-07-24T10:00:00Z",
         },
         {
-            "title": "食安不合格產品回收批號公布",
+            "title": "台灣食安不合格產品回收批號公布",
             "topic_category": "current_affairs",
             "feed_tier": "secondary",
             "published_at": "2026-07-24T09:00:00Z",
         },
     ]
-    assert rank_candidates(conn, rows, now=NOW)[0]["title"] == "食安不合格產品回收批號公布"
+    assert rank_candidates(conn, rows, now=NOW)[0]["title"] == "台灣食安不合格產品回收批號公布"
 
 
 def test_public_consequence_outranks_promotional_events_and_rally_headcount() -> None:
