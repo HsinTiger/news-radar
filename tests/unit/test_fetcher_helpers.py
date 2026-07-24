@@ -14,6 +14,7 @@ from src.fetcher import (
     make_news_id,
     is_too_old,
     _limited_entries,
+    _resolve_entry_link,
     _get_feed_with_retry,
     _parse_rss_time,
     _rewrite_url_for_extraction,
@@ -71,6 +72,18 @@ def test_make_news_id_stable():
 def test_official_archive_feed_limit_is_bounded():
     assert _limited_entries(list(range(250)), 15) == list(range(15))
     assert _limited_entries([1, 2], None) == [1, 2]
+
+
+def test_relative_official_entry_link_resolves_against_feed_origin():
+    assert _resolve_entry_link(
+        "https://www.twse.com.tw/rwd/zh/news/feed?type=rss",
+        "/rwd/zh/news/newsDetail/example",
+    ) == "https://www.twse.com.tw/rwd/zh/news/newsDetail/example"
+
+
+def test_absolute_entry_link_remains_unchanged():
+    link = "https://www.fsc.gov.tw/ch/home.jsp?id=96"
+    assert _resolve_entry_link("https://www.fsc.gov.tw/RSS/Messages", link) == link
 
 
 @pytest.mark.parametrize("value", [0, 101, True, "15"])

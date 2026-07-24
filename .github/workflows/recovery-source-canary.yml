@@ -1,0 +1,37 @@
+name: "Social Automation · Recovery Source Canary"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/recovery-source-canary.yml"
+      - "config/config.yaml"
+      - "scripts/recovery_source_canary.py"
+      - "src/cleaner.py"
+      - "src/fetcher.py"
+      - "tests/unit/test_recovery_source_canary.py"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -q
+      - name: Verify Taiwan primary-record feeds
+        run: python scripts/recovery_source_canary.py
+      - name: Upload source evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: recovery-source-canary-${{ github.run_id }}
+          path: reports/recovery_source_canary.json
+          retention-days: 30
+          if-no-files-found: warn
