@@ -47,6 +47,14 @@ def test_taiex_hits_tw_stocks():
     assert c is not None and c.category_id == "tw_stocks"
 
 
+def test_official_taiex_wording_hits_tw_stocks():
+    c = classify_topic_keyword(
+        "本週發行量加權股價指數漲幅約為2.30%，上市股票總市值達142.58兆元",
+        "",
+    )
+    assert c is not None and c.category_id == "tw_stocks"
+
+
 def test_claude_code_hits_ai_agent_not_ai_model():
     """『Claude Code』應命中 ai_agent（因為列表含『Claude Code』完整字串），
     而非 ai_model（列表只含『Claude Opus/Sonnet/Haiku』，不含 bare 'Claude'）。"""

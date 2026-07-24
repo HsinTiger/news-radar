@@ -102,6 +102,24 @@ def test_rank_candidates_prefers_primary_source_inside_same_topic() -> None:
     assert ranked[0]["title"] == "較早的台灣第一手來源"
 
 
+def test_official_market_record_survives_recovery_scope_gate() -> None:
+    conn = _conn()
+    row = {
+        "title": (
+            "本週發行量加權股價指數漲幅約為2.30%，"
+            "上市股票總市值達142.58兆元"
+        ),
+        "clean_markdown": "證交所公布本週市場統計。",
+        "feed_tier": "primary",
+        "feed_name": "證交所 官方訊息",
+        "tags": '["official","primary-record"]',
+        "source_type": "article",
+        "published_at": "2026-07-24T10:00:00Z",
+    }
+
+    assert rank_candidates(conn, [row], now=NOW) == [row]
+
+
 def test_primary_record_survives_bounded_scan_ahead_of_media_reaction() -> None:
     conn = _conn()
     rows = [
