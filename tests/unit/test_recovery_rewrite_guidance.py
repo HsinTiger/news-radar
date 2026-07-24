@@ -13,6 +13,7 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
                 "missing_reader_utility",
                 "unsupported_audience_extension",
                 "platform_stat_overload",
+                "multiple_closing_questions",
             },
             source_evidence_text=(
                 "食藥署 7 月 24 日公告，19 批油品合格，涉及 501 項產品。"
@@ -34,6 +35,7 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "Delete claims about retirement funds" in guidance
     assert "Remove repeated facts and secondary numbers" in guidance
     assert "Use no more than two market/statistical values" in guidance
+    assert "exactly one question mark" in guidance
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 

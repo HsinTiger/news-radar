@@ -214,9 +214,14 @@ def _recovery_rewrite_guidance(
             "tag. Facebook: 280-500 characters, 3-5 paragraphs, 2-3 tags. "
             "Instagram caption: 160-340 characters, 2-4 paragraphs, 3-5 tags."
         )
-    if rewrite_codes & {"missing_answerable_question", "generic_engagement_bait"}:
+    if rewrite_codes & {
+        "missing_answerable_question",
+        "multiple_closing_questions",
+        "generic_engagement_bait",
+    }:
         guidance.append(
-            "CLOSING: End with one specific question that a reader can answer "
+            "CLOSING: End with exactly one question mark and one specific question "
+            "that a reader can answer "
             "from experience, a public record, or a stated trade-off. Never ask "
             "generic `你怎麼看` or request engagement."
         )

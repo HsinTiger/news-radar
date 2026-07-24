@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v17"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v18"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -1072,12 +1072,22 @@ def check_platform_style(
             ),
         ))
     closing = content_paragraphs[-1] if content_paragraphs else ""
-    if not (closing.rstrip().endswith("？") or closing.rstrip().endswith("?")):
+    question_count = len(re.findall(r"[？?]", closing))
+    if question_count == 0 or not (
+        closing.rstrip().endswith("？") or closing.rstrip().endswith("?")
+    ):
         issues.append(QualityIssue(
             code="missing_answerable_question",
             severity="rewrite",
             message="Recovery 文案須以一個可具體回答的問題收尾",
             evidence=f"platform={canonical};closing={closing[-80:]}",
+        ))
+    elif question_count > 1:
+        issues.append(QualityIssue(
+            code="multiple_closing_questions",
+            severity="rewrite",
+            message="結尾只能保留一個可回答的問題，不得連問兩題",
+            evidence=f"platform={canonical};count={question_count};closing={closing[-80:]}",
         ))
     elif any(
         generic in closing

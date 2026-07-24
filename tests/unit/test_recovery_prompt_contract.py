@@ -16,6 +16,9 @@ def test_recovery_scorer_uses_public_interest_contract(monkeypatch):
     assert "公司數字" in prompt
     assert "政府宣傳活動、競賽、開幕" in prompt
     assert "日期、人數與主辦機關只能證明活動存在" in prompt
+    assert "全市場 benchmark" in prompt
+    assert "通常可評 0.70–0.82" in prompt
+    assert "程序公告" in prompt and "不得高於 0.65" in prompt
 
 
 def test_default_scorer_preserves_legacy_technology_filter(monkeypatch):
@@ -44,6 +47,7 @@ def test_recovery_composer_contract_is_platform_scoped_and_actionable():
     assert "3–5 個短段落" in prompt
     assert "緊接的下一段可延續同一份來源" in prompt
     assert "Threads：160–240 字" in prompt
+    assert "結尾只能有一個問號" in prompt
     assert "SOURCE AND CORRECTNESS GATE" in prompt
 
 
