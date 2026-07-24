@@ -17,11 +17,13 @@ Restart useful, attention-earning Meta publishing without a Mac, while learning 
 - `PROVEN`: 89 of those 104 Instagram posts were already carousel albums and 15 were single images; both cohorts have median reach zero. The next experiment tests save/share utility inside a five-card carousel, not carousel versus image.
 - `PROVEN`: platform API audience snapshots at 2026-07-24 14:07 Asia/Taipei report Facebook 28 followers, Instagram 9, and Threads 3,749. The stored history spans only about 18 hours: Facebook and Instagram are unchanged while Threads moved from 3,748 to 3,749.
 - `PROVEN`: active publishing days averaged 4.93 successful Facebook posts, 4.93 Instagram posts, and 4.84 Threads posts; the maximum was nine per platform in one UTC day. This is materially above the owner's remembered three-to-four posts.
+- `PROVEN`: a substring audit of successful published variants found at least one repeated dramatic frame (`護城河`, `真正的賽局`, `代價`, `神話破滅`, `底層邏輯`, `信任崩塌`, `產業洗牌`, or `結構性衝擊`) in 168/212 Facebook posts, 124/212 Instagram posts, and 123/213 Threads posts. All 212 pre-Recovery drafts were published across all three platforms. This proves severe template repetition and uniform cross-posting, not that either factor alone caused low reach.
 - `ASSUMED`: frequency amplified weak per-post signals and audience fatigue. The available Threads cohort shows 68–75% zero-interaction posts on days with four or more measured posts, but the relationship is observational, incomplete, and confounded by topic, time, and format. Do not claim frequency alone caused low reach.
 - `PROVEN`: Threads post `18059705018757201` proves API delivery only. It was composed and checked under `2026-07-24.recovery-v2`; it is excluded from the current editorial-quality and recovery-performance cohort.
 - `PROVEN`: Facebook runs `30085392911` and `30086522743` produced only quality-held drafts; publish had zero attempts. Run `30087468749` was cancelled before publish when a rolling-window verifier contamination bug was found. No Facebook post ID exists for 2026-07-24.
 - `PROVEN`: PRs #38–#40 isolate the Taiwan public-interest scorer/composer, introduce guard `2026-07-24.taiwan-daily-v6`, and scope compose verification to the current run's exact UTC boundary. Seven production drafts from run `30086522743` replay 7/7 PASS through v6; this is deterministic guard evidence, not publishing proof.
 - `UNKNOWN`: Account Status / recommendation eligibility inside the Meta products has not been observed. Low metrics alone do not prove a shadowban or account-level recommendation penalty.
+- `PROVEN`: PRs #45–#46 changed dashboard quality rates to the current `2026-07-24.taiwan-daily-v6` cohort and fixed direct workflow execution. Production Worker `2026-07-24.recovery-v10` and D1 readback show zero current-v6 evaluations before the next canary, with 188 Facebook, 177 Instagram, and 179 Threads legacy evaluations explicitly excluded. The previous apparent pass rate was not current-cohort evidence.
 
 ## Why volume did not create distribution
 
@@ -38,6 +40,7 @@ Primary references:
 - [How AI Influences What You See on Facebook and Instagram](https://about.fb.com/news/2023/06/how-ai-ranks-content-on-facebook-and-instagram/)
 - [How Does News Feed Predict What You Want to See?](https://about.fb.com/news/2021/01/how-does-news-feed-predict-what-you-want-to-see/)
 - [Instagram Ranking Explained](https://about.instagram.com/blog/announcements/instagram-ranking-explained)
+- [More Speech and Fewer Mistakes](https://about.fb.com/news/2025/01/meta-more-speech-fewer-mistakes/) — Meta says political/civic content is being phased back into Facebook, Instagram, and Threads using personalized explicit signals such as likes and implicit signals such as viewing. This is not evidence that this account is recommendation-eligible or penalized.
 
 The operational interpretation is therefore:
 
@@ -46,6 +49,7 @@ The operational interpretation is therefore:
 3. Repeated generic frames (`護城河`, `真正的賽局`, `代價`, `神話破滅`) make separate stories look interchangeable and weaken trust.
 4. Cross-posting the same editorial shape ignores platform-specific predictions: Facebook needs worth-time conversation, Instagram needs save/share-worthy visual utility, and Threads needs concise native relevance.
 5. Political or food-safety exaggeration can damage both trust and recommendation eligibility; correctness and attributed evidence remain hard gates even when a sharper hook might get more clicks.
+6. Political distribution is personalized rather than guaranteed. A cold account must first produce viewing and explicit-interest signals among a small relevant cohort; repeating undifferentiated party conflict does not establish that audience.
 
 ## Recovery contract
 
