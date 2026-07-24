@@ -35,7 +35,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v6"
+QUALITY_GUARD_VERSION = "2026-07-24.taiwan-daily-v7"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -343,17 +343,32 @@ def _corporate_fluff_pileup(full_text: str, _title: str) -> Optional[str]:
 
 def _has_citation_nearby(text: str, stat_pos: int, radius: int = 40) -> bool:
     """stat_pos 前後 radius 字元內若有 citation marker，就算有憑據。"""
-    lo = max(0, stat_pos - radius)
-    hi = min(len(text), stat_pos + radius)
+    paragraph_lo = text.rfind("\n\n", 0, stat_pos) + 2
+    paragraph_hi = text.find("\n\n", stat_pos)
+    if paragraph_hi < 0:
+        paragraph_hi = len(text)
+    lo = max(paragraph_lo, stat_pos - radius)
+    hi = min(paragraph_hi, stat_pos + radius)
     window = text[lo:hi]
     return any(m in window for m in _CITATION_MARKERS)
 
 
 def _uncited_stat(full_text: str, _title: str) -> Optional[str]:
-    """抓到任何數字但 ±40 字內都沒有 citation marker。"""
+    """Reject numbers lacking either a nearby marker or a named paragraph source."""
     for m in _STAT_PATTERN.finditer(full_text):
-        if not _has_citation_nearby(full_text, m.start()):
-            return "stat_no_citation:" + m.group(0)
+        if _has_citation_nearby(full_text, m.start()):
+            continue
+        paragraph_start = full_text.rfind("\n\n", 0, m.start()) + 2
+        paragraph_end = full_text.find("\n\n", m.end())
+        if paragraph_end < 0:
+            paragraph_end = len(full_text)
+        paragraph = full_text[paragraph_start:paragraph_end].strip()
+        if (
+            _has_recovery_named_source(paragraph)
+            and not _GENERIC_RECOVERY_SOURCE_PATTERN.search(paragraph)
+        ):
+            continue
+        return "stat_no_citation:" + m.group(0)
     return None
 
 
