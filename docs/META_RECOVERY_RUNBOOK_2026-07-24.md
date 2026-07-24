@@ -46,6 +46,12 @@ Every slot is a bounded timing hypothesis, not a proven optimum. Do not move a
 slot until at least seven posts on that platform complete their 168h windows;
 topic, format, and source-quality effects remain possible confounders.
 
+Timing analysis uses the actual Asia/Taipei `publish_log.posted_at`, one latest
+168h snapshot per real platform post, and only the current quality-guard cohort.
+Legacy cadence, engagement-fetch timestamps, duplicated polling rows, and API
+error payloads are ineligible. Results remain proposal-only until seven complete
+posts exist on that platform.
+
 ## Activation sequence
 
 1. Keep repository variable `AUTOMATION_MODE=paused`.
