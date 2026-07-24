@@ -77,7 +77,10 @@ def _policy(path: Path = POLICY_PATH) -> dict[str, Any]:
 
 def experiment_type_for(platform: str, topic: str | None) -> str:
     if platform == "instagram":
-        return "format"
+        # 89/104 audited legacy IG posts were already carousels and both
+        # carousel/image cohorts had median reach zero.  The new variable is
+        # save/share utility, not the carousel container itself.
+        return "utility"
     if topic in {
         "current_affairs",
         "military_defense",
@@ -106,7 +109,7 @@ def hypothesis_for(platform: str, experiment_type: str) -> str:
     if platform == "facebook":
         return f"Facebook explainer test: {hypothesis}"
     if platform == "instagram":
-        return f"Instagram visual test: {hypothesis}"
+        return f"Instagram visual utility test: {hypothesis}"
     return f"Threads daily recovery test: {hypothesis}"
 
 
