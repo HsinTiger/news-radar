@@ -45,6 +45,7 @@ concurrency:
 
 permissions:
   contents: write
+  models: read
 
 jobs:
   publish-now:

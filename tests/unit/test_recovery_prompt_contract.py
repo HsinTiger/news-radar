@@ -10,6 +10,8 @@ def test_recovery_scorer_uses_public_interest_contract(monkeypatch):
     assert "不要因為食安、民生、法律、政策或政府監督題" in prompt
     assert "任務不是尋找科技商業新聞" in prompt
     assert "公司數字" in prompt
+    assert "政府宣傳活動、競賽、開幕" in prompt
+    assert "日期、人數與主辦機關只能證明活動存在" in prompt
 
 
 def test_default_scorer_preserves_legacy_technology_filter(monkeypatch):

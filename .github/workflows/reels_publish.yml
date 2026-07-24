@@ -23,6 +23,7 @@ concurrency:
 
 permissions:
   contents: write
+  models: read
 
 jobs:
   reels:
@@ -118,6 +119,7 @@ jobs:
         if: steps.select.outputs.draft_id != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONUNBUFFERED: "1"
           DRAFT_ID: ${{ steps.select.outputs.draft_id }}
         run: |

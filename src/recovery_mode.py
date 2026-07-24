@@ -61,9 +61,11 @@ HIGH_PUBLIC_IMPACT_MARKERS = (
     "食安", "回收", "不合格", "預算", "稅", "關稅", "保險", "醫療", "隱私",
     "詐騙", "交保", "起訴", "判決", "搜索", "裁罰", "停產", "停電", "缺藥",
     "薪資", "房價", "房租", "電價", "通勤", "台股", "臺股", "股價", "融資",
+    "抽驗", "稽查", "上架產品清單", "高鐵",
 )
 CEREMONIAL_POLITICS_MARKERS = (
     "接見", "拜會", "出席", "參訪", "勉勵", "祝賀", "合影", "致詞",
+    "射擊賽", "多多享用", "推廣活動", "嘉年華", "開幕典禮", "啟動儀式",
 )
 
 
@@ -300,7 +302,11 @@ def rank_candidates(
 
     def public_impact_weight(row: Any) -> float:
         title = str(_row_value(row, "title", "") or "")
-        if any(marker in title for marker in CEREMONIAL_POLITICS_MARKERS):
+        campaign_headcount = "集會" in title and "到場" in title
+        if (
+            any(marker in title for marker in CEREMONIAL_POLITICS_MARKERS)
+            or campaign_headcount
+        ):
             return 0.45
         if any(marker in title for marker in HIGH_PUBLIC_IMPACT_MARKERS):
             return 1.25
