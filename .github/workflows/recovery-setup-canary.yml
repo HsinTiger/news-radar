@@ -52,8 +52,9 @@ jobs:
           python scripts/recovery_setup_canary.py
           --platform "${{ inputs.platform }}"
           --refresh-primary-sources
+          --include-copy
           --report reports/recovery_setup_canary.json
-      - name: Upload metadata-only evidence
+      - name: Upload owner-auditable canary evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:

@@ -135,12 +135,53 @@ def _all_configured_feeds_healthy(harvest_report: dict[str, Any] | None) -> bool
     )
 
 
+def _copy_previews(
+    conn: sqlite3.Connection,
+    quality: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Export only fresh public-primary canary copy for owner editorial audit."""
+
+    previews: list[dict[str, Any]] = []
+    for evidence in quality:
+        if not (
+            evidence.get("harvested_this_run")
+            and evidence.get("source_is_primary_record")
+        ):
+            continue
+        row = conn.execute(
+            """
+            SELECT pd.title,pd.full_text,d.carousel_json
+              FROM platform_drafts pd
+              JOIN drafts d ON d.id=pd.draft_id
+             WHERE pd.draft_id=? AND pd.platform=?
+            """,
+            (evidence["draft_id"], evidence["platform"]),
+        ).fetchone()
+        if row is None:
+            continue
+        try:
+            carousel = json.loads(row["carousel_json"]) if row["carousel_json"] else None
+        except (TypeError, json.JSONDecodeError):
+            carousel = {"invalid_json": True}
+        previews.append({
+            "draft_id": evidence["draft_id"],
+            "platform": evidence["platform"],
+            "source_feed": evidence["source_feed"],
+            "source_url": evidence["source_url"],
+            "title": row["title"],
+            "full_text": row["full_text"],
+            "carousel": carousel,
+        })
+    return previews
+
+
 async def run_setup_canary(
     *,
     source_db: Path,
     platform: str,
     report_path: Path,
     refresh_primary_sources: bool = False,
+    include_copy: bool = False,
 ) -> dict[str, Any]:
     # The script name is a runtime contract, not a suggestion.  Lock the
     # canary to the same Recovery/editorial path as the production workflow so
@@ -237,6 +278,7 @@ async def run_setup_canary(
             since_iso=started_at,
             freshly_harvested_ids=freshly_harvested_ids,
         )
+        copy_previews = _copy_previews(conn, quality) if include_copy else []
         queued_after = dbmod.count_queued_pending_for_platforms(
             conn,
             {platform},
@@ -333,6 +375,7 @@ async def run_setup_canary(
             "fresh_sources": fresh_primary_sources,
         },
         "quality": quality,
+        "copy_previews": copy_previews,
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
@@ -364,6 +407,14 @@ def main() -> int:
             "and require a newly fetched source to pass the current guard"
         ),
     )
+    parser.add_argument(
+        "--include-copy",
+        action="store_true",
+        help=(
+            "include only fresh public-primary generated copy in the short-lived "
+            "Actions report for owner editorial audit"
+        ),
+    )
     args = parser.parse_args()
     report = asyncio.run(
         run_setup_canary(
@@ -371,6 +422,7 @@ def main() -> int:
             platform=args.platform,
             report_path=args.report.resolve(),
             refresh_primary_sources=args.refresh_primary_sources,
+            include_copy=args.include_copy,
         )
     )
     return 0 if report["status"] == "pass" else 1

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.recovery_setup_canary import (
     _all_configured_feeds_healthy,
+    _copy_previews,
     _latest_quality,
 )
 from src.content_quality_guard import QUALITY_GUARD_VERSION
@@ -26,6 +27,7 @@ def test_setup_canary_script_has_hard_no_publish_contract() -> None:
     assert "write_log=False" in source
     assert '"harvested_this_run"' in source
     assert '"primary_source_gate_ready"' in source
+    assert '"copy_previews"' in source
 
 
 def test_setup_canary_workflow_is_read_only_and_has_no_meta_secrets() -> None:
@@ -41,6 +43,7 @@ def test_setup_canary_workflow_is_read_only_and_has_no_meta_secrets() -> None:
     assert "THREADS_ACCESS_TOKEN" not in workflow
     assert "scripts/recovery_setup_canary.py" in workflow
     assert "--refresh-primary-sources" in workflow
+    assert "--include-copy" in workflow
 
 
 def test_latest_quality_exposes_fresh_primary_source_lineage() -> None:
@@ -123,3 +126,56 @@ def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:
 
     report["feed_results"]["source-b"] = {"status": "ok"}
     assert _all_configured_feeds_healthy(report) is True
+
+
+def test_copy_preview_exports_only_fresh_public_primary_copy() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE drafts(id TEXT PRIMARY KEY,carousel_json TEXT);
+        CREATE TABLE platform_drafts(
+          draft_id TEXT,platform TEXT,title TEXT,full_text TEXT
+        );
+        INSERT INTO drafts VALUES(
+          'draft-primary','{"takeaways":["查核公告"]}'
+        );
+        INSERT INTO drafts VALUES('draft-private',NULL);
+        INSERT INTO platform_drafts VALUES(
+          'draft-primary','threads','公共政策','自然文案'
+        );
+        INSERT INTO platform_drafts VALUES(
+          'draft-private','threads','Owner seed','不得輸出'
+        );
+        """
+    )
+    quality = [
+        {
+            "draft_id": "draft-primary",
+            "platform": "threads",
+            "source_feed": "行政院 本院新聞",
+            "source_url": "https://example.gov.tw/record",
+            "source_is_primary_record": True,
+            "harvested_this_run": True,
+        },
+        {
+            "draft_id": "draft-private",
+            "platform": "threads",
+            "source_feed": "user_submission",
+            "source_url": "manual-text://private",
+            "source_is_primary_record": False,
+            "harvested_this_run": True,
+        },
+    ]
+
+    assert _copy_previews(conn, quality) == [
+        {
+            "draft_id": "draft-primary",
+            "platform": "threads",
+            "source_feed": "行政院 本院新聞",
+            "source_url": "https://example.gov.tw/record",
+            "title": "公共政策",
+            "full_text": "自然文案",
+            "carousel": {"takeaways": ["查核公告"]},
+        }
+    ]
