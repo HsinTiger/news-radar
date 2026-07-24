@@ -36,6 +36,7 @@ from src.content_quality_guard import (
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
 from src.recovery_mode import (
+    editorial_mandate_for,
     is_recovery_mode,
     rank_candidates,
     record_experiments,
@@ -694,11 +695,22 @@ async def process_item(
         except Exception as _exc:  # noqa: BLE001 — 搜集失敗用原素材續寫，不擋出稿（活下去）
             print(f"   ⚠️ [Gather] 例外，用原素材續寫：{_exc}")
 
+    editorial_mandate = score_data.editorial_note
+    if is_recovery_mode():
+        recovery_platforms = {
+            dbmod.PLATFORM_DB_NAME[platform_key]
+            for platform_key in active_platforms
+        }
+        editorial_mandate += "\n\n" + editorial_mandate_for(
+            recovery_platforms,
+            topic_cls.category_id,
+        )
+
     bundle = await compose_multi_platform(
         title,
         content,
         final_img_url,
-        editorial_note=score_data.editorial_note,
+        editorial_note=editorial_mandate,
         platforms=active_platforms
     )
     if not bundle:
@@ -785,7 +797,7 @@ async def process_item(
             + " || ".join(rewrite_requests)
         )
         rewrite_note = (
-            f"{score_data.editorial_note}\n\n"
+            f"{editorial_mandate}\n\n"
             "QUALITY REWRITE (one attempt only): Rewrite every requested platform "
             "variant. Preserve source-backed facts and the core insight. Remove or "
             "attribute unsupported numeric claims; do not invent citations. Fix these "

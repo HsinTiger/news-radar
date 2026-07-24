@@ -60,6 +60,17 @@ def hypothesis_for(platform: str, experiment_type: str) -> str:
     return f"Threads daily recovery test: {hypothesis}"
 
 
+def editorial_mandate_for(platforms: Iterable[str], topic: str | None) -> str:
+    lines = ["RECOVERY EXPERIMENT (primary hypothesis; keep other goals secondary):"]
+    for platform in sorted(set(platforms)):
+        experiment_type = experiment_type_for(platform, topic)
+        lines.append(
+            f"- {platform}: type={experiment_type}; "
+            f"hypothesis={hypothesis_for(platform, experiment_type)}"
+        )
+    return "\n".join(lines)
+
+
 def record_experiments(
     conn: sqlite3.Connection,
     *,
@@ -160,6 +171,7 @@ def rank_candidates(
 __all__ = [
     "EXPERIMENT_TYPES",
     "experiment_type_for",
+    "editorial_mandate_for",
     "hypothesis_for",
     "is_recovery_mode",
     "rank_candidates",
