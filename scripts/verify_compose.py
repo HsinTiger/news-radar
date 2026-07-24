@@ -29,6 +29,7 @@ def verify_compose(
     since_iso: str | None = None,
 ) -> int:
     failures = []
+    recovery_ready_drafts: set[str] = set()
     # 1. Limit evidence to this exact compose release.  A rolling window is a
     # compatibility fallback only: it can accidentally import held drafts from
     # an earlier run and create a false FAIL for a healthy new release.
@@ -62,6 +63,7 @@ def verify_compose(
     # 2. For each release draft, check the exact requested platform set.
     for draft in recent:
         draft_id = draft["id"]
+        draft_quality_ready = True
         platforms = conn.execute(
             "SELECT platform, char_count, full_text FROM platform_drafts WHERE draft_id=?",
             (draft_id,)
@@ -91,8 +93,15 @@ def verify_compose(
                 recovery and should_request_rewrite(issues)
             )
             if quality_failed:
-                print(f"❌ [Verify:Compose] draft={draft_id[:12]} {plat}: quality held")
-                failures.append(f"quality_held:{draft_id[:12]}:{plat}")
+                draft_quality_ready = False
+                if recovery:
+                    print(
+                        f"  ⏸ [Verify:Compose] draft={draft_id[:12]} "
+                        f"{plat}: quality held (excluded from release)"
+                    )
+                else:
+                    print(f"❌ [Verify:Compose] draft={draft_id[:12]} {plat}: quality held")
+                    failures.append(f"quality_held:{draft_id[:12]}:{plat}")
             else:
                 char_count = pd_data["char_count"] or len(text)
                 print(f"  ✓ {plat}: {char_count} chars")
@@ -108,7 +117,17 @@ def verify_compose(
             if ai_flags:
                 print(f"⚠️ [Verify:Compose] draft={draft_id[:12]} {plat}: AI味指紋={ai_flags}")
 
-        if recovery:
+        # Recovery is allowed to inspect and retain rejected candidates before
+        # finding one publish-ready draft.  A held candidate is evidence that
+        # the guard worked, not a release failure.  Lineage is required only
+        # for a quality-passing draft that is actually queued for publishing.
+        if recovery and not missing and not unexpected and draft_quality_ready:
+            if draft["queue_status"] != "queued":
+                print(
+                    f"  ⏸ [Verify:Compose] draft={draft_id[:12]} "
+                    f"queue_status={draft['queue_status']!r} (excluded from release)"
+                )
+                continue
             experiment_platforms = {
                 row["platform"]
                 for row in conn.execute(
@@ -123,6 +142,15 @@ def verify_compose(
                     f"❌ [Verify:Compose] draft={draft_id[:12]} "
                     f"missing recovery lineage: {missing_lineage}"
                 )
+            else:
+                recovery_ready_drafts.add(draft_id)
+
+    if recovery and not recovery_ready_drafts:
+        failures.append("no_publish_ready_recovery_draft")
+        print(
+            "❌ [Verify:Compose] no current-run Recovery draft passed quality, "
+            "queue, scope, and lineage gates"
+        )
 
     # 5. Overall health
     total_drafts = conn.execute("SELECT COUNT(*) as c FROM drafts").fetchone()["c"]

@@ -46,6 +46,35 @@ def _seed_threads_draft(conn: sqlite3.Connection, *, lineage: bool = True) -> No
     conn.commit()
 
 
+def _seed_held_threads_draft(conn: sqlite3.Connection, draft_id: str = "held") -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO drafts VALUES(?, '未通過品質稿', 0.8, 'pending_review', NULL, ?, 'n-held')",
+        (draft_id, now),
+    )
+    text = "沒有來源，也沒有提供讀者可採取的具體行動。"
+    conn.execute(
+        "INSERT INTO platform_drafts VALUES(?, 'threads', ?, ?)",
+        (draft_id, len(text), text),
+    )
+    conn.commit()
+
+
+def _seed_nonqueued_quality_draft(conn: sqlite3.Connection) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO drafts VALUES('not-queued', '交通公告', 0.8, "
+        "'pending_review', NULL, ?, 'n-not-queued')",
+        (now,),
+    )
+    text = "根據交通部公告，新制下週上路。對一般通勤者的實際影響是轉乘時間可能增加，可以先檢查班次。"
+    conn.execute(
+        "INSERT INTO platform_drafts VALUES('not-queued', 'threads', ?, ?)",
+        (len(text), text),
+    )
+    conn.commit()
+
+
 def test_compose_verifier_accepts_exact_threads_scope() -> None:
     conn = _conn(); _seed_threads_draft(conn)
     assert verify_compose(
@@ -63,6 +92,27 @@ def test_compose_verifier_rejects_wrong_scope_or_missing_lineage() -> None:
         expected_platforms={"facebook", "instagram", "threads"},
         since_minutes=30,
         recovery=False,
+    ) == 1
+
+
+def test_recovery_verifier_allows_held_candidate_before_ready_draft() -> None:
+    conn = _conn()
+    _seed_held_threads_draft(conn)
+    _seed_nonqueued_quality_draft(conn)
+    _seed_threads_draft(conn)
+
+    assert verify_compose(
+        conn, expected_platforms={"threads"}, since_minutes=30, recovery=True
+    ) == 0
+
+
+def test_recovery_verifier_rejects_release_when_all_candidates_are_held() -> None:
+    conn = _conn()
+    _seed_held_threads_draft(conn)
+    _seed_nonqueued_quality_draft(conn)
+
+    assert verify_compose(
+        conn, expected_platforms={"threads"}, since_minutes=30, recovery=True
     ) == 1
 
 
