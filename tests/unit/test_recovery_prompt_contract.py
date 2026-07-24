@@ -60,6 +60,8 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     assert "render exactly five cards" in prompt
     assert "Do not add today's date" in prompt
     assert "Never round, abbreviate, convert units" in prompt
+    assert "STATISTICAL DENSITY BUDGET" in prompt
+    assert "3521億元" in prompt
     fb_only = composer._build_recovery_generation_contract(
         "行政院公布政策", "行政院公告政策內容。", ["fb"]
     )

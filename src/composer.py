@@ -57,7 +57,10 @@ from typing import List, Optional, Tuple, Dict
 from dotenv import load_dotenv
 
 from src.llm_brain import call_for_json
-from src.content_quality_guard import numeric_claim_allowlist
+from src.content_quality_guard import (
+    numeric_claim_allowlist,
+    statistical_quantity_allowlist,
+)
 from src.schema import MultiPlatformDraft, PlatformVariant
 from src.cta_pool import decide_cta, get_cta_prompt_fragment
 from src.locale_tw import fix_mainland_text, to_traditional
@@ -441,6 +444,12 @@ def _build_recovery_generation_contract(
     omitted = [platform for platform in ("fb", "ig", "threads") if platform not in requested]
     allowed_numbers = numeric_claim_allowlist(f"{title}\n{content}")
     number_list = ", ".join(allowed_numbers) if allowed_numbers else "NONE"
+    statistical_budget = statistical_quantity_allowlist(title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(content, limit=2)
+    statistical_budget_text = (
+        ", ".join(statistical_budget) if statistical_budget else "NONE"
+    )
     carousel_contract = (
         """
 INSTAGRAM FIVE-CARD CONTRACT (required because ig was requested):
@@ -468,6 +477,11 @@ NUMERIC GROUNDING BEFORE WRITING:
 - Never round, abbreviate, convert units, or derive a new value, even when the arithmetic would be equivalent.
 - Do not add today's date, a guessed year, rankings, round numbers, or example numbers from the JSON schema.
 - If the allowlist is NONE, use a verified nonnumeric consequence and do not write Arabic-number claims.
+
+STATISTICAL DENSITY BUDGET:
+- The only market/statistical quantities permitted in visible copy are: {statistical_budget_text}.
+- Use at most two of them. Do not pull any additional percentage, amount, point value, turnover, or ranking from the long source table.
+- Exact dates, company codes, and legal article numbers may be used when essential; they do not consume the statistical budget.
 
 {carousel_contract}
 """

@@ -33,6 +33,7 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "One immediately adjacent paragraph may continue" in guidance
     assert "Delete claims about retirement funds" in guidance
     assert "Remove repeated facts and secondary numbers" in guidance
+    assert "Use no more than two market/statistical values" in guidance
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 

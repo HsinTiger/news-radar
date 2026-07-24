@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v15"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v16"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -705,6 +705,12 @@ _UNSUPPORTED_AUDIENCE_EXTENSIONS = (
     "所有投資人",
     "全體投資人",
 )
+_UNSUPPORTED_MARKET_INFERENCES = (
+    "流動性將回歸正常",
+    "交易流動性將回歸正常",
+    "交易流動性提升",
+    "成交量將回升",
+)
 
 
 def _normalized_numeric_claims(text: str) -> set[str]:
@@ -729,19 +735,23 @@ def _normalized_numeric_claims(text: str) -> set[str]:
     return claims
 
 
-def _normalized_quantity_claims(text: str) -> set[str]:
-    """Extract exact number-plus-unit spans, including compound Taiwan amounts."""
-
+def _normalize_quantity(raw: str) -> str:
     def normalize_number(match: re.Match[str]) -> str:
         try:
             return format(Decimal(match.group(0)).normalize(), "f")
         except InvalidOperation:
             return match.group(0)
 
+    value = raw.replace(",", "").replace("％", "%")
+    return re.sub(r"\d+(?:\.\d+)?", normalize_number, value)
+
+
+def _normalized_quantity_claims(text: str) -> set[str]:
+    """Extract exact number-plus-unit spans, including compound Taiwan amounts."""
+
     claims: set[str] = set()
     for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
-        raw = match.group(0).replace(",", "").replace("％", "%")
-        claims.add(re.sub(r"\d+(?:\.\d+)?", normalize_number, raw))
+        claims.add(_normalize_quantity(match.group(0)))
     return claims
 
 
@@ -753,6 +763,23 @@ def _statistical_quantity_claims(text: str) -> set[str]:
         for value in _normalized_quantity_claims(text)
         if not value.endswith(("年", "月", "日", "條", "期", "天"))
     }
+
+
+def statistical_quantity_allowlist(
+    text: str, *, limit: int | None = None
+) -> list[str]:
+    """Return statistical quantities in source order, excluding dates/law refs."""
+
+    result: list[str] = []
+    for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
+        value = _normalize_quantity(match.group(0))
+        if value.endswith(("年", "月", "日", "條", "期", "天")):
+            continue
+        if value not in result:
+            result.append(value)
+        if limit is not None and len(result) >= limit:
+            break
+    return result
 
 
 def _unsupported_numeric_claims(full_text: str, source_text: str) -> Optional[str]:
@@ -774,6 +801,17 @@ def _unsupported_audience_extensions(
     missing = [
         term
         for term in _UNSUPPORTED_AUDIENCE_EXTENSIONS
+        if term in full_text and term not in source_text
+    ]
+    return ",".join(missing) if missing else None
+
+
+def _unsupported_market_inferences(
+    full_text: str, source_text: str
+) -> Optional[str]:
+    missing = [
+        term
+        for term in _UNSUPPORTED_MARKET_INFERENCES
         if term in full_text and term not in source_text
     ]
     return ",".join(missing) if missing else None
@@ -882,6 +920,14 @@ def check_quality(
                 message=(
                     "Recovery 貼文不得把來源未提及的基金、機構或全體投資人擴寫成受影響對象"
                 ),
+                evidence=evidence[:120],
+            ))
+        evidence = _unsupported_market_inferences(ft, source_text)
+        if evidence is not None:
+            issues.append(QualityIssue(
+                code="unsupported_market_inference",
+                severity="rewrite",
+                message="Recovery 貼文不得把交易方式變更推論成流動性或成交量必然改善",
                 evidence=evidence[:120],
             ))
     return issues
@@ -1044,7 +1090,7 @@ def check_platform_style(
             "會否延續",
             "哪些族群會受益或受損",
         )
-    ) or not re.search(r"你|您的|你家|你們|自己|自身", closing):
+    ) or not re.search(r"你|您|你家|你們|自己|自身", closing):
         issues.append(QualityIssue(
             code="generic_engagement_bait",
             severity="rewrite",
@@ -1095,6 +1141,7 @@ __all__ = [
     "combine_visible_text",
     "has_blocking_issues",
     "numeric_claim_allowlist",
+    "statistical_quantity_allowlist",
     "should_request_rewrite",
     "format_issues",
 ]

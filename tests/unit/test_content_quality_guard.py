@@ -13,6 +13,7 @@ from src.content_quality_guard import (
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
+    statistical_quantity_allowlist,
     should_request_rewrite,
 )
 
@@ -36,7 +37,7 @@ def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
     )
 
 
-def test_v15_rejects_actual_recovery_canary_editorial_shapes() -> None:
+def test_v16_rejects_actual_recovery_canary_editorial_shapes() -> None:
     threads = (
         "行政院正式核定高鐵延伸宜蘭計畫，路線長60.6公里，總經費約新臺幣"
         "3521億元，預估11年完工（根據行政院公告）。已知事實是計畫已核定。"
@@ -85,7 +86,7 @@ def test_v15_rejects_actual_recovery_canary_editorial_shapes() -> None:
     }
 
 
-def test_v15_accepts_natural_threads_shape_without_editorial_labels() -> None:
+def test_v16_accepts_natural_threads_shape_without_editorial_labels() -> None:
     text = (
         "行政院核定宜蘭高鐵，3521億元要換到什麼？根據行政院公告，"
         "路線將由南港延伸至宜蘭。\n\n"
@@ -103,7 +104,7 @@ def test_v15_accepts_natural_threads_shape_without_editorial_labels() -> None:
     assert not should_request_rewrite(issues), format_issues(issues)
 
 
-def test_v15_threads_rejects_oversized_copy_and_impersonal_question() -> None:
+def test_v16_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     text = (
         "證交所公告台股本週上漲，這段重複資料很多。" * 14
         + "\n\n投資人可檢查自己的同期間報酬。"
@@ -119,7 +120,7 @@ def test_v15_threads_rejects_oversized_copy_and_impersonal_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
-def test_v15_threads_rejects_stat_dump_and_vague_stock_question() -> None:
+def test_v16_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     text = (
         "證交所本週統計顯示，加權指數上漲2.30%，收43,654.84點。\n\n"
         "電腦週邊上漲10.29%，綠能下跌9.04%。\n\n"
@@ -136,7 +137,7 @@ def test_v15_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
-def test_v15_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
+def test_v16_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     text = (
         "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"
         "自115年7月27日恢復正常交易。\n\n"
@@ -158,6 +159,21 @@ def test_v15_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     }
     assert "platform_stat_overload" not in style_codes
     assert "missing_reader_utility" not in quality_codes
+
+
+def test_v16_formal_reader_pronoun_is_a_direct_question() -> None:
+    text = (
+        "證交所公告隆銘綠能恢復一般交易方式。\n\n"
+        "股東可在券商平臺確認交易方式。\n\n"
+        "您會調整隆銘綠能持股比例嗎？\n\n#台股"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="隆銘綠能恢復交易", recovery=True
+        )
+    }
+    assert "generic_engagement_bait" not in codes
 
 
 # ---- 真實陷阱：2026-04-19 實際發出去的 emergency_template 貼文 ----
@@ -641,6 +657,23 @@ def test_recovery_rejects_source_free_institutional_audience_extension():
     issues = check_quality(text, recovery=True, source_text=source)
 
     assert "unsupported_audience_extension" in {item.code for item in issues}
+
+
+def test_recovery_rejects_unproven_liquidity_improvement():
+    source = "證交所公告公司恢復一般交易方式。"
+    text = "證交所公告公司恢復一般交易方式，交易流動性將回歸正常。"
+    issues = check_quality(text, recovery=True, source_text=source)
+
+    assert "unsupported_market_inference" in {item.code for item in issues}
+
+
+def test_statistical_quantity_allowlist_prioritizes_title_order():
+    text = "本週加權指數上漲2.30%，市值達142.58兆元，收43,654.84點。"
+
+    assert statistical_quantity_allowlist(text, limit=2) == [
+        "2.3%",
+        "142.58兆元",
+    ]
 
 
 def test_recovery_numeric_grounding_includes_rendered_carousel_text():

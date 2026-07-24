@@ -36,6 +36,7 @@ from src.content_quality_guard import (
     format_issues,
     has_blocking_issues,
     numeric_claim_allowlist,
+    statistical_quantity_allowlist,
     should_request_rewrite,
 )
 from src.topic_classifier import classify_topic, compute_weighted_score
@@ -98,6 +99,15 @@ def _recovery_rewrite_guidance(
     """Compile deterministic, source-specific instructions for the one retry."""
     allowed_numbers = numeric_claim_allowlist(source_evidence_text)
     allowed_text = ", ".join(allowed_numbers) if allowed_numbers else "none"
+    source_title = source_evidence_text.splitlines()[0] if source_evidence_text else ""
+    statistical_budget = statistical_quantity_allowlist(source_title, limit=2)
+    if not statistical_budget:
+        statistical_budget = statistical_quantity_allowlist(
+            source_evidence_text, limit=2
+        )
+    statistical_budget_text = (
+        ", ".join(statistical_budget) if statistical_budget else "none"
+    )
     label = " ".join(str(source_label or "").split())
     guidance: list[str] = []
 
@@ -130,6 +140,20 @@ def _recovery_rewrite_guidance(
             "asset allocation, all investors, or any other affected group not "
             "explicitly named in the supplied source. Address the reader without "
             "inventing institutional impact."
+        )
+    if "unsupported_market_inference" in rewrite_codes:
+        guidance.append(
+            "MARKET INFERENCE: A restored trading method does not prove normal "
+            "liquidity, higher volume, or a price move. State only the verified "
+            "order-method change and tell holders what they can observe."
+        )
+    if "platform_stat_overload" in rewrite_codes:
+        guidance.append(
+            "STATISTICAL BUDGET: Use no more than two market/statistical values, "
+            f"and only from this source-prioritized list: {statistical_budget_text}. "
+            "Dates, company codes, and legal article numbers do not count, but "
+            "must remain exact. Delete all other percentages, amounts, points, "
+            "turnover figures, and rankings."
         )
     if "missing_recovery_five_card_carousel" in rewrite_codes:
         guidance.append(
