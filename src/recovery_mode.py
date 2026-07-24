@@ -41,18 +41,18 @@ SOURCE_AUTHORITY_MULTIPLIERS = {
     20: 1.05,
     10: 1.00,
 }
-INHERENTLY_TAIWAN_TOPICS = {"tw_politics", "tw_stocks"}
 TAIWAN_RELEVANCE_MARKERS = (
-    "台灣", "臺灣", "台股", "新台幣", "國人", "民眾", "消費者", "納稅人",
-    "勞工", "投資人", "立法院", "行政院", "總統府", "食藥署", "衛福部",
-    "金管會", "證交所", "櫃買中心", "中央銀行", "財政部", "台積電", "聯電",
+    "台灣", "臺灣", "全台", "全臺", "台股", "臺股", "加權指數",
+    "立法院", "立院", "行政院", "政院", "總統府", "監察院", "監院",
+    "司法院", "國防部", "衛福部", "食藥署", "金管會", "證交所",
+    "櫃買中心", "健保", "勞保",
+    "民進黨", "國民黨", "民眾黨", "藍綠", "藍白", "凱道",
+    "台北", "臺北", "新北", "桃園", "台中", "臺中", "台南", "臺南",
+    "高雄", "基隆", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義",
+    "屏東", "宜蘭", "花蓮", "台東", "臺東", "澎湖", "金門縣", "馬祖", "連江縣",
+    "台積電", "聯電",
     "聯發科", "鴻海", "廣達", "緯創", "台達電", "日月光", "環球晶", "華邦電",
     "南亞科", "國巨", "台塑",
-)
-DIRECT_PUBLIC_INTEREST_MARKERS = (
-    "食安", "食品", "食藥", "回收", "消保", "消費警訊", "詐騙", "個資",
-    "健保", "勞保", "勞動", "最低工資", "通勤", "房價", "房租", "電價",
-    "水價", "油價", "薪資", "總預算", "台股", "臺股",
 )
 TAIWAN_OFFICIAL_FEED_MARKERS = (
     "行政院", "食藥署", "證交所", "中央銀行", "金管會", "財政部",
@@ -251,18 +251,18 @@ def rank_candidates(
         return feed_name == "user_submission" or "user_submission" in tags
 
     def taiwan_relevant(row: Any, category: str) -> bool:
-        if category in INHERENTLY_TAIWAN_TOPICS:
-            return True
         title = str(_row_value(row, "title", "") or "")
         feed_name = str(_row_value(row, "feed_name", "") or "")
+        # A classifier label is not geographical evidence.  For example, a
+        # Korean leverage story can hit the generic ``融資餘額`` keyword and be
+        # labelled tw_stocks.  Require the headline (the actual attention
+        # proposition) or an official-source identity to make the Taiwan link
+        # explicit.  A currency conversion or incidental body mention is not
+        # enough to turn foreign news into a Taiwan daily story.
         lowered = title.lower()
         return (
             "taiwan" in lowered
             or any(marker in title for marker in TAIWAN_RELEVANCE_MARKERS)
-            or (
-                category == "current_affairs"
-                and any(marker in title for marker in DIRECT_PUBLIC_INTEREST_MARKERS)
-            )
             or any(marker in feed_name for marker in TAIWAN_OFFICIAL_FEED_MARKERS)
         )
 
