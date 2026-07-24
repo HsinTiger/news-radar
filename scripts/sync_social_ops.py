@@ -51,8 +51,16 @@ def _has_error(value: Any) -> bool:
 
 
 def _error_summary(value: Any) -> dict[str, Any]:
+    collector = value.get("_collector") if isinstance(value, dict) else None
+    collector_summary = {}
+    if isinstance(collector, dict):
+        collector_summary = {
+            "scheduled_bucket_hours": collector.get("scheduled_bucket_hours"),
+            "actual_post_age_hours": collector.get("actual_post_age_hours"),
+            "late_by_hours": collector.get("late_by_hours"),
+        }
     if not isinstance(value, dict):
-        return {"legacy": True}
+        return {"legacy": True, **collector_summary}
     for candidate in (value.get("error"), value.get("insights", {}).get("error") if isinstance(value.get("insights"), dict) else None):
         if isinstance(candidate, dict):
             return {
@@ -60,8 +68,13 @@ def _error_summary(value: Any) -> dict[str, Any]:
                 "api_error": True,
                 "code": candidate.get("code"),
                 "message": str(candidate.get("message") or "")[:300],
+                **collector_summary,
             }
-    return {"legacy": True, "api_error": _has_error(value)}
+    return {
+        "legacy": True,
+        "api_error": _has_error(value),
+        **collector_summary,
+    }
 
 
 def _stable_id(prefix: str, *values: object) -> str:

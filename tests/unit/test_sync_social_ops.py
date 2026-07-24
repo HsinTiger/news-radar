@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.content_quality_guard import QUALITY_GUARD_VERSION
 from scripts.sync_social_ops import (
+    _error_summary,
     build_automation_state,
     build_engagement,
     build_health,
@@ -17,6 +18,24 @@ from scripts.sync_social_ops import (
     build_recovery_experiments,
     build_submission_updates,
 )
+
+
+def test_engagement_raw_summary_preserves_actual_collection_age() -> None:
+    summary = _error_summary(
+        {
+            "data": [],
+            "_collector": {
+                "scheduled_bucket_hours": 24,
+                "actual_post_age_hours": 24.4167,
+                "late_by_hours": 0.4167,
+            },
+        }
+    )
+
+    assert summary["api_error"] is False
+    assert summary["scheduled_bucket_hours"] == 24
+    assert summary["actual_post_age_hours"] == 24.4167
+    assert summary["late_by_hours"] == 0.4167
 
 
 def test_sync_social_ops_can_run_as_a_direct_script(tmp_path: Path) -> None:

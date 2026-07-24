@@ -3,7 +3,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from src.engagement import TOLERANCE_HOURS, select_posts_to_poll
+from src.engagement import (
+    MAX_LATE_HOURS,
+    PollTask,
+    _with_collection_audit,
+    select_posts_to_poll,
+)
 
 
 def _conn() -> sqlite3.Connection:
@@ -32,7 +37,42 @@ def test_hourly_tolerance_catches_posts_not_aligned_to_cron_minute() -> None:
     )
     tasks = select_posts_to_poll(conn, now)
     assert [(task.draft_id, task.bucket) for task in tasks] == [("d1", 1)]
-    assert TOLERANCE_HOURS == 0.75
+    assert MAX_LATE_HOURS == 1.25
+
+
+def test_bucket_is_never_collected_before_nominal_age() -> None:
+    conn = _conn()
+    now = datetime(2026, 7, 23, 12, 11, tzinfo=timezone.utc)
+    conn.execute(
+        "INSERT INTO publish_log VALUES(1,'d1','threads','p1',?,1)",
+        ((now - timedelta(minutes=59)).isoformat(),),
+    )
+    assert select_posts_to_poll(conn, now) == []
+
+
+def test_bucket_expires_after_the_truthful_late_window() -> None:
+    conn = _conn()
+    now = datetime(2026, 7, 23, 12, 11, tzinfo=timezone.utc)
+    conn.execute(
+        "INSERT INTO publish_log VALUES(1,'d1','threads','p1',?,1)",
+        ((now - timedelta(hours=2, minutes=16)).isoformat(),),
+    )
+    assert select_posts_to_poll(conn, now) == []
+
+
+def test_collection_audit_preserves_actual_age_and_bucket() -> None:
+    posted = datetime(2026, 7, 23, 10, 0, tzinfo=timezone.utc)
+    task = PollTask("d1", "threads", "p1", 1, posted)
+    raw, age = _with_collection_audit(
+        {"data": []}, task, posted + timedelta(hours=1, minutes=35)
+    )
+
+    assert age == 1.5833
+    assert raw["_collector"] == {
+        "scheduled_bucket_hours": 1,
+        "actual_post_age_hours": 1.5833,
+        "late_by_hours": 0.5833,
+    }
 
 
 def test_each_bucket_is_idempotent() -> None:
@@ -47,10 +87,9 @@ def test_each_bucket_is_idempotent() -> None:
     assert select_posts_to_poll(conn, now) == []
 
 
-def test_hourly_tick_at_minute_eleven_covers_every_publish_minute() -> None:
-    # For any publish minute, one of the adjacent hourly :11 ticks is at most
-    # 30 minutes from the desired age bucket, safely inside the 45-minute gate.
+def test_hourly_tick_at_minute_eleven_fits_the_late_only_window() -> None:
+    # When the pre-bucket :11 tick is too early, the following hourly tick is
+    # less than one hour late for every possible publish minute.
     for publish_minute in range(60):
-        distance = abs(11 - publish_minute)
-        nearest = min(distance, 60 - distance) / 60
-        assert nearest <= TOLERANCE_HOURS
+        late_minutes = (11 - publish_minute) % 60
+        assert late_minutes / 60 <= MAX_LATE_HOURS
