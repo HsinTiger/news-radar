@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from run_pipeline import _recovery_rewrite_guidance
+from run_pipeline import (
+    _deterministic_recovery_closing_repair,
+    _recovery_rewrite_guidance,
+)
 
 
 def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
@@ -58,3 +61,17 @@ def test_recovery_rewrite_contract_removes_formula_and_attributes_allegation() -
     assert "Attribute every allegation" in guidance
     assert "Explicitly name" in guidance
     assert "exact named institution" not in guidance
+
+
+def test_deterministic_market_closing_repair_uses_source_benchmark() -> None:
+    body = "證交所公布本週市場統計。\n\n下週主要產業會延續漲勢嗎？"
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="threads",
+        topic="tw_stocks",
+        source_evidence_text="加權指數上漲2.30%，市值達142.58兆元。",
+    )
+
+    assert repaired.endswith("你的持股本週有跑贏 2.3% 嗎？")
+    assert repaired.count("？") == 1

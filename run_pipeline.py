@@ -13,6 +13,7 @@ News Radar · Pipeline 主程式（Milestone 3.1 · Multi-Platform Native）
 import asyncio
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple, Optional
@@ -242,6 +243,40 @@ def _recovery_rewrite_guidance(
         "platform JSON."
     )
     return guidance
+
+
+def _deterministic_recovery_closing_repair(
+    body: str,
+    *,
+    platform: str,
+    topic: str | None,
+    source_evidence_text: str,
+) -> str:
+    """Repair only a closing-question defect after all substantive gates pass."""
+
+    if topic != "tw_stocks":
+        return body
+    statistics = statistical_quantity_allowlist(source_evidence_text, limit=2)
+    benchmark = next((value for value in statistics if value.endswith("%")), None)
+    if benchmark:
+        questions = {
+            "threads": f"你的持股本週有跑贏 {benchmark} 嗎？",
+            "fb": f"你這週的投資組合有跑贏 {benchmark} 嗎？",
+            "ig": f"你本週報酬有跑贏 {benchmark} 嗎？",
+        }
+    else:
+        questions = {
+            "threads": "你的持股裡，哪一檔最受這次變化影響？",
+            "fb": "你會先檢查持股，還是先確認交易方式？",
+            "ig": "你會先看持股報酬，還是產業曝險？",
+        }
+    question = questions.get(platform, questions["threads"])
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    if paragraphs and re.search(r"[？?]", paragraphs[-1]):
+        paragraphs[-1] = question
+    else:
+        paragraphs.append(question)
+    return "\n\n".join(paragraphs)
 
 # 對應 config/platforms/*.md 的版本；若改動 appendix 請同步 bump
 APPENDIX_VERSION = "1.0"
@@ -1149,6 +1184,44 @@ async def process_item(
         )
         if not rewrite_unresolved:
             break
+
+    if rewrite_unresolved and is_recovery_mode() and topic_cls.category_id == "tw_stocks":
+        remaining_codes = {
+            issue.code
+            for issues in quality_findings.values()
+            for issue in issues
+            if issue.severity == "rewrite"
+        }
+        closing_codes = {
+            "missing_answerable_question",
+            "multiple_closing_questions",
+            "generic_engagement_bait",
+        }
+        if remaining_codes and remaining_codes <= closing_codes:
+            repaired_finalized = dict(finalized)
+            for platform_key, (variant, _full_text, _ok) in finalized.items():
+                repaired_body = _deterministic_recovery_closing_repair(
+                    variant.body,
+                    platform=platform_key,
+                    topic=topic_cls.category_id,
+                    source_evidence_text=source_evidence_text,
+                )
+                repaired_variant = variant.model_copy(update={"body": repaired_body})
+                repaired_finalized[platform_key] = finalize_variant(
+                    repaired_variant, platform_key
+                )
+            finalized = repaired_finalized
+            quality_findings = evaluate_quality(
+                MAX_QUALITY_REWRITE_ATTEMPTS + 2
+            )
+            rewrite_unresolved = any(
+                should_request_rewrite(issues)
+                for issues in quality_findings.values()
+            )
+            print(
+                "   ↳ [QualityGuard·closing] 台股稿僅剩結尾問題；"
+                f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
+            )
 
     # 4. 建立 Draft（舊表相容；若本輪沒有 FB，就用第一個實際目標作 canonical）
     canonical_key = "fb" if "fb" in finalized else active_platforms[0]
