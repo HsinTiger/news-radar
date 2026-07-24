@@ -111,7 +111,7 @@ def test_deterministic_market_utility_repair_is_concrete() -> None:
         for issue in check_quality(repaired, recovery=True)
     }
 
-    assert "若你的報酬跑輸大盤，先檢查持股產業曝險。" in repaired
+    assert "若你的報酬跑輸大盤，先比較產業配置與個股選擇" in repaired
     assert "missing_reader_utility" not in codes
 
 

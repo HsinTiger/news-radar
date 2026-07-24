@@ -137,6 +137,25 @@ def test_v20_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
+def test_v22_rejects_stock_question_that_only_says_holdings() -> None:
+    body = (
+        "根據證交所本週統計，加權指數上漲2.3%。\n\n"
+        "若你的報酬跑輸大盤，先比較產業配置與個股選擇。\n\n"
+        "你的持股表現是否跟本週加權指數漲幅一致？\n\n#台股"
+    )
+
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads",
+            body,
+            recovery=True,
+        )
+    }
+
+    assert "generic_engagement_bait" in codes
+
+
 def test_v20_dates_and_rule_numbers_do_not_count_as_stat_overload() -> None:
     text = (
         "證交所公告，隆銘綠能（3018）符合第49條及第49條之2規定，"

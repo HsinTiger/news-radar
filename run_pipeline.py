@@ -283,8 +283,8 @@ def _deterministic_recovery_closing_repair(
     else:
         questions = {
             "threads": "你的持股裡，哪一檔最受這次變化影響？",
-            "fb": "你會先檢查持股，還是先確認交易方式？",
-            "ig": "你會先看持股報酬，還是產業曝險？",
+            "fb": "你的持股裡，哪一檔最需要重新檢查產業曝險？",
+            "ig": "你的持股裡，哪一檔最受產業輪動影響？",
         }
     question = questions.get(platform, questions["threads"])
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
@@ -304,7 +304,7 @@ def _deterministic_recovery_utility_repair(
 
     if topic != "tw_stocks":
         return body
-    utility = "若你的報酬跑輸大盤，先檢查持股產業曝險。"
+    utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     insert_at = len(paragraphs)
     if paragraphs and re.search(r"[？?]", paragraphs[-1]):

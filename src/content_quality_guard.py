@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v21"
+QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v22"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -1112,7 +1112,7 @@ def check_platform_style(
         f"{title}\n{text}",
     )
     if stock_context and not re.search(
-        r"\d|哪一|哪個|多少|跑贏|跑輸|報酬|持股", closing
+        r"\d|哪一|哪個|多少|跑贏|跑輸|報酬|比例|權重", closing
     ):
         if not any(issue.code == "generic_engagement_bait" for issue in issues):
             issues.append(QualityIssue(
