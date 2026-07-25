@@ -201,6 +201,10 @@ CONFIG_DIR = Path(__file__).resolve().parent / "config"  # substack/config (2026
 SOUL_PATH = CONFIG_DIR / "substack_soul.md"
 COMPANY_SOUL_PATH = CONFIG_DIR / "company_analysis_soul.md"  # company mode 專屬方法論
 VOICE_ANCHOR_PATH = CONFIG_DIR / "substack_voice_anchor.md"
+MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"  # 曼報 KB 蒸餾的分析框架（唯讀副本）
+# company mode 主要吃四段式拆解；另外兩個框架是它判定「不適用」時的去處，
+# 一併載入才有東西可換。順序即注入順序。
+COMPANY_FRAMEWORKS = ("company-teardown.md", "capital-allocation-engine.md", "cycle-and-capital-flow.md")
 
 
 def load_substack_soul() -> str:
@@ -219,6 +223,40 @@ def load_company_soul() -> str:
         return COMPANY_SOUL_PATH.read_text(encoding="utf-8")
     except Exception:
         return ""
+
+
+def load_manny_frameworks() -> str:
+    """曼報 KB 蒸餾的分析框架（manny-li-pro-kb skills/ 的唯讀副本）。
+
+    company_analysis_soul.md 講的是「這個專欄怎麼寫」（體例、語氣、篇幅）；
+    這裡疊的是「一家公司怎麼拆」（四段式、複利引擎四閘門、資金四終點）。
+    兩者互補，故疊加而非取代。
+
+    缺檔回空字串——框架是加分項，不該讓寫稿因為副本沒同步就整個停擺。
+    副本由上游 manny-li-pro-kb 的 skills/sync-skills.sh 產生，請勿在此編輯。
+    """
+    if not MANNY_SKILLS_DIR.is_dir():
+        return ""
+    blocks = []
+    for name in COMPANY_FRAMEWORKS:
+        try:
+            text = (MANNY_SKILLS_DIR / name).read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if text:
+            blocks.append(text)
+    if not blocks:
+        return ""
+    header = (
+        "===== 分析框架層（來自曼報 Pro 知識庫的蒸餾，manny-li-pro-kb skills/）=====\n"
+        "以下是「怎麼看」的框架，不是「看到什麼」的內容。三條硬規則：\n"
+        "1. 框架的舉例（Roper、Bending Spoons、薩莉亞等）只是示範拆法，"
+        "絕對不可以當成本期標的的事實寫進文章。本期一切數據以素材為準。\n"
+        "2. 每個框架都有「什麼情況下會失效」一節。若標的不符合前提，"
+        "正確做法是明說不適用並改用另一個框架，不要硬套。\n"
+        "3. 引用曼報觀點時要標明來源；不可整段照抄框架文字充當原創分析。\n"
+    )
+    return header + "\n\n" + "\n\n---\n\n".join(blocks)
 
 
 def load_voice_anchor() -> str:
@@ -821,8 +859,11 @@ async def compose_substack_article(
         None on LLM failure (caller 必須 skip 並 notify user).
     """
     soul = load_substack_soul()
-    if mode == "company":                       # 疊上公司分析方法論（§C0-§C3）
+    if mode == "company":                       # 疊上公司分析方法論（§C0-§C3）+ 曼報分析框架
         soul = soul + "\n\n\n" + load_company_soul()
+        frameworks = load_manny_frameworks()
+        if frameworks:
+            soul = soul + "\n\n\n" + frameworks
     system = _build_system_instruction(soul)
     prompt = _build_user_prompt(
         raw_title=title,
