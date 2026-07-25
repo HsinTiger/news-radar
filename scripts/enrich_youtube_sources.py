@@ -162,6 +162,7 @@ def _highlights(text: str) -> dict:
     return {"data_sentences": data_sents, "entities": top_entities}
 
 
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿]")
 _STOP = {"The","This","That","And","But","We","I","It","Yeah","Like","What","Well","There",
     "They","Could","Please","Also","Okay","Sorry","When","Then","Right","Every","You","He",
     "She","So","Now","Here","How","Why","If","Or","Is","Are","Was","Were","Be","Been","Do",
@@ -188,6 +189,16 @@ def _clean_entity(c: str) -> str:
     return " ".join(toks)
 
 
+def _content_len(text: str) -> int:
+    """語言中立的長度：CJK 逐字 + 非 CJK 按空白切詞。
+    `len(text.split())` 對中文逐字稿會嚴重低估（中文詞間無空白，整段字幕可能只算 1），
+    這會① 讓素材包標示的字數失真 ② 更糟的是誤觸下面「< 80 視為無字幕」的 Whisper 閘門，
+    把抓到的好字幕丟掉、白跑一次 ASR。故統計時把 CJK 字元單獨計數。"""
+    cjk = len(_CJK_RE.findall(text))
+    non_cjk = len(_CJK_RE.sub(" ", text).split())
+    return cjk + non_cjk
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("urls", nargs="+")
@@ -207,12 +218,12 @@ def main():
         print(f"  · 抓取 {m['id']} {m['title'][:40]} …")
         m["transcript"] = _transcript(m["id"])
         m["src"] = "字幕"
-        if (len(m["transcript"].split()) < 80 or m["transcript"].startswith("(")) and args.whisper:
+        if (_content_len(m["transcript"]) < 80 or m["transcript"].startswith("(")) and args.whisper:
             print(f"    └ 無字幕 → Whisper ASR 轉錄中（{m['title'][:24]}）…")
             m["transcript"] = _whisper_transcript(m["id"], args.whisper_model)
             m["src"] = f"Whisper({args.whisper_model})"
         m["hl"] = _highlights(m["transcript"])
-        m["words"] = len(m["transcript"].split())
+        m["words"] = _content_len(m["transcript"])
         sources.append(m)
 
     # 自動上網找對應的書面深度報告（曼報配 SemiAnalysis/Stratechery 那層）
