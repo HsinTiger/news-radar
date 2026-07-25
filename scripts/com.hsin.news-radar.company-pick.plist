@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 每週六 10:00：用 watchlist × 本週新聞熱度提候選，寫進 .company_next。
+     不寫稿、不呼叫 LLM，純排序，所以放心每週跑。
+     信哥可在週六~週日之間編輯 .company_next 拍板；沒編輯也不會卡稿，
+     compose 會退回 watchlist 第一名（見 compose.py:_resolve_company_ticker）。 -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hsin.news-radar.company-pick</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>6</integer>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd HOME_DIR/news_radar &amp;&amp; .venv/bin/python scripts/pick_company_candidate.py</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/tmp/news-radar-company-pick.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/news-radar-company-pick.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

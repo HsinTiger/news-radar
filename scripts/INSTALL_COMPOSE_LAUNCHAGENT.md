@@ -107,6 +107,31 @@ launchctl print gui/$(id -u)/com.hsin.news-radar.substack-fast
 - Compose worker: every 60 minutes.
 - Immediate Substack drain: every 5 minutes.
 
+## Weekly company analysis (independent of Stage 1/2)
+
+Two agents, installed the same way (`sed HOME_DIR` → `plutil -lint` →
+`launchctl bootstrap`):
+
+| Agent | When | What |
+|---|---|---|
+| `com.hsin.news-radar.company-pick` | Sat 10:00 | rank watchlist × news heat → `.company_next` |
+| `com.hsin.news-radar.company-compose` | Sun 09:00 | one deep company draft |
+
+The gap between them is deliberate: it is the window in which the owner
+can edit `.company_next` to override the pick. Leaving it alone is safe —
+`compose.py:_resolve_company_ticker` falls back to the watchlist top, so
+composition never blocks on a human decision.
+
+These replace the legacy `com.newsradar.company_pick` /
+`com.newsradar.substack_company` pair, which had a real bug: pick was
+weekly (Sat) but compose was **daily** at 11:30, so a single candidate
+would be rewritten six times over. Both legacy plists are left on disk
+but unloaded; do not bootstrap them.
+
+This pair is independent of the Stage 1/Stage 2 gating above — company
+mode draws from the watchlist, not from the Substack submission backlog,
+so enabling it cannot trigger a backlog flush.
+
 ## Verification
 
 ```bash
