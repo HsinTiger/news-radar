@@ -10,7 +10,7 @@ trafilatura==1.12.2       # 網頁正文抽取（純化成 markdown）
 beautifulsoup4==4.12.3    # 抓 og:image 等 meta 標籤
 pydantic==2.9.2           # 結構化資料驗證
 pyyaml==6.0.2             # config.yaml 解析
-python-dotenv==1.0.1      # .env 載入
+python-dotenv>=1.2.1,<2.0.0  # .env 載入（python-substack 0.1.21+ 要求 >=1.2.1，死 pin 會 ResolutionImpossible）
 # ===== AI 處理 (Milestone 2) =====
 # 兩個 Gemini SDK 並存：新版（google-genai）給 scorer/composer/analyst/reflector；
 # 舊版（google-generativeai）給 competitor_agent。等 competitor_agent 遷移後可以刪掉舊版。
