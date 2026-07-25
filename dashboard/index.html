@@ -40,9 +40,12 @@
     <section class="unlock panel" id="unlock-panel">
       <div>
         <strong>Owner 驗證</strong>
-        <p>Token 僅存在本分頁的 sessionStorage；關閉分頁即清除。</p>
+        <p>預設只存在本分頁的 sessionStorage；勾選「記住此裝置」可跨分頁保存。</p>
       </div>
-      <input id="owner-token" type="password" autocomplete="off" placeholder="貼上 owner token">
+      <div class="unlock-input">
+        <input id="owner-token" type="password" autocomplete="off" placeholder="貼上 owner token">
+        <label class="remember-row" for="remember-device"><input id="remember-device" type="checkbox"> 記住此裝置</label>
+      </div>
       <button class="primary" id="unlock" type="button">驗證並載入</button>
       <span class="unlock-state" id="unlock-state">尚未驗證</span>
     </section>

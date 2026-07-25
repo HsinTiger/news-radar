@@ -29,7 +29,13 @@
   let refreshTimer = null;
 
   const $ = (id) => document.getElementById(id);
-  const token = () => sessionStorage.getItem(TOKEN_KEY) || "";
+  const token = () => localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
+  const storeToken = (value, remember) => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    (remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, value);
+  };
+  const clearToken = () => { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); };
   const n = (value) => Number(value || 0);
   const fmt = (value) => new Intl.NumberFormat("zh-TW", { notation: n(value) >= 10000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(n(value));
   const when = (value) => value ? new Date(value).toLocaleString("zh-TW", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "未知";
@@ -60,7 +66,8 @@
   }
 
   function setLocked(locked) {
-    $("unlock-state").textContent = locked ? "尚未驗證" : "已驗證 · token 只存在本分頁";
+    const remembered = !locked && !!localStorage.getItem(TOKEN_KEY);
+    $("unlock-state").textContent = locked ? "尚未驗證" : (remembered ? "已驗證 · 已記住此裝置" : "已驗證 · token 只存在本分頁");
     $("unlock-state").className = `unlock-state${locked ? "" : " good"}`;
     $("automation-mode").textContent = locked ? "LOCKED" : "LOADING";
     $("mode-dot").className = "state-dot paused";
@@ -69,7 +76,7 @@
   async function unlock() {
     const candidate = $("owner-token").value.trim() || token();
     if (!candidate) { showError("請先貼上 owner token。"); return; }
-    sessionStorage.setItem(TOKEN_KEY, candidate);
+    storeToken(candidate, $("remember-device").checked);
     try {
       await request("/api/submissions?limit=1");
       $("owner-token").value = "";
@@ -78,7 +85,7 @@
       await load();
       startRefresh();
     } catch (error) {
-      sessionStorage.removeItem(TOKEN_KEY);
+      clearToken();
       setLocked(true);
       showError(`驗證失敗：${error.message}`);
     }
@@ -94,7 +101,7 @@
     } catch (error) {
       showError(`Dashboard 載入失敗：${error.message}`);
       if (/credential|auth|unauthorized/i.test(error.message)) {
-        sessionStorage.removeItem(TOKEN_KEY);
+        clearToken();
         setLocked(true);
       }
     } finally { $("refresh").disabled = false; }
@@ -398,7 +405,8 @@
   $("unlock").addEventListener("click",unlock);
   $("owner-token").addEventListener("keydown",event=>{if(event.key==="Enter")unlock();});
   $("refresh").addEventListener("click",load);
-  $("lock").addEventListener("click",()=>{sessionStorage.removeItem(TOKEN_KEY);clearInterval(refreshTimer);setLocked(true);showError("");});
+  $("lock").addEventListener("click",()=>{clearToken();$("remember-device").checked=false;clearInterval(refreshTimer);setLocked(true);showError("");});
 
+  if(localStorage.getItem(TOKEN_KEY)) $("remember-device").checked = true;
   if(token()){setLocked(false);load();startRefresh();}else setLocked(true);
 })();
