@@ -11,7 +11,7 @@
   python scripts/enrich_youtube_sources.py URL1 URL2 ... [--topic "Palantir"] [--out path.md]
 """
 from __future__ import annotations
-import argparse, re, subprocess, sys, json
+import argparse, os, re, subprocess, sys, json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -66,6 +66,47 @@ def _transcript(vid: str) -> str:
         return f"(逐字稿抓取失敗: {e})"
 
 
+AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
+AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.6 Flash (High)")
+
+
+def _agy_transcript(vid: str, timeout_s: int = 600) -> str:
+    """字幕抓取失敗時的第二條路：agy（Antigravity CLI）讓 Gemini 讀 YouTube。
+
+    ⚠️ 這條路**不能取代 Whisper**。2026-07-26 實測釐清了它的真實能力邊界：
+      · youtu.be/Dr8t8xgvOZY（**有**字幕）→ 逐字複述開頭六句與真值一字不差，
+        且答對三個只有該片才有的事實（片尾預告、片中的巴菲特對話、頻道名），
+        確認不是靠常識作答。
+      · youtu.be/_VaEjGnHgOI（**無**字幕）→ 明確回「無法讀取影片」。
+    結論：Gemini 讀的是**字幕軌**，不是音訊。所以真正的缺口（無字幕影片）
+    它補不上，那裡只有 Whisper。
+
+    那留著它幹嘛？當 youtube_transcript_api 本身失敗（限流、地區封鎖、
+    套件與 YouTube 介面脫節）但影片其實有字幕時，這是取得同一份字幕的
+    另一條路。純粹是取字幕的韌性備援，不是 ASR 的替代品。
+
+    仍排在字幕 API 之後：有字幕時字幕是真值，LLM 輸出是模型產物。
+    只在本機可用（雲端 runner 沒裝 agy），失敗一律回空字串交給 Whisper 接手。
+    """
+    if not os.path.exists(AGY_BIN):
+        return ""
+    prompt = (
+        f"逐字輸出這支影片的完整逐字稿：https://youtu.be/{vid}\n"
+        "規則：① 一字不差，不要改寫、不要總結、不要加旁白或標題；"
+        "② 只輸出逐字稿本身，不要任何前言後語；"
+        "③ 若你無法讀取這支影片，只輸出六個字：無法讀取影片。"
+    )
+    try:
+        r = subprocess.run([AGY_BIN, "--model", AGY_MODEL, "-p", prompt],
+                           capture_output=True, text=True, timeout=timeout_s)
+    except Exception:
+        return ""
+    out = (r.stdout or "").strip()
+    if r.returncode != 0 or not out or "無法讀取影片" in out[:40]:
+        return ""
+    return out
+
+
 def _whisper_transcript(vid: str, model_size: str = "base", max_minutes: int = 0) -> str:
     """無字幕影片的後備：yt-dlp 抓音檔 → faster-whisper ASR 轉字幕（免費、本機）。"""
     import tempfile, os
@@ -84,7 +125,9 @@ def _whisper_transcript(vid: str, model_size: str = "base", max_minutes: int = 0
     try:
         from faster_whisper import WhisperModel
         m = WhisperModel(model_size, device="cpu", compute_type="int8")
-        segs, _ = m.transcribe(mp3, language="en", vad_filter=True)
+        # language=None → 自動偵測。原本寫死 "en"，中文影片會被硬當英文轉，
+        # 這是中文 ASR 品質長期偏低的原因之一（2026-07-26 修）。
+        segs, _ = m.transcribe(mp3, language=None, vad_filter=True)
         text = " ".join(s.text.strip() for s in segs)
     except Exception as e:
         text = f"(Whisper 轉錄失敗: {e})"
@@ -206,6 +249,8 @@ def main():
     ap.add_argument("--out", default="")
     ap.add_argument("--whisper", action="store_true", help="無字幕時用 faster-whisper ASR 轉錄")
     ap.add_argument("--whisper-model", default="base", help="tiny/base/small/medium")
+    ap.add_argument("--no-agy", action="store_true",
+                    help="不使用 agy/Gemini 原生讀片，無字幕時直接走 Whisper")
     ap.add_argument("--no-reports", action="store_true", help="不上網找書面報告")
     args = ap.parse_args()
 
@@ -218,10 +263,21 @@ def main():
         print(f"  · 抓取 {m['id']} {m['title'][:40]} …")
         m["transcript"] = _transcript(m["id"])
         m["src"] = "字幕"
-        if (_content_len(m["transcript"]) < 80 or m["transcript"].startswith("(")) and args.whisper:
-            print(f"    └ 無字幕 → Whisper ASR 轉錄中（{m['title'][:24]}）…")
-            m["transcript"] = _whisper_transcript(m["id"], args.whisper_model)
-            m["src"] = f"Whisper({args.whisper_model})"
+        if _content_len(m["transcript"]) < 80 or m["transcript"].startswith("("):
+            # 後備順序：agy/Gemini 讀字幕軌 → Whisper ASR。
+            # Gemini 排前面是因為它便宜且快；但它讀的是字幕軌不是音訊，
+            # 所以真正無字幕的影片它也讀不到，會自己回「無法讀取影片」→ 落到 Whisper。
+            # 它的價值在於：影片有字幕、但 youtube_transcript_api 取字幕失敗時的備援。
+            if not args.no_agy:
+                print(f"    └ 取字幕失敗 → 試 agy/Gemini 讀字幕軌（{m['title'][:24]}）…")
+                agy_text = _agy_transcript(m["id"])
+                if _content_len(agy_text) >= 80:
+                    m["transcript"] = agy_text
+                    m["src"] = f"Gemini({AGY_MODEL})"
+            if (_content_len(m["transcript"]) < 80 or m["transcript"].startswith("(")) and args.whisper:
+                print(f"    └ 改用 Whisper ASR 轉錄中（{m['title'][:24]}）…")
+                m["transcript"] = _whisper_transcript(m["id"], args.whisper_model)
+                m["src"] = f"Whisper({args.whisper_model})"
         m["hl"] = _highlights(m["transcript"])
         m["words"] = _content_len(m["transcript"])
         sources.append(m)
