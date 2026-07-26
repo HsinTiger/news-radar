@@ -204,7 +204,8 @@ VOICE_ANCHOR_PATH = CONFIG_DIR / "substack_voice_anchor.md"
 MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"  # 曼報 KB 蒸餾的分析框架（唯讀副本）
 # company mode 主要吃四段式拆解；另外兩個框架是它判定「不適用」時的去處，
 # 一併載入才有東西可換。順序即注入順序。
-COMPANY_FRAMEWORKS = ("company-teardown.md", "capital-allocation-engine.md", "cycle-and-capital-flow.md")
+COMPANY_FRAMEWORKS = ("company-teardown.md", "capital-allocation-engine.md",
+                      "cycle-and-capital-flow.md", "counter-case-construction.md")
 
 
 def load_substack_soul() -> str:
