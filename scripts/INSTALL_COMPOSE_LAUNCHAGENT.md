@@ -107,6 +107,30 @@ launchctl print gui/$(id -u)/com.hsin.news-radar.substack-fast
 - Compose worker: every 60 minutes.
 - Immediate Substack drain: every 5 minutes.
 
+## Optional: mlx-whisper (Apple Silicon only)
+
+```bash
+~/news_radar/.venv/bin/pip install mlx-whisper
+```
+
+**Do not add this to `requirements.txt`.** `mlx` is Apple-Silicon-only and
+would break the Linux CI install for every cloud workflow.
+`enrich_youtube_sources.py` treats it as an optional accelerator: if the
+import fails it falls back to `faster-whisper` on CPU, so the Mac works
+either way and the cloud is unaffected.
+
+Worth installing. Measured on one 3-minute Mandarin clip (M1):
+
+| path | time | Chinese output |
+|---|---|---|
+| faster-whisper `base` + CPU | 26.9s | unusable |
+| mlx `small` + Metal | 18.7s | usable |
+| mlx `medium` + Metal | 347.4s | best, but 18× slower — memory-bound, not viable |
+
+"Unusable" is literal, and character counts hide it — `base` renders
+領域 as 旅渔, 發表 as 坟表, and OpenAI as 欧浩人爱. Override the model
+with `MLX_WHISPER_MODEL` if needed; default is `whisper-small-mlx`.
+
 ## Weekly company analysis (independent of Stage 1/2)
 
 Two agents, installed the same way (`sed HOME_DIR` → `plutil -lint` →

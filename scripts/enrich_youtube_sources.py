@@ -107,6 +107,45 @@ def _agy_transcript(vid: str, timeout_s: int = 600) -> str:
     return out
 
 
+MLX_MODEL = os.getenv("MLX_WHISPER_MODEL", "mlx-community/whisper-small-mlx")
+
+
+def _mlx_transcribe(mp3: str) -> str:
+    """Apple Silicon 首選：mlx-whisper 走 Metal GPU，比 faster-whisper CPU 快且準。
+
+    2026-07-26 同一段 3 分鐘中文音檔實測（M1）：
+        faster-whisper base + CPU   26.9s   中文輸出**壞的**
+        mlx  base   + Metal         10.2s   同上（模型本身的問題，不是後端）
+        mlx  small  + Metal         18.7s   可用
+        mlx  medium + Metal        347.4s   ← 記憶體不足換頁，18 倍慢，不可行
+
+    base 的中文有多壞值得具體記下來，因為光看字數看不出來：
+        base : 「人工智能**旅渔**」「**坟表**之後」「這家公司就是**欧浩人爱**」
+        small: 「人工智能**領域**」「**發表**之後」「這家公司就是 **OpenAI**」
+    base 不是差一點，是不能用；而且 base 吐簡體、small 吐繁體。
+    先前所有無字幕中文影片的稿件都是拿 base 的產出寫的。
+
+    故預設 small。要覆寫用 MLX_WHISPER_MODEL 環境變數。
+    失敗（非 Apple Silicon、套件未裝、ffmpeg 不在 PATH）一律回空字串，
+    交給 faster-whisper 接手，不讓加速路徑變成單點故障。
+    """
+    try:
+        import mlx_whisper
+    except Exception:
+        return ""
+    # mlx-whisper 內部 shell out 到 ffmpeg，需要它在 PATH 上；本專案的 ffmpeg
+    # 在 anaconda env 裡（見 FFMPEG），launchd 的精簡 PATH 找不到。
+    ffdir = os.path.dirname(FFMPEG)
+    if ffdir and ffdir not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = ffdir + os.pathsep + os.environ.get("PATH", "")
+    try:
+        result = mlx_whisper.transcribe(mp3, path_or_hf_repo=MLX_MODEL)
+    except Exception as e:
+        print(f"    └ mlx-whisper 失敗（{str(e)[:60]}），改用 faster-whisper")
+        return ""
+    return (result.get("text") or "").strip()
+
+
 def _whisper_transcript(vid: str, model_size: str = "base", max_minutes: int = 0) -> str:
     """無字幕影片的後備：yt-dlp 抓音檔 → faster-whisper ASR 轉字幕（免費、本機）。"""
     import tempfile, os
@@ -122,6 +161,11 @@ def _whisper_transcript(vid: str, model_size: str = "base", max_minutes: int = 0
     mp3 = base + ".mp3"
     if not os.path.exists(mp3):
         return "(音檔下載失敗)"
+    text = _mlx_transcribe(mp3)
+    if text:
+        try: os.remove(mp3)
+        except Exception: pass
+        return text
     try:
         from faster_whisper import WhisperModel
         m = WhisperModel(model_size, device="cpu", compute_type="int8")
