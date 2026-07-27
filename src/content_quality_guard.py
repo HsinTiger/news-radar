@@ -38,7 +38,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v32"
+QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v33"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -237,7 +237,7 @@ _RECOVERY_READER = (
     r"一般人|民眾|居民|住戶|消費者|使用者|讀者|上班族|投資人|股民|"
     r"股東|持有人|持股人|市場參與者|"
     r"家長|學生|通勤族|一般通勤者|通勤者|駕駛|旅客|家庭|企業|業者|"
-    r"出口商|製造業|產業|產業界|供應鏈業者|店家|商家|勞工|農民|你"
+    r"出口商|製造業|產業|產業界|供應鏈業者|店家|商家|勞工|農民|您|你"
 )
 _RECOVERY_IMPACT_PATTERN = re.compile(
     rf"(?:對[^。！？\n]{{0,36}}(?:{_RECOVERY_READER})[^。！？\n]{{0,24}}"
