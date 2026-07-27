@@ -12,6 +12,12 @@ ENABLE_META_PUBLISH_NOW = "true"
 enabled = true
 head_sampling_rate = 1.0
 
+[triggers]
+# Independent delivery path for the governed GitHub scheduler.  These ticks
+# arrive ten minutes after the matching GitHub cron; shared production
+# concurrency and daily quotas make the redundant decision run idempotent.
+crons = ["27 0,3,10,11,12,13 * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "hsintiger-social-ops"

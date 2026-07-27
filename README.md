@@ -11,9 +11,9 @@
 
 | Surface | State | Truth boundary |
 |---|---|---|
-| Meta scheduled publishing | **PAUSED** | Requires an owner-approved canary before `AUTOMATION_MODE=live` |
-| Submission processor | **PAUSED** | Submissions may be stored, but the poller will not claim them automatically |
-| Meta publish-now | **LOCKED** | Worker returns `409 canary_required` |
+| Meta scheduled publishing | **RECOVERY** | One post/day/platform under source, quality, quota, readback, and shared-lock gates |
+| Submission processor | **LIVE** | Poller claims one-off work; target-specific evidence remains required |
+| Meta publish-now | **ARMED** | Owner submissions still pass editorial gates before any platform write |
 | Substack | **DRAFT ONLY** | Never auto-publishes; `draft_created` requires a remote Substack draft id |
 | Social Ops API | **DEPLOYED** | Cloudflare Worker + authenticated D1 |
 | Runtime SQLite | **CANONICAL RELEASE STATE** | Versioned GitHub Release bundle, SHA-256 + `PRAGMA quick_check` + readback |
@@ -81,6 +81,8 @@ authorizes that proposal only; it never grants publishing authority.
 ```mermaid
 flowchart LR
   Sources[Public sources + owner submissions] --> Runtime[(SQLite runtime state)]
+  Watchdog[Cloudflare scheduler watchdog] --> Scheduler[Governed scheduler]
+  Scheduler --> Runtime
   Runtime --> Compose[Platform-specific compose]
   Compose --> Queue[Governed Meta queue]
   Queue --> Meta[FB / IG / Threads]
@@ -122,7 +124,7 @@ Cloudflare D1 stores:
 
 | Workflow | Purpose | Publishing authority |
 |---|---|---|
-| `adaptive-scheduler.yml` | Evaluates platform cadence and dispatches the main pipeline | Disabled while `AUTOMATION_MODE=paused` |
+| `adaptive-scheduler.yml` | Evaluates platform cadence and dispatches the main pipeline; receives GitHub cron plus Cloudflare watchdog ticks | Disabled while `AUTOMATION_MODE=paused`; shared lock and quotas prevent duplicate dispatch |
 | `submission-poller.yml` | Claims D1 one-off submissions and dispatches an allowlisted workflow | Disabled while `SUBMISSION_PROCESSOR_MODE=paused` |
 | `engagement-monitor.yml` | Polls 1h/24h/168h post-age buckets hourly (±45-minute capture window) | Read-only platform access |
 | `audience-monitor.yml` | Captures daily follower snapshots | Read-only platform access |

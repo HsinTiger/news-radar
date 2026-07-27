@@ -53,6 +53,33 @@ gh workflow view learning-review.yml --repo HsinTiger/news-radar
 Healthy means the latest expected run completed and its exact collector output
 is credible. A scheduled workflow with no recent run is stale, not healthy.
 
+### Scheduler dual-delivery contract
+
+GitHub `schedule` is the primary trigger. The `news-radar-submit` Cloudflare
+Worker is an independent watchdog and dispatches the same
+`adaptive-scheduler.yml` ten minutes after each configured GitHub tick. It does
+not compose or publish. Both paths share the `news-radar-production` concurrency
+group, read canonical Release state, and must pass the same policy, platform
+quota, time-window, and quality gates before `full_pipeline.yml` can run.
+
+Keep `GITHUB_ACTIONS_TOKEN` as a Worker secret, never a `[vars]` value. Prefer a
+fine-grained token limited to Actions write access for `HsinTiger/news-radar`.
+The current delivery proof chain is:
+
+```text
+Cloudflare cron
+-> D1 scheduler_watchdog_dispatch=healthy (GitHub API accepted + dispatch_id)
+-> Actions event=workflow_dispatch, trigger_source=cloudflare_watchdog
+-> D1 scheduler_watchdog_delivery=healthy (workflow started + matching dispatch_id)
+-> schedule decision artifact
+-> optional Full Cloud Pipeline run
+-> platform post ID / API readback / canonical persistence
+```
+
+A Worker deploy, HTTP 204 from GitHub, or workflow heartbeat alone does not
+prove a Meta post. If both GitHub and watchdog ticks arrive, the second decision
+must report the already-met quota and must not dispatch another pipeline.
+
 ### Canonical runtime state
 
 ```bash

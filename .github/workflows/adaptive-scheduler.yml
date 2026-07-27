@@ -21,6 +21,19 @@ on:
         required: true
         default: true
         type: boolean
+      trigger_source:
+        description: "Auditable dispatch authority"
+        required: true
+        default: "manual"
+        type: choice
+        options:
+          - "manual"
+          - "cloudflare_watchdog"
+      watchdog_dispatch_id:
+        description: "Cloudflare watchdog lineage identifier"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   # Serialize the decision reader with state writers and publishers. A later
@@ -82,6 +95,17 @@ jobs:
           SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
           GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: python scripts/scheduler_heartbeat.py
+      - name: Record Cloudflare watchdog delivery heartbeat
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.trigger_source == 'cloudflare_watchdog'
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          SCHEDULER_WATCHDOG_SOURCE: ${{ inputs.trigger_source }}
+          SCHEDULER_WATCHDOG_DISPATCH_ID: ${{ inputs.watchdog_dispatch_id }}
+        run: python scripts/scheduler_watchdog_heartbeat.py
       - name: Upload decision evidence
         if: always()
         uses: actions/upload-artifact@v6

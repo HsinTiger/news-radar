@@ -41,10 +41,32 @@ def test_dashboard_classifies_scheduler_delivery_against_expected_ticks() -> Non
     source = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
     assert 'scheduler_delivery: "GitHub 排程送達"' in source
+    assert 'scheduler_watchdog_dispatch: "Cloudflare watchdog 派送"' in source
+    assert 'scheduler_watchdog_delivery: "Cloudflare watchdog 到達 Actions"' in source
     assert "const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13]" in source
-    assert "const SCHEDULER_DELAY_TOLERANCE_MS = 4 * 60 * 60 * 1000" in source
-    assert 'item.metric !== "scheduler_delivery"' in source
+    assert "scheduler_delivery: { minute:17, toleranceMs:4 * 60 * 60 * 1000 }" in source
+    assert "function ensureExpectedSchedulerHealth(rows,nowMs=Date.now())" in source
+    assert 'detail:"heartbeat_not_persisted"' in source
     assert 'waiting ? "unknown" : "degraded"' in source
+
+
+def test_cloudflare_watchdog_dispatches_only_the_governed_scheduler() -> None:
+    worker = (ROOT / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
+    dashboard = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    config = (ROOT / "cloudflare-worker" / "wrangler.toml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'crons = ["27 0,3,10,11,12,13 * * *"]' in config
+    assert "async scheduled(controller, env, ctx)" in worker
+    assert 'const WATCHDOG_WORKFLOW = "adaptive-scheduler.yml"' in worker
+    assert 'setup_only: "false"' in worker
+    assert 'trigger_source: "cloudflare_watchdog"' in worker
+    assert "watchdog_dispatch_id: dispatchId" in worker
+    assert '"scheduler_watchdog_dispatch"' in worker
+    assert "env.GITHUB_ACTIONS_TOKEN" in worker
+    assert "function reconcileWatchdogLineage(rows)" in dashboard
+    assert "dispatch_lineage_mismatch" in dashboard
 
 
 def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> None:
