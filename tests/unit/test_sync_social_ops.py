@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from src.content_quality_guard import QUALITY_GUARD_VERSION
 from scripts.sync_social_ops import (
     _error_summary,
@@ -227,6 +229,41 @@ def test_automation_state_uses_canonical_repository_variables(monkeypatch) -> No
     row = build_automation_state()[0]
     assert row["mode"] == "recovery"
     assert row["submission_processor"] == "paused"
+
+
+def test_automation_state_omits_update_when_runtime_variables_are_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("AUTOMATION_MODE", raising=False)
+    monkeypatch.delenv("SUBMISSION_PROCESSOR_MODE", raising=False)
+
+    assert build_automation_state() == []
+
+
+def test_automation_state_rejects_invalid_runtime_variables(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOMATION_MODE", "recovery")
+    monkeypatch.setenv("SUBMISSION_PROCESSOR_MODE", "unknown")
+
+    with pytest.raises(ValueError, match="invalid SUBMISSION_PROCESSOR_MODE"):
+        build_automation_state()
+
+
+def test_every_social_ops_sync_caller_passes_canonical_runtime_variables() -> None:
+    workflows = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    for path in workflows.glob("*.yml"):
+        source = path.read_text(encoding="utf-8")
+        cursor = 0
+        while True:
+            index = source.find("scripts/sync_social_ops.py", cursor)
+            if index < 0:
+                break
+            step = source[max(0, index - 900) : index]
+            assert "AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}" in step, path.name
+            assert (
+                "SUBMISSION_PROCESSOR_MODE: ${{ vars.SUBMISSION_PROCESSOR_MODE }}"
+                in step
+            ), path.name
+            cursor = index + 1
 
 
 def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None:
