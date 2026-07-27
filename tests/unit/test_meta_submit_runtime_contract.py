@@ -29,6 +29,14 @@ def test_submit_ui_uses_runtime_instead_of_a_permanent_pause() -> None:
     assert "品質檢查後立即發布到 Meta" in page
 
 
+def test_substack_ui_defaults_to_the_remote_proven_fast_lane() -> None:
+    page = (ROOT / "substack-submit" / "index.html").read_text(encoding="utf-8")
+
+    assert 'name="substack-mode" value="draft_priority" checked' in page
+    assert 'name="substack-mode" value="draft" checked' not in page
+    assert "已有遠端實證的快速通道" in page
+
+
 def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish_now.yml").read_text(
         encoding="utf-8"

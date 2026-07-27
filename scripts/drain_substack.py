@@ -14,6 +14,7 @@ Usage:
     python scripts/drain_substack.py            # compose all new submissions
     python scripts/drain_substack.py --dry-run  # list candidates, compose nothing
     python scripts/drain_substack.py --mark <id> # mark an id done without composing
+    python scripts/drain_substack.py --only-current-control  # current website/API submissions
 """
 from __future__ import annotations
 import argparse, json, os, re, sqlite3, subprocess, sys
@@ -57,7 +58,20 @@ def _save_done(done: set):
     DONE_FILE.write_text(json.dumps({"done": sorted(done)}, ensure_ascii=False, indent=2))
 
 
-def _candidates(only_immediate: bool = False) -> list:
+def _candidate_tags(raw: str | None) -> set[str]:
+    try:
+        values = json.loads(raw or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    if not isinstance(values, list):
+        return set()
+    return {value for value in values if isinstance(value, str)}
+
+
+def _candidates(
+    only_immediate: bool = False,
+    only_current_control: bool = False,
+) -> list:
     if not DB.exists():
         print(f"[drain] DB not found: {DB}")
         return []
@@ -78,11 +92,21 @@ def _candidates(only_immediate: bool = False) -> list:
         ).fetchall()
     finally:
         conn.close()
+    tagged = [(row, _candidate_tags(row[5])) for row in rows]
     if only_immediate:
-        # tags 是 json.dumps 的陣列字串；子字串比對即可（無其他 tag 含 "immediate"）。
-        rows = [r for r in rows if "immediate" in (r[5] or "")]
+        tagged = [(row, tags) for row, tags in tagged if "immediate" in tags]
+    if only_current_control:
+        tagged = [
+            (row, tags)
+            for row, tags in tagged
+            if any(tag.startswith("control_submission:") for tag in tags)
+        ]
+    # The loaded five-minute worker serves all current control-plane submissions.
+    # Priority remains meaningful: explicit immediate requests go first, while old
+    # rows without control_submission lineage are never admitted to this lane.
+    tagged.sort(key=lambda item: 0 if "immediate" in item[1] else 1)
     # 回傳維持 5 元組（id, title, word_count, url, clean_markdown），下游解包不變。
-    return [r[:5] for r in rows]
+    return [row[:5] for row, _tags in tagged]
 
 
 def _yt_seeds(url, body) -> list:
@@ -122,8 +146,17 @@ def main():
     ap.add_argument("--mark", type=str, help="mark this id as done without composing")
     ap.add_argument("--no-enrich", action="store_true",
                     help="跳過 YouTube 深度素材包 enrichment（純用原始 submission 內文）")
-    ap.add_argument("--only-immediate", action="store_true",
-                    help="只處理被標 immediate 的投稿（給每 5 分鐘的快速 drain 用）")
+    lane = ap.add_mutually_exclusive_group()
+    lane.add_argument("--only-immediate", action="store_true",
+                      help="只處理被標 immediate 的投稿（相容舊版手動 canary）")
+    lane.add_argument(
+        "--only-current-control",
+        action="store_true",
+        help=(
+            "只處理帶 control_submission lineage 的目前投稿；priority 先處理，"
+            "排除無 lineage 的歷史 backlog"
+        ),
+    )
     args = ap.parse_args()
 
     done = _load_done()
@@ -149,11 +182,18 @@ def main():
             f"[drain] protecting {len(receipt_ids)} source(s) with pending remote receipts"
         )
 
-    rows = _candidates(only_immediate=args.only_immediate)
+    rows = _candidates(
+        only_immediate=args.only_immediate,
+        only_current_control=args.only_current_control,
+    )
     pending = [r for r in rows if r[0] not in done and r[0] not in receipt_ids]
-    scope = " (immediate only)" if args.only_immediate else ""
+    scope = (
+        " (immediate only)"
+        if args.only_immediate
+        else " (current control only)" if args.only_current_control else ""
+    )
     print(f"[drain] {len(rows)} user_substack item(s){scope}, {len(pending)} pending compose")
-    if args.only_immediate and not pending:
+    if (args.only_immediate or args.only_current_control) and not pending:
         return 0  # 快速通道沒事就安靜結束（每 5 分鐘跑一次，不洗 log）
     for rid, title, wc, url, body in pending:
         tag = "  🎥yt" if (not args.no_enrich and _yt_seeds(url, body)) else ""

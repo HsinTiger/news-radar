@@ -296,15 +296,23 @@ def test_substack_worker_health_is_degraded_for_stale_pending_source() -> None:
             '["substack_source"]', None, None, None,
         ),
     )
-    row = next(
+    current = next(
         item
         for item in build_health(conn)
         if item["platform"] == "system"
         and item["metric"] == "substack_draft_worker"
     )
-    assert row["status"] == "degraded"
-    assert "pending_remote=1" in row["detail"]
-    assert "remote_proven=0" in row["detail"]
+    legacy = next(
+        item
+        for item in build_health(conn)
+        if item["platform"] == "system"
+        and item["metric"] == "substack_legacy_backlog"
+    )
+    assert current["status"] == "unknown"
+    assert "current_submissions=0" in current["detail"]
+    assert legacy["status"] == "degraded"
+    assert "legacy_pending_remote=1" in legacy["detail"]
+    assert "legacy_remote_proven=0" in legacy["detail"]
 
 
 def test_substack_worker_health_is_healthy_only_with_recent_remote_evidence() -> None:
@@ -314,7 +322,8 @@ def test_substack_worker_health_is_healthy_only_with_recent_remote_evidence() ->
         "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "sub-recent", "text", "manual://recent", "Owner source", "ai_application",
-            "fetched", now, 100, 1.0, "user_substack", '["substack_source"]',
+            "fetched", now, 100, 1.0, "user_substack",
+            '["substack_source","control_submission:current-proof-001"]',
             now, "draft-123", now,
         ),
     )
@@ -325,8 +334,59 @@ def test_substack_worker_health_is_healthy_only_with_recent_remote_evidence() ->
         and item["metric"] == "substack_draft_worker"
     )
     assert row["status"] == "healthy"
-    assert "pending_remote=0" in row["detail"]
-    assert "remote_proven=1" in row["detail"]
+    assert "current_pending_remote=0" in row["detail"]
+    assert "current_remote_proven=1" in row["detail"]
+    assert "remote_fresh_gate=24h" in row["detail"]
+
+
+def test_substack_worker_health_is_unknown_when_remote_proof_is_stale() -> None:
+    conn = _db()
+    conn.execute(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "sub-stale-proof", "text", "manual://stale-proof", "Owner source",
+            "ai_application", "fetched", "2020-01-01T00:00:00Z", 100, 1.0,
+            "user_substack",
+            '["substack_source","control_submission:stale-proof-001"]',
+            "2020-01-01T01:00:00Z", "draft-stale", "2020-01-01T02:00:00Z",
+        ),
+    )
+    row = next(
+        item
+        for item in build_health(conn)
+        if item["metric"] == "substack_draft_worker"
+    )
+
+    assert row["status"] == "unknown"
+    assert "current_remote_proven=1" in row["detail"]
+    assert "remote_fresh_gate=24h" in row["detail"]
+
+
+def test_current_substack_health_stays_healthy_while_legacy_backlog_is_visible() -> None:
+    conn = _db()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "sub-current", "text", "manual://current", "Current", "ai_application",
+                "fetched", now, 100, 1.0, "user_substack",
+                '["substack_source","control_submission:current-proof-002"]',
+                now, "draft-current", now,
+            ),
+            (
+                "sub-legacy", "text", "manual://legacy", "Legacy", "ai_application",
+                "fetched", "2020-01-01T00:00:00Z", 100, 1.0, "user_substack",
+                '["substack_source"]', None, None, None,
+            ),
+        ],
+    )
+    health = {item["metric"]: item for item in build_health(conn)}
+
+    assert health["substack_draft_worker"]["status"] == "healthy"
+    assert "current_remote_proven=1" in health["substack_draft_worker"]["detail"]
+    assert health["substack_legacy_backlog"]["status"] == "degraded"
+    assert "legacy_pending_remote=1" in health["substack_legacy_backlog"]["detail"]
 
 
 def test_engagement_sync_degrades_legacy_schema_without_clicks_to_zero() -> None:

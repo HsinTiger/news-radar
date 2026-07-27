@@ -111,8 +111,9 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
         clean_markdown=body or "",
         word_count=len((body or "").split()),
         og_image_url=None,
-        # `immediate` 標籤讓 Mac 端的快速 drain（每 5 分鐘）優先挑出這篇立刻寫稿，
-        # 不必等每小時的常規 drain。見 scripts/drain_substack.py --only-immediate。
+        # `immediate` 標籤讓 Mac 端的 current-control drain 優先挑出這篇；
+        # 所有帶 control_submission lineage 的新投稿都由已載入的快速 worker 服務，
+        # 不會落入未啟用的 legacy hourly backlog。見 --only-current-control。
         tags=desired_tags,
         status="fetched",
     )

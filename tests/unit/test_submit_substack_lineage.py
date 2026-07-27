@@ -152,6 +152,10 @@ def test_short_owner_view_is_still_a_substack_compose_candidate(
     assert result["status"] == "created"
     candidates = drain_substack._candidates()
     assert [row[0] for row in candidates] == [result["id"]]
+    assert [
+        row[0]
+        for row in drain_substack._candidates(only_current_control=True)
+    ] == [result["id"]]
 
     conn = submit_substack.dbmod.get_conn()
     try:
@@ -162,3 +166,48 @@ def test_short_owner_view_is_still_a_substack_compose_candidate(
     finally:
         conn.close()
     assert drain_substack._candidates() == []
+
+
+def test_current_control_lane_prioritizes_immediate_and_excludes_legacy(
+    monkeypatch, tmp_path
+) -> None:
+    db_path = tmp_path / "news_radar.db"
+    monkeypatch.setattr(submit_substack.dbmod, "DB_PATH", db_path)
+    monkeypatch.setattr(drain_substack, "DB", db_path)
+    submit_substack.dbmod.init_db()
+
+    normal = submit_substack.process_text(
+        "一般控制面投稿也必須被已載入的 fast worker 服務。",
+        "normal current",
+        immediate=False,
+        submission_id="substack-current-normal",
+    )
+    priority = submit_substack.process_text(
+        "優先投稿應排在一般控制面投稿之前。",
+        "priority current",
+        immediate=True,
+        submission_id="substack-current-priority",
+    )
+    conn = submit_substack.dbmod.get_conn()
+    try:
+        legacy = NewsItem(
+            id="legacy-unverified",
+            feed_name="user_substack",
+            feed_tier="primary",
+            source_type="text",
+            url="manual-text://legacy-unverified",
+            title="legacy",
+            published_at="2020-01-01T00:00:00+00:00",
+            fetched_at="2020-01-01T00:00:00+00:00",
+            clean_markdown="Historical row without control-plane lineage.",
+            word_count=6,
+            tags=["substack_source"],
+            status="fetched",
+        )
+        submit_substack.dbmod.upsert_news(conn, legacy)
+    finally:
+        conn.close()
+
+    selected = drain_substack._candidates(only_current_control=True)
+    assert [row[0] for row in selected] == [priority["id"], normal["id"]]
+    assert "legacy-unverified" not in {row[0] for row in selected}
