@@ -666,6 +666,26 @@ def test_v32_accepts_fda_publication_hook_and_direct_consumer_relevance() -> Non
     assert "missing_reader_utility" not in codes
 
 
+def test_v33_accepts_honorific_reader_action() -> None:
+    text = (
+        "食藥署公布中聯油脂案第三方調查結果。\n\n"
+        "根據食藥署調查，原料管理、製程與檢驗監測有多項缺失。\n\n"
+        "所有臺灣食用油消費者都可能受食安事件影響；"
+        "您可以持續關注立法院審議進度。"
+    )
+    codes = {
+        item.code
+        for item in check_quality(
+            text,
+            title="中聯油脂調查",
+            recovery=True,
+            source_text=text,
+        )
+    }
+
+    assert "missing_reader_utility" not in codes
+
+
 def test_recovery_accepts_modified_reader_phrase_and_specific_action():
     text = (
         "行政院通過法院組織法修正草案，未來進入法院將全面安檢。\n\n"
