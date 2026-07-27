@@ -37,6 +37,16 @@ def test_substack_ui_defaults_to_the_remote_proven_fast_lane() -> None:
     assert "已有遠端實證的快速通道" in page
 
 
+def test_dashboard_classifies_scheduler_delivery_against_expected_ticks() -> None:
+    source = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    assert 'scheduler_delivery: "GitHub 排程送達"' in source
+    assert "const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13]" in source
+    assert "const SCHEDULER_DELAY_TOLERANCE_MS = 4 * 60 * 60 * 1000" in source
+    assert 'item.metric !== "scheduler_delivery"' in source
+    assert 'waiting ? "unknown" : "degraded"' in source
+
+
 def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish_now.yml").read_text(
         encoding="utf-8"
