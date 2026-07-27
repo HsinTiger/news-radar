@@ -11,6 +11,7 @@ from src.content_quality_guard import QUALITY_GUARD_VERSION
 from scripts.sync_social_ops import (
     _error_summary,
     build_automation_state,
+    build_daily_publish_health,
     build_engagement,
     build_health,
     build_knowledge,
@@ -19,6 +20,15 @@ from scripts.sync_social_ops import (
     build_quality,
     build_recovery_experiments,
     build_submission_updates,
+)
+
+
+SOCIAL_POLICY = json.loads(
+    (
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "social_automation_policy.json"
+    ).read_text(encoding="utf-8")
 )
 
 
@@ -284,6 +294,94 @@ def test_health_is_unknown_for_missing_platform_and_degraded_for_error() -> None
     assert status[("instagram", "signal_coverage")] == "unknown"
     assert status[("threads", "signal_coverage")] == "healthy"
     assert not any(row["metric"] == "audience" for row in rows)
+
+
+def test_daily_cadence_degrades_when_previous_expected_day_was_missed() -> None:
+    conn = _db()
+    conn.execute("DELETE FROM publish_log")
+    # 2026-07-27 17:18 Taipei: today is already recovered, but 7/26 was missed.
+    for index, platform in enumerate(("threads", "facebook", "instagram"), 1):
+        conn.execute(
+            "INSERT INTO publish_log VALUES(?,?,?,?,?,?,?)",
+            (
+                index,
+                f"today-{platform}",
+                platform,
+                f"post-{platform}",
+                "2026-07-27T08:00:00+00:00",
+                1,
+                None,
+            ),
+        )
+    rows = build_daily_publish_health(
+        conn,
+        captured_at="2026-07-27T09:18:00+00:00",
+        policy=SOCIAL_POLICY,
+        mode="recovery",
+    )
+
+    assert {row["status"] for row in rows} == {"degraded"}
+    assert all("reason=previous_day_missed" in row["detail"] for row in rows)
+    assert all("today_posts=1/1" in row["detail"] for row in rows)
+
+
+def test_daily_cadence_waits_before_deadline_then_degrades_after_it() -> None:
+    conn = _db()
+    conn.execute("DELETE FROM publish_log")
+    conn.execute(
+        "INSERT INTO publish_log VALUES(?,?,?,?,?,?,?)",
+        (
+            1,
+            "yesterday-facebook",
+            "facebook",
+            "fb-yesterday",
+            "2026-07-26T10:10:00+00:00",
+            1,
+            None,
+        ),
+    )
+    before = build_daily_publish_health(
+        conn,
+        captured_at="2026-07-27T11:30:00+00:00",  # 19:30 Taipei
+        policy=SOCIAL_POLICY,
+        mode="recovery",
+    )
+    after = build_daily_publish_health(
+        conn,
+        captured_at="2026-07-27T12:05:00+00:00",  # 20:05 Taipei
+        policy=SOCIAL_POLICY,
+        mode="recovery",
+    )
+    before_fb = next(row for row in before if row["platform"] == "facebook")
+    after_fb = next(row for row in after if row["platform"] == "facebook")
+
+    assert before_fb["status"] == "unknown"
+    assert "reason=awaiting_today_deadline" in before_fb["detail"]
+    assert after_fb["status"] == "degraded"
+    assert "reason=today_deadline_missed" in after_fb["detail"]
+
+
+def test_daily_cadence_is_healthy_after_two_consecutive_expected_days() -> None:
+    conn = _db()
+    conn.execute("DELETE FROM publish_log")
+    conn.executemany(
+        "INSERT INTO publish_log VALUES(?,?,?,?,?,?,?)",
+        [
+            (1, "yesterday-threads", "threads", "th-yesterday", "2026-07-26T00:10:00Z", 1, None),
+            (2, "today-threads", "threads", "th-today", "2026-07-27T00:10:00Z", 1, None),
+        ],
+    )
+    rows = build_daily_publish_health(
+        conn,
+        captured_at="2026-07-27T03:00:00+00:00",
+        policy=SOCIAL_POLICY,
+        mode="recovery",
+    )
+    threads = next(row for row in rows if row["platform"] == "threads")
+
+    assert threads["status"] == "healthy"
+    assert "reason=today_target_met" in threads["detail"]
+    assert "previous_day_posts=1/1" in threads["detail"]
 
 
 def test_substack_worker_health_is_degraded_for_stale_pending_source() -> None:

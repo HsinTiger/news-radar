@@ -15,9 +15,10 @@ import sqlite3
 import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -31,6 +32,11 @@ CONTROL_SUBMISSION_PREFIX = "control_submission:"
 CONTROL_ROUTE_PREFIX = "control_route:"
 CONTROL_SOURCE_URL_PREFIX = "control_source_url:"
 DEFAULT_PROPOSALS_DIR = Path("data/05_reflect/proposals")
+SOCIAL_POLICY_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "config"
+    / "social_automation_policy.json"
+)
 
 
 def _json(value: str | None, fallback: Any) -> Any:
@@ -645,6 +651,127 @@ def build_substack_legacy_backlog_health(
     )
 
 
+def build_daily_publish_health(
+    conn: sqlite3.Connection,
+    *,
+    captured_at: str,
+    policy: dict[str, Any] | None = None,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    """Classify actual daily Meta delivery, never scheduler process health."""
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if policy is None:
+        policy = json.loads(SOCIAL_POLICY_PATH.read_text(encoding="utf-8"))
+    tz_name = str(policy["timezone"])
+    now = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local = now.astimezone(ZoneInfo(tz_name))
+    today_start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start_local = today_start_local + timedelta(days=1)
+    previous_start_local = today_start_local - timedelta(days=1)
+    today_start = today_start_local.astimezone(timezone.utc).isoformat()
+    tomorrow_start = tomorrow_start_local.astimezone(timezone.utc).isoformat()
+    previous_start = previous_start_local.astimezone(timezone.utc).isoformat()
+    active_mode = (mode or os.environ.get("AUTOMATION_MODE") or "recovery").strip().lower()
+    platform_policy = (
+        policy["recovery"]["platforms"]
+        if active_mode == "recovery"
+        else policy["platforms"]
+    )
+    recovery_started = None
+    if active_mode == "recovery" and policy.get("recovery", {}).get("owner_approved_at"):
+        recovery_started = datetime.fromisoformat(
+            str(policy["recovery"]["owner_approved_at"]).replace("Z", "+00:00")
+        ).astimezone(ZoneInfo(tz_name)).date()
+    result: list[dict[str, Any]] = []
+    for platform in sorted(PLATFORMS):
+        config = platform_policy[platform]
+        target = int(config["target_posts_per_day"])
+        local_days = [int(value) for value in config.get("local_days", range(7))]
+        slots = [int(value) for value in config.get("local_slots", [])]
+        deadline = config.get("catch_up_deadline_hour")
+        if deadline is None:
+            deadline = min(24, (max(slots) + 1) if slots else 24)
+        if "publish_log" not in tables:
+            today_posts = 0
+            previous_posts = 0
+            latest_success = None
+            status = "unknown"
+            reason = "publish_log_missing"
+        else:
+            row = conn.execute(
+                """
+                SELECT
+                  SUM(CASE WHEN success=1 AND datetime(posted_at) >= datetime(?)
+                            AND datetime(posted_at) < datetime(?) THEN 1 ELSE 0 END)
+                    AS today_posts,
+                  SUM(CASE WHEN success=1 AND datetime(posted_at) >= datetime(?)
+                            AND datetime(posted_at) < datetime(?) THEN 1 ELSE 0 END)
+                    AS previous_posts,
+                  MAX(CASE WHEN success=1 THEN posted_at END) AS latest_success
+                FROM publish_log WHERE platform=?
+                """,
+                (
+                    today_start,
+                    tomorrow_start,
+                    previous_start,
+                    today_start,
+                    platform,
+                ),
+            ).fetchone()
+            today_posts = int((row["today_posts"] if row else 0) or 0)
+            previous_posts = int((row["previous_posts"] if row else 0) or 0)
+            latest_success = row["latest_success"] if row else None
+            today_expected = local.weekday() in local_days and target > 0
+            previous_expected = (
+                previous_start_local.weekday() in local_days
+                and target > 0
+                and (
+                    recovery_started is None
+                    or previous_start_local.date() >= recovery_started
+                )
+            )
+            minute_of_day = local.hour * 60 + local.minute
+            if active_mode == "paused":
+                status = "unknown"
+                reason = "automation_paused"
+            elif previous_expected and previous_posts < target:
+                status = "degraded"
+                reason = "previous_day_missed"
+            elif today_posts >= target:
+                status = "healthy"
+                reason = "today_target_met"
+            elif not today_expected:
+                status = "unknown"
+                reason = "outside_local_day"
+            elif minute_of_day >= int(deadline) * 60:
+                status = "degraded"
+                reason = "today_deadline_missed"
+            else:
+                status = "unknown"
+                reason = "awaiting_today_deadline"
+        result.append(
+            {
+                "platform": platform,
+                "metric": "daily_publish_cadence",
+                "status": status,
+                "detail": (
+                    f"reason={reason}; mode={active_mode}; timezone={tz_name}; "
+                    f"today_posts={today_posts}/{target}; "
+                    f"previous_day_posts={previous_posts}/{target}; "
+                    f"local_deadline_hour={deadline}; "
+                    f"latest_success={latest_success or 'none'}"
+                ),
+                "captured_at": captured_at,
+            }
+        )
+    return result
+
+
 def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc).isoformat()
     engagement_columns = {
@@ -707,6 +834,7 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             build_substack_legacy_backlog_health(conn, captured_at=now),
         ]
     )
+    result.extend(build_daily_publish_health(conn, captured_at=now))
     return result
 
 
