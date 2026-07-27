@@ -134,7 +134,7 @@ def test_deterministic_policy_closing_is_reader_answerable() -> None:
         )
     }
 
-    assert "如果這項政策適用你或家人" in repaired
+    assert "如果你家有未成年孩子" in repaired
     assert repaired.index("你最想先確認") < repaired.index("#公共政策")
     assert "generic_engagement_bait" not in codes
     assert repaired.count("？") == 1
@@ -155,6 +155,26 @@ def test_deterministic_current_affairs_closing_keeps_facts_unchanged() -> None:
     assert repaired.startswith(factual)
     assert "如果事件影響到你所在的社區" in repaired
     assert "福壽公司能否" not in repaired
+
+
+def test_deterministic_energy_closing_uses_source_context_over_topic_label() -> None:
+    body = (
+        "經濟部能源署表示，臺灣天然氣儲備至少11天。\n\n"
+        "面對封鎖風險，臺灣如何確保供應不中斷？\n\n"
+        "#國防安全"
+    )
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="threads",
+        topic="tw_politics",
+        source_evidence_text="臺灣維持天然氣儲備，並規劃東部海岸應變演習。",
+        source_label="中央社",
+    )
+
+    assert "如果能源供應中斷影響到你" in repaired
+    assert "適用資格" not in repaired
+    assert repaired.index("官方演習結果？") < repaired.index("#國防安全")
 
 
 def test_deterministic_market_utility_repair_is_concrete() -> None:

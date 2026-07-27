@@ -409,7 +409,15 @@ def _deterministic_recovery_closing_repair(
     else:
         policy_topics = {"tw_politics", "policy_geopolitics"}
         company_topics = {"earnings", "supply_chain", "us_stocks"}
-        if topic in policy_topics:
+        if re.search(r"天然氣|能源|燃料|物資供應", source_evidence_text):
+            question = "如果能源供應中斷影響到你，你最想先知道儲備天數、應變措施，還是官方演習結果？"
+        elif re.search(r"兒少|孩童|兒童|未來帳戶", source_evidence_text):
+            question = "如果你家有未成年孩子，你最想先確認適用資格、撥款規則，還是申請方式？"
+        elif re.search(r"詐騙|人頭門號|高價收購", source_evidence_text):
+            question = "如果你家孩子收到高價收購訊息，你會先停下交易、查證對方，還是聯絡警方？"
+        elif re.search(r"解放軍|海警|封鎖|攻臺|國防", source_evidence_text):
+            question = "如果這項安全威脅影響公共預算，你最想先看到風險說明、應變時程，還是驗證標準？"
+        elif topic in policy_topics:
             question = "如果這項政策適用你或家人，你最想先確認資格、開始日期，還是申請方式？"
         elif topic == "current_affairs":
             question = "如果事件影響到你所在的社區，你會先查官方公告、處理進度，還是申訴管道？"
