@@ -160,6 +160,61 @@ def test_v20_threads_rejects_stat_dump_and_vague_stock_question() -> None:
     assert "generic_engagement_bait" in codes
 
 
+def test_v34_facebook_rejects_market_flow_stat_dump_and_causal_inference() -> None:
+    source = (
+        "證交所公布，上週外資在集中市場賣超470.64億元，"
+        "賣超力積電10.88萬張最多，買超緯創15.49萬張最多。"
+    )
+    text = (
+        "證交所公布，上週外資在集中市場賣超470.64億元，"
+        "賣超力積電10.88萬張最多，買超緯創15.49萬張最多。\n\n"
+        "這反映外資對不同產業的看法，可能帶動個股短期波動。\n\n"
+        "投資人可核對證交所原始名單。\n\n"
+        "你的持股是否落在本週外資買賣超前列？\n\n#台股"
+    )
+    codes = {
+        item.code
+        for item in check_quality(
+            text,
+            title="外資集中市場買賣超",
+            recovery=True,
+            source_text=source,
+        )
+    }
+    codes.update(
+        item.code
+        for item in check_platform_style(
+            "facebook",
+            text,
+            title="外資集中市場買賣超",
+            recovery=True,
+        )
+    )
+
+    assert "unsupported_market_inference" in codes
+    assert "platform_stat_overload" in codes
+
+
+def test_v34_food_safety_rejects_mismatched_application_closing() -> None:
+    text = (
+        "食藥署公布中聯油脂案調查結果。\n\n"
+        "民眾可追蹤立法院後續審議。\n\n"
+        "如果政策適用你或家人，你最想先確認資格、開始日期，還是申請方式？\n\n"
+        "#食品安全"
+    )
+    codes = {
+        item.code
+        for item in check_platform_style(
+            "facebook",
+            text,
+            title="中聯油脂食安調查",
+            recovery=True,
+        )
+    }
+
+    assert "generic_engagement_bait" in codes
+
+
 def test_v22_rejects_stock_question_that_only_says_holdings() -> None:
     body = (
         "根據證交所本週統計，加權指數上漲2.3%。\n\n"
