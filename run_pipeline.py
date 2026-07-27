@@ -478,6 +478,12 @@ def _deterministic_recovery_closing_repair(
             question = "如果你家有未成年孩子，你最想先確認適用資格、撥款規則，還是申請方式？"
         elif re.search(r"詐騙|人頭門號|高價收購", source_evidence_text):
             question = "如果你家孩子收到高價收購訊息，你會先停下交易、查證對方，還是聯絡警方？"
+        elif re.search(
+            r"食安|食藥署|食品安全|油脂|苯\s*\(a\)\s*駢芘|抽驗|回收",
+            source_evidence_text,
+            re.IGNORECASE,
+        ):
+            question = "你買食用油時，最希望主管機關優先公開原料風險、抽驗結果，還是違規改善進度？"
         elif re.search(r"解放軍|海警|封鎖|攻臺|國防", source_evidence_text):
             question = "如果這項安全威脅影響公共預算，你最想先看到風險說明、應變時程，還是驗證標準？"
         elif topic in policy_topics:

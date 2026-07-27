@@ -206,6 +206,27 @@ def test_deterministic_energy_closing_uses_source_context_over_topic_label() -> 
     assert repaired.index("官方演習結果？") < repaired.index("#國防安全")
 
 
+def test_v34_deterministic_food_safety_closing_uses_source_context() -> None:
+    body = (
+        "食藥署公布中聯油脂案調查結果。\n\n"
+        "民眾可追蹤立法院後續審議。\n\n"
+        "如果政策適用你或家人，你最想先確認資格、開始日期，還是申請方式？\n\n"
+        "#食品安全"
+    )
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="fb",
+        topic="tw_politics",
+        source_evidence_text="食藥署公布中聯油脂食品安全調查結果。",
+        source_label="食藥署 本署新聞",
+    )
+
+    assert "原料風險、抽驗結果，還是違規改善進度" in repaired
+    assert "資格" not in repaired
+    assert repaired.index("違規改善進度？") < repaired.index("#食品安全")
+
+
 def test_deterministic_market_utility_repair_is_concrete() -> None:
     body = "證交所公布本週市場統計。\n\n你的持股有跑贏大盤嗎？"
 
@@ -329,6 +350,26 @@ def test_deterministic_market_inference_prune_keeps_sourced_fact() -> None:
     assert "加權指數上漲2.3%" in repaired
     assert "市場情緒有所回暖" not in repaired
     assert "吸引更多資金" not in repaired
+
+
+def test_v34_market_inference_prune_removes_flow_causality() -> None:
+    source = "證交所公布，上週外資在集中市場賣超470.64億元。"
+    body = (
+        source
+        + "這反映外資對不同產業的看法，可能帶動個股短期波動。\n\n"
+        "外資大幅賣超可能影響持股價值與市場信心。"
+    )
+
+    repaired = _deterministic_recovery_inference_prune(
+        body,
+        topic="tw_stocks",
+        source_evidence_text=source,
+    )
+
+    assert "賣超470.64億元" in repaired
+    assert "反映外資" not in repaired
+    assert "短期波動" not in repaired
+    assert "市場信心" not in repaired
 
 
 def test_deterministic_market_prunes_vague_fb_interpretation_and_title() -> None:
