@@ -20,6 +20,7 @@
     superseded: "已取代",
   };
   const HEALTH_COPY = {
+    daily_publish_cadence: "每日實際發文",
     substack_draft_worker: "Substack 現行草稿 worker",
     substack_legacy_backlog: "Substack 歷史待核實",
   };
@@ -210,12 +211,13 @@
       const eng = engagement.find(row=>row.platform===platform) || {};
       const aud = audience.find(row=>row.platform===platform) || {};
       const q = quality.find(row=>row.platform===platform) || {};
-      const h = health.find(row=>row.platform===platform && row.metric==="latest_post_canary") ||
+      const cadence = health.find(row=>row.platform===platform && row.metric==="daily_publish_cadence");
+      const h = cadence || health.find(row=>row.platform===platform && row.metric==="latest_post_canary") ||
         health.find(row=>row.platform===platform && row.metric==="engagement_api");
       const card = node("article", "platform"); card.style.setProperty("--platform-color", meta.color);
       const head=node("div","platform-head"); const name=node("div","platform-name");
       name.append(node("span","platform-icon",meta.short),node("span","",meta.label));
-      head.append(name,node("span","metric-state",h ? `${h.status.toUpperCase()} data` : "UNKNOWN data"));
+      head.append(name,node("span","metric-state",h ? `${h.status.toUpperCase()} ${cadence ? "cadence" : "data"}` : "UNKNOWN data"));
       const metrics=node("div","platform-main");
       const nativeMetrics = platform === "facebook"
         ? [
