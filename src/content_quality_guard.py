@@ -38,7 +38,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v34"
+QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v35"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -747,7 +747,10 @@ _UNSUPPORTED_MARKET_INFERENCES = (
     "對臺股資金流向產生直接影響",
     "反映外資對不同產業的看法",
     "可能帶動個股短期波動",
+    "容易引發相關個股價格波動",
+    "市場情緒的變化",
     "可能影響持股價值與市場信心",
+    "牽動整體市場信心",
     "這波漲幅中受益",
     "適應市場變化",
     "跟上市場的步伐",

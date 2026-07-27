@@ -514,12 +514,23 @@ def _deterministic_recovery_utility_repair(
     body: str,
     *,
     topic: str | None,
+    source_evidence_text: str = "",
 ) -> str:
-    """Insert one compact, checkable reader action for an otherwise clean stock post."""
+    """Insert one compact, checkable reader action for a supported source type."""
 
-    if topic != "tw_stocks":
+    if re.search(
+        r"食安|食藥署|食品安全|油脂|苯\s*\(a\)\s*駢芘|抽驗|回收",
+        source_evidence_text,
+        re.IGNORECASE,
+    ):
+        utility = (
+            "這項修法會直接影響食品業者的管理責任；消費者可追蹤立法院審議與"
+            "食藥署後續公告，核對源頭、製程、異常通報與品質管理規則是否落地。"
+        )
+    elif topic == "tw_stocks":
+        utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
+    else:
         return body
-    utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     trailing_hashtags: list[str] = []
     while paragraphs and all(
@@ -1632,6 +1643,7 @@ async def process_item(
             "reserve_source_false_recency",
         }
         universal_deterministic_codes = closing_codes | reserve_framing_codes | {
+            "missing_reader_utility",
             "platform_hashtag_overload",
         }
         stock_deterministic_codes = universal_deterministic_codes | {
@@ -1686,6 +1698,7 @@ async def process_item(
                     repaired_body = _deterministic_recovery_utility_repair(
                         repaired_body,
                         topic=topic_cls.category_id,
+                        source_evidence_text=source_evidence_text,
                     )
                 if platform_codes & closing_codes:
                     repaired_body = _deterministic_recovery_closing_repair(
