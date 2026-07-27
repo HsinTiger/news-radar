@@ -4,9 +4,9 @@ compatibility_date = "2026-07-23"
 workers_dev = true
 
 [vars]
-AUTOMATION_MODE = "paused"
-SUBMISSION_PROCESSOR_MODE = "paused"
-ENABLE_META_PUBLISH_NOW = "false"
+AUTOMATION_MODE = "recovery"
+SUBMISSION_PROCESSOR_MODE = "live"
+ENABLE_META_PUBLISH_NOW = "true"
 
 [observability]
 enabled = true

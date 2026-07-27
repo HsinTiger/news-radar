@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-25.recovery-v29";
+const API_VERSION = "2026-07-27.meta-submit-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -84,8 +84,15 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/health") {
-        const row = await env.DB.prepare("SELECT 1 AS ok").first();
-        return reply({ ok: row?.ok === 1, version: API_VERSION }, 200, cors);
+        const [row, runtime] = await Promise.all([
+          env.DB.prepare("SELECT 1 AS ok").first(),
+          currentRuntime(env),
+        ]);
+        return reply(
+          { ok: row?.ok === 1, version: API_VERSION, automation: runtime },
+          200,
+          cors,
+        );
       }
       if (url.pathname === "/" || url.searchParams.has("action")) {
         throw new HTTPError(
@@ -179,6 +186,24 @@ function reply(payload, status, headers) {
     status,
     headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
   });
+}
+
+async function currentRuntime(env) {
+  const row = await env.DB.prepare(
+    "SELECT mode,submission_processor,source,updated_at FROM automation_state WHERE id='runtime'",
+  ).first();
+  const mode = row?.mode || env.AUTOMATION_MODE || "paused";
+  const submissionProcessor = row?.submission_processor || env.SUBMISSION_PROCESSOR_MODE || "paused";
+  const metaPublishNowEnabled = env.ENABLE_META_PUBLISH_NOW === "true";
+  return {
+    mode,
+    submission_processor: submissionProcessor,
+    source: row?.source || "worker_fallback",
+    updated_at: row?.updated_at || null,
+    meta_publish_now_enabled: metaPublishNowEnabled,
+    meta_publish_now_ready: metaPublishNowEnabled && submissionProcessor === "live",
+    substack_auto_publish: false,
+  };
 }
 
 async function requireToken(request, expected, actor) {
@@ -302,12 +327,36 @@ async function createSubmission(request, env, cors) {
   if (target === "meta" && !META_MODES.has(mode)) {
     throw new HTTPError(400, "Meta mode must be publish_now or queue", "invalid_input");
   }
-  if (target === "meta" && mode === "publish_now" && env.ENABLE_META_PUBLISH_NOW !== "true") {
-    throw new HTTPError(
-      409,
-      "Meta publish-now is locked until the owner canary is approved",
-      "canary_required",
-    );
+  if (target === "meta" && mode === "publish_now") {
+    const runtime = await currentRuntime(env);
+    if (!runtime.meta_publish_now_enabled) {
+      throw new HTTPError(
+        409,
+        "Meta publish-now is locked until the setup-only canary is approved",
+        "canary_required",
+      );
+    }
+    if (!runtime.meta_publish_now_ready) {
+      throw new HTTPError(
+        409,
+        "Meta publish-now is unavailable because the submission processor is not live",
+        "processor_unavailable",
+      );
+    }
+    if (sourceType === "text" && !note) {
+      throw new HTTPError(
+        400,
+        "note is required as the editorial title for immediate text publishing",
+        "editorial_title_required",
+      );
+    }
+    if (sourceType === "text" && content.length < 80) {
+      throw new HTTPError(
+        400,
+        "immediate text publishing requires at least 80 characters of source material",
+        "source_too_short",
+      );
+    }
   }
   let platforms = target === "meta" ? body.platforms : [];
   if (!Array.isArray(platforms)) throw new HTTPError(400, "platforms must be an array", "invalid_input");
@@ -1027,12 +1076,9 @@ async function dashboard(env, cors) {
       version: API_VERSION,
       generated_at: new Date().toISOString(),
       automation: {
-        mode: runtime.mode || env.AUTOMATION_MODE || "paused",
-        submission_processor: runtime.submission_processor || env.SUBMISSION_PROCESSOR_MODE || "paused",
+        ...(await currentRuntime(env)),
         source: runtime.source || "worker_fallback",
         updated_at: runtime.updated_at || null,
-        meta_publish_now_enabled: env.ENABLE_META_PUBLISH_NOW === "true",
-        substack_auto_publish: false,
       },
       submissions: submissions.results,
       recent_submissions: recentSubmissions.results.map((row) => ({

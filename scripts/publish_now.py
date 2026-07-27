@@ -77,6 +77,7 @@ STATUS_PUBLISHED = "published"
 STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
 STATUS_QUALITY_HELD = "quality_held"
+STATUS_SETUP_READY = "setup_ready"
 
 
 def _now() -> str:
@@ -358,6 +359,171 @@ def _quality_problems(findings: dict[str, list], severity: str) -> list[str]:
         for platform, issues in findings.items()
         if predicate(issues)
     ]
+
+
+def _quality_evidence(findings: dict[str, list]) -> dict[str, list[dict[str, str]]]:
+    return {
+        platform: [
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "message": issue.message,
+                "evidence": issue.evidence,
+            }
+            for issue in issues
+        ]
+        for platform, issues in findings.items()
+    }
+
+
+def _check_setup_quality(
+    finalized: dict[str, dict[str, Any]],
+    *,
+    title: str,
+) -> tuple[dict[str, list], list[str]]:
+    findings = {
+        platform: check_quality(item["full_text"], title=title)
+        for platform, item in finalized.items()
+    }
+    unresolved = _quality_problems(findings, "block")
+    unresolved.extend(_quality_problems(findings, "rewrite"))
+    return findings, unresolved
+
+
+def _render_setup_previews(
+    *,
+    evidence_dir: Path,
+    bundle,
+    finalized: dict[str, dict[str, Any]],
+    platforms: list[str],
+) -> dict[str, list[str]]:
+    previews: dict[str, list[str]] = {}
+    for platform in platforms:
+        item = finalized[platform]
+        cards = build_cards(
+            title=item["title"] or "",
+            subtitle="",
+            carousel=bundle.carousel,
+        )
+        if len(cards) < 2:
+            raise ValueError(f"{platform}: build_cards <2")
+        output_dir = evidence_dir / "cards" / platform
+        paths = render_cards(
+            cards=cards,
+            topic_category="other",
+            aspect=platform,
+            output_dir=output_dir,
+        )
+        if len(paths) < 2:
+            raise ValueError(f"{platform}: render_cards <2")
+        previews[platform] = [
+            path.resolve().relative_to(evidence_dir.resolve()).as_posix()
+            for path in paths
+        ]
+    return previews
+
+
+async def run_setup_only(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    """Compose and render evidence without opening canonical state or Meta APIs."""
+    platforms = _parse_platforms(args.platforms)
+    title, text = _load_source(args)
+    if len(text) < 80:
+        raise ValueError("抓不到足夠內文；請改用全文輸入")
+    content = (f"{args.note}\n\n" if args.note else "") + text
+    bundle = await compose_multi_platform(
+        title,
+        content,
+        editorial_note=args.note,
+        platforms=platforms,
+    )
+    if bundle is None:
+        return 3, {
+            "status": STATUS_FAILED,
+            "reason": "compose_failed",
+            "selected_platforms": [_DB_PLATFORM[p] for p in platforms],
+            "publish_invoked": False,
+            "canonical_state_mutated": False,
+        }
+    finalized, structural = _finalize_bundle(bundle, platforms)
+    findings: dict[str, list] = {}
+    unresolved = structural
+    if not unresolved:
+        findings, unresolved = _check_setup_quality(finalized, title=title)
+    if unresolved:
+        print(
+            "[publish_now] ✍️ setup-only quality guard 要求唯一一次重寫："
+            + " || ".join(unresolved),
+            flush=True,
+        )
+        rewrite_note = (
+            f"{args.note}\n\nQUALITY REWRITE (one attempt only): Preserve source-backed "
+            "facts and the core insight. Remove or attribute unsupported numeric claims; "
+            "do not invent citations. Fix: "
+            + " || ".join(unresolved)
+        )
+        retry = await compose_multi_platform(
+            title,
+            content,
+            editorial_note=rewrite_note,
+            platforms=platforms,
+        )
+        if retry is not None:
+            retry_finalized, retry_structural = _finalize_bundle(retry, platforms)
+            if not retry_structural:
+                retry_findings, retry_unresolved = _check_setup_quality(
+                    retry_finalized,
+                    title=title,
+                )
+                bundle = retry
+                finalized = retry_finalized
+                findings = retry_findings
+                unresolved = retry_unresolved
+            else:
+                unresolved = ["quality rewrite incomplete", *retry_structural]
+        else:
+            unresolved = ["quality rewrite composer failed", *unresolved]
+
+    evidence_dir = Path(args.evidence_dir)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    preview_payload = {
+        platform: {
+            "title": item["title"],
+            "full_text": item["full_text"],
+            "within_limit": item["within_limit"],
+        }
+        for platform, item in finalized.items()
+    }
+    if unresolved:
+        result = {
+            "status": STATUS_QUALITY_HELD,
+            "reason": "unresolved_quality_evidence",
+            "issues": unresolved,
+            "quality": _quality_evidence(findings),
+            "selected_platforms": [_DB_PLATFORM[p] for p in platforms],
+            "previews": preview_payload,
+            "publish_invoked": False,
+            "canonical_state_mutated": False,
+        }
+        _write_result(str(evidence_dir / "setup_only_evidence.json"), result)
+        return 4, result
+
+    card_files = _render_setup_previews(
+        evidence_dir=evidence_dir,
+        bundle=bundle,
+        finalized=finalized,
+        platforms=platforms,
+    )
+    result = {
+        "status": STATUS_SETUP_READY,
+        "selected_platforms": [_DB_PLATFORM[p] for p in platforms],
+        "quality": _quality_evidence(findings),
+        "previews": preview_payload,
+        "card_files": card_files,
+        "publish_invoked": False,
+        "canonical_state_mutated": False,
+    }
+    _write_result(str(evidence_dir / "setup_only_evidence.json"), result)
+    return 0, result
 
 
 async def _compose_governed(
@@ -679,13 +845,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--note", default="")
     parser.add_argument("--submission-id", default="")
     parser.add_argument("--result-json", default="")
+    parser.add_argument(
+        "--setup-only",
+        action="store_true",
+        help="compose, quality-check, and render previews without DB or Meta I/O",
+    )
+    parser.add_argument("--evidence-dir", default="logs/publish-now-canary")
     return parser
 
 
 async def main() -> int:
     args = _parser().parse_args()
     try:
-        exit_code, result = await run(args)
+        if args.setup_only:
+            exit_code, result = await run_setup_only(args)
+        else:
+            exit_code, result = await run(args)
     except (OSError, ValueError) as exc:
         exit_code = 2
         result = {"status": STATUS_FAILED, "reason": str(exc)[:500]}

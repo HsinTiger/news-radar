@@ -38,19 +38,95 @@ on:
         required: false
         default: ""
         type: string
+      setup_only:
+        description: "Setup-only canary: compose + quality + local previews; never publish"
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
   group: news-radar-production
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  models: read
+permissions: {}
 
 jobs:
-  publish-now:
+  setup-canary:
+    if: ${{ inputs.setup_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      models: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip -q
+          pip install -r requirements.txt -q
+
+      - name: Download preview fonts
+        run: |
+          mkdir -p assets/fonts
+          BASE_SANS="https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese"
+          BASE_SERIF="https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/TraditionalChinese"
+          for f in SourceHanSansTC-Bold SourceHanSansTC-Regular SourceHanSerifTC-Light; do
+            curl -sSL --fail-with-body -o "assets/fonts/${f}.otf" \
+              "${BASE_SANS}/${f}.otf" 2>/dev/null || \
+            curl -sSL --fail-with-body -o "assets/fonts/${f}.otf" \
+              "${BASE_SERIF}/${f}.otf" 2>/dev/null || true
+          done
+
+      - name: Compose and render without canonical or Meta writes
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_MODELS_MODEL: openai/gpt-4.1
+          LITELLM_MODEL: gemini/gemini-2.5-flash
+          TZ: Asia/Taipei
+          PYTHONUNBUFFERED: "1"
+          INPUT_URL: ${{ inputs.url }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_TEXT: ${{ inputs.text }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          INPUT_NOTE: ${{ inputs.note }}
+        run: |
+          set -o pipefail
+          mkdir -p logs/publish-now-canary
+          python scripts/publish_now.py \
+            --setup-only \
+            --url "$INPUT_URL" \
+            --title "$INPUT_TITLE" \
+            --text "$INPUT_TEXT" \
+            --platforms "$INPUT_PLATFORMS" \
+            --note "$INPUT_NOTE" \
+            --result-json logs/publish-now-canary/result.json \
+            --evidence-dir logs/publish-now-canary 2>&1 | tee logs/publish-now-canary/run.log
+
+      - name: Upload owner-auditable canary evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: publish-now-setup-canary-${{ github.run_id }}
+          path: logs/publish-now-canary/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish-now:
+    if: ${{ !inputs.setup_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      models: read
     steps:
       - uses: actions/checkout@v5
 
@@ -111,18 +187,24 @@ jobs:
           THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
           TZ: Asia/Taipei
           PYTHONUNBUFFERED: "1"
+          INPUT_URL: ${{ inputs.url }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_TEXT: ${{ inputs.text }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          INPUT_NOTE: ${{ inputs.note }}
+          INPUT_SUBMISSION_ID: ${{ inputs.submission_id }}
         run: |
           set -o pipefail
           mkdir -p logs
           set +e
           python scripts/publish_now.py \
-            --url "${{ inputs.url }}" \
-            --title "${{ inputs.title }}" \
-            --text "${{ inputs.text }}" \
-            --platforms "${{ inputs.platforms }}" \
-            --submission-id "${{ inputs.submission_id }}" \
+            --url "$INPUT_URL" \
+            --title "$INPUT_TITLE" \
+            --text "$INPUT_TEXT" \
+            --platforms "$INPUT_PLATFORMS" \
+            --submission-id "$INPUT_SUBMISSION_ID" \
             --result-json logs/publish_now_result.json \
-            --note "${{ inputs.note }}" 2>&1 | tee logs/publish_now_last.log
+            --note "$INPUT_NOTE" 2>&1 | tee logs/publish_now_last.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           RESULT_STATUS=$(python -c "import json; print(json.load(open('logs/publish_now_result.json', encoding='utf-8')).get('status','failed'))" 2>/dev/null || echo failed)

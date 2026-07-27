@@ -52,6 +52,7 @@ def build_dispatch(submission: dict[str, Any]) -> Dispatch:
                     "platforms": platforms,
                     "note": submission.get("note", ""),
                     "submission_id": submission["id"],
+                    "setup_only": "false",
                 },
             )
         return Dispatch(
@@ -63,6 +64,7 @@ def build_dispatch(submission: dict[str, Any]) -> Dispatch:
                 "platforms": platforms,
                 "note": submission.get("note", ""),
                 "submission_id": submission["id"],
+                "setup_only": "false",
             },
         )
     raise ValueError("unsupported Meta submission mode")
