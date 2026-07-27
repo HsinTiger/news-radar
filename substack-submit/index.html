@@ -107,7 +107,7 @@
           <button type="button" data-target="meta">Meta 三平台</button>
         </div>
 
-        <div class="route-copy" id="route-copy">Substack 永遠只建立草稿；Mac 真正建立草稿後，狀態才會顯示「草稿已建立」。</div>
+        <div class="route-copy" id="route-copy">Substack 永遠只建立草稿；入口固定走已有遠端實證的快速通道，遠端草稿 ID 回寫後才顯示「草稿已建立」。</div>
 
         <div class="field">
           <div class="legend">來源類型</div>
@@ -132,10 +132,9 @@
         </div>
 
         <div id="substack-options">
-          <div class="legend">草稿優先級</div>
+          <div class="legend">Substack 草稿路徑</div>
           <div class="modes">
-            <label class="chip"><input type="radio" name="substack-mode" value="draft" checked><span>一般佇列</span></label>
-            <label class="chip"><input type="radio" name="substack-mode" value="draft_priority"><span>優先處理</span></label>
+            <label class="chip"><input type="radio" name="substack-mode" value="draft_priority" checked><span>高品質草稿 · 快速通道</span></label>
           </div>
         </div>
 
@@ -302,7 +301,7 @@
     document.getElementById("substack-options").hidden = target !== "substack";
     document.getElementById("meta-options").hidden = target !== "meta";
     document.getElementById("route-copy").textContent = target === "substack"
-      ? "Substack 永遠只建立草稿；Mac 真正建立草稿後，狀態才會顯示「草稿已建立」。"
+      ? "Substack 永遠只建立草稿；入口固定走已有遠端實證的快速通道，遠端草稿 ID 回寫後才顯示「草稿已建立」。"
       : (metaRuntime.ready
         ? "Meta 會依平台各自生成內容；可選內容佇列，或經品質閘門後立即發布。"
         : "Meta 會依平台各自生成內容；目前 production runtime 只允許進內容佇列。");

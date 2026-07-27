@@ -39,8 +39,10 @@ LEASED=1
 DB_PATH="$TMPROOT/data/01_harvest/news_radar.db"
 BEFORE_SHA=$(shasum -a 256 "$DB_PATH" | awk '{print $1}')
 
+# Serve every current control-plane submission.  The selector prioritizes
+# explicit immediate requests and excludes legacy rows without lineage.
 NEWS_RADAR_DB="$DB_PATH" \
-  "$PY" -u scripts/drain_substack.py --only-immediate
+  "$PY" -u scripts/drain_substack.py --only-current-control
 DRAIN_EXIT=$?
 
 AFTER_SHA=$(shasum -a 256 "$DB_PATH" | awk '{print $1}')

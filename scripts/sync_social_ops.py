@@ -489,12 +489,19 @@ def _age_hours(value: str | None, now: datetime) -> float | None:
         return None
 
 
-def build_substack_worker_health(
+def _build_substack_scope_health(
     conn: sqlite3.Connection,
     *,
     captured_at: str,
+    current_control: bool,
 ) -> dict[str, Any]:
-    """Expose draft-worker evidence without exporting owner article content."""
+    """Expose current and legacy draft evidence without owner article content."""
+    metric = (
+        "substack_draft_worker"
+        if current_control
+        else "substack_legacy_backlog"
+    )
+    scope = "current" if current_control else "legacy"
     tables = {
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -502,27 +509,42 @@ def build_substack_worker_health(
     if "news_items" not in tables:
         return {
             "platform": "system",
-            "metric": "substack_draft_worker",
+            "metric": metric,
             "status": "unknown",
-            "detail": "news_items=missing; draft worker evidence unavailable",
+            "detail": f"news_items=missing; {scope} draft evidence unavailable",
             "captured_at": captured_at,
         }
     columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
-    required = {"substack_draft_id", "substack_drafted_at"}
+    required = {"tags", "substack_draft_id", "substack_drafted_at"}
+    if "tags" not in columns:
+        return {
+            "platform": "system",
+            "metric": metric,
+            "status": "unknown",
+            "detail": f"schema=legacy; {scope}_classification=unavailable",
+            "captured_at": captured_at,
+        }
+    scope_where = (
+        "tags LIKE '%control_submission:%'"
+        if current_control
+        else "COALESCE(tags,'') NOT LIKE '%control_submission:%'"
+    )
     total_row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS total,MIN(fetched_at) AS oldest,MAX(fetched_at) AS newest
-          FROM news_items WHERE feed_name='user_substack'
+          FROM news_items
+         WHERE feed_name='user_substack' AND {scope_where}
         """
     ).fetchone()
     total = int(total_row["total"] or 0)
     if not required <= columns:
         return {
             "platform": "system",
-            "metric": "substack_draft_worker",
+            "metric": metric,
             "status": "degraded" if total else "unknown",
             "detail": (
-                f"schema=legacy; submissions={total}; remote_evidence=unavailable; "
+                f"schema=legacy; {scope}_submissions={total}; "
+                "remote_evidence=unavailable; "
                 f"oldest={total_row['oldest'] or 'none'}; "
                 f"newest={total_row['newest'] or 'none'}"
             ),
@@ -545,7 +567,8 @@ def build_substack_worker_health(
                MIN(CASE WHEN substack_drafted_at IS NULL OR substack_draft_id IS NULL
                         THEN fetched_at END) AS oldest_pending,
                MAX(substack_drafted_at) AS latest_remote
-          FROM news_items WHERE feed_name='user_substack'
+          FROM news_items
+         WHERE feed_name='user_substack' AND {scope_where}
         """
     ).fetchone()
     total = int(row["total"] or 0)
@@ -555,34 +578,71 @@ def build_substack_worker_health(
     now = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
     oldest_pending_hours = _age_hours(row["oldest_pending"], now)
     latest_remote_hours = _age_hours(row["latest_remote"], now)
+    remote_fresh_hours = 24
     if total == 0:
         status = "unknown"
+    elif not current_control and pending:
+        status = "degraded"
     elif pending:
-        status = (
-            "degraded"
-            if oldest_pending_hours is None or oldest_pending_hours >= 6
-            else "unknown"
-        )
+        status = "degraded" if oldest_pending_hours is None or oldest_pending_hours >= 6 else "unknown"
+    elif not current_control:
+        status = "healthy" if remote_proven == total else "unknown"
     else:
         status = (
             "healthy"
             if remote_proven == total
             and latest_remote_hours is not None
-            and latest_remote_hours <= 168
+            and latest_remote_hours <= remote_fresh_hours
             else "unknown"
         )
     return {
         "platform": "system",
-        "metric": "substack_draft_worker",
+        "metric": metric,
         "status": status,
         "detail": (
-            f"submissions={total}; pending_remote={pending}; local_written={local_written}; "
-            f"remote_proven={remote_proven}; "
+            f"{scope}_submissions={total}; {scope}_pending_remote={pending}; "
+            f"{scope}_local_written={local_written}; {scope}_remote_proven={remote_proven}; "
             f"oldest_pending={row['oldest_pending'] or 'none'}; "
-            f"latest_remote={row['latest_remote'] or 'none'}; stale_gate=6h"
+            f"latest_remote={row['latest_remote'] or 'none'}; "
+            + (
+                "latest_remote_age_hours="
+                f"{latest_remote_hours:.1f}; pending_stale_gate=6h; "
+                f"remote_fresh_gate={remote_fresh_hours}h"
+                if current_control and latest_remote_hours is not None
+                else "latest_remote_age_hours=none; pending_stale_gate=6h; "
+                f"remote_fresh_gate={remote_fresh_hours}h"
+                if current_control
+                else "history_preserved=true"
+            )
         ),
         "captured_at": captured_at,
     }
+
+
+def build_substack_worker_health(
+    conn: sqlite3.Connection,
+    *,
+    captured_at: str,
+) -> dict[str, Any]:
+    """Current control-plane submissions; legacy rows cannot mask this signal."""
+    return _build_substack_scope_health(
+        conn,
+        captured_at=captured_at,
+        current_control=True,
+    )
+
+
+def build_substack_legacy_backlog_health(
+    conn: sqlite3.Connection,
+    *,
+    captured_at: str,
+) -> dict[str, Any]:
+    """Retain historical unverified backlog as a separate visible risk."""
+    return _build_substack_scope_health(
+        conn,
+        captured_at=captured_at,
+        current_control=False,
+    )
 
 
 def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -641,7 +701,12 @@ def build_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 },
             ]
         )
-    result.append(build_substack_worker_health(conn, captured_at=now))
+    result.extend(
+        [
+            build_substack_worker_health(conn, captured_at=now),
+            build_substack_legacy_backlog_health(conn, captured_at=now),
+        ]
+    )
     return result
 
 

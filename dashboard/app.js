@@ -20,7 +20,8 @@
     superseded: "已取代",
   };
   const HEALTH_COPY = {
-    substack_draft_worker: "Substack 草稿 worker",
+    substack_draft_worker: "Substack 現行草稿 worker",
+    substack_legacy_backlog: "Substack 歷史待核實",
   };
   const GOOD = new Set(["published", "complete", "draft_created", "healthy", "approved", "applied"]);
   const BAD = new Set(["failed", "rejected", "error"]);
