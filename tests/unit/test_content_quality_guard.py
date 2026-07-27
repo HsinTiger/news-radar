@@ -645,6 +645,27 @@ def test_v30_recovery_hook_accepts_day_unit_for_energy_reserve() -> None:
     assert "weak_recovery_hook" not in codes
 
 
+def test_v32_accepts_fda_publication_hook_and_direct_consumer_relevance() -> None:
+    text = (
+        "食藥署今（27）日公佈中聯油脂案第三方調查結果。\n\n"
+        "根據食藥署調查，原料管理、製程與檢驗監測有多項缺失。\n\n"
+        "這項修法直接關係到臺灣消費者未來能否避免類似食安風險；"
+        "民眾可持續關注立法院審議進度。"
+    )
+    codes = {
+        item.code
+        for item in check_quality(
+            text,
+            title="中聯油脂調查",
+            recovery=True,
+            source_text=text,
+        )
+    }
+
+    assert "weak_recovery_hook" not in codes
+    assert "missing_reader_utility" not in codes
+
+
 def test_recovery_accepts_modified_reader_phrase_and_specific_action():
     text = (
         "行政院通過法院組織法修正草案，未來進入法院將全面安檢。\n\n"
@@ -744,6 +765,22 @@ def test_recovery_numeric_grounding_normalizes_commas_decimals_and_percentages()
         "3521",
         "3521億元",
     ]
+
+
+def test_v32_numeric_grounding_normalizes_spaced_and_parenthesized_dates() -> None:
+    source = (
+        "食藥署今（27）日公布調查結果，行政院於 7 月 23 日通過修正草案。"
+    )
+    text = "食藥署27日公布調查結果，行政院已於7月23日通過修正草案。"
+
+    issues = check_quality(
+        text,
+        title="食安修法",
+        recovery=True,
+        source_text=source,
+    )
+
+    assert "unsupported_numeric_claim" not in {item.code for item in issues}
 
 
 def test_recovery_numeric_grounding_rejects_rounded_compound_amount():

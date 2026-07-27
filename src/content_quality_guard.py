@@ -38,7 +38,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v31"
+QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v32"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -247,13 +247,15 @@ _RECOVERY_IMPACT_PATTERN = re.compile(
     rf"|(?:{_RECOVERY_READER})[^。！？\n]{{0,60}}"
     r"(?:會|可能|將|得|面臨|增加|減少|多花|少拿|延誤|損失|受益|跑輸|跑贏)"
     r"|(?:這|此).{0,20}(?:對你意味著|會直接影響)"
+    rf"|(?:這|此次|此舉|這項|此項)[^。！？\n]{{0,24}}"
+    rf"(?:直接)?關係到[^。！？\n]{{0,24}}(?:{_RECOVERY_READER})"
     rf"|(?:這|此次|此舉)[^。！？\n]{{0,20}}(?:意味|代表)"
     rf"[^。！？\n]{{0,20}}(?:{_RECOVERY_READER})[^。！？\n]{{0,40}}"
     r"(?:可|可以|能|能夠))",
 )
 _RECOVERY_ACTION_PATTERN = re.compile(
     rf"(?:(?:{_RECOVERY_READER})[^。！？\n]{{0,16}}"
-    r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切)?"
+    r"(?:可以|可|應該|應|需要|最好|不妨)(?:先|再|立即|主動|優先|提前|密切|持續)?"
     r"(?:查詢|確認|檢查|比較|比對|保留|避開|避免|等待|追蹤|申請|備份|"
     r"諮詢|停止|關閉|更新|調整|通報|規劃|準備|改用|檢視|巡檢|留意|"
     r"關注|採取|納入|參考|觀察)"
@@ -321,7 +323,7 @@ _RECOVERY_HOOK_ACTOR_PATTERN = re.compile(
 _RECOVERY_HOOK_CONSEQUENCE_PATTERN = re.compile(
     r"(?:\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|人|件|批|家|元|美元|倍|"
     r"點|日|天|年|小時|分鐘|秒|個|公里|公尺|毫米|公厘|縣市|村|里|村里))|"
-    r"(?:公告|公布|宣布|通過|否決|裁罰|起訴|判決|下架|"
+    r"(?:公告|公布|公佈|宣布|通過|否決|裁罰|起訴|判決|下架|"
     r"回收|停產|停業|暫停|恢復|調漲|調降|上調|下調|失守|大跌|暴跌|"
     r"上漲|下跌|增加|減少|超標|不合格|生效|延後|取消|刪減|凍結|"
     r"解禁|召回|關稅|缺藥|停電)"
@@ -704,10 +706,13 @@ _NUMERIC_CLAIM_PATTERN = re.compile(
 )
 _MATERIAL_QUANTITY_PATTERN = re.compile(
     r"\d[\d,]*(?:\.\d+)?"
-    r"(?:兆\d[\d,]*(?:\.\d+)?億|兆|億|萬)?"
-    r"(?:%|％|元|點|年|月|日|件|人|家|批|項|公里|公尺|噸|股|檔|倍|"
+    r"(?:\s*兆\s*\d[\d,]*(?:\.\d+)?\s*億|\s*(?:兆|億|萬))?"
+    r"\s*(?:%|％|元|點|年|月|日|件|人|家|批|項|公里|公尺|噸|股|檔|倍|"
     r"條|期|天|小時|分鐘|秒|GB|TB|MW|GW)",
     re.IGNORECASE,
+)
+_PARENTHESIZED_DAY_PATTERN = re.compile(
+    r"[（(]\s*(?P<day>\d{1,2})\s*[）)]\s*日"
 )
 _UNSUPPORTED_AUDIENCE_EXTENSIONS = (
     "退休基金",
@@ -773,7 +778,7 @@ def _normalize_quantity(raw: str) -> str:
         except InvalidOperation:
             return match.group(0)
 
-    value = raw.replace(",", "").replace("％", "%")
+    value = re.sub(r"\s+", "", raw).replace(",", "").replace("％", "%")
     return re.sub(r"\d+(?:\.\d+)?", normalize_number, value)
 
 
@@ -783,6 +788,8 @@ def _normalized_quantity_claims(text: str) -> set[str]:
     claims: set[str] = set()
     for match in _MATERIAL_QUANTITY_PATTERN.finditer(text or ""):
         claims.add(_normalize_quantity(match.group(0)))
+    for match in _PARENTHESIZED_DAY_PATTERN.finditer(text or ""):
+        claims.add(_normalize_quantity(f"{match.group('day')}日"))
     return claims
 
 
