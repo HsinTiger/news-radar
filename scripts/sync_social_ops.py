@@ -339,12 +339,18 @@ def build_recovery_experiments(conn: sqlite3.Connection) -> list[dict[str, Any]]
 
 
 def build_automation_state() -> list[dict[str, Any]]:
-    mode = os.environ.get("AUTOMATION_MODE", "paused").strip().lower()
-    processor = os.environ.get("SUBMISSION_PROCESSOR_MODE", "paused").strip().lower()
+    raw_mode = os.environ.get("AUTOMATION_MODE")
+    raw_processor = os.environ.get("SUBMISSION_PROCESSOR_MODE")
+    # Metadata-only callers must never overwrite durable runtime state merely
+    # because their workflow omitted repository variables.
+    if raw_mode is None or raw_processor is None:
+        return []
+    mode = raw_mode.strip().lower()
+    processor = raw_processor.strip().lower()
     if mode not in {"paused", "recovery", "live"}:
-        mode = "paused"
+        raise ValueError(f"invalid AUTOMATION_MODE: {mode!r}")
     if processor not in {"paused", "live"}:
-        processor = "paused"
+        raise ValueError(f"invalid SUBMISSION_PROCESSOR_MODE: {processor!r}")
     return [
         {
             "id": "runtime",
