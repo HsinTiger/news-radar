@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple, Optional
+from zoneinfo import ZoneInfo
 
 from src import db as dbmod
 from src import image_manager
@@ -204,6 +205,56 @@ def _deterministic_market_benchmark_carousel(
             {"label": "證交所總市值", "value": market_cap},
         ],
     )
+
+
+def _deterministic_reserve_framing_repair(
+    body: str,
+    *,
+    source_label: str,
+    source_published_at: str | None,
+) -> str:
+    """Add a dated attribution and remove claims of present-time recency."""
+
+    try:
+        published = datetime.fromisoformat(
+            str(source_published_at or "").replace("Z", "+00:00")
+        )
+    except ValueError:
+        return body
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    local = published.astimezone(ZoneInfo("Asia/Taipei"))
+    date_pattern = re.compile(
+        rf"(?:{local.month}\s*月\s*{local.day}\s*日|"
+        rf"0?{local.month}\s*[/\-]\s*0?{local.day})"
+    )
+
+    cleaned = (body or "").replace("最新", "後續")
+    segments = re.split(r"(?<=[。！？])", cleaned)
+    segments = [
+        segment
+        for segment in segments
+        if not re.search(r"今日|今天|剛剛|現正|截至目前|目前", segment)
+    ]
+    cleaned = "".join(segments).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    if date_pattern.search(cleaned):
+        return cleaned
+
+    label = re.sub(
+        r"\s*(?:官方訊息|本署新聞|消費警訊|本院新聞|新聞稿)$",
+        "",
+        " ".join(str(source_label or "官方來源").split()),
+    )
+    prefix = f"根據{label}{local.month}月{local.day}日公告，"
+    if re.match(r"^\s*根據[^，,。\n]{1,50}[，,]", cleaned):
+        return re.sub(
+            r"^\s*根據[^，,。\n]{1,50}[，,]",
+            prefix,
+            cleaned,
+            count=1,
+        )
+    return prefix + cleaned
 
 
 def _recovery_rewrite_guidance(
@@ -1570,7 +1621,11 @@ async def process_item(
             "multiple_closing_questions",
             "generic_engagement_bait",
         }
-        universal_deterministic_codes = closing_codes | {
+        reserve_framing_codes = {
+            "reserve_source_missing_date",
+            "reserve_source_false_recency",
+        }
+        universal_deterministic_codes = closing_codes | reserve_framing_codes | {
             "platform_hashtag_overload",
         }
         stock_deterministic_codes = universal_deterministic_codes | {
@@ -1594,6 +1649,12 @@ async def process_item(
                 }
                 repaired_body = variant.body
                 repaired_title = variant.title
+                if platform_codes & reserve_framing_codes:
+                    repaired_body = _deterministic_reserve_framing_repair(
+                        repaired_body,
+                        source_label=str(row["feed_name"] or ""),
+                        source_published_at=row["published_at"],
+                    )
                 if "formulaic_attention_hook" in platform_codes:
                     repaired_title = _deterministic_recovery_title_prune(
                         repaired_title

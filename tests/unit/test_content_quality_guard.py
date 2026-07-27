@@ -26,6 +26,10 @@ def test_official_reserve_requires_dated_non_breaking_framing() -> None:
         "行政院7月25日公告油價調整。讀者可核對本週加油支出。",
         published_at,
     ) == []
+    assert check_reserve_source_framing(
+        "根據行政院 2026 年 7 月 25 日公告，問題肉品未流入市面。",
+        published_at,
+    ) == []
     issues = check_reserve_source_framing(
         "行政院今日最新公告油價調整。",
         published_at,
