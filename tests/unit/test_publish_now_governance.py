@@ -18,6 +18,8 @@ def _args(*, platforms="threads", submission_id="submission-test-001"):
         note="",
         submission_id=submission_id,
         result_json="",
+        setup_only=False,
+        evidence_dir="",
     )
 
 
@@ -175,3 +177,48 @@ def test_unresolved_rewrite_is_held_without_external_publish(monkeypatch, tmp_pa
         assert conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_path):
+    canonical_db = tmp_path / "canonical.db"
+    monkeypatch.setattr(publish_now.dbmod, "DB_PATH", canonical_db)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("setup-only must not touch canonical or external publish I/O")
+
+    async def fake_compose(*_args, platforms, **_kwargs):
+        return _bundle(platforms)
+
+    monkeypatch.setattr(publish_now.dbmod, "init_db", forbidden)
+    monkeypatch.setattr(publish_now.dbmod, "get_conn", forbidden)
+    monkeypatch.setattr(publish_now, "upload_cards", forbidden)
+    monkeypatch.setattr(publish_now, "_publish_platform", forbidden)
+    monkeypatch.setattr(publish_now, "compose_multi_platform", fake_compose)
+    monkeypatch.setattr(publish_now, "check_quality", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "build_cards", lambda **_kwargs: [object(), object()])
+    monkeypatch.setattr(
+        publish_now,
+        "render_cards",
+        lambda *, output_dir, **_kwargs: [
+            output_dir / "card-1.png",
+            output_dir / "card-2.png",
+        ],
+    )
+    args = _args(platforms="fb,ig,threads", submission_id="")
+    args.setup_only = True
+    args.evidence_dir = str(tmp_path / "evidence")
+
+    exit_code, result = publish_now.asyncio.run(publish_now.run_setup_only(args))
+
+    assert exit_code == 0
+    assert result["status"] == "setup_ready"
+    assert result["publish_invoked"] is False
+    assert result["canonical_state_mutated"] is False
+    assert set(result["card_files"]) == {"fb", "ig", "threads"}
+    assert not canonical_db.exists()
+    evidence = json.loads(
+        (tmp_path / "evidence" / "setup_only_evidence.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert evidence["status"] == "setup_ready"

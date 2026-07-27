@@ -80,7 +80,7 @@
     <div>
       <div class="eyebrow">HSINTIGER SOCIAL OPS</div>
       <h1>一次性投稿控制台</h1>
-      <p class="lede">同一入口把觀點送往 Meta 內容佇列，或送往 Substack 草稿流程。畫面只呈現可稽核的實際狀態，不把「已排入」說成「已發布」。</p>
+      <p class="lede">同一入口把觀點送往 Meta 佇列或高品質立即發布流程，也能送往 Substack 草稿流程。畫面只呈現可稽核的實際狀態，不把「已排入」說成「已發布」。</p>
     </div>
     <nav class="topnav">
       <a class="link" href="../dashboard/">數據儀表板</a>
@@ -149,9 +149,9 @@
           <div class="legend" style="margin-top:14px">處理方式</div>
           <div class="modes">
             <label class="chip"><input type="radio" name="meta-mode" value="queue" checked><span>進內容佇列</span></label>
-            <label class="chip"><input type="radio" name="meta-mode" value="publish_now" disabled><span>立即發布（待 canary）</span></label>
+            <label class="chip"><input id="meta-publish-now" type="radio" name="meta-mode" value="publish_now" disabled><span id="meta-publish-now-label">立即發布（確認 runtime 中）</span></label>
           </div>
-          <div class="notice">目前正式發布仍為 paused。投稿可以安全累積，owner canary 通過後才會解鎖「立即發布」。</div>
+          <div class="notice" id="meta-runtime-notice">正在讀取 production runtime；確認前只允許進內容佇列。</div>
         </div>
 
         <div style="height:18px"></div>
@@ -183,8 +183,12 @@
   const submitButton = document.getElementById("submit");
   const message = document.getElementById("message");
   const history = document.getElementById("history");
+  const publishNowInput = document.getElementById("meta-publish-now");
+  const publishNowLabel = document.getElementById("meta-publish-now-label");
+  const metaRuntimeNotice = document.getElementById("meta-runtime-notice");
   let target = "substack";
   let pollTimer = null;
+  let metaRuntime = {loaded:false, ready:false, mode:"unknown", processor:"unknown", version:"unknown"};
 
   const STATUS_COPY = {
     queued: "已受理，等待受治理 poller",
@@ -212,12 +216,58 @@
   function clearToken(){ sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); }
   function authHeaders(extra){ return Object.assign({Authorization: `Bearer ${token()}`}, extra || {}); }
   function showMessage(text, kind){ message.textContent = text; message.className = `message show ${kind}`; }
+  function updateSubmitButton(){
+    const ok = Boolean(token());
+    submitButton.disabled = !ok;
+    if(!ok){ submitButton.textContent = "先驗證 owner token"; return; }
+    if(target === "substack"){ submitButton.textContent = "送到 Substack 草稿流程"; return; }
+    submitButton.textContent = selected("meta-mode") === "publish_now"
+      ? "品質檢查後立即發布到 Meta"
+      : "送到 Meta 內容佇列";
+  }
   function setUnlocked(ok){
     const remembered = ok && !!localStorage.getItem(TOKEN_KEY);
     lockState.textContent = ok ? (remembered ? "已驗證；已記住此裝置" : "已驗證；token 只活在這個分頁") : "尚未驗證";
     lockState.className = `lock-state${ok ? " ok" : ""}`;
-    submitButton.disabled = !ok;
-    submitButton.textContent = ok ? (target === "substack" ? "送到 Substack 草稿流程" : "送到 Meta 內容佇列") : "先驗證 owner token";
+    updateSubmitButton();
+  }
+
+  function applyMetaRuntime(){
+    publishNowInput.disabled = !metaRuntime.ready;
+    if(!metaRuntime.ready && publishNowInput.checked){
+      document.querySelector('input[name="meta-mode"][value="queue"]').checked = true;
+    }
+    publishNowLabel.textContent = metaRuntime.ready
+      ? "立即發布（品質閘門）"
+      : (metaRuntime.loaded ? "立即發布（runtime 未就緒）" : "立即發布（無法確認 runtime）");
+    metaRuntimeNotice.textContent = metaRuntime.ready
+      ? `Meta 即時流程已就緒（${metaRuntime.mode} / processor ${metaRuntime.processor} / ${metaRuntime.version}）。送出後仍須等待各平台 post ID 才算發布成功。`
+      : `Meta 即時流程目前不可用（${metaRuntime.mode} / processor ${metaRuntime.processor} / ${metaRuntime.version}）；已自動保留安全的內容佇列選項。`;
+    if(target === "meta"){
+      document.getElementById("route-copy").textContent = metaRuntime.ready
+        ? "Meta 會依平台各自生成內容；可選內容佇列，或經品質閘門後立即發布。"
+        : "Meta 會依平台各自生成內容；目前 production runtime 只允許進內容佇列。";
+    }
+    updateSubmitButton();
+  }
+
+  async function loadRuntime(){
+    try{
+      const response = await fetch(`${API}/health`, {headers:{Accept:"application/json"}});
+      const data = await response.json().catch(() => ({}));
+      if(!response.ok || !data.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      const automation = data.automation || {};
+      metaRuntime = {
+        loaded:true,
+        ready:automation.meta_publish_now_ready === true,
+        mode:automation.mode || "unknown",
+        processor:automation.submission_processor || "unknown",
+        version:data.version || "unknown"
+      };
+    }catch(_error){
+      metaRuntime = {loaded:false, ready:false, mode:"unreachable", processor:"unknown", version:"unknown"};
+    }
+    applyMetaRuntime();
   }
 
   async function api(path, options){
@@ -253,7 +303,9 @@
     document.getElementById("meta-options").hidden = target !== "meta";
     document.getElementById("route-copy").textContent = target === "substack"
       ? "Substack 永遠只建立草稿；Mac 真正建立草稿後，狀態才會顯示「草稿已建立」。"
-      : "Meta 會依平台各自生成內容。現在只允許進內容佇列，正式發布仍受 owner canary 控制。";
+      : (metaRuntime.ready
+        ? "Meta 會依平台各自生成內容；可選內容佇列，或經品質閘門後立即發布。"
+        : "Meta 會依平台各自生成內容；目前 production runtime 只允許進內容佇列。");
     setUnlocked(Boolean(token()));
   }
 
@@ -280,6 +332,9 @@
     const platforms = [...document.querySelectorAll("input[name=platform]:checked")].map(input => input.value);
     if(target === "meta" && !platforms.length){ showMessage("Meta 至少選一個平台。", "bad"); return; }
     const mode = target === "substack" ? selected("substack-mode") : selected("meta-mode");
+    if(target === "meta" && mode === "publish_now" && !metaRuntime.ready){ showMessage("Meta production runtime 尚未就緒，請改選內容佇列。", "bad"); return; }
+    if(target === "meta" && mode === "publish_now" && sourceType === "text" && !note){ showMessage("立即發布完整文字時，請填寫編輯意圖 / 標題。", "bad"); return; }
+    if(target === "meta" && mode === "publish_now" && sourceType === "text" && content.length < 80){ showMessage("立即發布至少需要 80 個字的原始素材。", "bad"); return; }
     submitButton.disabled = true;
     showMessage("正在寫入受治理佇列…", "info");
     try{
@@ -332,6 +387,7 @@
 
   document.querySelectorAll("[data-target]").forEach(button => button.addEventListener("click", () => setTarget(button.dataset.target)));
   document.querySelectorAll("input[name=source]").forEach(input => input.addEventListener("change", () => setSource(input.value)));
+  document.querySelectorAll("input[name=meta-mode]").forEach(input => input.addEventListener("change", updateSubmitButton));
   document.getElementById("unlock").addEventListener("click", unlock);
   tokenInput.addEventListener("keydown", event => { if(event.key === "Enter") unlock(); });
   document.getElementById("refresh").addEventListener("click", loadHistory);
@@ -340,6 +396,7 @@
   });
 
   if(localStorage.getItem(TOKEN_KEY)) rememberCheckbox.checked = true;
+  loadRuntime();
   if(token()){ setUnlocked(true); loadHistory(); startPolling(); }
   else setUnlocked(false);
 })();

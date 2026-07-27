@@ -33,6 +33,7 @@ def test_meta_text_publish_now_maps_platform_names() -> None:
     assert result.workflow == "publish_now.yml"
     assert result.inputs["platforms"] == "fb,threads"
     assert result.inputs["text"] == "body"
+    assert result.inputs["setup_only"] == "false"
 
 
 def test_meta_queue_uses_submit_source() -> None:
