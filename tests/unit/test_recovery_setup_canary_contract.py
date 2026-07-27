@@ -6,9 +6,11 @@ from scripts.recovery_setup_canary import (
     _all_configured_feeds_healthy,
     _copy_previews,
     _eligible_current_primary_rows,
+    _eligible_reserve_primary_rows,
     _filter_pending_items,
     _latest_quality,
     _source_current_at_run,
+    _source_reserve_at_run,
 )
 from src.content_quality_guard import QUALITY_GUARD_VERSION
 
@@ -118,6 +120,7 @@ def test_latest_quality_exposes_fresh_primary_source_lineage() -> None:
             "source_is_primary_record": True,
             "harvested_this_run": True,
             "source_current_at_run": True,
+            "source_reserve_at_run": False,
         }
     ]
 
@@ -169,6 +172,58 @@ def test_current_primary_allowlist_requires_unpublished_current_rows() -> None:
         [{"id": "secondary"}, {"id": "eligible-canonical"}],
         {"eligible-canonical"},
     ) == [{"id": "eligible-canonical"}]
+
+
+def test_reserve_allowlist_is_bounded_primary_canonical_and_unpublished() -> None:
+    started_at = "2026-07-27T04:00:00+00:00"
+    rows = [
+        {
+            "news_id": "reserve-relative",
+            "source_status": "fetched",
+            "source_feed": "行政院 消費警訊",
+            "source_title": "本週油價公告",
+            "source_url": "/record",
+            "source_tags": ["official", "primary-record"],
+            "source_published_at": "2026-07-25T14:56:00+00:00",
+        },
+        {
+            "news_id": "reserve-canonical",
+            "source_status": "fetched",
+            "source_feed": "行政院 消費警訊",
+            "source_title": "本週油價公告",
+            "source_url": "https://example.gov.tw/record",
+            "source_tags": ["official", "primary-record"],
+            "source_published_at": "2026-07-25T14:56:00+00:00",
+        },
+        {
+            "news_id": "secondary",
+            "source_status": "fetched",
+            "source_url": "https://example.com/media",
+            "source_tags": ["news"],
+            "source_published_at": "2026-07-25T14:56:00+00:00",
+        },
+        {
+            "news_id": "already-published",
+            "source_status": "published",
+            "source_url": "https://example.gov.tw/published",
+            "source_tags": ["official", "primary-record"],
+            "source_published_at": "2026-07-25T14:56:00+00:00",
+        },
+        {
+            "news_id": "too-old",
+            "source_status": "fetched",
+            "source_url": "https://example.gov.tw/old",
+            "source_tags": ["official", "primary-record"],
+            "source_published_at": "2026-07-24T03:59:59+00:00",
+        },
+    ]
+
+    assert _source_current_at_run(rows[1]["source_published_at"], started_at) is False
+    assert _source_reserve_at_run(rows[1]["source_published_at"], started_at) is True
+    assert [
+        row["news_id"]
+        for row in _eligible_reserve_primary_rows(rows, started_at)
+    ] == ["reserve-canonical"]
 
 
 def test_primary_refresh_requires_a_result_for_every_configured_feed() -> None:

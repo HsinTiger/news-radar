@@ -26,10 +26,10 @@ sys.path.insert(0, str(ROOT))
 
 from src import db as dbmod  # noqa: E402
 from src.content_quality_guard import QUALITY_GUARD_VERSION  # noqa: E402
+from src.recovery_mode import source_age_windows  # noqa: E402
 
 
 PLATFORMS = {"facebook", "instagram", "threads"}
-PRIMARY_FRESHNESS_HOURS = 36
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -49,22 +49,27 @@ def _source_current_at_run(published_at: str | None, started_at: str) -> bool:
     started = _parse_iso(started_at)
     if published is None or started is None:
         return False
-    return started - timedelta(hours=PRIMARY_FRESHNESS_HOURS) <= published <= started
+    normal_hours, _ = source_age_windows()
+    return started - timedelta(hours=normal_hours) <= published <= started
 
 
-def _eligible_current_primary_rows(
-    rows: list[dict[str, Any]], started_at: str
+def _source_reserve_at_run(published_at: str | None, started_at: str) -> bool:
+    published = _parse_iso(published_at)
+    started = _parse_iso(started_at)
+    if published is None or started is None:
+        return False
+    normal_hours, reserve_hours = source_age_windows()
+    age = started - published
+    return (
+        timedelta(hours=normal_hours) < age <= timedelta(hours=reserve_hours)
+    )
+
+
+def _deduplicate_primary_rows(
+    rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return current pending primary rows, deduplicated to canonical URLs."""
-
-    candidates = [
-        row
-        for row in rows
-        if row.get("source_status") == "fetched"
-        and _source_current_at_run(row.get("source_published_at"), started_at)
-    ]
     deduplicated: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for row in candidates:
+    for row in rows:
         key = (
             str(row.get("source_feed") or ""),
             str(row.get("source_title") or row.get("news_id") or ""),
@@ -79,6 +84,36 @@ def _eligible_current_primary_rows(
         ):
             deduplicated[key] = row
     return list(deduplicated.values())
+
+
+def _eligible_current_primary_rows(
+    rows: list[dict[str, Any]], started_at: str
+) -> list[dict[str, Any]]:
+    """Return current pending primary rows, deduplicated to canonical URLs."""
+
+    candidates = [
+        row
+        for row in rows
+        if row.get("source_status") == "fetched"
+        and _source_current_at_run(row.get("source_published_at"), started_at)
+    ]
+    return _deduplicate_primary_rows(candidates)
+
+
+def _eligible_reserve_primary_rows(
+    rows: list[dict[str, Any]], started_at: str
+) -> list[dict[str, Any]]:
+    """Return dated official-primary reserve rows only when normal freshness is empty."""
+
+    candidates = [
+        row
+        for row in rows
+        if row.get("source_status") == "fetched"
+        and "primary-record" in (row.get("source_tags") or [])
+        and str(row.get("source_url") or "").startswith(("https://", "http://"))
+        and _source_reserve_at_run(row.get("source_published_at"), started_at)
+    ]
+    return _deduplicate_primary_rows(candidates)
 
 
 def _filter_pending_items(
@@ -152,6 +187,9 @@ def _latest_quality(
             "source_current_at_run": _source_current_at_run(
                 row["published_at"], since_iso
             ),
+            "source_reserve_at_run": _source_reserve_at_run(
+                row["published_at"], since_iso
+            ),
         })
     return result
 
@@ -210,6 +248,7 @@ def _copy_previews(
         if not evidence.get("source_is_primary_record") or not (
             evidence.get("harvested_this_run")
             or evidence.get("source_current_at_run")
+            or evidence.get("source_reserve_at_run")
         ):
             continue
         row = conn.execute(
@@ -315,23 +354,31 @@ async def run_setup_canary(
         eligible_current_primary_sources = _eligible_current_primary_rows(
             list(primary_after.values()), started_at
         )
-        eligible_current_ids = {
-            row["news_id"] for row in eligible_current_primary_sources
+        eligible_reserve_primary_sources = _eligible_reserve_primary_rows(
+            list(primary_after.values()), started_at
+        )
+        eligible_primary_sources = (
+            eligible_current_primary_sources
+            if eligible_current_primary_sources
+            else eligible_reserve_primary_sources
+        )
+        eligible_primary_ids = {
+            row["news_id"] for row in eligible_primary_sources
         }
         eligible_fresh_primary_sources = [
             row
             for row in fresh_primary_sources
-            if row["news_id"] in eligible_current_ids
+            if row["news_id"] in eligible_primary_ids
         ]
 
         # Deduplication is not staleness.  A reverified official record remains
-        # eligible while its publication timestamp is inside the freshness
-        # window.  The disposable pipeline is allowlisted to current,
-        # unpublished primary rows so its normal topic ranking cannot silently
-        # select a secondary-media item instead.
+        # eligible while its publication timestamp is inside the normal window
+        # or the bounded dated reserve.  The disposable pipeline is allowlisted
+        # to unpublished primary rows so its normal topic ranking cannot
+        # silently select a secondary-media item instead.
         should_compose = (
             not refresh_primary_sources
-            or bool(eligible_current_primary_sources)
+            or bool(eligible_primary_sources)
         )
         if should_compose:
             original_argv = sys.argv[:]
@@ -341,7 +388,7 @@ async def run_setup_canary(
                 rows = original_get_pending_items(conn)
                 if not refresh_primary_sources:
                     return rows
-                return _filter_pending_items(rows, eligible_current_ids)
+                return _filter_pending_items(rows, eligible_primary_ids)
 
             dbmod.get_pending_items = canary_get_pending_items
             try:
@@ -407,12 +454,26 @@ async def run_setup_canary(
         row["decision"] in {"pass", "warn"}
         for row in current_primary_quality
     )
+    reserve_primary_quality = [
+        row
+        for row in quality
+        if row["source_is_primary_record"] and row["source_reserve_at_run"]
+    ]
+    reserve_primary_ready = any(
+        row["decision"] in {"pass", "warn"}
+        for row in reserve_primary_quality
+    )
     primary_harvest_complete = (
         not refresh_primary_sources
         or _all_configured_feeds_healthy(harvest_report)
     )
     source_gate_ready = (
-        (fresh_primary_ready or current_primary_ready) and primary_harvest_complete
+        (
+            fresh_primary_ready
+            or current_primary_ready
+            or reserve_primary_ready
+        )
+        and primary_harvest_complete
         if refresh_primary_sources
         else publish_ready
     )
@@ -429,18 +490,20 @@ async def run_setup_canary(
         hold_reason = "state_invariant_failed"
     elif refresh_primary_sources and not primary_harvest_complete:
         hold_reason = "primary_harvest_incomplete"
-    elif refresh_primary_sources and not eligible_current_primary_sources:
-        hold_reason = "no_eligible_current_primary_sources"
+    elif refresh_primary_sources and not eligible_primary_sources:
+        hold_reason = "no_eligible_primary_or_reserve_sources"
     elif not quality:
         hold_reason = "no_current_guard_evaluation"
     elif refresh_primary_sources and not (
-        fresh_primary_quality or current_primary_quality
+        fresh_primary_quality
+        or current_primary_quality
+        or reserve_primary_quality
     ):
-        hold_reason = "current_primary_not_selected"
+        hold_reason = "eligible_primary_not_selected"
     elif refresh_primary_sources and not (
-        fresh_primary_ready or current_primary_ready
+        fresh_primary_ready or current_primary_ready or reserve_primary_ready
     ):
-        hold_reason = "current_primary_quality_held"
+        hold_reason = "eligible_primary_quality_held"
     elif not publish_ready:
         hold_reason = "quality_held"
     elif experiments <= 0:
@@ -468,10 +531,15 @@ async def run_setup_canary(
         "primary_source_gate_ready": source_gate_ready,
         "fresh_primary_quality_ready": fresh_primary_ready,
         "current_primary_quality_ready": current_primary_ready,
+        "reserve_primary_quality_ready": reserve_primary_ready,
         "source_gate_mode": (
             "fresh_primary"
             if fresh_primary_ready
-            else "current_primary" if current_primary_ready else "none"
+            else "current_primary"
+            if current_primary_ready
+            else "official_primary_reserve"
+            if reserve_primary_ready
+            else "none"
         ),
         "primary_refresh": {
             "requested": refresh_primary_sources,
@@ -482,6 +550,9 @@ async def run_setup_canary(
             "current_source_count": len(current_primary_sources),
             "eligible_current_source_count": len(
                 eligible_current_primary_sources
+            ),
+            "eligible_reserve_source_count": len(
+                eligible_reserve_primary_sources
             ),
             "fresh_sources": fresh_primary_sources,
         },
@@ -515,16 +586,16 @@ def main() -> int:
         action="store_true",
         help=(
             "harvest configured primary-record feeds into the disposable DB "
-            "and require a newly fetched or 36-hour current source to pass "
-            "the current guard"
+            "and require a newly fetched, normally current, or bounded dated "
+            "official-primary reserve source to pass the current guard"
         ),
     )
     parser.add_argument(
         "--include-copy",
         action="store_true",
         help=(
-            "include only fresh or current public-primary generated copy in the "
-            "short-lived Actions report for owner editorial audit"
+            "include only fresh, current, or bounded reserve public-primary "
+            "copy in the short-lived Actions report for owner editorial audit"
         ),
     )
     args = parser.parse_args()

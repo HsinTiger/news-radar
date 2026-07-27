@@ -7,6 +7,7 @@ from __future__ import annotations
 from src.content_quality_guard import (
     _RULES,
     check_platform_format,
+    check_reserve_source_framing,
     check_platform_style,
     check_quality,
     combine_visible_text,
@@ -16,6 +17,24 @@ from src.content_quality_guard import (
     statistical_quantity_allowlist,
     should_request_rewrite,
 )
+
+
+def test_official_reserve_requires_dated_non_breaking_framing() -> None:
+    published_at = "2026-07-25T14:56:00+00:00"
+
+    assert check_reserve_source_framing(
+        "行政院7月25日公告油價調整。讀者可核對本週加油支出。",
+        published_at,
+    ) == []
+    issues = check_reserve_source_framing(
+        "行政院今日最新公告油價調整。",
+        published_at,
+    )
+    assert {issue.code for issue in issues} == {
+        "reserve_source_missing_date",
+        "reserve_source_false_recency",
+    }
+    assert all(issue.severity == "rewrite" for issue in issues)
 
 
 def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:

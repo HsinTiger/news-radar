@@ -10,6 +10,8 @@ from src.recovery_mode import (
     platform_uses_carousel,
     rank_candidates,
     record_experiments,
+    recovery_source_tier,
+    source_age_windows,
     visible_carousel_for_platform,
 )
 
@@ -298,6 +300,105 @@ def test_entirely_stale_batch_cannot_redefine_freshness_window() -> None:
         },
     ]
     assert rank_candidates(conn, rows, now=NOW) == []
+
+
+def test_official_primary_reserve_is_used_only_when_fresh_layer_is_empty() -> None:
+    conn = _conn()
+    reserve = {
+        "title": "行政院公布台灣本週油價調整",
+        "topic_category": "current_affairs",
+        "feed_name": "行政院 消費警訊",
+        "feed_tier": "primary",
+        "tags": '["official","primary-record"]',
+        "url": "https://example.gov.tw/fuel",
+        "published_at": (NOW - timedelta(hours=48)).isoformat(),
+    }
+    secondary = {
+        "title": "台灣媒體兩日前報導",
+        "topic_category": "current_affairs",
+        "feed_name": "某新聞網",
+        "feed_tier": "secondary",
+        "tags": '["news"]',
+        "url": "https://example.com/story",
+        "published_at": (NOW - timedelta(hours=48)).isoformat(),
+    }
+
+    assert source_age_windows() == (36.0, 72.0)
+    assert recovery_source_tier(reserve, now=NOW) == "official_primary_reserve"
+    assert recovery_source_tier(secondary, now=NOW) is None
+    assert rank_candidates(conn, [secondary, reserve], now=NOW) == [reserve]
+
+    fresh = {
+        "title": "台灣食安最新官方處置",
+        "topic_category": "current_affairs",
+        "feed_name": "食藥署 本署新聞",
+        "tags": '["official","primary-record"]',
+        "url": "https://example.gov.tw/fresh",
+        "published_at": (NOW - timedelta(hours=2)).isoformat(),
+    }
+    assert rank_candidates(conn, [reserve, fresh], now=NOW) == [fresh]
+
+    fresh_secondary = {
+        "title": "台灣媒體兩小時前報導",
+        "topic_category": "current_affairs",
+        "feed_name": "某新聞網",
+        "feed_tier": "secondary",
+        "tags": '["news"]',
+        "url": "https://example.com/fresh-story",
+        "published_at": (NOW - timedelta(hours=2)).isoformat(),
+    }
+    ranked = rank_candidates(conn, [fresh_secondary, reserve], now=NOW)
+    assert reserve in ranked
+    assert ranked[0] == reserve
+
+
+def test_reserve_rejects_relative_url_and_rows_older_than_bound() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "台股官方舊資料",
+            "topic_category": "tw_stocks",
+            "feed_name": "證交所 官方訊息",
+            "tags": '["official","primary-record"]',
+            "url": "https://example.gov.tw/too-old",
+            "published_at": (NOW - timedelta(hours=73)).isoformat(),
+        },
+        {
+            "title": "台股官方相對網址資料",
+            "topic_category": "tw_stocks",
+            "feed_name": "證交所 官方訊息",
+            "tags": '["official","primary-record"]',
+            "url": "/relative",
+            "published_at": (NOW - timedelta(hours=48)).isoformat(),
+        },
+    ]
+    assert rank_candidates(conn, rows, now=NOW) == []
+
+
+def test_rank_candidates_deduplicates_same_event_across_primary_feeds() -> None:
+    conn = _conn()
+    rows = [
+        {
+            "title": "雲林羊肉戴奧辛檢驗不合格",
+            "topic_category": "current_affairs",
+            "feed_name": "行政院 消費警訊",
+            "tags": '["official","primary-record"]',
+            "url": "https://example.gov.tw/food",
+            "published_at": (NOW - timedelta(hours=48)).isoformat(),
+        },
+        {
+            "title": "雲林羊肉戴奧辛檢驗不合格",
+            "topic_category": "current_affairs",
+            "feed_name": "食藥署 本署新聞",
+            "tags": '["official","primary-record"]',
+            "url": "https://fda.gov.tw/food",
+            "published_at": (NOW - timedelta(hours=49)).isoformat(),
+        },
+    ]
+
+    ranked = rank_candidates(conn, rows, now=NOW)
+    assert len(ranked) == 1
+    assert ranked[0]["feed_name"] == "行政院 消費警訊"
 
 
 def test_rank_candidates_keeps_owner_submission_for_one_off_post() -> None:

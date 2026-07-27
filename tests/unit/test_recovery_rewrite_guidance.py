@@ -55,6 +55,18 @@ def test_recovery_rewrite_contract_names_source_and_allowed_numbers() -> None:
     assert "FINAL SELF-CHECK BEFORE JSON" in guidance
 
 
+def test_recovery_rewrite_contract_repairs_reserve_recency() -> None:
+    guidance = _recovery_rewrite_guidance(
+        {"reserve_source_missing_date", "reserve_source_false_recency"},
+        source_evidence_text=(
+            "行政院公告油價調整\n內容\n2026-07-25T14:56:00+00:00"
+        ),
+        source_label="行政院 消費警訊",
+    )
+
+    assert any("OFFICIAL RESERVE FRAMING" in line for line in guidance)
+
+
 def test_recovery_rewrite_contract_removes_formula_and_attributes_allegation() -> None:
     guidance = "\n".join(
         _recovery_rewrite_guidance(
