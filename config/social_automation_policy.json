@@ -39,21 +39,24 @@
         "minimum_interval_hours": 20,
         "local_slots": [8],
         "local_days": [0, 1, 2, 3, 4, 5, 6],
-        "slot_tolerance_minutes": 50
+        "slot_tolerance_minutes": 50,
+        "catch_up_deadline_hour": 18
       },
       "facebook": {
         "target_posts_per_day": 1,
         "minimum_interval_hours": 20,
         "local_slots": [18],
         "local_days": [0, 1, 2, 3, 4, 5, 6],
-        "slot_tolerance_minutes": 50
+        "slot_tolerance_minutes": 50,
+        "catch_up_deadline_hour": 20
       },
       "instagram": {
         "target_posts_per_day": 1,
         "minimum_interval_hours": 20,
         "local_slots": [20],
         "local_days": [0, 1, 2, 3, 4, 5, 6],
-        "slot_tolerance_minutes": 50
+        "slot_tolerance_minutes": 50,
+        "catch_up_deadline_hour": 24
       }
     },
     "baselines": {

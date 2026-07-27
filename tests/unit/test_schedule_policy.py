@@ -299,7 +299,7 @@ def test_recovery_daily_evening_slots_separate_facebook_and_instagram() -> None:
     assert instagram.platforms == ["instagram"]
 
 
-def test_scheduler_tolerance_never_dispatches_before_commute_slot() -> None:
+def test_scheduler_never_dispatches_before_slot_and_catches_up_after_delay() -> None:
     before = decide_schedule(
         _conn(),
         load_policy(POLICY),
@@ -312,15 +312,59 @@ def test_scheduler_tolerance_never_dispatches_before_commute_slot() -> None:
         datetime(2026, 7, 27, 10, 50, tzinfo=timezone.utc),  # 18:50 Taipei
         mode="recovery",
     )
-    too_late = decide_schedule(
+    delayed_catch_up = decide_schedule(
         _conn(),
         load_policy(POLICY),
-        datetime(2026, 7, 27, 10, 51, tzinfo=timezone.utc),  # 18:51 Taipei
+        datetime(2026, 7, 27, 11, 25, tzinfo=timezone.utc),  # 19:25 Taipei
         mode="recovery",
     )
     assert "facebook" not in before.platforms
     assert delayed_ok.platforms == ["facebook"]
-    assert "facebook" not in too_late.platforms
+    assert delayed_catch_up.platforms == ["facebook"]
+    facebook = next(
+        item
+        for item in delayed_catch_up.platform_decisions
+        if item.platform == "facebook"
+    )
+    assert facebook.reason == "catch_up_due"
+
+
+def test_observed_github_delivery_delays_still_reach_each_recovery_slot() -> None:
+    policy = load_policy(POLICY)
+
+    late_morning = decide_schedule(
+        _conn(),
+        policy,
+        datetime(2026, 7, 27, 3, 47, tzinfo=timezone.utc),  # 11:47 Taipei
+        mode="recovery",
+    )
+    late_facebook = decide_schedule(
+        _conn(),
+        policy,
+        datetime(2026, 7, 27, 11, 25, tzinfo=timezone.utc),  # 19:25 Taipei
+        mode="recovery",
+    )
+    late_instagram = decide_schedule(
+        _conn(),
+        policy,
+        datetime(2026, 7, 27, 13, 47, tzinfo=timezone.utc),  # 21:47 Taipei
+        mode="recovery",
+    )
+
+    assert late_morning.platforms == ["threads"]
+    assert late_facebook.platforms == ["facebook"]
+    assert late_instagram.platforms == ["instagram"]
+
+
+def test_recovery_catch_up_expires_at_local_midnight() -> None:
+    decision = decide_schedule(
+        _conn(),
+        load_policy(POLICY),
+        datetime(2026, 7, 27, 16, 5, tzinfo=timezone.utc),  # Tuesday 00:05 Taipei
+        mode="recovery",
+    )
+
+    assert decision.platforms == []
 
 
 def test_recovery_ignores_live_runtime_override() -> None:
@@ -350,11 +394,15 @@ def test_recovery_ignores_live_runtime_override() -> None:
     assert threads.policy_source == "recovery_policy"
 
 
-def test_recovery_old_noon_slot_is_noop() -> None:
+def test_recovery_noon_is_a_delayed_morning_catch_up() -> None:
     decision = decide_schedule(
         _conn(),
         load_policy(POLICY),
         datetime(2026, 7, 24, 4, 10, tzinfo=timezone.utc),
         mode="recovery",
     )
-    assert decision.dispatch is False
+    assert decision.platforms == ["threads"]
+    threads = next(
+        item for item in decision.platform_decisions if item.platform == "threads"
+    )
+    assert threads.reason == "catch_up_due"

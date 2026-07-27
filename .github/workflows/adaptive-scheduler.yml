@@ -2,10 +2,13 @@ name: "Social Automation · Governed Scheduler"
 
 on:
   schedule:
-    # GitHub schedule delivery is best-effort. Use four off-peak opportunities
-    # inside each approved 0-50 minute window, and do not wake the 108 MB state
-    # reader during unrelated hours. UTC 00/10/12 = Taipei 08/18/20.
-    - cron: "7,22,37,47 0,10,12 * * *"
+    # GitHub schedule delivery is best-effort and has arrived 1-3 hours late.
+    # Use one primary plus one backup hour for each governed local slot; the
+    # recovery policy catches up only after the slot and before its deadline.
+    # UTC 00/03,10/11,12/13 = Taipei 08/11,18/19,20/21.
+    - cron: "17 0,3 * * *"
+    - cron: "17 10,11 * * *"
+    - cron: "17 12,13 * * *"
   workflow_dispatch:
     inputs:
       now:
@@ -13,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      setup_only:
+        description: "Decision evidence only; never dispatch the publishing pipeline"
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
   # Serialize the decision reader with state writers and publishers. A later
@@ -54,7 +62,9 @@ jobs:
           [ -n "$REQUESTED_NOW" ] && EXTRA=(--now "$REQUESTED_NOW")
           python scripts/adaptive_dispatch.py --mode "$AUTOMATION_MODE" "${EXTRA[@]}"
       - name: Dispatch production pipeline
-        if: steps.policy.outputs.dispatch == 'true'
+        if: >-
+          steps.policy.outputs.dispatch == 'true' &&
+          (github.event_name == 'schedule' || inputs.setup_only == false)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PLATFORMS: ${{ steps.policy.outputs.platforms }}
