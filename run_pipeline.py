@@ -375,38 +375,50 @@ def _deterministic_recovery_closing_repair(
 ) -> str:
     """Repair only a closing-question defect after all substantive gates pass."""
 
-    if topic != "tw_stocks":
-        return body
-    official_source = next(
-        (
-            short_label
-            for marker, short_label in (
-                ("證交所", "證交所"),
-                ("臺灣證券交易所", "證交所"),
-                ("台灣證券交易所", "證交所"),
-                ("櫃買", "櫃買中心"),
-                ("金管會", "金管會"),
-                ("中央銀行", "中央銀行"),
-            )
-            if marker in source_label
-        ),
-        None,
-    )
-    statistics = statistical_quantity_allowlist(source_evidence_text, limit=2)
-    benchmark = next((value for value in statistics if value.endswith("%")), None)
-    if benchmark and official_source:
-        questions = {
-            "threads": f"對照{official_source}本週 {benchmark} 的漲幅，你的持股有跑贏嗎？",
-            "fb": f"對照{official_source}本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？",
-            "ig": f"對照{official_source}本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？",
-        }
+    if topic == "tw_stocks":
+        official_source = next(
+            (
+                short_label
+                for marker, short_label in (
+                    ("證交所", "證交所"),
+                    ("臺灣證券交易所", "證交所"),
+                    ("台灣證券交易所", "證交所"),
+                    ("櫃買", "櫃買中心"),
+                    ("金管會", "金管會"),
+                    ("中央銀行", "中央銀行"),
+                )
+                if marker in source_label
+            ),
+            None,
+        )
+        statistics = statistical_quantity_allowlist(source_evidence_text, limit=2)
+        benchmark = next((value for value in statistics if value.endswith("%")), None)
+        if benchmark and official_source:
+            questions = {
+                "threads": f"對照{official_source}本週 {benchmark} 的漲幅，你的持股有跑贏嗎？",
+                "fb": f"對照{official_source}本週 {benchmark} 的漲幅，你的投資組合有跑贏嗎？",
+                "ig": f"對照{official_source}本週 {benchmark} 的漲幅，你的報酬有跑贏嗎？",
+            }
+        else:
+            questions = {
+                "threads": "你的持股裡，哪一檔最受這次變化影響？",
+                "fb": "你的持股裡，哪一檔最需要重新檢查產業曝險？",
+                "ig": "你的持股裡，哪一檔最受產業輪動影響？",
+            }
+        question = questions.get(platform, questions["threads"])
     else:
-        questions = {
-            "threads": "你的持股裡，哪一檔最受這次變化影響？",
-            "fb": "你的持股裡，哪一檔最需要重新檢查產業曝險？",
-            "ig": "你的持股裡，哪一檔最受產業輪動影響？",
-        }
-    question = questions.get(platform, questions["threads"])
+        policy_topics = {"tw_politics", "policy_geopolitics"}
+        company_topics = {"earnings", "supply_chain", "us_stocks"}
+        if topic in policy_topics:
+            question = "如果這項政策適用你或家人，你最想先確認資格、開始日期，還是申請方式？"
+        elif topic == "current_affairs":
+            question = "如果事件影響到你所在的社區，你會先查官方公告、處理進度，還是申訴管道？"
+        elif topic == "military_defense":
+            question = "如果這項國防決策使用公共預算，你最想先看到成本、時程，還是驗收標準？"
+        elif topic in company_topics:
+            question = "如果你持有相關公司，你會先查正式公告、財務影響，還是後續時程？"
+        else:
+            question = "如果這件事影響到你，你最需要先確認官方公告、適用時間，還是申訴管道？"
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     trailing_hashtags: list[str] = []
     while paragraphs and all(
@@ -1505,7 +1517,7 @@ async def process_item(
         )
         print("   ↳ [QualityGuard·best] 後稿品質倒退，恢復 issue 最少版本")
 
-    if rewrite_unresolved and is_recovery_mode() and topic_cls.category_id == "tw_stocks":
+    if rewrite_unresolved and is_recovery_mode():
         remaining_codes = {
             issue.code
             for issues in quality_findings.values()
@@ -1517,13 +1529,20 @@ async def process_item(
             "multiple_closing_questions",
             "generic_engagement_bait",
         }
-        deterministic_codes = closing_codes | {
+        universal_deterministic_codes = closing_codes | {
+            "platform_hashtag_overload",
+        }
+        stock_deterministic_codes = universal_deterministic_codes | {
             "missing_reader_utility",
             "formulaic_attention_hook",
-            "platform_hashtag_overload",
             "platform_stat_overload",
             "unsupported_market_inference",
         }
+        deterministic_codes = (
+            stock_deterministic_codes
+            if topic_cls.category_id == "tw_stocks"
+            else universal_deterministic_codes
+        )
         if remaining_codes and remaining_codes <= deterministic_codes:
             repaired_finalized = dict(finalized)
             for platform_key, (variant, _full_text, _ok) in finalized.items():
@@ -1583,7 +1602,13 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 台股稿僅剩 title/inference/stats/utility/closing/tags；"
+                "   ↳ [QualityGuard·deterministic] 僅剩可安全修復的 closing/tags"
+                + (
+                    "/title/inference/stats/utility"
+                    if topic_cls.category_id == "tw_stocks"
+                    else ""
+                )
+                + "；"
                 f"deterministic repair {'仍 held' if rewrite_unresolved else 'PASS'}"
             )
 
