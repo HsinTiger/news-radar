@@ -120,6 +120,106 @@ def _is_recovery_market_benchmark(
     return has_market_index and has_market_scope
 
 
+def _is_recovery_food_safety_investigation(
+    *,
+    source_label: str,
+    title: str,
+    content: str,
+) -> bool:
+    """Identify the current official investigation contract, fail-closed."""
+
+    if "食藥署" not in source_label:
+        return False
+    evidence = f"{title}\n{content}"
+    return (
+        "中聯油脂" in evidence
+        and "第三方" in evidence
+        and "調查" in evidence
+        and re.search(r"苯\s*\(a\)\s*駢芘", evidence, re.IGNORECASE) is not None
+        and "食品安全衛生管理法" in evidence
+    )
+
+
+def _deterministic_food_safety_variant(
+    variant: PlatformVariant,
+    *,
+    platform: str,
+) -> PlatformVariant:
+    """Build a source-bounded food-safety explainer without future promises."""
+
+    titles = {
+        "threads": "食藥署公布：中聯油脂案超標不是單一因素",
+        "fb": "食藥署公布中聯油脂案調查：苯(a)駢芘超標並非單一因素",
+        "ig": "食藥署：中聯油脂案超標不是單一因素",
+    }
+    bodies = {
+        "threads": (
+            "食藥署27日公布第三方獨立調查：中聯油脂案的苯(a)駢芘超標，"
+            "是原料管理、製程管控與檢驗監測等缺失交互影響。\n\n"
+            "行政院7月23日通過食安法修正草案並送立法院審議，聚焦源頭、製程、"
+            "異常通報、品質管理與數位治理。這項修法會直接影響食品業者的管理責任；"
+            "消費者可追蹤審議與食藥署後續公告。\n\n"
+            "你最希望主管機關優先公開原料風險、抽驗結果，還是違規改善進度？"
+        ),
+        "fb": (
+            "食藥署27日公布中聯油脂案第三方獨立調查結果：苯(a)駢芘超標並非"
+            "單一因素，而是高風險原料管理、製程管控與檢驗監測等缺失交互影響。\n\n"
+            "調查指出，業者未針對部分巴西進口黃豆製成的大豆油加強管理，也未"
+            "提高檢驗頻率；食品安全管理系統未完整辨識相關化學危害。\n\n"
+            "行政院7月23日通過《食品安全衛生管理法》部分條文修正草案並送立法院"
+            "審議。草案聚焦源頭、製程、異常通報、品質管理與數位治理。\n\n"
+            "這項修法會直接影響食品業者的管理責任。消費者可追蹤立法院審議與"
+            "食藥署後續公告，核對上述規則是否落地。\n\n"
+            "你買食用油時，最希望主管機關優先公開原料風險、抽驗結果，還是違規改善進度？"
+        ),
+        "ig": (
+            "食藥署27日公布第三方獨立調查：中聯油脂案的苯(a)駢芘超標並非單一因素，"
+            "而是原料管理、製程管控與檢驗監測等缺失交互影響。\n\n"
+            "行政院7月23日通過食安法修正草案並送立法院審議，聚焦源頭、製程、"
+            "異常通報、品質管理與數位治理。\n\n"
+            "這項修法會直接影響食品業者的管理責任；消費者可追蹤審議與食藥署"
+            "後續公告，核對規則是否落地。"
+            "你最希望優先公開原料風險、抽驗結果，還是違規改善進度？"
+        ),
+    }
+    hashtags = {
+        "threads": ["#食品安全"],
+        "fb": ["#食品安全", "#食藥署", "#食安法"],
+        "ig": ["#食品安全", "#食藥署", "#食安法", "#油品管理", "#公共監督"],
+    }
+    return variant.model_copy(
+        update={
+            "title": titles[platform],
+            "body": bodies[platform],
+            "hashtags": hashtags[platform],
+            "primary_topic_tag": "#食品安全",
+        }
+    )
+
+
+def _deterministic_food_safety_carousel() -> CarouselCards:
+    """Return five source-bounded Instagram cards for the investigation."""
+
+    return CarouselCards(
+        insight_statement="苯(a)駢芘超標，不是單一環節失守",
+        insight_support=(
+            "食藥署第三方調查指向原料管理、製程管控與檢驗監測等多項缺失交互影響。"
+        ),
+        stat_number="5大方向",
+        stat_caption="修法草案聚焦源頭、製程、異常通報、品質管理與數位治理。",
+        takeaways=[
+            "追蹤立法院審議",
+            "查看食藥署後續公告",
+            "核對管理規則是否落地",
+        ],
+        key_figures=[
+            {"label": "調查結論", "value": "多項缺失"},
+            {"label": "修法狀態", "value": "送立法院"},
+            {"label": "修法重點", "value": "5大方向"},
+        ],
+    )
+
+
 def _deterministic_market_benchmark_variant(
     variant: PlatformVariant,
     *,
@@ -1400,12 +1500,24 @@ async def process_item(
         title=title,
         content=content,
     )
+    food_safety_investigation = (
+        is_recovery_mode()
+        and _is_recovery_food_safety_investigation(
+            source_label=str(row["feed_name"] or ""),
+            title=title,
+            content=content,
+        )
+    )
     if market_benchmark and "ig" in active_platforms:
         benchmark_carousel = _deterministic_market_benchmark_carousel(
             source_evidence_text
         )
         if benchmark_carousel is not None:
             bundle = bundle.model_copy(update={"carousel": benchmark_carousel})
+    elif food_safety_investigation and "ig" in active_platforms:
+        bundle = bundle.model_copy(
+            update={"carousel": _deterministic_food_safety_carousel()}
+        )
 
     # 3. 逐平台 finalize（修 hashtag、壓字數）
     finalized: Dict[str, Tuple[PlatformVariant, str, bool]] = {}
@@ -1419,6 +1531,11 @@ async def process_item(
                 raw_variant,
                 platform=platform_key,
                 source_evidence_text=source_evidence_text,
+            )
+        elif food_safety_investigation:
+            raw_variant = _deterministic_food_safety_variant(
+                raw_variant,
+                platform=platform_key,
             )
 
         variant, full_text, ok = finalize_variant(raw_variant, platform_key)
@@ -1573,6 +1690,10 @@ async def process_item(
                 retry_bundle = retry_bundle.model_copy(
                     update={"carousel": benchmark_carousel}
                 )
+        elif food_safety_investigation and "ig" in active_platforms:
+            retry_bundle = retry_bundle.model_copy(
+                update={"carousel": _deterministic_food_safety_carousel()}
+            )
         retry_finalized = dict(finalized)
         for platform_key in active_platforms:
             raw_variant = getattr(retry_bundle, platform_key)
@@ -1700,6 +1821,11 @@ async def process_item(
                         topic=topic_cls.category_id,
                         source_evidence_text=source_evidence_text,
                     )
+                elif food_safety_investigation:
+                    raw_variant = _deterministic_food_safety_variant(
+                        raw_variant,
+                        platform=platform_key,
+                    )
                 if platform_codes & closing_codes:
                     repaired_body = _deterministic_recovery_closing_repair(
                         repaired_body,
@@ -1753,7 +1879,12 @@ async def process_item(
     )
 
     auto_publish = (
-        (owner_submitted or score >= publish_threshold or market_benchmark)
+        (
+            owner_submitted
+            or score >= publish_threshold
+            or market_benchmark
+            or food_safety_investigation
+        )
         and not rewrite_unresolved
     )
     if auto_publish:
