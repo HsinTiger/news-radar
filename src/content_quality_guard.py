@@ -1001,16 +1001,13 @@ def check_reserve_source_framing(
     if published.tzinfo is None:
         published = published.replace(tzinfo=timezone.utc)
     local = published.astimezone(ZoneInfo("Asia/Taipei"))
-    date_markers = {
-        f"{local.month}月{local.day}日",
-        f"{local.month}/{local.day}",
-        f"{local.month:02}/{local.day:02}",
-        f"{local.month}-{local.day}",
-        f"{local.month:02}-{local.day:02}",
-    }
+    date_pattern = re.compile(
+        rf"(?:{local.month}\s*月\s*{local.day}\s*日|"
+        rf"0?{local.month}\s*[/\-]\s*0?{local.day})"
+    )
     text = full_text or ""
     issues: List[QualityIssue] = []
-    if not any(marker in text for marker in date_markers):
+    if not date_pattern.search(text):
         issues.append(
             QualityIssue(
                 code="reserve_source_missing_date",
@@ -1019,7 +1016,7 @@ def check_reserve_source_framing(
                 evidence=f"expected={local.month}月{local.day}日",
             )
         )
-    false_recency = re.search(r"今日|今天|最新|剛剛|現正|截至目前", text)
+    false_recency = re.search(r"今日|今天|最新|剛剛|現正|截至目前|目前", text)
     if false_recency:
         issues.append(
             QualityIssue(

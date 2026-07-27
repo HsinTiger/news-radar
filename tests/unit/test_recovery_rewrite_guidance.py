@@ -4,6 +4,7 @@ from run_pipeline import (
     _deterministic_recovery_closing_repair,
     _deterministic_recovery_hashtag_prune,
     _deterministic_recovery_inference_prune,
+    _deterministic_reserve_framing_repair,
     _deterministic_recovery_stat_prune,
     _deterministic_recovery_title_prune,
     _deterministic_market_benchmark_carousel,
@@ -65,6 +66,22 @@ def test_recovery_rewrite_contract_repairs_reserve_recency() -> None:
     )
 
     assert any("OFFICIAL RESERVE FRAMING" in line for line in guidance)
+
+
+def test_deterministic_reserve_framing_adds_date_and_removes_false_recency() -> None:
+    repaired = _deterministic_reserve_framing_repair(
+        (
+            "根據臺灣證券交易所本週統計，加權指數上漲2.3%。\n\n"
+            "目前市場已全面回暖。請追蹤最新公告。"
+        ),
+        source_label="證交所 官方訊息",
+        source_published_at="2026-07-24T10:00:00+00:00",
+    )
+
+    assert repaired.startswith("根據證交所7月24日公告，")
+    assert "目前市場" not in repaired
+    assert "最新公告" not in repaired
+    assert "後續公告" in repaired
 
 
 def test_recovery_rewrite_contract_removes_formula_and_attributes_allegation() -> None:
