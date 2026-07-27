@@ -109,6 +109,54 @@ def test_deterministic_market_closing_does_not_attribute_unknown_source() -> Non
     assert "user_submission" not in repaired
 
 
+def test_deterministic_policy_closing_is_reader_answerable() -> None:
+    body = (
+        "立法院三讀通過兒少未來帳戶條例。\n\n"
+        "家長可追蹤衛福部後續公布的實施細則與申請方式。\n\n"
+        "衛福部預計何時公布首次撥款日期？\n\n"
+        "#公共政策"
+    )
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="threads",
+        topic="tw_politics",
+        source_evidence_text="立法院三讀通過兒少未來帳戶條例。",
+        source_label="公視新聞 PTS",
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads",
+            repaired,
+            title="兒少未來帳戶條例三讀",
+            recovery=True,
+        )
+    }
+
+    assert "如果這項政策適用你或家人" in repaired
+    assert repaired.index("你最想先確認") < repaired.index("#公共政策")
+    assert "generic_engagement_bait" not in codes
+    assert repaired.count("？") == 1
+
+
+def test_deterministic_current_affairs_closing_keeps_facts_unchanged() -> None:
+    factual = "臺中市環保局表示將依空汙法裁處。"
+    body = factual + "\n\n福壽公司能否重建消費者信任？"
+
+    repaired = _deterministic_recovery_closing_repair(
+        body,
+        platform="threads",
+        topic="current_affairs",
+        source_evidence_text=factual,
+        source_label="公視新聞 PTS",
+    )
+
+    assert repaired.startswith(factual)
+    assert "如果事件影響到你所在的社區" in repaired
+    assert "福壽公司能否" not in repaired
+
+
 def test_deterministic_market_utility_repair_is_concrete() -> None:
     body = "證交所公布本週市場統計。\n\n你的持股有跑贏大盤嗎？"
 
