@@ -36,7 +36,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-25.taiwan-daily-v29"
+QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v30"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -318,7 +318,7 @@ _RECOVERY_HOOK_ACTOR_PATTERN = re.compile(
 )
 _RECOVERY_HOOK_CONSEQUENCE_PATTERN = re.compile(
     r"(?:\d+(?:\.\d+)?\s*(?:%|％|萬|億|兆|人|件|批|家|元|美元|倍|"
-    r"點|日|年|小時|分鐘|秒|個|公里|公尺|毫米|公厘|縣市|村|里|村里))|"
+    r"點|日|天|年|小時|分鐘|秒|個|公里|公尺|毫米|公厘|縣市|村|里|村里))|"
     r"(?:公告|公布|宣布|通過|否決|裁罰|起訴|判決|下架|"
     r"回收|停產|停業|暫停|恢復|調漲|調降|上調|下調|失守|大跌|暴跌|"
     r"上漲|下跌|增加|減少|超標|不合格|生效|延後|取消|刪減|凍結|"
@@ -1143,7 +1143,7 @@ def check_platform_style(
             evidence=closing[-80:],
         ))
     stock_context = re.search(
-        r"台股|臺股|加權指數|上市股票|持股|股票|基金",
+        r"台股|臺股|加權指數|上市股票|持股|股票|基金(?!會)",
         f"{title}\n{text}",
     )
     if stock_context and not re.search(

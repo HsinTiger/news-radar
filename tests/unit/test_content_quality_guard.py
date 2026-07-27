@@ -218,6 +218,22 @@ def test_v20_formal_reader_pronoun_is_a_direct_question() -> None:
     assert "generic_engagement_bait" not in codes
 
 
+def test_v30_foundation_name_does_not_trigger_stock_question_rules() -> None:
+    text = (
+        "臺中市一名12歲男童險遭詐騙，警方及時攔阻。\n\n"
+        "靖娟基金會提醒家長建立共同使用規範。\n\n"
+        "您是否已和孩子建立明確的網路使用規範？\n\n#兒少安全"
+    )
+    codes = {
+        issue.code
+        for issue in check_platform_style(
+            "threads", text, title="兒少網路安全", recovery=True
+        )
+    }
+
+    assert "generic_engagement_bait" not in codes
+
+
 def test_v20_threads_rejects_two_closing_questions() -> None:
     text = (
         "證交所公告本週加權指數上漲2.3%。\n\n"
@@ -585,6 +601,24 @@ def test_taiwan_daily_accepts_actor_and_consequence_in_first_45_chars():
         "對消費者的具體影響是異常通報時間縮短；消費者可以先查詢修法進度。"
     )
     codes = {item.code for item in check_quality(text, title="食安法修正", recovery=True)}
+    assert "weak_recovery_hook" not in codes
+
+
+def test_v30_recovery_hook_accepts_day_unit_for_energy_reserve() -> None:
+    text = (
+        "經濟部能源署表示，臺灣天然氣儲備至少11天。\n\n"
+        "根據經濟部能源署資料，民眾可關注後續演習公告。"
+    )
+    codes = {
+        item.code
+        for item in check_quality(
+            text,
+            title="天然氣儲備",
+            recovery=True,
+            source_text=text,
+        )
+    }
+
     assert "weak_recovery_hook" not in codes
 
 
