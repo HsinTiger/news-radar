@@ -40,6 +40,21 @@ def test_only_real_schedule_events_record_delivery_heartbeat() -> None:
     assert "GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}" in heartbeat
 
 
+def test_cloudflare_watchdog_has_independent_fail_closed_delivery_proof() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "adaptive-scheduler.yml").read_text(
+        encoding="utf-8"
+    )
+    heartbeat = workflow.split(
+        "      - name: Record Cloudflare watchdog delivery heartbeat\n", 1
+    )[1].split("      - name: Upload decision evidence\n", 1)[0]
+
+    assert "inputs.trigger_source == 'cloudflare_watchdog'" in heartbeat
+    assert "python scripts/scheduler_watchdog_heartbeat.py" in heartbeat
+    assert "SCHEDULER_WATCHDOG_SOURCE: ${{ inputs.trigger_source }}" in heartbeat
+    assert "SCHEDULER_WATCHDOG_DISPATCH_ID: ${{ inputs.watchdog_dispatch_id }}" in heartbeat
+    assert "SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}" in heartbeat
+
+
 def test_manual_scheduler_defaults_to_decision_only() -> None:
     workflow = (ROOT / ".github" / "workflows" / "adaptive-scheduler.yml").read_text(
         encoding="utf-8"

@@ -6,12 +6,14 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-27.meta-submit-v1";
+const API_VERSION = "2026-07-27.scheduler-watchdog-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
 const META_MODES = new Set(["publish_now", "queue"]);
 const PLATFORMS = new Set(["facebook", "instagram", "threads"]);
+const WATCHDOG_REPOSITORY = "HsinTiger/news-radar";
+const WATCHDOG_WORKFLOW = "adaptive-scheduler.yml";
 
 const LATEST_AUDIENCE_SQL = `WITH ranked AS (
   SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
@@ -76,6 +78,9 @@ class HTTPError extends Error {
 }
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(dispatchSchedulerWatchdog(controller, env));
+  },
   async fetch(request, env) {
     const cors = corsHeaders(request);
     if (request.method === "OPTIONS") {
@@ -164,6 +169,103 @@ export default {
     }
   },
 };
+
+async function recordWatchdogDispatch(env, status, detail, capturedAt) {
+  await env.DB.prepare(
+    `INSERT INTO data_health_snapshots(platform,metric,status,detail,captured_at)
+     VALUES(?,?,?,?,?)
+     ON CONFLICT(platform,metric,captured_at) DO UPDATE SET
+       status=excluded.status,detail=excluded.detail`,
+  )
+    .bind("system", "scheduler_watchdog_dispatch", status, detail, capturedAt)
+    .run();
+  await audit(
+    env,
+    "cloudflare_cron",
+    "dispatch_governed_scheduler",
+    WATCHDOG_WORKFLOW,
+    status,
+    { detail, captured_at: capturedAt },
+  );
+}
+
+async function dispatchSchedulerWatchdog(controller, env) {
+  const capturedAt = new Date().toISOString();
+  const dispatchId = crypto.randomUUID();
+  const scheduledTime = Number.isFinite(controller?.scheduledTime)
+    ? new Date(controller.scheduledTime).toISOString()
+    : capturedAt;
+  const cron = String(controller?.cron || "unknown").slice(0, 80);
+  const mode = String(env.AUTOMATION_MODE || "paused").trim().toLowerCase();
+  const prefix = `event=cloudflare_cron; dispatch_id=${dispatchId}; scheduled_time=${scheduledTime}; cron=${cron}`;
+  if (!new Set(["live", "recovery"]).has(mode)) {
+    await recordWatchdogDispatch(
+      env,
+      "unknown",
+      `${prefix}; dispatch=skipped; reason=automation_${mode || "unset"}`,
+      capturedAt,
+    );
+    return;
+  }
+  if (!env.GITHUB_ACTIONS_TOKEN) {
+    await recordWatchdogDispatch(
+      env,
+      "error",
+      `${prefix}; dispatch=failed; reason=github_actions_token_missing`,
+      capturedAt,
+    );
+    throw new Error("scheduler watchdog GitHub credential is unavailable");
+  }
+
+  let response;
+  try {
+    response = await fetch(
+      `https://api.github.com/repos/${WATCHDOG_REPOSITORY}/actions/workflows/${WATCHDOG_WORKFLOW}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${env.GITHUB_ACTIONS_TOKEN}`,
+          "Content-Type": "application/json",
+          "User-Agent": "hsintiger-news-radar-scheduler-watchdog",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify({
+          ref: "main",
+          inputs: {
+            now: "",
+            setup_only: "false",
+            trigger_source: "cloudflare_watchdog",
+            watchdog_dispatch_id: dispatchId,
+          },
+        }),
+      },
+    );
+  } catch (error) {
+    await recordWatchdogDispatch(
+      env,
+      "error",
+      `${prefix}; dispatch=failed; reason=github_network_error`,
+      capturedAt,
+    );
+    throw error;
+  }
+  if (response.status !== 204) {
+    await recordWatchdogDispatch(
+      env,
+      "error",
+      `${prefix}; dispatch=failed; github_status=${response.status}`,
+      capturedAt,
+    );
+    throw new Error(`scheduler watchdog dispatch rejected with HTTP ${response.status}`);
+  }
+  await recordWatchdogDispatch(
+    env,
+    "healthy",
+    `${prefix}; dispatch=accepted; workflow=${WATCHDOG_WORKFLOW}`,
+    capturedAt,
+  );
+}
 
 function corsHeaders(request) {
   const origin = request.headers.get("Origin");

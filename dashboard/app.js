@@ -22,6 +22,8 @@
   const HEALTH_COPY = {
     daily_publish_cadence: "每日實際發文",
     scheduler_delivery: "GitHub 排程送達",
+    scheduler_watchdog_dispatch: "Cloudflare watchdog 派送",
+    scheduler_watchdog_delivery: "Cloudflare watchdog 到達 Actions",
     substack_draft_worker: "Substack 現行草稿 worker",
     substack_legacy_backlog: "Substack 歷史待核實",
   };
@@ -29,8 +31,11 @@
   const BAD = new Set(["failed", "rejected", "error"]);
   const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
   const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13];
-  const SCHEDULER_MINUTE_UTC = 17;
-  const SCHEDULER_DELAY_TOLERANCE_MS = 4 * 60 * 60 * 1000;
+  const SCHEDULER_HEALTH = {
+    scheduler_delivery: { minute:17, toleranceMs:4 * 60 * 60 * 1000 },
+    scheduler_watchdog_dispatch: { minute:27, toleranceMs:60 * 60 * 1000 },
+    scheduler_watchdog_delivery: { minute:27, toleranceMs:60 * 60 * 1000 },
+  };
   let chart = null;
   let refreshTimer = null;
 
@@ -60,28 +65,57 @@
     const item = node("span", `badge ${GOOD.has(status) ? "good" : (BAD.has(status) ? "bad" : "warn")}`, STATUS_COPY[status] || status || "unknown");
     return item;
   }
-  function lastExpectedSchedulerTick(nowMs) {
+  function lastExpectedSchedulerTick(nowMs, minute) {
     const now = new Date(nowMs);
     const starts = [
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     ];
     return Math.max(...starts.flatMap(start => SCHEDULER_HOURS_UTC.map(hour =>
-      start + hour * 60 * 60 * 1000 + SCHEDULER_MINUTE_UTC * 60 * 1000
+      start + hour * 60 * 60 * 1000 + minute * 60 * 1000
     )).filter(value => value <= nowMs));
   }
   function effectiveHealth(item, nowMs = Date.now()) {
-    if(item.metric !== "scheduler_delivery" || item.status !== "healthy") return item;
+    const timing=SCHEDULER_HEALTH[item.metric];
+    if(!timing || item.status !== "healthy") return item;
     const capturedMs = Date.parse(item.captured_at || "");
-    const expectedMs = lastExpectedSchedulerTick(nowMs);
+    const expectedMs = lastExpectedSchedulerTick(nowMs,timing.minute);
     if(Number.isFinite(capturedMs) && capturedMs + 5 * 60 * 1000 >= expectedMs) return item;
     const delayMs = nowMs - expectedMs;
-    const waiting = delayMs <= SCHEDULER_DELAY_TOLERANCE_MS;
+    const waiting = delayMs <= timing.toleranceMs;
     return {
       ...item,
       status: waiting ? "unknown" : "degraded",
-      detail: `${waiting ? "awaiting_expected_tick" : "expected_tick_missing"}; expected_utc=${new Date(expectedMs).toISOString()}; tolerance_hours=4; ${item.detail || "no heartbeat detail"}`,
+      detail: `${waiting ? "awaiting_expected_tick" : "expected_tick_missing"}; expected_utc=${new Date(expectedMs).toISOString()}; tolerance_minutes=${timing.toleranceMs/60000}; ${item.detail || "no heartbeat detail"}`,
     };
+  }
+  function ensureExpectedSchedulerHealth(rows,nowMs=Date.now()) {
+    const result=[...rows];
+    Object.keys(SCHEDULER_HEALTH).forEach(metric=>{
+      if(result.some(item=>item.metric===metric)) return;
+      result.push(effectiveHealth({
+        platform:"system",metric,status:"healthy",captured_at:null,
+        detail:"heartbeat_not_persisted",
+      },nowMs));
+    });
+    return reconcileWatchdogLineage(result);
+  }
+  function healthDetailField(item,key) {
+    const match=String(item?.detail||"").match(new RegExp(`(?:^|; )${key}=([^;]+)`));
+    return match ? match[1] : "";
+  }
+  function reconcileWatchdogLineage(rows) {
+    const dispatch=rows.find(item=>item.metric==="scheduler_watchdog_dispatch");
+    const deliveryIndex=rows.findIndex(item=>item.metric==="scheduler_watchdog_delivery");
+    if(!dispatch || deliveryIndex<0 || dispatch.status!=="healthy" || rows[deliveryIndex].status!=="healthy") return rows;
+    const dispatchId=healthDetailField(dispatch,"dispatch_id");
+    const deliveryId=healthDetailField(rows[deliveryIndex],"dispatch_id");
+    if(dispatchId && dispatchId===deliveryId) return rows;
+    rows[deliveryIndex]={
+      ...rows[deliveryIndex],status:"degraded",
+      detail:`dispatch_lineage_mismatch; expected_dispatch_id=${dispatchId||"missing"}; ${rows[deliveryIndex].detail||"delivery detail missing"}`,
+    };
+    return rows;
   }
   function showError(message) { const box=$("error"); box.hidden=!message; box.textContent=message || ""; }
 
@@ -307,8 +341,7 @@
 
   function renderHealth(rows) {
     const host=$("health-list"); clear(host);
-    if(!rows.length){empty(host,"UNKNOWN · 尚未同步 health snapshots");return;}
-    rows.map(item=>effectiveHealth(item)).forEach(item=>{
+    ensureExpectedSchedulerHealth(rows).map(item=>effectiveHealth(item)).forEach(item=>{
       const severity=item.status==="healthy"?"good":(item.status==="error"?"bad":"warn");
       const row=node("div","row"); const dot=node("span",`health-dot ${severity}`);
       const main=node("div","row-main"); main.append(node("div","row-title",`${PLATFORM_META[item.platform]?.label||"System"} · ${HEALTH_COPY[item.metric]||item.metric}`),node("div","row-detail",item.detail||"沒有 detail evidence"),node("div","row-meta",`觀測 ${when(item.captured_at)}`));
