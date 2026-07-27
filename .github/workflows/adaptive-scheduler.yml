@@ -75,6 +75,13 @@ jobs:
             -f platforms="$PLATFORMS" \
             -f automation_mode="$AUTOMATION_MODE" \
             -f dispatch_reason="adaptive-scheduler:${{ github.run_id }}"
+      - name: Record real scheduler delivery heartbeat
+        if: always() && github.event_name == 'schedule'
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: python scripts/scheduler_heartbeat.py
       - name: Upload decision evidence
         if: always()
         uses: actions/upload-artifact@v6

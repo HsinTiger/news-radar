@@ -21,12 +21,16 @@
   };
   const HEALTH_COPY = {
     daily_publish_cadence: "每日實際發文",
+    scheduler_delivery: "GitHub 排程送達",
     substack_draft_worker: "Substack 現行草稿 worker",
     substack_legacy_backlog: "Substack 歷史待核實",
   };
   const GOOD = new Set(["published", "complete", "draft_created", "healthy", "approved", "applied"]);
   const BAD = new Set(["failed", "rejected", "error"]);
   const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
+  const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13];
+  const SCHEDULER_MINUTE_UTC = 17;
+  const SCHEDULER_DELAY_TOLERANCE_MS = 4 * 60 * 60 * 1000;
   let chart = null;
   let refreshTimer = null;
 
@@ -55,6 +59,29 @@
   function badge(status) {
     const item = node("span", `badge ${GOOD.has(status) ? "good" : (BAD.has(status) ? "bad" : "warn")}`, STATUS_COPY[status] || status || "unknown");
     return item;
+  }
+  function lastExpectedSchedulerTick(nowMs) {
+    const now = new Date(nowMs);
+    const starts = [
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    ];
+    return Math.max(...starts.flatMap(start => SCHEDULER_HOURS_UTC.map(hour =>
+      start + hour * 60 * 60 * 1000 + SCHEDULER_MINUTE_UTC * 60 * 1000
+    )).filter(value => value <= nowMs));
+  }
+  function effectiveHealth(item, nowMs = Date.now()) {
+    if(item.metric !== "scheduler_delivery" || item.status !== "healthy") return item;
+    const capturedMs = Date.parse(item.captured_at || "");
+    const expectedMs = lastExpectedSchedulerTick(nowMs);
+    if(Number.isFinite(capturedMs) && capturedMs + 5 * 60 * 1000 >= expectedMs) return item;
+    const delayMs = nowMs - expectedMs;
+    const waiting = delayMs <= SCHEDULER_DELAY_TOLERANCE_MS;
+    return {
+      ...item,
+      status: waiting ? "unknown" : "degraded",
+      detail: `${waiting ? "awaiting_expected_tick" : "expected_tick_missing"}; expected_utc=${new Date(expectedMs).toISOString()}; tolerance_hours=4; ${item.detail || "no heartbeat detail"}`,
+    };
   }
   function showError(message) { const box=$("error"); box.hidden=!message; box.textContent=message || ""; }
 
@@ -281,7 +308,7 @@
   function renderHealth(rows) {
     const host=$("health-list"); clear(host);
     if(!rows.length){empty(host,"UNKNOWN · 尚未同步 health snapshots");return;}
-    rows.forEach(item=>{
+    rows.map(item=>effectiveHealth(item)).forEach(item=>{
       const severity=item.status==="healthy"?"good":(item.status==="error"?"bad":"warn");
       const row=node("div","row"); const dot=node("span",`health-dot ${severity}`);
       const main=node("div","row-main"); main.append(node("div","row-title",`${PLATFORM_META[item.platform]?.label||"System"} · ${HEALTH_COPY[item.metric]||item.metric}`),node("div","row-detail",item.detail||"沒有 detail evidence"),node("div","row-meta",`觀測 ${when(item.captured_at)}`));
