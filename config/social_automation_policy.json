@@ -96,6 +96,7 @@
       ],
       "required_relevance": "The source or proposed post must make a concrete Taiwan connection. Owner submissions remain eligible but still pass every quality gate.",
       "max_source_age_hours": 36,
+      "reserve_max_source_age_hours": 72,
       "source_order": ["official_primary", "company_filing", "public_broadcaster_or_wire", "independent_factcheck", "named_secondary_media"],
       "political_standard": "Apply the same evidence, attribution, response, and correction standard to every party and public official.",
       "no_scope_fallback": true

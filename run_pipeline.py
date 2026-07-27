@@ -33,6 +33,7 @@ from src.composer import compose_multi_platform, finalize_variant
 from src.content_quality_guard import (
     check_quality,
     check_platform_format,
+    check_reserve_source_framing,
     check_platform_style,
     combine_visible_text,
     format_issues,
@@ -50,6 +51,7 @@ from src.recovery_mode import (
     platform_uses_carousel,
     rank_candidates,
     record_experiments,
+    recovery_source_tier,
     visible_carousel_for_platform,
 )
 from src.publisher import (
@@ -260,6 +262,16 @@ def _recovery_rewrite_guidance(
             "MARKET INFERENCE: A restored trading method does not prove normal "
             "liquidity, higher volume, or a price move. State only the verified "
             "order-method change and tell holders what they can observe."
+        )
+    if rewrite_codes & {
+        "reserve_source_missing_date",
+        "reserve_source_false_recency",
+    }:
+        guidance.append(
+            "OFFICIAL RESERVE FRAMING: Name the source institution and its exact "
+            "publication date in visible prose. Treat it as a dated official "
+            "record, not breaking news. Delete `今日`, `今天`, `最新`, `剛剛`, "
+            "`現正`, and `截至目前`; do not infer developments after the source."
         )
     if "platform_stat_overload" in rewrite_codes:
         guidance.append(
@@ -1078,6 +1090,9 @@ async def process_item(
     og_image = row["og_image_url"]
     news_url = row["url"]
     tags_raw = row["tags"] if "tags" in row.keys() else None
+    recovery_source_class = (
+        recovery_source_tier(row) if is_recovery_mode() else None
+    )
     owner_submitted = (
         ("feed_name" in row.keys() and row["feed_name"] == "user_submission")
         or (tags_raw and "user_submission" in str(tags_raw))
@@ -1279,6 +1294,17 @@ async def process_item(
             recovery_platforms,
             topic_cls.category_id,
         )
+        if recovery_source_class == "official_primary_reserve":
+            editorial_mandate += (
+                "\n\nOFFICIAL PRIMARY RESERVE (highest priority):\n"
+                f"- Source publication timestamp: {row['published_at']}\n"
+                "- Name the source institution and publication date in visible "
+                "prose; frame this as a dated official record.\n"
+                "- Never call it today, latest, just announced, or currently. "
+                "Do not infer any development after the supplied source.\n"
+                "- A later effective date in the source may be stated exactly, "
+                "but it does not replace the required publication date."
+            )
 
     bundle = await compose_multi_platform(
         title,
@@ -1361,6 +1387,13 @@ async def process_item(
                 recovery=is_recovery_mode(),
                 source_text=source_evidence_text if is_recovery_mode() else None,
             )
+            if recovery_source_class == "official_primary_reserve":
+                issues.extend(
+                    check_reserve_source_framing(
+                        visible_text,
+                        row["published_at"],
+                    )
+                )
             issues.extend(
                 check_platform_style(
                     platform_key,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -135,6 +136,69 @@ def content_format_for_platform(
 
 def _policy(path: Path = POLICY_PATH) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def source_age_windows(path: Path = POLICY_PATH) -> tuple[float, float]:
+    """Return the normal and official-primary reserve age limits in hours."""
+
+    editorial = _policy(path)["recovery"]["editorial_policy"]
+    normal = float(editorial["max_source_age_hours"])
+    reserve = float(editorial.get("reserve_max_source_age_hours", normal))
+    if normal <= 0 or reserve < normal:
+        raise ValueError(
+            "reserve_max_source_age_hours must be >= max_source_age_hours > 0"
+        )
+    return normal, reserve
+
+
+def _published_time(row: Any) -> datetime | None:
+    value = str(_row_value(row, "published_at", "") or "")
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def recovery_source_tier(
+    row: Any,
+    *,
+    now: datetime | None = None,
+    windows: tuple[float, float] | None = None,
+) -> str | None:
+    """Classify a candidate as owner, fresh, bounded primary reserve, or ineligible."""
+
+    feed_name = str(_row_value(row, "feed_name", "") or "")
+    tags = str(_row_value(row, "tags", "") or "")
+    if feed_name == "user_submission" or "user_submission" in tags:
+        return "owner"
+
+    published = _published_time(row)
+    if published is None:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    reference = reference.astimezone(timezone.utc)
+    normal_hours, reserve_hours = windows or source_age_windows()
+    age = reference - published
+    if age < timedelta(hours=-6):
+        return None
+    if age <= timedelta(hours=normal_hours):
+        return "fresh"
+
+    url = str(_row_value(row, "url", "") or "")
+    if (
+        age <= timedelta(hours=reserve_hours)
+        and "primary-record" in tags
+        and url.startswith(("https://", "http://"))
+    ):
+        return "official_primary_reserve"
+    return None
 
 
 def experiment_type_for(platform: str, topic: str | None) -> str:
@@ -293,11 +357,6 @@ def rank_candidates(
     allowed_topics = set(
         policy["recovery"]["editorial_policy"]["allowed_topics"]
     )
-    max_source_age = timedelta(
-        hours=float(
-            policy["recovery"]["editorial_policy"]["max_source_age_hours"]
-        )
-    )
     weights = {
         row["category_id"]: float(row["weight"])
         for row in conn.execute("SELECT category_id,weight FROM topic_weights")
@@ -345,26 +404,12 @@ def rank_candidates(
             or any(marker in feed_name for marker in TAIWAN_OFFICIAL_FEED_MARKERS)
         )
 
-    def published_time(row: Any) -> datetime | None:
-        value = str(_row_value(row, "published_at", "") or "")
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-
     candidate_rows = list(rows)
     reference_time = now or datetime.now(timezone.utc)
     if reference_time.tzinfo is None:
         reference_time = reference_time.replace(tzinfo=timezone.utc)
     reference_time = reference_time.astimezone(timezone.utc)
-    freshness_cutoff = reference_time - max_source_age
-    future_tolerance = reference_time + timedelta(hours=6)
-
+    age_windows = source_age_windows()
     def estimated_source_weight(row: Any) -> float:
         tier = str(_row_value(row, "feed_tier", "") or "").lower()
         feed_name = str(_row_value(row, "feed_name", "") or "")
@@ -402,21 +447,44 @@ def rank_candidates(
             else 1.0
         )
 
+    def in_scope(row: Any) -> bool:
+        topic = estimated_topic(row)
+        return topic in allowed_topics and taiwan_relevant(row, topic)
+
     ranked = [
         row
         for row in candidate_rows
         if owner_submitted(row)
         or (
-            (
-                freshness_cutoff
-                <= (published_time(row) or datetime.min.replace(tzinfo=timezone.utc))
-                <= future_tolerance
+            recovery_source_tier(
+                row,
+                now=reference_time,
+                windows=age_windows,
             )
-            and
-            estimated_topic(row) in allowed_topics
-            and taiwan_relevant(row, estimated_topic(row))
+            == "fresh"
+            and in_scope(row)
         )
     ]
+    has_fresh_primary = any(
+        "primary-record" in str(_row_value(row, "tags", "") or "")
+        and str(_row_value(row, "url", "") or "").startswith(
+            ("https://", "http://")
+        )
+        for row in ranked
+        if not owner_submitted(row)
+    )
+    if not has_fresh_primary:
+        ranked.extend(
+            row
+            for row in candidate_rows
+            if recovery_source_tier(
+                row,
+                now=reference_time,
+                windows=age_windows,
+            )
+            == "official_primary_reserve"
+            and in_scope(row)
+        )
     ranked.sort(
         key=lambda row: str(_row_value(row, "published_at", "") or ""),
         reverse=True,
@@ -430,7 +498,20 @@ def rank_candidates(
         ),
         reverse=True,
     )
-    return ranked
+    deduplicated: list[Any] = []
+    seen_titles: set[str] = set()
+    for row in ranked:
+        title_key = re.sub(
+            r"[^0-9A-Za-z\u4e00-\u9fff]+",
+            "",
+            str(_row_value(row, "title", "") or "").casefold(),
+        )
+        if title_key and title_key in seen_titles:
+            continue
+        if title_key:
+            seen_titles.add(title_key)
+        deduplicated.append(row)
+    return deduplicated
 
 
 __all__ = [
@@ -443,5 +524,7 @@ __all__ = [
     "platform_uses_carousel",
     "rank_candidates",
     "record_experiments",
+    "recovery_source_tier",
+    "source_age_windows",
     "visible_carousel_for_platform",
 ]

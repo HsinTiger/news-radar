@@ -28,15 +28,17 @@ News Radar · Content Quality Guard（Phase 8.20 附帶品）
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Literal, Optional
+from zoneinfo import ZoneInfo
 
 Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v30"
+QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v31"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -965,6 +967,68 @@ def check_quality(
                 message="Recovery 貼文不得把交易方式變更推論成流動性或成交量必然改善",
                 evidence=evidence[:120],
             ))
+    return issues
+
+
+def check_reserve_source_framing(
+    full_text: str,
+    source_published_at: str | None,
+) -> List[QualityIssue]:
+    """Require dated, non-breaking-news framing for the bounded source reserve."""
+
+    if not source_published_at:
+        return [
+            QualityIssue(
+                code="reserve_source_missing_date",
+                severity="rewrite",
+                message="官方 reserve 稿必須標明來源公告日期",
+                evidence="missing source_published_at",
+            )
+        ]
+    try:
+        published = datetime.fromisoformat(
+            str(source_published_at).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return [
+            QualityIssue(
+                code="reserve_source_missing_date",
+                severity="rewrite",
+                message="官方 reserve 稿的來源日期無法解析",
+                evidence=str(source_published_at)[:120],
+            )
+        ]
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    local = published.astimezone(ZoneInfo("Asia/Taipei"))
+    date_markers = {
+        f"{local.month}月{local.day}日",
+        f"{local.month}/{local.day}",
+        f"{local.month:02}/{local.day:02}",
+        f"{local.month}-{local.day}",
+        f"{local.month:02}-{local.day:02}",
+    }
+    text = full_text or ""
+    issues: List[QualityIssue] = []
+    if not any(marker in text for marker in date_markers):
+        issues.append(
+            QualityIssue(
+                code="reserve_source_missing_date",
+                severity="rewrite",
+                message="官方 reserve 稿須在可見文案寫出來源機關的公告日期",
+                evidence=f"expected={local.month}月{local.day}日",
+            )
+        )
+    false_recency = re.search(r"今日|今天|最新|剛剛|現正|截至目前", text)
+    if false_recency:
+        issues.append(
+            QualityIssue(
+                code="reserve_source_false_recency",
+                severity="rewrite",
+                message="官方 reserve 稿不得把較早公告包裝成即時最新消息",
+                evidence=false_recency.group(0),
+            )
+        )
     return issues
 
 
