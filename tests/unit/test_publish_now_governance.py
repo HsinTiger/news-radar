@@ -53,10 +53,19 @@ def _temp_db(monkeypatch, tmp_path):
     monkeypatch.setattr(publish_now.dbmod, "DB_PATH", tmp_path / "news_radar.db")
 
 
+def _allow_fake_quality(monkeypatch):
+    monkeypatch.setattr(
+        publish_now,
+        "_quality_issues",
+        lambda _platform, item, **_kwargs: (item["full_text"], []),
+    )
+
+
 def test_threads_only_persists_lineage_and_retry_is_idempotent(
     monkeypatch, tmp_path
 ):
     _temp_db(monkeypatch, tmp_path)
+    _allow_fake_quality(monkeypatch)
     compose_calls = []
     publish_calls = []
 
@@ -99,6 +108,7 @@ def test_threads_only_persists_lineage_and_retry_is_idempotent(
 
 def test_partial_retry_calls_only_missing_platforms(monkeypatch, tmp_path):
     _temp_db(monkeypatch, tmp_path)
+    _allow_fake_quality(monkeypatch)
     attempts = {"facebook": 0, "instagram": 0, "threads": 0}
 
     async def fake_compose(*_args, platforms, **_kwargs):
@@ -195,6 +205,8 @@ def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_
     monkeypatch.setattr(publish_now, "_publish_platform", forbidden)
     monkeypatch.setattr(publish_now, "compose_multi_platform", fake_compose)
     monkeypatch.setattr(publish_now, "check_quality", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "check_platform_style", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "check_platform_format", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(publish_now, "build_cards", lambda **_kwargs: [object(), object()])
     monkeypatch.setattr(
         publish_now,
@@ -222,3 +234,36 @@ def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_
         )
     )
     assert evidence["status"] == "setup_ready"
+
+
+def test_source_bounded_food_safety_override_passes_all_platform_gates() -> None:
+    source = (
+        "食藥署27日公布中聯油脂案第三方獨立調查結果，苯(a)駢芘超標並非單一因素，"
+        "而是高風險原料管理、製程管控與檢驗監測等缺失交互影響。"
+        "行政院7月23日通過食品安全衛生管理法修正草案並送立法院審議，"
+        "聚焦源頭、製程、異常通報、品質管理與數位治理。"
+    )
+    platforms = ["fb", "ig", "threads"]
+    bundle = publish_now._apply_source_bounded_overrides(
+        _bundle(platforms),
+        title="食藥署公布中聯油脂案第三方獨立調查結果",
+        source_text=source,
+        platforms=platforms,
+    )
+    finalized, structural = publish_now._finalize_bundle(bundle, platforms)
+
+    assert structural == []
+    for platform, item in finalized.items():
+        _visible, issues = publish_now._quality_issues(
+            platform,
+            item,
+            title="食藥署公布中聯油脂案第三方獨立調查結果",
+            source_text=source,
+            carousel=bundle.carousel,
+        )
+        assert not [issue for issue in issues if issue.severity == "rewrite"]
+        assert "問題油品流入市面" not in item["full_text"]
+        assert "未來可追蹤" not in item["full_text"]
+    assert len(publish_now.build_cards(
+        title=finalized["ig"]["title"], subtitle="", carousel=bundle.carousel
+    )) == 5

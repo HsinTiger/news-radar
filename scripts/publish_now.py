@@ -33,7 +33,10 @@ load_dotenv(REPO / ".env")
 from src import db as dbmod  # noqa: E402
 from src.composer import compose_multi_platform, finalize_variant  # noqa: E402
 from src.content_quality_guard import (  # noqa: E402
+    check_platform_format,
+    check_platform_style,
     check_quality,
+    combine_visible_text,
     format_issues,
     has_blocking_issues,
     should_request_rewrite,
@@ -54,6 +57,11 @@ from src.schema import (  # noqa: E402
     ScoreBreakdown,
 )
 from substack_radar.cards import build_cards, render_cards  # noqa: E402
+from run_pipeline import (  # noqa: E402
+    _deterministic_food_safety_carousel,
+    _deterministic_food_safety_variant,
+    _is_recovery_food_safety_investigation,
+)
 
 
 _PUB = {
@@ -277,6 +285,36 @@ def _finalize_bundle(bundle, platforms: list[str]) -> tuple[dict[str, dict[str, 
     return finalized, problems
 
 
+def _apply_source_bounded_overrides(
+    bundle,
+    *,
+    title: str,
+    source_text: str,
+    platforms: list[str],
+):
+    """Reuse production Recovery templates for exact owner-supplied evidence."""
+
+    evidence = f"{title}\n{source_text}"
+    source_label = "食藥署 owner submission" if "食藥署" in evidence else "owner submission"
+    if not _is_recovery_food_safety_investigation(
+        source_label=source_label,
+        title=title,
+        content=source_text,
+    ):
+        return bundle
+    updates: dict[str, Any] = {
+        "carousel": _deterministic_food_safety_carousel(),
+    }
+    for platform in platforms:
+        variant = getattr(bundle, platform, None)
+        if variant is not None:
+            updates[platform] = _deterministic_food_safety_variant(
+                variant,
+                platform=platform,
+            )
+    return bundle.model_copy(update=updates)
+
+
 def _persist_composition(
     conn,
     *,
@@ -332,12 +370,20 @@ def _record_quality(
     draft_id: str,
     news_id: str,
     title: str,
+    source_text: str,
+    carousel: CarouselCards | None,
     finalized: dict[str, dict[str, Any]],
     attempt: int,
 ) -> dict[str, list]:
     findings: dict[str, list] = {}
     for platform, item in finalized.items():
-        issues = check_quality(item["full_text"], title=title)
+        visible_text, issues = _quality_issues(
+            platform,
+            item,
+            title=title,
+            source_text=source_text,
+            carousel=carousel,
+        )
         findings[platform] = issues
         dbmod.record_quality_evaluation(
             conn,
@@ -346,7 +392,7 @@ def _record_quality(
             platform=_DB_PLATFORM[platform],
             stage="compose",
             attempt=attempt,
-            full_text=item["full_text"],
+            full_text=visible_text,
             issues=issues,
         )
     return findings
@@ -376,15 +422,67 @@ def _quality_evidence(findings: dict[str, list]) -> dict[str, list[dict[str, str
     }
 
 
+def _quality_issues(
+    platform: str,
+    item: dict[str, Any],
+    *,
+    title: str,
+    source_text: str,
+    carousel: CarouselCards | None,
+) -> tuple[str, list]:
+    """Apply the same evidence, native-style, and visible-card gates as Recovery."""
+
+    visible_text = combine_visible_text(item["full_text"], carousel)
+    issues = check_quality(
+        visible_text,
+        title=title,
+        recovery=True,
+        source_text=source_text,
+    )
+    issues.extend(
+        check_platform_style(
+            platform,
+            item["full_text"],
+            title=title,
+            recovery=True,
+        )
+    )
+    card_count = 0
+    if carousel is not None:
+        card_count = len(
+            build_cards(
+                title=item["title"] or "",
+                subtitle="",
+                carousel=carousel,
+            )
+        )
+    issues.extend(
+        check_platform_format(
+            platform,
+            carousel_card_count=card_count,
+            recovery=True,
+        )
+    )
+    return visible_text, issues
+
+
 def _check_setup_quality(
     finalized: dict[str, dict[str, Any]],
     *,
     title: str,
+    source_text: str,
+    carousel: CarouselCards | None,
 ) -> tuple[dict[str, list], list[str]]:
-    findings = {
-        platform: check_quality(item["full_text"], title=title)
-        for platform, item in finalized.items()
-    }
+    findings = {}
+    for platform, item in finalized.items():
+        _visible_text, issues = _quality_issues(
+            platform,
+            item,
+            title=title,
+            source_text=source_text,
+            carousel=carousel,
+        )
+        findings[platform] = issues
     unresolved = _quality_problems(findings, "block")
     unresolved.extend(_quality_problems(findings, "rewrite"))
     return findings, unresolved
@@ -444,11 +542,23 @@ async def run_setup_only(args: argparse.Namespace) -> tuple[int, dict[str, Any]]
             "publish_invoked": False,
             "canonical_state_mutated": False,
         }
+    source_evidence_text = f"{title}\n{text}"
+    bundle = _apply_source_bounded_overrides(
+        bundle,
+        title=title,
+        source_text=text,
+        platforms=platforms,
+    )
     finalized, structural = _finalize_bundle(bundle, platforms)
     findings: dict[str, list] = {}
     unresolved = structural
     if not unresolved:
-        findings, unresolved = _check_setup_quality(finalized, title=title)
+        findings, unresolved = _check_setup_quality(
+            finalized,
+            title=title,
+            source_text=source_evidence_text,
+            carousel=bundle.carousel,
+        )
     if unresolved:
         print(
             "[publish_now] ✍️ setup-only quality guard 要求唯一一次重寫："
@@ -468,11 +578,19 @@ async def run_setup_only(args: argparse.Namespace) -> tuple[int, dict[str, Any]]
             platforms=platforms,
         )
         if retry is not None:
+            retry = _apply_source_bounded_overrides(
+                retry,
+                title=title,
+                source_text=text,
+                platforms=platforms,
+            )
             retry_finalized, retry_structural = _finalize_bundle(retry, platforms)
             if not retry_structural:
                 retry_findings, retry_unresolved = _check_setup_quality(
                     retry_finalized,
                     title=title,
+                    source_text=source_evidence_text,
+                    carousel=retry.carousel,
                 )
                 bundle = retry
                 finalized = retry_finalized
@@ -534,6 +652,7 @@ async def _compose_governed(
     draft_id: str,
     title: str,
     content: str,
+    source_text: str,
     platforms: list[str],
 ) -> tuple[Any | None, dict[str, dict[str, Any]], list[str]]:
     note = args.note
@@ -545,6 +664,12 @@ async def _compose_governed(
     )
     if bundle is None:
         return None, {}, ["composer returned no draft"]
+    bundle = _apply_source_bounded_overrides(
+        bundle,
+        title=title,
+        source_text=source_text,
+        platforms=platforms,
+    )
     finalized, structural = _finalize_bundle(bundle, platforms)
     if structural:
         return bundle, finalized, structural
@@ -561,6 +686,8 @@ async def _compose_governed(
         draft_id=draft_id,
         news_id=news_id,
         title=title,
+        source_text=f"{title}\n{source_text}",
+        carousel=bundle.carousel,
         finalized=finalized,
         attempt=1,
     )
@@ -588,6 +715,12 @@ async def _compose_governed(
     )
     if retry is None:
         return bundle, finalized, ["quality rewrite composer failed", *rewrites]
+    retry = _apply_source_bounded_overrides(
+        retry,
+        title=title,
+        source_text=source_text,
+        platforms=platforms,
+    )
     retry_finalized, structural = _finalize_bundle(retry, platforms)
     if structural:
         return bundle, finalized, ["quality rewrite incomplete", *structural]
@@ -604,6 +737,8 @@ async def _compose_governed(
         draft_id=draft_id,
         news_id=news_id,
         title=title,
+        source_text=f"{title}\n{source_text}",
+        carousel=retry.carousel,
         finalized=retry_finalized,
         attempt=2,
     )
@@ -772,6 +907,7 @@ async def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 draft_id=draft_id,
                 title=title,
                 content=content,
+                source_text=text,
                 platforms=platforms,
             )
             draft_exists = conn.execute(
