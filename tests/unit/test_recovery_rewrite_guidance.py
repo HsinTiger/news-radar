@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from run_pipeline import (
+    _deterministic_food_safety_carousel,
+    _deterministic_food_safety_variant,
     _deterministic_recovery_closing_repair,
     _deterministic_recovery_hashtag_prune,
     _deterministic_recovery_inference_prune,
@@ -11,6 +13,7 @@ from run_pipeline import (
     _deterministic_market_benchmark_variant,
     _deterministic_recovery_utility_repair,
     _is_recovery_market_benchmark,
+    _is_recovery_food_safety_investigation,
     _quality_rewrite_penalty,
     _recovery_rewrite_guidance,
 )
@@ -472,6 +475,71 @@ def test_recovery_market_benchmark_excludes_company_procedure_notice() -> None:
         title="英柏得科技申請股票上市",
         content="公司送件申請上市，公告資本額與產品。",
     )
+
+
+def test_recovery_food_safety_template_is_fail_closed() -> None:
+    source = (
+        "中聯油脂事件第三方獨立調查指出苯(a)駢芘超標並非單一因素。"
+        "行政院通過食品安全衛生管理法修正草案。"
+    )
+
+    assert _is_recovery_food_safety_investigation(
+        source_label="食藥署 本署新聞",
+        title="食藥署公布中聯油脂事件第三方調查",
+        content=source,
+    )
+    assert not _is_recovery_food_safety_investigation(
+        source_label="食藥署 本署新聞",
+        title="一般食品抽驗結果",
+        content="食藥署公布例行抽驗。",
+    )
+    assert not _is_recovery_food_safety_investigation(
+        source_label="一般媒體",
+        title="中聯油脂事件第三方調查",
+        content=source,
+    )
+
+
+def test_deterministic_food_safety_copy_is_source_bounded() -> None:
+    source = (
+        "食藥署27日公布中聯油脂案第三方獨立調查結果，苯(a)駢芘超標並非單一因素。"
+        "調查指出原料管理、製程管控與檢驗監測等多項缺失。"
+        "行政院7月23日通過食品安全衛生管理法修正草案，聚焦源頭、製程、"
+        "異常通報、品質管理與數位治理。"
+    )
+    seed = PlatformVariant(
+        title="LLM title",
+        body="LLM body",
+        hashtags=[],
+        char_count=0,
+    )
+
+    for platform, canonical in (
+        ("threads", "threads"),
+        ("fb", "facebook"),
+        ("ig", "instagram"),
+    ):
+        rewritten = _deterministic_food_safety_variant(seed, platform=platform)
+        _variant, full_text, _ok = finalize_variant(rewritten, platform)
+        issues = check_quality(
+            full_text,
+            title="中聯油脂食安調查",
+            recovery=True,
+            source_text=source,
+        ) + check_platform_style(
+            canonical,
+            full_text,
+            title="中聯油脂食安調查",
+            recovery=True,
+        )
+
+        assert "有望降低" not in full_text
+        assert "今年完成審議" not in full_text
+        assert "所有臺灣消費者" not in full_text
+        assert not [issue for issue in issues if issue.severity == "rewrite"]
+
+    carousel = _deterministic_food_safety_carousel()
+    assert len(build_cards(title="中聯油脂食安調查", subtitle="", carousel=carousel)) == 5
 
 
 def test_deterministic_market_benchmark_copy_is_source_bounded() -> None:
