@@ -55,6 +55,14 @@ def test_official_taiex_wording_hits_tw_stocks():
     assert c is not None and c.category_id == "tw_stocks"
 
 
+def test_official_concentrated_market_flows_hit_tw_stocks():
+    c = classify_topic_keyword(
+        "上週外資在集中市場賣超470.64億元，另買超緯創15.49萬張最多",
+        "證交所公布集中市場外資及陸資投資情形。",
+    )
+    assert c is not None and c.category_id == "tw_stocks"
+
+
 def test_claude_code_hits_ai_agent_not_ai_model():
     """『Claude Code』應命中 ai_agent（因為列表含『Claude Code』完整字串），
     而非 ai_model（列表只含『Claude Opus/Sonnet/Haiku』，不含 bare 'Claude'）。"""
