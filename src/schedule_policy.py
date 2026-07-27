@@ -23,6 +23,7 @@ class PlatformDecision:
     target_posts_per_day: int
     minimum_interval_hours: float
     local_slots: list[int]
+    catch_up_deadline_hour: int | None
     local_days: list[int]
     policy_source: str
 
@@ -73,6 +74,22 @@ def _inside_slot(now_local: datetime, hours: list[int], tolerance: int) -> bool:
         0 <= minute_of_day - hour * 60 <= tolerance
         for hour in hours
     )
+
+
+def _inside_catch_up(
+    now_local: datetime,
+    hours: list[int],
+    deadline_hour: int | None,
+) -> bool:
+    """Allow an overdue recovery slot to run before its explicit local deadline."""
+    if deadline_hour is None:
+        return False
+    if len(hours) != 1:
+        raise ValueError("catch-up deadline requires exactly one local slot")
+    if not hours[0] < deadline_hour <= 24:
+        raise ValueError("catch-up deadline must be after the local slot and at most 24")
+    minute_of_day = now_local.hour * 60 + now_local.minute
+    return hours[0] * 60 <= minute_of_day < deadline_hour * 60
 
 
 def _retryable_recovery_queue(conn: sqlite3.Connection, platform: str) -> int:
@@ -222,11 +239,25 @@ def decide_schedule(
                 retryable_queue = _retryable_recovery_queue(conn, platform)
         last = _parse_timestamp(last_value)
         interval = timedelta(hours=float(config["minimum_interval_hours"]))
-        slot_ok = _inside_slot(
+        local_slots = [int(value) for value in config["local_slots"]]
+        slot_tolerance = int(config["slot_tolerance_minutes"])
+        primary_slot_ok = _inside_slot(
             local,
-            [int(value) for value in config["local_slots"]],
-            int(config["slot_tolerance_minutes"]),
+            local_slots,
+            slot_tolerance,
         )
+        catch_up_deadline = config.get("catch_up_deadline_hour")
+        if catch_up_deadline is not None:
+            if isinstance(catch_up_deadline, bool) or not isinstance(
+                catch_up_deadline, int
+            ):
+                raise ValueError(f"invalid catch-up deadline for {platform}")
+        catch_up_slot_ok = mode == "recovery" and _inside_catch_up(
+            local,
+            local_slots,
+            catch_up_deadline,
+        )
+        slot_ok = primary_slot_ok or catch_up_slot_ok
         local_days = [int(value) for value in config.get("local_days", range(7))]
         day_ok = local.weekday() in local_days
         post_quota_ok = posts_today < int(config["target_posts_per_day"])
@@ -249,7 +280,9 @@ def decide_schedule(
         if not interval_ok:
             reasons.append("minimum_interval_not_reached")
         if due:
-            reasons.append("due")
+            reasons.append(
+                "catch_up_due" if catch_up_slot_ok and not primary_slot_ok else "due"
+            )
         decisions.append(
             PlatformDecision(
                 platform=platform,
@@ -261,7 +294,8 @@ def decide_schedule(
                 last_success=last_value,
                 target_posts_per_day=int(config["target_posts_per_day"]),
                 minimum_interval_hours=float(config["minimum_interval_hours"]),
-                local_slots=[int(value) for value in config["local_slots"]],
+                local_slots=local_slots,
+                catch_up_deadline_hour=catch_up_deadline,
                 local_days=local_days,
                 policy_source=policy_source,
             )
