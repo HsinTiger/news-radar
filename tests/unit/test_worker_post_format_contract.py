@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_worker_upsert_refreshes_proven_post_format() -> None:
     source = (ROOT / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
     assert "format=excluded.format,platform_post_id=excluded.platform_post_id" in source
-    assert 'const API_VERSION = "2026-07-27.scheduler-watchdog-v1";' in source
+    assert 'const API_VERSION = "2026-07-28.direct-post-sync-v1";' in source
 
 
 def test_worker_computes_seven_day_follower_delta_from_d1_history() -> None:

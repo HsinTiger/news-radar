@@ -1020,6 +1020,13 @@ def report_submission_updates(
             headers=headers,
             json={"status": update["status"]},
         )
+        if response.status_code == 404:
+            print(
+                "[sync_social_ops] WARN skipping status for non-control "
+                f"submission {update['submission_id']}",
+                file=sys.stderr,
+            )
+            continue
         response.raise_for_status()
         reported += 1
     return reported

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import httpx
 
 from src.content_quality_guard import QUALITY_GUARD_VERSION
 from scripts.sync_social_ops import (
@@ -20,6 +21,7 @@ from scripts.sync_social_ops import (
     build_quality,
     build_recovery_experiments,
     build_submission_updates,
+    report_submission_updates,
 )
 
 
@@ -30,6 +32,41 @@ SOCIAL_POLICY = json.loads(
         / "social_automation_policy.json"
     ).read_text(encoding="utf-8")
 )
+
+
+def test_submission_status_sync_skips_only_unknown_direct_keys(capsys) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/owner-direct-key/" in str(request.url):
+            return httpx.Response(404, request=request)
+        return httpx.Response(200, request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        reported = report_submission_updates(
+            client,
+            api_url="https://social.example",
+            token="token",
+            updates=[
+                {"submission_id": "owner-direct-key", "status": "published"},
+                {"submission_id": "submission-existing", "status": "published"},
+            ],
+        )
+
+    assert reported == 1
+    assert "WARN skipping status for non-control submission owner-direct-key" in capsys.readouterr().err
+
+
+def test_submission_status_sync_keeps_non_404_errors_fail_closed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            report_submission_updates(
+                client,
+                api_url="https://social.example",
+                token="token",
+                updates=[{"submission_id": "submission-broken", "status": "published"}],
+            )
 
 
 def test_engagement_raw_summary_preserves_actual_collection_age() -> None:
