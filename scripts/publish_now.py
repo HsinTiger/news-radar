@@ -82,11 +82,21 @@ _SHORT_PLATFORM = {value: key for key, value in _DB_PLATFORM.items()}
 _ORDER = ("threads", "ig", "fb")
 APPENDIX_VERSION = "1.0"
 
+_TW_STOCK_TITLE_CUES = ("台股", "證交所", "加權指數", "櫃買")
+
 STATUS_PUBLISHED = "published"
 STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
 STATUS_QUALITY_HELD = "quality_held"
 STATUS_SETUP_READY = "setup_ready"
+
+
+def _topic_category_for_title(title: str) -> str:
+    """Keep immediate-publish cards out of the generic ``other`` bucket."""
+
+    if any(cue in (title or "") for cue in _TW_STOCK_TITLE_CUES):
+        return "tw_stocks"
+    return "other"
 
 
 def _now() -> str:
@@ -550,7 +560,7 @@ def _render_setup_previews(
         output_dir = evidence_dir / "cards" / platform
         paths = render_cards(
             cards=cards,
-            topic_category="other",
+            topic_category=_topic_category_for_title(item["title"] or ""),
             aspect=platform,
             output_dir=output_dir,
         )
@@ -829,7 +839,7 @@ async def _publish_platform(
     output_dir = Path(tempfile.mkdtemp(prefix=f"pn_{platform}_"))
     paths = render_cards(
         cards=cards,
-        topic_category="other",
+        topic_category=_topic_category_for_title(cover_title),
         aspect=platform,
         output_dir=output_dir,
     )
