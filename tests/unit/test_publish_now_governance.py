@@ -237,6 +237,13 @@ def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_
     assert evidence["status"] == "setup_ready"
 
 
+def test_immediate_publish_classifies_tw_stock_card_titles() -> None:
+    assert publish_now._topic_category_for_title(
+        "證交所外資統計：賣超不等於持股市值下降"
+    ) == "tw_stocks"
+    assert publish_now._topic_category_for_title("一般生活觀察") == "other"
+
+
 def test_exact_copy_uses_no_composer_and_cannot_broaden_platform_scope(
     monkeypatch, tmp_path
 ):
