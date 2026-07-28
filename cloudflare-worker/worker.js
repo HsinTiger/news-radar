@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-27.scheduler-watchdog-v1";
+const API_VERSION = "2026-07-28.direct-post-sync-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -816,7 +816,7 @@ async function syncOperationalData(request, env, cors) {
         `INSERT INTO platform_posts(
           id,draft_id,submission_id,platform,format,platform_post_id,status,
           title,topic,source_url,posted_at,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?, ?, (SELECT id FROM submissions WHERE id=?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           draft_id=excluded.draft_id,submission_id=excluded.submission_id,
           format=excluded.format,platform_post_id=excluded.platform_post_id,
