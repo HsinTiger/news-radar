@@ -19,6 +19,12 @@ def test_public_health_exposes_truthful_meta_readiness() -> None:
     assert '"source_too_short"' in worker
 
 
+def test_direct_publish_sync_does_not_invent_submission_foreign_keys() -> None:
+    worker = (ROOT / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
+
+    assert "(SELECT id FROM submissions WHERE id=?)" in worker
+
+
 def test_submit_ui_uses_runtime_instead_of_a_permanent_pause() -> None:
     page = (ROOT / "substack-submit" / "index.html").read_text(encoding="utf-8")
 

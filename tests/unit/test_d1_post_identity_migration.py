@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from pathlib import Path
 
@@ -5,6 +6,17 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _worker_post_upsert_sql() -> str:
+    source = (ROOT / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
+    match = re.search(
+        r"`(INSERT INTO platform_posts\(.*?updated_at=excluded\.updated_at)`",
+        source,
+        re.DOTALL,
+    )
+    assert match is not None
+    return match.group(1)
 
 
 def _insert_post(
@@ -82,3 +94,46 @@ def test_migration_reconciles_superseded_failure_and_enforces_one_row() -> None:
             status="failed",
             platform_post_id=None,
         )
+
+
+def test_worker_post_sync_nulls_only_unknown_submission_foreign_keys() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        (ROOT / "cloudflare-worker/migrations/0001_operational_control.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    sql = _worker_post_upsert_sql()
+    tail = (
+        "threads",
+        "carousel",
+        "thread-1",
+        "published",
+        "title",
+        "tw_stocks",
+        None,
+        "2099-01-01T00:00:00Z",
+        "2099-01-01T00:00:00Z",
+        "2099-01-01T00:00:00Z",
+    )
+
+    conn.execute(sql, ("post-direct", "draft-1", "owner-direct-key", *tail))
+    assert conn.execute(
+        "SELECT submission_id FROM platform_posts WHERE id='post-direct'"
+    ).fetchone()[0] is None
+
+    conn.execute(
+        """INSERT INTO submissions(
+          id,idempotency_key,target,source_type,content,requested_mode,status,
+          created_at,updated_at
+        ) VALUES('submission-1','key-1','meta','text','body','publish_now',
+                 'queued','2099-01-01T00:00:00Z','2099-01-01T00:00:00Z')"""
+    )
+    controlled_tail = (*tail[:2], "thread-2", *tail[3:])
+    conn.execute(
+        sql,
+        ("post-controlled", "draft-2", "submission-1", *controlled_tail),
+    )
+    assert conn.execute(
+        "SELECT submission_id FROM platform_posts WHERE id='post-controlled'"
+    ).fetchone()[0] == "submission-1"
