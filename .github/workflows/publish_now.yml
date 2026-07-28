@@ -33,6 +33,11 @@ on:
         required: false
         default: ""
         type: string
+      exact_copy_json:
+        description: "Optional deterministic MultiPlatformDraft JSON; quality gates still apply"
+        required: false
+        default: ""
+        type: string
       submission_id:
         description: "Control-plane submission ID / idempotency key"
         required: false
@@ -98,6 +103,7 @@ jobs:
           INPUT_TEXT: ${{ inputs.text }}
           INPUT_PLATFORMS: ${{ inputs.platforms }}
           INPUT_NOTE: ${{ inputs.note }}
+          INPUT_EXACT_COPY_JSON: ${{ inputs.exact_copy_json }}
         run: |
           set -o pipefail
           mkdir -p logs/publish-now-canary
@@ -108,6 +114,7 @@ jobs:
             --text "$INPUT_TEXT" \
             --platforms "$INPUT_PLATFORMS" \
             --note "$INPUT_NOTE" \
+            --exact-copy-json "$INPUT_EXACT_COPY_JSON" \
             --result-json logs/publish-now-canary/result.json \
             --evidence-dir logs/publish-now-canary 2>&1 | tee logs/publish-now-canary/run.log
 
@@ -192,6 +199,7 @@ jobs:
           INPUT_TEXT: ${{ inputs.text }}
           INPUT_PLATFORMS: ${{ inputs.platforms }}
           INPUT_NOTE: ${{ inputs.note }}
+          INPUT_EXACT_COPY_JSON: ${{ inputs.exact_copy_json }}
           INPUT_SUBMISSION_ID: ${{ inputs.submission_id }}
         run: |
           set -o pipefail
@@ -204,7 +212,8 @@ jobs:
             --platforms "$INPUT_PLATFORMS" \
             --submission-id "$INPUT_SUBMISSION_ID" \
             --result-json logs/publish_now_result.json \
-            --note "$INPUT_NOTE" 2>&1 | tee logs/publish_now_last.log
+            --note "$INPUT_NOTE" \
+            --exact-copy-json "$INPUT_EXACT_COPY_JSON" 2>&1 | tee logs/publish_now_last.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           RESULT_STATUS=$(python -c "import json; print(json.load(open('logs/publish_now_result.json', encoding='utf-8')).get('status','failed'))" 2>/dev/null || echo failed)

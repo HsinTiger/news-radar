@@ -51,6 +51,7 @@ from src.schema import (  # noqa: E402
     CarouselCards,
     Draft,
     DraftContent,
+    MultiPlatformDraft,
     NewsItem,
     PlatformVariant,
     PublishResult,
@@ -198,6 +199,47 @@ def _load_source(args: argparse.Namespace) -> tuple[str, str]:
     if not title or not text:
         raise ValueError("需要 --url，或 --title 搭配 --text/--file")
     return title, text
+
+
+def _load_exact_bundle(raw: str, platforms: list[str]) -> MultiPlatformDraft:
+    """Load owner-supplied copy without weakening any downstream quality gate."""
+
+    try:
+        payload = json.loads(raw)
+        bundle = MultiPlatformDraft.model_validate(payload)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise ValueError(f"invalid exact_copy_json: {exc}") from exc
+    requested = set(platforms)
+    missing = [platform for platform in platforms if getattr(bundle, platform) is None]
+    if missing:
+        raise ValueError(f"exact_copy_json missing requested platforms: {','.join(missing)}")
+    broadened = [
+        platform
+        for platform in _ORDER
+        if platform not in requested and getattr(bundle, platform) is not None
+    ]
+    if broadened:
+        raise ValueError(
+            f"exact_copy_json contains unrequested platforms: {','.join(broadened)}"
+        )
+    return bundle
+
+
+async def _compose_or_exact(
+    args: argparse.Namespace,
+    title: str,
+    content: str,
+    platforms: list[str],
+) -> MultiPlatformDraft | None:
+    if args.exact_copy_json:
+        print("[publish_now] 🧾 using deterministic owner copy", flush=True)
+        return _load_exact_bundle(args.exact_copy_json, platforms)
+    return await compose_multi_platform(
+        title,
+        content,
+        editorial_note=args.note,
+        platforms=platforms,
+    )
 
 
 def _persist_source(
@@ -528,12 +570,7 @@ async def run_setup_only(args: argparse.Namespace) -> tuple[int, dict[str, Any]]
     if len(text) < 80:
         raise ValueError("抓不到足夠內文；請改用全文輸入")
     content = (f"{args.note}\n\n" if args.note else "") + text
-    bundle = await compose_multi_platform(
-        title,
-        content,
-        editorial_note=args.note,
-        platforms=platforms,
-    )
+    bundle = await _compose_or_exact(args, title, content, platforms)
     if bundle is None:
         return 3, {
             "status": STATUS_FAILED,
@@ -559,7 +596,7 @@ async def run_setup_only(args: argparse.Namespace) -> tuple[int, dict[str, Any]]
             source_text=source_evidence_text,
             carousel=bundle.carousel,
         )
-    if unresolved:
+    if unresolved and not args.exact_copy_json:
         print(
             "[publish_now] ✍️ setup-only quality guard 要求唯一一次重寫："
             + " || ".join(unresolved),
@@ -656,12 +693,7 @@ async def _compose_governed(
     platforms: list[str],
 ) -> tuple[Any | None, dict[str, dict[str, Any]], list[str]]:
     note = args.note
-    bundle = await compose_multi_platform(
-        title,
-        content,
-        editorial_note=note,
-        platforms=platforms,
-    )
+    bundle = await _compose_or_exact(args, title, content, platforms)
     if bundle is None:
         return None, {}, ["composer returned no draft"]
     bundle = _apply_source_bounded_overrides(
@@ -697,6 +729,9 @@ async def _compose_governed(
     rewrites = _quality_problems(findings, "rewrite")
     if not rewrites:
         return bundle, finalized, []
+
+    if args.exact_copy_json:
+        return bundle, finalized, rewrites
 
     print(
         "[publish_now] ✍️ quality guard 要求唯一一次重寫：" + " || ".join(rewrites),
@@ -979,6 +1014,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--file", default="")
     parser.add_argument("--platforms", default="fb,ig,threads")
     parser.add_argument("--note", default="")
+    parser.add_argument(
+        "--exact-copy-json",
+        default="",
+        help="owner-supplied MultiPlatformDraft JSON; still subject to all quality gates",
+    )
     parser.add_argument("--submission-id", default="")
     parser.add_argument("--result-json", default="")
     parser.add_argument(

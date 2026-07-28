@@ -85,6 +85,8 @@ def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> Non
     assert "FB_PAGE_ACCESS_TOKEN" not in setup_job
     assert "IG_ACCESS_TOKEN" not in setup_job
     assert "THREADS_ACCESS_TOKEN" not in setup_job
+    assert "exact_copy_json:" in workflow
+    assert '--exact-copy-json "$INPUT_EXACT_COPY_JSON"' in workflow
 
 
 def test_deploy_config_arms_meta_only_with_live_processor() -> None:
