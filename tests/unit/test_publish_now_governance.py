@@ -16,6 +16,7 @@ def _args(*, platforms="threads", submission_id="submission-test-001"):
         file="",
         platforms=platforms,
         note="",
+        exact_copy_json="",
         submission_id=submission_id,
         result_json="",
         setup_only=False,
@@ -234,6 +235,41 @@ def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_
         )
     )
     assert evidence["status"] == "setup_ready"
+
+
+def test_exact_copy_uses_no_composer_and_cannot_broaden_platform_scope(
+    monkeypatch, tmp_path
+):
+    def forbidden_compose(*_args, **_kwargs):
+        raise AssertionError("exact copy must not invoke a model")
+
+    monkeypatch.setattr(publish_now, "compose_multi_platform", forbidden_compose)
+    monkeypatch.setattr(publish_now, "check_quality", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "check_platform_style", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "check_platform_format", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(publish_now, "build_cards", lambda **_kwargs: [object(), object()])
+    monkeypatch.setattr(
+        publish_now,
+        "render_cards",
+        lambda *, output_dir, **_kwargs: [output_dir / "one.png", output_dir / "two.png"],
+    )
+    args = _args(platforms="threads", submission_id="")
+    args.setup_only = True
+    args.evidence_dir = str(tmp_path / "evidence")
+    args.exact_copy_json = _bundle(["threads"]).model_dump_json()
+
+    exit_code, result = publish_now.asyncio.run(publish_now.run_setup_only(args))
+
+    assert exit_code == 0
+    assert result["status"] == "setup_ready"
+
+    broadened = _bundle(["fb", "threads"]).model_dump_json()
+    try:
+        publish_now._load_exact_bundle(broadened, ["threads"])
+    except ValueError as exc:
+        assert "unrequested platforms: fb" in str(exc)
+    else:
+        raise AssertionError("unrequested exact-copy platform must fail closed")
 
 
 def test_source_bounded_food_safety_override_passes_all_platform_gates() -> None:
