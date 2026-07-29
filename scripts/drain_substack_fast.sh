@@ -24,6 +24,16 @@ trap cleanup EXIT
 
 cd "$LOCAL_REPO" 2>/dev/null || { echo "[fast-drain] no repo at $LOCAL_REPO"; exit 0; }
 if [ ! -x "$PY" ]; then echo "[fast-drain] missing venv; run compose_hourly.sh once"; exit 2; fi
+
+# Re-kick whichever scheduled workflow is running late. GitHub coalesces
+# submission-poller.yml and operational-sync.yml to 1-3 hours apart under load
+# despite their sub-hourly crons, so this launchd tick is the reliable clock
+# that covers for both. Runs before both locks: read-only plus an idempotent
+# workflow dispatch, one HTTPS call, and it must still happen on ticks where
+# the drain itself is locked out by a long-running compose. Never allowed to
+# fail the drain.
+"$PY" -u scripts/nudge_stuck_submissions.py || true
+
 if ! mkdir "$LOCAL_LOCK" 2>/dev/null; then echo "[fast-drain] another local writer is active; skip"; exit 0; fi
 LOCAL_LOCKED=1
 
