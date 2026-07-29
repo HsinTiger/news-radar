@@ -25,6 +25,21 @@ trap cleanup EXIT
 cd "$LOCAL_REPO" 2>/dev/null || { echo "[fast-drain] no repo at $LOCAL_REPO"; exit 0; }
 if [ ! -x "$PY" ]; then echo "[fast-drain] missing venv; run compose_hourly.sh once"; exit 2; fi
 
+# Say so when the installed copy has drifted from the tracked one. INSTALL doc
+# already prescribes this shasum check, but a check someone has to remember to
+# run is not a check: on 2026-07-29 the installed copy was found still draining
+# --only-immediate long after the tracked one moved to --only-current-control,
+# and nothing had reported it. Warn only; a drifted script that still works
+# must not be prevented from running.
+CANONICAL="$LOCAL_REPO/scripts/drain_substack_fast.sh"
+if [ -f "$CANONICAL" ] && [ "$(readlink -f "$0" 2>/dev/null || echo "$0")" != "$(readlink -f "$CANONICAL" 2>/dev/null || echo "$CANONICAL")" ]; then
+  if ! cmp -s "$0" "$CANONICAL"; then
+    echo "[fast-drain] ⚠️ 這支腳本 ($0) 與 repo 版本不同步；差異："
+    diff "$CANONICAL" "$0" | sed 's/^/[fast-drain]   /' | head -20
+    echo "[fast-drain]   對齊：cp $CANONICAL $0"
+  fi
+fi
+
 # Re-kick whichever scheduled workflow is running late. GitHub coalesces
 # submission-poller.yml and operational-sync.yml to 1-3 hours apart under load
 # despite their sub-hourly crons, so this launchd tick is the reliable clock
