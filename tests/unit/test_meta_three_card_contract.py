@@ -4,8 +4,10 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
+from src.character_cover_meta import _wrap as wrap_character_cover
+from src.cover_renderer import FONT_TITLE_PATH, _load_font
 from src.publisher import (
     publish_fb_carousel,
     publish_ig_carousel,
@@ -124,6 +126,22 @@ def test_renderer_blocks_when_required_mascot_cannot_render(
             aspect="ig",
             output_dir=tmp_path,
         )
+
+
+def test_character_cover_wrap_avoids_single_cjk_orphan() -> None:
+    draw = ImageDraw.Draw(Image.new("RGB", (1080, 1350), "white"))
+    font = _load_font(FONT_TITLE_PATH, 104)
+
+    lines = wrap_character_cover(
+        draw,
+        "食藥署公佈：中聯油脂案超標不是單一因素",
+        font,
+        1080 - 2 * 72,
+    )
+
+    assert len(lines) >= 2
+    assert len(lines[-1]) != 1
+    assert "".join(lines).endswith("因素")
 
 
 @pytest.mark.parametrize(
