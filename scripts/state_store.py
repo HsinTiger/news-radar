@@ -204,20 +204,57 @@ def restore_bundle(bundle_path: Path, root: Path, manifest: dict[str, Any]) -> d
     return db_meta
 
 
-def _resolve_token() -> str:
+def _gh_auth_token(user: str = "") -> str:
+    """`gh auth token`，可指定帳號。取不到回空字串。"""
+    cmd = ["gh", "auth", "token"]
+    if user:
+        cmd += ["--user", user]
+    try:
+        return subprocess.check_output(
+            cmd, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _resolve_token(repo: str = "") -> str:
+    """解析可寫入 `repo` 的 GitHub token。
+
+    2026-07-29 事故：`gh` 的 **active account** 被切成另一個只有 pull 權限的帳號，
+    `gh auth token`（不指定帳號）就交出那把唯讀 token。GitHub 對「讀得到但不能寫」
+    的 repo 回 404 而非 403，於是 release asset upload 失敗變成一句沒頭沒尾的
+    `asset upload failed (404)`，整條 Mac 寫稿 lane 在拿 lease 這一步就 exit 3，
+    LLM 根本沒被呼叫到。
+
+    因此改為 **綁 repo owner 取 token**，不再依賴 gh 的 active account：
+      1. GITHUB_TOKEN / GH_TOKEN（CI 用；顯式指定最優先）
+      2. NEWS_RADAR_GH_USER 指定的帳號
+      3. repo owner 同名帳號（HsinTiger/news-radar → HsinTiger）
+      4. gh active account（最後退路，維持舊行為）
+    """
     for name in ("GITHUB_TOKEN", "GH_TOKEN"):
         value = os.environ.get(name, "").strip()
         if value:
             return value
-    try:
-        value = subprocess.check_output(
-            ["gh", "auth", "token"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        value = ""
-    if not value:
-        raise StateStoreError("missing GITHUB_TOKEN/GH_TOKEN and no gh auth token")
-    return value
+
+    candidates: list[str] = []
+    pinned = os.environ.get("NEWS_RADAR_GH_USER", "").strip()
+    if pinned:
+        candidates.append(pinned)
+    if "/" in repo:
+        owner = repo.split("/", 1)[0].strip()
+        if owner and owner not in candidates:
+            candidates.append(owner)
+    candidates.append("")  # gh active account
+
+    for user in candidates:
+        value = _gh_auth_token(user)
+        if value:
+            if user:
+                print(f"[state-store] using gh token for account `{user}`")
+            return value
+
+    raise StateStoreError("missing GITHUB_TOKEN/GH_TOKEN and no gh auth token")
 
 
 class GitHubReleaseStore:
@@ -230,7 +267,7 @@ class GitHubReleaseStore:
             timeout=httpx.Timeout(120.0, connect=20.0),
             follow_redirects=True,
             headers={
-                "Authorization": f"Bearer {token or _resolve_token()}",
+                "Authorization": f"Bearer {token or _resolve_token(repo)}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": API_VERSION,
                 "User-Agent": "news-radar-state-store/1",
@@ -298,9 +335,41 @@ class GitHubReleaseStore:
             )
         if response.is_error:
             raise StateStoreError(
-                f"asset upload failed ({response.status_code}): {response.text[:500]}"
+                f"asset upload failed ({response.status_code}): "
+                f"{response.text[:500]}{self._write_permission_hint(response.status_code)}"
             )
         return response.json()
+
+    def _write_permission_hint(self, status_code: int) -> str:
+        """把 404/403 的 upload 失敗翻成「這把 token 不能寫」的人話。
+
+        GitHub 對「讀得到但沒有 push 權限」的 repo 回 404，光看狀態碼會誤判成
+        release/asset 不存在。這裡多打一次 repo API 把真正原因講清楚。
+        """
+        if status_code not in (403, 404):
+            return ""
+        try:
+            probe = self.client.get(self.api)
+            if probe.is_error:
+                return ""
+            perms = (probe.json() or {}).get("permissions") or {}
+        except Exception:
+            return ""
+        if perms.get("push"):
+            return ""
+        login = ""
+        try:
+            who = self.client.get("https://api.github.com/user")
+            if not who.is_error:
+                login = (who.json() or {}).get("login", "")
+        except Exception:
+            pass
+        return (
+            f"\n[state-store] ⚠️ 這把 token（帳號 {login or '?'}）對 {self.repo} 沒有 push 權限"
+            f"（permissions={perms}）。GitHub 對唯讀 repo 的寫入一律回 404。"
+            f"\n[state-store] 修法：gh auth switch --user <有權限的帳號>，"
+            f"或設 NEWS_RADAR_GH_USER / GH_TOKEN。"
+        )
 
     def delete_asset(self, asset: dict[str, Any]) -> None:
         response = self.client.delete(f"{self.api}/releases/assets/{asset['id']}")
