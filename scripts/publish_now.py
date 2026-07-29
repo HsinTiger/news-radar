@@ -47,6 +47,7 @@ from src.publisher import (  # noqa: E402
     publish_ig_carousel,
     publish_threads_carousel,
 )
+from src.recovery_mode import record_experiments  # noqa: E402
 from src.schema import (  # noqa: E402
     CarouselCards,
     Draft,
@@ -923,6 +924,13 @@ async def _publish_pending(
                 error_message=error or None,
             ),
         )
+        if ok:
+            # This entry point is hard-wired to the three carousel publishers
+            # above.  Persist the API path that actually returned the post ID;
+            # downstream Social Ops must never fall back to ``feed`` for it.
+            dbmod.mark_recovery_actual_format(
+                conn, draft_id, db_platform, "carousel", _now()
+            )
         outcomes[db_platform] = {
             "status": "published" if ok else "failed",
             "success": ok,
@@ -1028,6 +1036,27 @@ async def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             dbmod.enqueue_draft(conn, draft_id, publish_at=_now())
             dbmod.update_status(conn, news_id, "queued")
             carousel = bundle.carousel
+
+        source_row = conn.execute(
+            "SELECT title,topic_category FROM news_items WHERE id=?", (news_id,)
+        ).fetchone()
+        topic = (
+            str(source_row["topic_category"] or "").strip()
+            if source_row is not None
+            else ""
+        )
+        if not topic:
+            topic = _topic_category_for_title(
+                str(source_row["title"] or "") if source_row is not None else ""
+            )
+        record_experiments(
+            conn,
+            draft_id=draft_id,
+            platforms=[_DB_PLATFORM[platform] for platform in platforms],
+            topic=topic,
+            content_format="carousel",
+            created_at=_now(),
+        )
 
         status, outcomes = await _publish_pending(
             conn,

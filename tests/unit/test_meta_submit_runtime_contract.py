@@ -93,6 +93,11 @@ def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> Non
     assert "THREADS_ACCESS_TOKEN" not in setup_job
     assert "exact_copy_json:" in workflow
     assert '--exact-copy-json "$INPUT_EXACT_COPY_JSON"' in workflow
+    assert "report_submission_state:" in workflow
+    assert (
+        "if: always() && inputs.report_submission_state && inputs.submission_id != ''"
+        in workflow
+    )
 
 
 def test_deploy_config_arms_meta_only_with_live_processor() -> None:
@@ -103,3 +108,17 @@ def test_deploy_config_arms_meta_only_with_live_processor() -> None:
     assert 'AUTOMATION_MODE = "recovery"' in config
     assert 'SUBMISSION_PROCESSOR_MODE = "live"' in config
     assert 'ENABLE_META_PUBLISH_NOW = "true"' in config
+
+
+def test_meta_carousel_readback_is_separate_from_publish_and_fail_closed() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "meta-carousel-readback.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "scripts/verify_meta_carousel.py" in workflow
+    assert "--record-canonical" in workflow
+    assert "scripts/state_store.py push" in workflow
+    assert "scripts/sync_social_ops.py" in workflow
+    assert "scripts/publish_now.py" not in workflow
+    assert "run_publish_queue" not in workflow
+    assert "actions/upload-artifact@v6" in workflow
