@@ -86,12 +86,7 @@ def platform_uses_carousel(
     *,
     recovery: bool | None = None,
 ) -> bool:
-    """Return whether this platform may publish carousel cards.
-
-    Recovery changes one primary variable per platform: Instagram tests visual
-    utility, while Facebook and Threads test native feed posts. Live mode keeps
-    the legacy carousel-first behaviour.
-    """
+    """All supported Meta platforms use the governed three-card carousel."""
 
     if recovery is None:
         recovery = is_recovery_mode()
@@ -102,7 +97,7 @@ def platform_uses_carousel(
         "instagram": "instagram",
         "threads": "threads",
     }.get(str(platform).strip().lower(), str(platform).strip().lower())
-    return not recovery or canonical == "instagram"
+    return canonical in {"facebook", "instagram", "threads"}
 
 
 def visible_carousel_for_platform(
@@ -202,10 +197,20 @@ def recovery_source_tier(
 
 
 def experiment_type_for(platform: str, topic: str | None) -> str:
-    if platform == "instagram":
+    canonical = {
+        "fb": "facebook",
+        "ig": "instagram",
+    }.get(str(platform).strip().lower(), str(platform).strip().lower())
+    if canonical in {"facebook", "threads"}:
+        # These platforms previously ran native feed/single-image recovery.
+        # Hold topic, cadence and source policy steady while measuring the new
+        # three-card container as the primary changed variable.
+        return "format"
+    if canonical == "instagram":
         # 89/104 audited legacy IG posts were already carousels and both
         # carousel/image cohorts had median reach zero.  The new variable is
-        # save/share utility, not the carousel container itself.
+        # the shorter evidence/action design and save/share utility, not the
+        # carousel container itself.
         return "utility"
     if topic in {
         "current_affairs",

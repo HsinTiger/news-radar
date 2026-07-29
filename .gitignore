@@ -34,6 +34,7 @@ __pycache__/
 .Python
 *.egg-info/
 .pytest_cache/
+.pytest-tmp-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -87,6 +88,7 @@ drafts_for_review.csv
 # --- 診斷報告（會被 make diag 重新產生）---
 data/01_harvest/diagnostic_report.md
 data/01_harvest/feeds_health.md
+reports/gate_*.md
 
 # --- Playwright / Puppeteer 快取 ---
 .playwright/

@@ -38,7 +38,7 @@ Severity = Literal["block", "warn", "rewrite"]
 
 # Persisted with every evaluation so dashboard trends remain interpretable when
 # rules change. Bump only when rule semantics change, not for comments/tests.
-QUALITY_GUARD_VERSION = "2026-07-27.taiwan-daily-v35"
+QUALITY_GUARD_VERSION = "2026-07-29.meta-three-card-v37"
 # block   = 拒絕發文（嚴重 FP）
 # warn    = 記錄但放行（弱訊號）
 # rewrite = 請 composer 再寫一次再判定（通常 LLM output 有破綻，但可修）
@@ -902,7 +902,7 @@ def combine_visible_text(full_text: str, carousel: Any = None) -> str:
     # attributes the number; treating every JSON field as a separate paragraph
     # would create a false rewrite.
     for field_names in (
-        ("insight_statement", "insight_support"),
+        ("insight_statement", "insight_support", "source_attribution"),
         ("stat_number", "stat_caption"),
     ):
         card = " ".join(
@@ -915,6 +915,9 @@ def combine_visible_text(full_text: str, carousel: Any = None) -> str:
     ]
     if takeaways:
         parts.append("；".join(takeaways))
+    reader_question = str(data.get("reader_question") or "").strip()
+    if reader_question:
+        parts.append(reader_question)
     figures: list[str] = []
     for figure in data.get("key_figures") or []:
         if hasattr(figure, "model_dump"):
@@ -1050,8 +1053,16 @@ def check_platform_format(
     *,
     carousel_card_count: int,
     recovery: bool = False,
+    stage: Literal["compose", "publish"] = "publish",
 ) -> List[QualityIssue]:
-    """Validate the visible container shape separately from its prose."""
+    """Validate the visible container shape separately from its prose.
+
+    An incomplete compose result is repairable and receives one bounded rewrite.
+    The publisher remains fail-closed and treats the same defect as a block.
+    """
+
+    if stage not in {"compose", "publish"}:
+        raise ValueError(f"unsupported platform-format stage: {stage}")
 
     canonical = {
         "fb": "facebook",
@@ -1060,12 +1071,12 @@ def check_platform_format(
         "instagram": "instagram",
         "threads": "threads",
     }.get(str(platform).strip().lower(), str(platform).strip().lower())
-    if recovery and canonical == "instagram" and carousel_card_count != 5:
+    if canonical in {"facebook", "instagram", "threads"} and carousel_card_count != 3:
         return [
             QualityIssue(
-                code="missing_recovery_five_card_carousel",
-                severity="rewrite",
-                message="Recovery Instagram 必須有五張可獨立閱讀的圖卡",
+                code="invalid_meta_three_card_carousel",
+                severity="rewrite" if stage == "compose" else "block",
+                message="Meta 每篇貼文必須恰好三張圖卡，順序為封面、證據、行動",
                 evidence=f"rendered_card_count={carousel_card_count}",
             )
         ]

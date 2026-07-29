@@ -1,16 +1,16 @@
 name: "News Radar · Reels Maker"
 
-# Reels are dispatched by the governed scheduler after it decides that a reel
-# is useful.  This workflow deliberately has no independent cron: the former
-# six-runs-per-day cron repeatedly published the same draft.
+# Reels are render/QC-only while the owner contract requires every Meta feed
+# post to use exactly three carousel cards.  This workflow deliberately has no
+# independent cron and exposes no live publishing option.
 on:
   workflow_dispatch:
     inputs:
       publish_to:
-        description: "Publish target; use none for render/QC only"
+        description: "Render/QC only; live Reel publishing is retired"
         default: "none"
         type: choice
-        options: [none, ig, fb, threads]
+        options: [none]
       draft_id:
         description: "Optional exact draft ID; otherwise pick newest unpublished"
         required: false

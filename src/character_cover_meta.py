@@ -65,6 +65,14 @@ def _wrap(draw, text: str, font, max_w: int) -> list:
             cur = t
     if cur:
         lines.append(cur)
+    # Never leave closing punctuation at the start of a line.  If it cannot
+    # fit on the previous line, move one preceding CJK character down with it.
+    opening_forbidden = "，。！？!?：:；;、）)」』】》"
+    for index in range(1, len(lines)):
+        if lines[index] and lines[index][0] in opening_forbidden and lines[index - 1]:
+            moved = lines[index - 1][-1]
+            lines[index - 1] = lines[index - 1][:-1]
+            lines[index] = moved + lines[index]
     return lines
 
 
@@ -137,6 +145,19 @@ def compose_meta_character_cover(
     label = TOPIC_CHIP_LABELS.get((topic_category or "other"), "News Radar")
     portrait = (H / W) >= 1.15
     M = 72
+    d.rectangle((0, 0, W, max(12, int(H * 0.012))), fill=_SIENNA)
+    index_font = _load_font(FONT_BRAND_PATH, 28)
+    index_text = "01  /  03"
+    index_w = d.textlength(index_text, font=index_font)
+    index_x = W - M - index_w - 34
+    index_y = 50
+    d.rounded_rectangle(
+        (index_x, index_y, W - M, index_y + 56),
+        radius=13,
+        outline=_SIENNA,
+        width=2,
+    )
+    d.text((index_x + 17, index_y + 11), index_text, font=index_font, fill=_INK)
 
     if portrait:
         # ── 直圖：標題在上、角色在下置中 ──

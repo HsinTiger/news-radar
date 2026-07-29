@@ -7,7 +7,7 @@ News Radar · Cloud Publish Queue (Phase 8.18)
     會把 composer / scorer 的 LLM 呼叫改成 `claude -p` subprocess）。
 
 契約（見 docs/architect_plan_disscussion.md Phase 8.18）：
-    - 僅 import publisher / db / schema / image_manager。**禁止** import composer /
+    - 僅 import publisher / db / schema / deterministic renderer。**禁止** import composer /
       scorer / reflector——brain 不能雲端化這條結構性防線。
     - 選稿：freshness-first（`pick_freshest_queued` = 按 news_items.published_at DESC）。
     - 發出後把「比被挑中那筆還舊」的 queued draft 全標 stale。
@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Optional
 
 from src import db as dbmod
-from src import image_manager
 from src.content_quality_guard import (
     check_quality,
     check_platform_format,
@@ -51,10 +50,8 @@ from src.recovery_mode import (
     visible_carousel_for_platform,
 )
 from src.publisher import (
-    publish_to_fb, publish_to_ig, publish_to_threads,
     publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
 )
-from src.cover_pipeline import prepare_publish_image
 from src.cover_uploader import upload_cards
 from src.schema import PublishResult, CarouselCards
 from src.token_utils import refresh_threads_token
@@ -199,7 +196,7 @@ async def _publish_one(
         try:
             carousel = CarouselCards.model_validate_json(cjson)
         except Exception as exc:  # noqa: BLE001
-            print(f"   ⚠️ carousel_json 解析失敗 → 純單圖：{exc}")
+            print(f"   ⚠️ carousel_json 解析失敗 → 品質閘阻擋：{exc}")
 
     # ---------- Phase 8.20：品質守門員（攔下 Phase 8.19 前的 emergency_template）----------
     # 檢查每個平台的 final/full_text；只要有任一個 platform_draft 觸發 block 級規則，
@@ -229,7 +226,7 @@ async def _publish_one(
         if visible_carousel is not None:
             carousel_card_count = len(
                 build_cards(
-                    title=pd_row["title"] or "",
+                    title=pd_row["title"] or guard_news_title,
                     subtitle="",
                     carousel=visible_carousel,
                 )
@@ -306,17 +303,13 @@ async def _publish_one(
                 )
             return OUTCOME_EDITOR_KILLED
 
-    image_url = row["og_image_url"]
-    # og_video_url 暫不主動使用（Phase 8.18 範圍內；影片 path 已在 Phase 8.16 實作，
-    # 需 composer 決定是否走影片發文，此處維持純文字 + 圖片路徑）
-
     # Phase 9.5: topic_category drives the cover-image topic chip color.
     # Older queue rows may not carry it — fall back to None and the
     # cover_pipeline defaults to "macro" (gray chip).
     topic_category = row["topic_category"] if "topic_category" in row.keys() else None
 
-    # Phase 10 (2026-06-03)：2–4 圖卡 carousel（compose 階段持久化在 draft 層）。
-    # 有內容時每平台優先發 carousel，任何一步失敗就 fall through 到單圖。
+    # Governed Meta contract: each platform must publish exactly three cards.
+    # Any card/render/upload/API failure stays pending; no feed fallback is allowed.
     # Map DB-side platform names ("facebook"/"instagram"/"threads") to the
     # cover_pipeline platform_key codes ("fb"/"ig"/"threads").
     _COVER_KEY = {"facebook": "fb", "instagram": "ig", "threads": "threads"}
@@ -347,21 +340,28 @@ async def _publish_one(
             continue
 
         # Phase 10 carousel-first (2026-06-03)：render → upload → 發 carousel。
-        # Live mode 可降級單圖；Recovery IG 失敗必須保留重試，不能污染格式實驗。
+        # Every Meta platform must preserve the exact three-card contract.
+        # A failed tuple stays retryable; no runtime mode may degrade to feed.
         if carousel is not None and platform_uses_carousel(
             platform, recovery=recovery_strict
         ):
             try:
-                cards = build_cards(title=pd_row["title"] or "", subtitle="", carousel=carousel)
-                if len(cards) >= 2:
+                cards = build_cards(
+                    title=pd_row["title"] or guard_news_title,
+                    subtitle="",
+                    carousel=carousel,
+                )
+                if len(cards) == 3:
                     cdir = Path(tempfile.mkdtemp(prefix="cards_"))
                     card_paths = render_cards(
                         cards=cards, topic_category=topic_category or "other",
                         aspect=cover_key, output_dir=cdir,  # ig/fb/threads ∈ ASPECTS
                     )
                     slug = re.sub(r"[^A-Za-z0-9_]", "", f"{draft_id}_{cover_key}")[:40]
+                    if len(card_paths) != 3:
+                        raise ValueError(f"rendered_card_count={len(card_paths)}")
                     card_urls = upload_cards(card_paths, slug)
-                    if len(card_urls) >= 2:
+                    if len(card_urls) == 3:
                         if platform == "instagram":
                             cresult = await publish_ig_carousel(card_urls, full_text)
                         elif platform == "threads":
@@ -382,95 +382,24 @@ async def _publish_one(
                             any_success = True
                             print(f"   ✅ [{platform}] carousel 成功 id={cresult.get('id')}（{len(card_urls)} 卡）")
                             continue
-                        next_step = (
-                            "保留重試"
-                            if recovery_strict and platform == "instagram"
-                            else "降級單圖"
-                        )
                         print(
-                            f"   ⚠️ [{platform}] carousel 失敗 → {next_step}："
+                            f"   ⚠️ [{platform}] carousel 失敗 → 保留重試："
                             f"{str(cresult.get('error'))[:160]}"
                         )
             except Exception as exc:  # noqa: BLE001
                 print(f"   ⚠️ [{platform}] carousel 流程例外：{exc}")
 
-        if recovery_strict and platform == "instagram":
-            msg = "Recovery Instagram 五卡 carousel 發布失敗；禁止降級單圖"
-            dbmod.log_publish(conn, PublishResult(
-                draft_id=draft_id,
-                platform=platform,
-                platform_post_id=None,
-                posted_at=posted_at,
-                success=False,
-                error_message=msg,
-            ))
-            print(f"   ❌ [instagram] {msg}")
-            continue
-
-        prep = await prepare_publish_image(
-            platform_key=cover_key,
-            original_image_url=image_url,
-            draft_id=draft_id,
-            title=pd_row["title"] or "",
-            topic_category=topic_category,
-        )
-        publish_image_url = prep["image_url"]
-        used_cover_cdn = (publish_image_url is not None
-                          and publish_image_url != image_url
-                          and cover_key in ("fb", "ig"))
-
-        if platform == "facebook":
-            if used_cover_cdn:
-                print(f"   ↳ [📘 FB] 用 rendered cover URL: {publish_image_url}")
-            elif publish_image_url:
-                print(f"   ↳ [📘 FB] cover 不可用，用原圖網址")
-            else:
-                print(f"   ↳ [📘 FB] 無可用圖片 → 純文字發布")
-            result = await publish_to_fb(full_text, image_url=publish_image_url)
-            # Fallback: if FB can't fetch the image (external CDN), retry text-only
-            error_msg = str(result.get("error", ""))
-            needs_text = any(phrase in error_msg.lower() for phrase in
-                ["object with id 'none'", "failed to download", "1353045", "unsupported post"])
-            if not result.get("success") and needs_text and publish_image_url:
-                print(f"   ⚠️ [📘 FB] 圖片上傳失敗 → 降級為純文字發布...")
-                result = await publish_to_fb(full_text)
-        elif platform == "instagram":
-            if not publish_image_url:
-                result = {"success": False, "error": {"local_reject": "IG 需要 image_url"}}
-            else:
-                if used_cover_cdn:
-                    print(f"   ↳ [📸 IG] 用 rendered cover URL: {publish_image_url}")
-                result = await publish_to_ig(full_text, publish_image_url)
-        elif platform == "threads":
-            if not publish_image_url:
-                result = {"success": False, "error": {"local_reject": "Threads 需要 image_url"}}
-            else:
-                result = await publish_to_threads(full_text, publish_image_url)
-        else:
-            print(f"   ⚠️ 未知平台 {platform}，跳過")
-            continue
-
-        success = bool(result.get("success"))
+        msg = "Meta 三卡 carousel 發布失敗；禁止降級單圖"
         dbmod.log_publish(conn, PublishResult(
             draft_id=draft_id,
             platform=platform,
-            platform_post_id=result.get("id"),
-            posted_at=datetime.now(timezone.utc).isoformat(),
-            success=success,
-            error_message=str(result.get("error", "")) if not success else None,
+            platform_post_id=None,
+            posted_at=posted_at,
+            success=False,
+            error_message=msg,
         ))
-        if success:
-            dbmod.mark_recovery_actual_format(
-                conn,
-                draft_id,
-                platform,
-                "feed",
-                datetime.now(timezone.utc).isoformat(),
-            )
-            any_success = True
-            print(f"   ✅ [{platform}] 成功 id={result.get('id')}")
-        else:
-            print(f"   ❌ [{platform}] 失敗: {str(result.get('error'))[:200]}")
+        print(f"   ❌ [{platform}] {msg}")
+        continue
 
     if dry_run:
         return OUTCOME_PUBLISHED  # dry-run 不改 DB、也不記失敗——視為正常走完

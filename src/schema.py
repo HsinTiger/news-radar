@@ -84,8 +84,11 @@ class KeyFigure(BaseModel):
 
 
 class CarouselCards(BaseModel):
-    """2–5 張可滑動社群圖卡的內容（從文章蒸餾），給 IG/FB/Threads carousel 用。
-    封面卡用 ig/fb 變體的 title；其餘卡用下面這些欄位。能填就填，缺的卡會自動略過。"""
+    """Meta 三平台固定三卡的結構化內容。
+
+    封面使用各平台 variant title；其餘欄位組成 evidence 與 action 卡。
+    缺少核心欄位時 renderer 會 fail closed，不會縮成單圖或較少張數。
+    """
     insight_statement: Optional[str] = Field(
         default=None, description="一句最反直覺的核心洞察（自己長一句，禁套範例句型）。")
     insight_support: Optional[str] = Field(
@@ -96,6 +99,14 @@ class CarouselCards(BaseModel):
         default=None, description="那個數字代表什麼，1–2 句。")
     takeaways: List[str] = Field(
         default_factory=list, description="2–3 條讀者可帶走的具體判斷（每條一句）。")
+    source_attribution: Optional[str] = Field(
+        default=None,
+        description="卡2可直接看懂的具名來源與證據邊界，禁止只寫官方資料或媒體報導。",
+    )
+    reader_question: Optional[str] = Field(
+        default=None,
+        description="卡3唯一一個可具體回答的互動問題，不得只問你怎麼看。",
+    )
     key_figures: List[KeyFigure] = Field(
         default_factory=list,
         description="3–4 個關鍵數據（label+value）給『關鍵數據』卡與影片數據面板用；沒有夠力數據就留空。")
@@ -128,7 +139,7 @@ class MultiPlatformDraft(BaseModel):
     )
     carousel: Optional[CarouselCards] = Field(
         default=None,
-        description="2–4 張社群圖卡的蒸餾內容（洞察句、關鍵數字、帶走判斷）。",
+        description="固定三張社群圖卡的蒸餾內容（封面、證據、行動）。",
     )
 
     @field_validator("fb", "ig", "threads", mode="before")

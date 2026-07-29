@@ -194,6 +194,12 @@ async def _publish_one(platform_short: str, full_text: str, image_url: str) -> d
 
 
 async def main_async(args) -> int:
+    fail(
+        2,
+        "Legacy single-image retry is retired. Retry the canonical queued draft "
+        "with run_publish_queue.py so render/upload/API must all preserve exactly "
+        "three cards.",
+    )
     step(f"Retry Publish · draft_id={args.draft_id}")
     print(f"DB = {DB_PATH}")
     print(f"new og_image = {args.og_image}")

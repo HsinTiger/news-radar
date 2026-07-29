@@ -118,6 +118,10 @@ TOPIC_CHIP_COLORS: Dict[str, Tuple[int, int, int]] = {
     "us_stocks":           (239, 159, 39),   # vivid orange — market-alert punch
     "tech_product_launch": (43, 179, 155),   # teal — non-AI tech launch
     "policy_geopolitics":  (136, 135, 128),  # gray — policy
+    "current_affairs":     (200, 74, 50),    # sienna — public impact
+    "tw_politics":         (200, 74, 50),    # sienna — accountability
+    "food_safety":         (173, 92, 45),    # rust — consumer safety
+    "military_defense":    (73, 92, 75),     # olive — national security
     "other":               (136, 135, 128),  # gray — fallback
 }
 
@@ -133,6 +137,10 @@ TOPIC_CHIP_LABELS: Dict[str, str] = {
     "us_stocks":           "美股",
     "tech_product_launch": "科技新品",
     "policy_geopolitics":  "政策",
+    "current_affairs":     "時事",
+    "tw_politics":         "政府監督",
+    "food_safety":         "食安",
+    "military_defense":    "國防",
     "other":               "其它",
 }
 
@@ -297,14 +305,26 @@ def _wrap_chinese_title(
 
 
 def _load_font(path: Path, pt: int) -> ImageFont.ImageFont:
-    """Load a TrueType font, falling back to PIL default if absent.
+    """Load the branded font or a CJK-capable host font.
 
-    The fallback only covers latin glyphs — CJK content will render as
-    placeholder boxes. That's intentional: it makes a missing-font
-    situation visually obvious in tests and dev runs.
+    Clean workflow clones may not contain the optional font bundle.  Rendering
+    tofu boxes is not an acceptable production fallback, so use a known
+    Traditional-Chinese system face before falling back to PIL's bitmap font.
     """
     if path.exists():
         return ImageFont.truetype(str(path), pt)
+    bold = "bold" in path.name.casefold()
+    candidates = [
+        Path("C:/Windows/Fonts/msjhbd.ttc" if bold else "C:/Windows/Fonts/msjh.ttc"),
+        Path("C:/Windows/Fonts/mingliu.ttc"),
+        Path("/System/Library/Fonts/PingFang.ttc"),
+        Path("/System/Library/Fonts/STHeiti Medium.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return ImageFont.truetype(str(candidate), pt)
     return ImageFont.load_default()
 
 

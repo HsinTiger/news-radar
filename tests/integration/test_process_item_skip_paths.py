@@ -24,7 +24,7 @@ import pytest
 
 import run_pipeline
 from src import db as dbmod
-from src.schema import MultiPlatformDraft, PlatformVariant
+from src.schema import CarouselCards, MultiPlatformDraft, PlatformVariant
 from src.topic_classifier import TopicClassification
 
 
@@ -101,6 +101,15 @@ def _bundle(body: str) -> MultiPlatformDraft:
         ig=variant("Instagram"),
         threads=variant("Threads"),
         image_url="https://images.example.net/cover.jpg",
+        carousel=CarouselCards(
+            insight_statement="測試內容保留一個可驗證的核心判斷",
+            insight_support="原始測試來源交代事件與適用限制",
+            source_attribution="來源：測試機關原始公告",
+            stat_number="3項",
+            stat_caption="公告列出的檢查項目",
+            takeaways=["核對原始公告", "比較適用範圍"],
+            reader_question="你會先核對哪一項？",
+        ),
     )
 
 

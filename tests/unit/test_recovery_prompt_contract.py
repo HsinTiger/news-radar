@@ -61,7 +61,7 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     assert "REQUIRED NON-NULL variants: ig" in prompt
     assert "REQUIRED NULL variants: fb, threads" in prompt
     assert "11" in prompt and "3521" in prompt
-    assert "render exactly five cards" in prompt
+    assert "render exactly three cards" in prompt
     assert "Do not add today's date" in prompt
     assert "Never round, abbreviate, convert units" in prompt
     assert "STATISTICAL DENSITY BUDGET" in prompt
@@ -69,7 +69,8 @@ def test_recovery_generation_contract_compiles_numbers_and_required_keys():
     fb_only = composer._build_recovery_generation_contract(
         "行政院公布政策", "行政院公告政策內容。", ["fb"]
     )
-    assert "`carousel` MUST be null" in fb_only
+    assert "META THREE-CARD CONTRACT" in fb_only
+    assert "carousel` must be non-null" in fb_only
 
 
 def test_recovery_source_excerpt_hides_nonbudget_market_statistics():
@@ -108,9 +109,11 @@ def test_recovery_compose_prompt_removes_legacy_numeric_examples(monkeypatch):
                 carousel=CarouselCards(
                     insight_statement="行政院核定宜蘭高鐵案",
                     insight_support="行政院公告列出計畫內容",
+                    source_attribution="來源：行政院高鐵延伸計畫公告",
                     stat_number="3521億",
                     stat_caption="行政院公告總經費",
-                    takeaways=["通勤族先查計畫書"],
+                    takeaways=["通勤族先查計畫書", "核對環評與工期"],
+                    reader_question="你會先追蹤環評還是工期？",
                     key_figures=[
                         {"label": "行政院經費", "value": "3521億"},
                         {"label": "行政院工期", "value": "11年"},
@@ -133,5 +136,5 @@ def test_recovery_compose_prompt_removes_legacy_numeric_examples(monkeypatch):
     assert "REQUIRED NON-NULL variants: ig" in captured["system"]
     assert "$329" not in captured["prompt"]
     assert "2-4 張" not in captured["prompt"]
-    assert "五卡契約" in captured["prompt"]
+    assert "固定三卡契約" in captured["prompt"]
 

@@ -396,7 +396,8 @@ async def publish_ig_carousel(
       4. 輪詢相簿容器到 FINISHED
       5. POST `{base}/media_publish` with creation_id=相簿容器 id
 
-    IG 規定 carousel 需 2~10 張圖；少於 2 張直接 local_reject。
+    News Radar 發布契約要求恰好 3 張圖；Meta API 雖可接受其他張數，
+    publisher 仍會在本地 fail closed。
     回傳 shape 與 publish_to_ig 一致：{success, id, media_kind: "carousel"}。
 
     注意：每張子圖 IG 仍會做 aspect ratio / filesize 把關，這裡複用
@@ -408,13 +409,8 @@ async def publish_ig_carousel(
         print(f"[Publisher: IG] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
-    if not image_urls or len(image_urls) < 2:
-        msg = f"IG carousel 需至少 2 張圖,實得 {len(image_urls or [])} 張,拒發"
-        print(f"[Publisher: IG] {msg}")
-        return {"success": False, "error": {"local_reject": msg}}
-
-    if len(image_urls) > 10:
-        msg = f"IG carousel 上限 10 張,實得 {len(image_urls)} 張,拒發"
+    if len(image_urls or []) != 3:
+        msg = f"IG carousel 契約要求恰好 3 張圖,實得 {len(image_urls or [])} 張,拒發"
         print(f"[Publisher: IG] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
@@ -501,7 +497,7 @@ async def publish_threads_carousel(
       4. 輪詢相簿容器到 FINISHED
       5. POST `{base}/threads_publish` with creation_id=相簿容器 id
 
-    Threads carousel 需 2~20 張。回傳 shape 與 publish_to_threads 一致：
+    News Radar 發布契約要求恰好 3 張。回傳 shape 與 publish_to_threads 一致：
     {success, id, media_kind: "carousel"}。
     """
     if _over_limit(text, THREADS_MAX):
@@ -509,13 +505,8 @@ async def publish_threads_carousel(
         print(f"[Publisher: Threads] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
-    if not image_urls or len(image_urls) < 2:
-        msg = f"Threads carousel 需至少 2 張圖,實得 {len(image_urls or [])} 張,拒發"
-        print(f"[Publisher: Threads] {msg}")
-        return {"success": False, "error": {"local_reject": msg}}
-
-    if len(image_urls) > 20:
-        msg = f"Threads carousel 上限 20 張,實得 {len(image_urls)} 張,拒發"
+    if len(image_urls or []) != 3:
+        msg = f"Threads carousel 契約要求恰好 3 張圖,實得 {len(image_urls or [])} 張,拒發"
         print(f"[Publisher: Threads] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
@@ -603,8 +594,10 @@ async def publish_fb_carousel(
         print(f"[Publisher: FB] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
-    if not images:
-        return {"success": False, "error": {"local_reject": "FB carousel 必須至少 1 張圖"}}
+    if len(images or []) != 3:
+        msg = f"FB carousel 契約要求恰好 3 張圖,實得 {len(images or [])} 張,拒發"
+        print(f"[Publisher: FB] {msg}")
+        return {"success": False, "error": {"local_reject": msg}}
 
     base = "https://graph.facebook.com/v20.0"
 

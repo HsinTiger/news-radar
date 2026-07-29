@@ -56,10 +56,8 @@ from src.recovery_mode import (
     visible_carousel_for_platform,
 )
 from src.publisher import (
-    publish_to_fb, publish_to_threads, publish_to_ig,
     publish_ig_carousel, publish_threads_carousel, publish_fb_carousel,
 )
-from src.cover_pipeline import prepare_publish_image
 from src.token_utils import refresh_threads_token
 from src.analyst import run_analysis_cycle
 from src.reflector import run_reflection
@@ -198,13 +196,14 @@ def _deterministic_food_safety_variant(
 
 
 def _deterministic_food_safety_carousel() -> CarouselCards:
-    """Return five source-bounded Instagram cards for the investigation."""
+    """Return source-bounded content for the governed Meta three-card set."""
 
     return CarouselCards(
         insight_statement="苯(a)駢芘超標，不是單一環節失守",
         insight_support=(
             "食藥署第三方調查指向原料管理、製程管控與檢驗監測等多項缺失交互影響。"
         ),
+        source_attribution="來源：食藥署第三方調查與修法說明",
         stat_number="5大方向",
         stat_caption="修法草案聚焦源頭、製程、異常通報、品質管理與數位治理。",
         takeaways=[
@@ -212,6 +211,7 @@ def _deterministic_food_safety_carousel() -> CarouselCards:
             "查看食藥署後續公告",
             "核對管理規則是否落地",
         ],
+        reader_question="你最想先看到哪一項管理規則公開？",
         key_figures=[
             {"label": "調查結論", "value": "多項缺失"},
             {"label": "修法狀態", "value": "送立法院"},
@@ -293,6 +293,7 @@ def _deterministic_market_benchmark_carousel(
     return CarouselCards(
         insight_statement="大盤上漲，不等於你的持股都上漲",
         insight_support="先比較同期間報酬，再拆解產業配置與個股選擇。",
+        source_attribution="來源：臺灣證券交易所本週統計",
         stat_number=benchmark,
         stat_caption="證交所本週加權指數漲幅",
         takeaways=[
@@ -300,6 +301,7 @@ def _deterministic_market_benchmark_carousel(
             "拆解產業配置",
             "檢查個股選擇",
         ],
+        reader_question="你的同期間報酬有跑贏大盤嗎？",
         key_figures=[
             {"label": "證交所漲幅", "value": benchmark},
             {"label": "證交所總市值", "value": market_cap},
@@ -432,12 +434,12 @@ def _recovery_rewrite_guidance(
             "must remain exact. Delete all other percentages, amounts, points, "
             "turnover figures, and rankings."
         )
-    if "missing_recovery_five_card_carousel" in rewrite_codes:
+    if "invalid_meta_three_card_carousel" in rewrite_codes:
         guidance.append(
-            "INSTAGRAM FORMAT: Return all five standalone carousel jobs: "
-            "verified consequence, what happened, primary-source number, "
-            "who pays or benefits, and the exact next check. Populate the "
-            "structured carousel fields so the renderer produces five cards."
+            "META FORMAT: Return the complete three-card structure: mascot hook, "
+            "named-source evidence, and reader action with one answerable question. "
+            "Populate every required carousel field so the renderer produces "
+            "exactly three ordered cards for every requested platform."
         )
     if rewrite_codes & {
         "uncited_stat",
@@ -694,6 +696,45 @@ def _deterministic_recovery_hashtag_prune(body: str, *, platform: str) -> str:
         if part.strip()
     ]
     return "\n\n".join(paragraphs)
+
+
+def _deterministic_recovery_hashtag_fields(
+    variant: PlatformVariant,
+    *,
+    platform: str,
+) -> PlatformVariant:
+    """Bound structured hashtag fields, including ``primary_topic_tag``.
+
+    Recovery copy normally stores tags in ``PlatformVariant.hashtags`` instead
+    of appending them to ``body``.  Pruning body text alone therefore left the
+    quality issue unchanged and could hold an otherwise publishable post.  The
+    variant entering this helper has already passed ``finalize_variant``, so its
+    tags are normalized and can be safely de-duplicated and sliced.
+    """
+
+    limit = {"threads": 1, "fb": 3, "ig": 5}.get(platform)
+    if limit is None:
+        return variant
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in [variant.primary_topic_tag, *(variant.hashtags or [])]:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        key = value.lstrip("#").casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(value)
+    kept = ordered[:limit]
+    primary = str(variant.primary_topic_tag or "").strip() or None
+    if primary and primary.lstrip("#").casefold() not in {
+        value.lstrip("#").casefold() for value in kept
+    }:
+        primary = kept[0] if kept else None
+    return variant.model_copy(
+        update={"hashtags": kept, "primary_topic_tag": primary}
+    )
 
 
 def _deterministic_recovery_inference_prune(
@@ -1026,17 +1067,14 @@ async def _publish_platform(
     variant: PlatformVariant,
     full_text: str,
     ok: bool,
-    image_url: Optional[str],
     topic_category: Optional[str] = None,
     carousel=None,
 ) -> bool:
     """單平台發布 + publish_log。ok=False 或缺圖 → 不呼叫 API，直接記失敗。
     回傳：True 表示 API 回報成功；False 表示任何原因失敗。
 
-    Phase 9.5: image goes through ``cover_pipeline.prepare_publish_image``
-    first — FB gets a rendered branded cover via bytes upload, Threads /
-    IG keep their pre-cover behaviour (Threads no cover by design; IG
-    cover-URL hosting is Phase 2).
+    Every platform must complete the governed three-card render/upload path;
+    this function has no single-image or text-only fallback.
     """
     db_name = dbmod.PLATFORM_DB_NAME[platform_key]
     posted_at = datetime.now(timezone.utc).isoformat()
@@ -1061,25 +1099,11 @@ async def _publish_platform(
         )
         return True
 
-    # --- Phase 10 (2026-06-02): 2–4 圖卡 carousel（有蒸餾卡片內容時優先）。
-    # Live mode 失敗可降級單圖；Recovery IG 必須維持五卡實驗，失敗則保留重試。 ---
-    # Phase 10 carousel: try structured carousel first, then auto-generate from text.
+    # Governed Meta contract: every platform publishes exactly three cards.
+    # Missing/failed cards are held for retry; single-image/text fallback is forbidden.
     carousel_enabled = platform_uses_carousel(platform_key)
     _carousel_to_use = carousel if carousel_enabled else None
-    if _carousel_to_use is None and variant.body and not is_recovery_mode():
-        # Auto-generate 4 cards from the platform text (split by paragraphs)
-        from src.schema import CarouselCards
-        paras = [p.strip() for p in variant.body.split("\n") if p.strip() and len(p.strip()) > 10][:4]
-        if len(paras) >= 2:
-            _carousel_to_use = CarouselCards(
-                insight_statement=paras[0] if len(paras) > 0 else None,
-                insight_support=paras[1] if len(paras) > 1 else None,
-                stat_number=None,
-                stat_caption=None,
-                takeaways=paras[2:4],
-            )
-            print(f"   ↳ [Phase 10] 自動生成 {len(_carousel_to_use.takeaways)} 張圖卡（從 body 內容）")
-
+    carousel_error = "missing structured carousel"
     if _carousel_to_use is not None:
         try:
             import re as _re
@@ -1088,15 +1112,17 @@ async def _publish_platform(
             from src.cover_uploader import upload_cards
 
             cards = build_cards(title=variant.title or "", subtitle="", carousel=_carousel_to_use)
-            if len(cards) >= 2:
+            if len(cards) == 3:
                 cdir = Path(_tmp.mkdtemp(prefix="cards_"))
                 card_paths = render_cards(
                     cards=cards, topic_category=topic_category or "other",
                     aspect=platform_key, output_dir=cdir,  # ig/fb/threads ∈ ASPECTS
                 )
                 slug = _re.sub(r"[^A-Za-z0-9_]", "", f"{draft_id}_{platform_key}")[:40]
+                if len(card_paths) != 3:
+                    raise ValueError(f"rendered_card_count={len(card_paths)}")
                 card_urls = upload_cards(card_paths, slug)
-                if len(card_urls) >= 2:
+                if len(card_urls) == 3:
                     label = dbmod.PLATFORM_LABEL[platform_key]
                     print(f"   ↳ [{label}] 發布 {len(card_urls)} 張圖卡 carousel")
                     if platform_key == "ig":
@@ -1118,109 +1144,26 @@ async def _publish_platform(
                         )
                         print(f"   ✅ [{label}] carousel 成功 id={result.get('id')}")
                         return True
-                    next_step = (
-                        "保留重試" if is_recovery_mode() and platform_key == "ig"
-                        else "降級單圖"
-                    )
+                    carousel_error = str(result.get("error"))[:160]
                     print(
-                        f"   ⚠️ [{label}] carousel 失敗 → {next_step}："
-                        f"{str(result.get('error'))[:160]}"
+                        f"   ⚠️ [{label}] carousel 失敗 → 保留重試："
+                        f"{carousel_error}"
                     )
+                else:
+                    carousel_error = f"uploaded_card_count={len(card_urls)}"
+            else:
+                carousel_error = f"built_card_count={len(cards)}"
         except Exception as exc:
+            carousel_error = str(exc)[:160]
             print(f"   ⚠️ carousel 流程例外：{exc}")
 
-    if is_recovery_mode() and platform_key == "ig":
-        msg = "Recovery Instagram 五卡 carousel 發布失敗；禁止降級單圖"
-        print(f"   ❌ [📸 IG] {msg}")
-        dbmod.log_publish(conn, PublishResult(
-            draft_id=draft_id, platform=db_name, platform_post_id=None,
-            posted_at=posted_at, success=False, error_message=msg,
-        ))
-        return False
-
-    # Phase 2: FB and IG both go through render → upload → URL.
-    # prep["image_url"] is the cover-cdn raw URL (when render+upload
-    # succeed) or the original news image URL (any failure step).
-    # local_file_path is preserved in the shape but always None now.
-    prep = await prepare_publish_image(
-        platform_key=platform_key,
-        original_image_url=image_url,
-        draft_id=draft_id,
-        title=variant.title or "",
-        topic_category=topic_category,
-    )
-    publish_image_url = prep["image_url"]
-    used_cover_cdn = (publish_image_url is not None
-                      and publish_image_url != image_url
-                      and platform_key in ("fb", "ig"))
-
-    # 呼叫對應 API
-    result = {"success": False}
-
-    if platform_key == "fb":
-        if used_cover_cdn:
-            print(f"   ↳ [📘 FB] 用 rendered cover URL: {publish_image_url}")
-        elif publish_image_url:
-            print(f"   ↳ [📘 FB] cover 不可用，用原圖網址")
-        else:
-            print(f"   ↳ [📘 FB] 無可用圖片 → 純文字發布")
-        result = await publish_to_fb(full_text, image_url=publish_image_url)
-        # Fallback: if FB can't fetch the image (common for external CDN URLs
-        # like Reddit, Motley Fool, etc.), retry as text-only.
-        error_msg = str(result.get("error", ""))
-        needs_text_fallback = any(phrase in error_msg.lower() for phrase in
-            ["object with id 'none'", "failed to download", "1353045", "unsupported post"])
-        if not result.get("success") and needs_text_fallback and publish_image_url:
-            print(f"   ⚠️ [📘 FB] 圖片上傳失敗 → 降級為純文字發布...")
-            result = await publish_to_fb(full_text)
-            if not result.get("success"):
-                print(f"   ❌ [📘 FB] 下載 fallback 也失敗")
-
-    elif platform_key == "threads":
-        if not publish_image_url:
-            msg = "Threads 需要 image_url 才能發布"
-            print(f"   ↳ [🧵 Threads Skip] {msg}")
-            dbmod.log_publish(conn, PublishResult(
-                draft_id=draft_id, platform=db_name, platform_post_id=None,
-                posted_at=posted_at, success=False, error_message=msg,
-            ))
-            return False
-        result = await publish_to_threads(full_text, publish_image_url)
-    elif platform_key == "ig":
-        if not publish_image_url:
-            msg = "IG 需要 image_url 才能發布"
-            print(f"   ↳ [📸 IG Skip] {msg}")
-            dbmod.log_publish(conn, PublishResult(
-                draft_id=draft_id, platform=db_name, platform_post_id=None,
-                posted_at=posted_at, success=False, error_message=msg,
-            ))
-            return False
-        if used_cover_cdn:
-            print(f"   ↳ [📸 IG] 用 rendered cover URL: {publish_image_url}")
-        else:
-            print(f"   ↳ [📸 IG] cover 不可用，用原圖網址")
-        result = await publish_to_ig(full_text, publish_image_url)
-    else:
-        raise ValueError(f"未知平台 key: {platform_key}")
-
+    msg = f"Meta 三卡 carousel 發布失敗；禁止降級單圖：{carousel_error}"
+    print(f"   ❌ [{dbmod.PLATFORM_LABEL[platform_key]}] {msg}")
     dbmod.log_publish(conn, PublishResult(
-        draft_id=draft_id,
-        platform=db_name,
-        platform_post_id=result.get("id"),
-        posted_at=datetime.now(timezone.utc).isoformat(),
-        success=bool(result.get("success")),
-        error_message=str(result.get("error", "")) if not result.get("success") else None,
+        draft_id=draft_id, platform=db_name, platform_post_id=None,
+        posted_at=posted_at, success=False, error_message=msg,
     ))
-    if result.get("success"):
-        dbmod.mark_recovery_actual_format(
-            conn,
-            draft_id,
-            db_name,
-            "feed",
-            datetime.now(timezone.utc).isoformat(),
-        )
-    return bool(result.get("success"))
-
+    return False
 
 # ---------- 單篇新聞處理 ----------
 
@@ -1604,6 +1547,7 @@ async def process_item(
                     platform_key,
                     carousel_card_count=carousel_card_count,
                     recovery=is_recovery_mode(),
+                    stage="compose",
                 )
             )
             findings[platform_key] = issues
@@ -1788,6 +1732,7 @@ async def process_item(
                 }
                 repaired_body = variant.body
                 repaired_title = variant.title
+                repaired_variant = variant
                 if platform_codes & reserve_framing_codes:
                     repaired_body = _deterministic_reserve_framing_repair(
                         repaired_body,
@@ -1809,6 +1754,10 @@ async def process_item(
                         repaired_body,
                         platform=platform_key,
                     )
+                    repaired_variant = _deterministic_recovery_hashtag_fields(
+                        repaired_variant,
+                        platform=platform_key,
+                    )
                 if "platform_stat_overload" in platform_codes:
                     repaired_body = _deterministic_recovery_stat_prune(
                         repaired_body,
@@ -1821,11 +1770,6 @@ async def process_item(
                         topic=topic_cls.category_id,
                         source_evidence_text=source_evidence_text,
                     )
-                elif food_safety_investigation:
-                    raw_variant = _deterministic_food_safety_variant(
-                        raw_variant,
-                        platform=platform_key,
-                    )
                 if platform_codes & closing_codes:
                     repaired_body = _deterministic_recovery_closing_repair(
                         repaired_body,
@@ -1834,7 +1778,7 @@ async def process_item(
                         source_evidence_text=source_evidence_text,
                         source_label=str(row["feed_name"] or ""),
                     )
-                repaired_variant = variant.model_copy(
+                repaired_variant = repaired_variant.model_copy(
                     update={"body": repaired_body, "title": repaired_title}
                 )
                 repaired_finalized[platform_key] = finalize_variant(
@@ -1907,7 +1851,8 @@ async def process_item(
     # 5. 寫入 drafts 表
     dbmod.insert_draft(conn, draft)
     # Phase 10 (2026-06-03)：把 carousel 圖卡內容持久化到 draft 層，讓雲端
-    # run_publish_queue 能 render+發 carousel（沒有則維持單圖）。
+    # run_publish_queue can render and publish the governed three-card carousel.
+    # Missing carousel data is held rather than degraded to a single image.
     if bundle.carousel is not None:
         # 簡→繁台灣 backstop：carousel 卡片內容是獨立欄位，不經 finalize_variant，
         # 所以雲端 Gemini 吐的簡體字必須在這裡攔下（與 caption 同一套 OpenCC s2tw）。
@@ -1985,7 +1930,7 @@ async def process_item(
                 continue
             variant, full_text, ok = finalized[platform_key]
             success = await _publish_platform(
-                conn, draft_id, platform_key, variant, full_text, ok, bundle.image_url,
+                conn, draft_id, platform_key, variant, full_text, ok,
                 topic_category=row["topic_category"] if "topic_category" in row.keys() else None,
                 carousel=bundle.carousel,
             )

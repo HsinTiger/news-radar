@@ -422,7 +422,8 @@ def _build_recovery_system_instruction(
 平台規格：
 - Threads：160–240 字；2–4 個短段落；只留 2–3 個最有解釋力的來源數字；body 可獨立閱讀；一個 topic tag。
 - FB：280–500 字；3–5 個短段落，依序交代事件、證據、缺口與可回答問題；2–3 個 hashtags；不放站外連結。
-- IG：caption 160–340 字、2–4 個短段落，不複製 FB；carousel 五張依序是已驗證後果、發生何事、第一手數字、誰付出或受益、下一步查什麼；3–5 個 hashtags。
+- IG：caption 160–340 字、2–4 個短段落，不複製 FB；3–5 個 hashtags。
+- FB、IG、Threads 都必須附固定三卡：吉祥物熱點封面、具名來源與核心證據、讀者判斷/行動與一個可回答問題。三卡不是 caption 的逐字複製。
 
 輸出 MultiPlatformDraft JSON。未要求的平台填 null。完稿前逐句檢查數字來源、第一句、自然語氣、短段落、讀者後果、具體行動與結尾問題；任何一項不合格就先自行重寫再輸出。
 
@@ -451,20 +452,14 @@ def _build_recovery_generation_contract(
     statistical_budget_text = (
         ", ".join(statistical_budget) if statistical_budget else "NONE"
     )
-    carousel_contract = (
-        """
-INSTAGRAM FIVE-CARD CONTRACT (required because ig was requested):
-- `carousel` must be non-null and render exactly five cards.
-- Card 1 comes from the IG title: a verified actor plus consequence, <=20 Chinese characters.
-- Card 2 requires non-empty insight_statement and insight_support; name the source on the card.
-- Card 3 requires stat_number from the numeric allowlist and stat_caption naming its source.
-- Card 4 requires 2-3 concrete takeaways including who pays/benefits and the next check.
-- Card 5 requires 2-4 key_figures; include the source institution in each short label.
-- Never return an incomplete carousel and never substitute facts from another event.
+    carousel_contract = """
+META THREE-CARD CONTRACT (required for every requested platform):
+- `carousel` must be non-null and render exactly three cards.
+- Card 1 comes from each platform title: a verified actor plus consequence, <=20 Chinese characters, with the existing mascot.
+- Card 2 requires non-empty insight_statement, insight_support and source_attribution. Name the primary source on the card; use stat_number/stat_caption only when grounded by the numeric allowlist.
+- Card 3 requires 2-3 concrete takeaways plus reader_question. Include who should check what now; ask exactly one specific question.
+- Never return an incomplete carousel, never substitute facts from another event, and never use a generic source label.
 """
-        if "ig" in requested
-        else "`carousel` MUST be null because Instagram was not requested."
-    )
     return f"""
 EXACT REQUESTED-PLATFORM CONTRACT (overrides every generic legacy example):
 - REQUIRED NON-NULL variants: {', '.join(requested)}.
@@ -581,20 +576,18 @@ async def compose_multi_platform(
             print(f"   ↳ [CTA] 本篇 Threads 不注入 CTA（保持純內容篇）")
 
     if recovery_mode:
-        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2單句\",\n     \"insight_support\": \"卡2具名來源支撐\",\n     \"stat_number\": \"卡3白名單數值\",\n     \"stat_caption\": \"卡3具名來源說明\",\n     \"takeaways\": [\"卡4具體判斷或行動\"],\n     \"key_figures\": [{\"label\": \"卡5來源與欄名\", \"value\": \"白名單數值與原單位\"}]\n  } or null"""
-        carousel_prompt = """Recovery 輸出不得套用舊版 2-4 卡範例。若要求 IG，嚴格遵守 system 中的五卡契約；若未要求 IG，carousel 必須為 null。不要複製本 JSON 欄位說明中的示意文字。"""
+        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2核心證據單句\",\n     \"insight_support\": \"卡2證據的簡短說明\",\n     \"source_attribution\": \"卡2具名第一手來源與文件/統計\",\n     \"stat_number\": \"卡2白名單數值或 null\",\n     \"stat_caption\": \"卡2數值代表什麼\",\n     \"takeaways\": [\"卡3具體判斷或行動\"],\n     \"reader_question\": \"卡3唯一一個可回答問題\",\n     \"key_figures\": []\n  }"""
+        carousel_prompt = """Recovery 輸出不得套用舊版 2-5 卡範例。只遵守 system 中的 Meta 固定三卡契約；carousel 對任何已要求的 Meta 平台都不可為 null。不要複製本 JSON 欄位說明中的示意文字。"""
     else:
-        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2 核心洞察：一句最反直覺的判斷(so-what)。單一陳述句、非條列。**≤30 字**。自己長、禁套範例。\",\n     \"insight_support\": \"支撐那句的一句話。**≤40 字**。\",\n     \"stat_number\": \"卡3 的主角數字/型號，如 $329 / 9 億 / 18%。**≤8 字元**。沒有夠力的數字就填 null（這張卡會自動省略）。\",\n     \"stat_caption\": \"那個數字代表什麼，一句。**≤24 字**。\",\n     \"takeaways\": [\"卡4：2-3 條、**每條 ≤18 字**、條列式、可帶走的行動或判斷\"],\n     \"key_figures\": [{\"label\": \"這是什麼(≤8字，如『第三季營收』)\", \"value\": \"帶單位數值(≤10字元，如 $351億 / 94% / 3 倍)\"}]\n  }"""
-        carousel_prompt = """**carousel 欄位（必填）= 2-4 張可滑動圖卡的蒸餾內容。每張卡有固定任務，務必遵守字數上限**
+        carousel_schema = """  \"carousel\": {\n     \"insight_statement\": \"卡2核心證據或判讀，單句≤30字\",\n     \"insight_support\": \"卡2證據說明≤40字\",\n     \"source_attribution\": \"卡2具名來源與文件/統計≤54字\",\n     \"stat_number\": \"卡2主角數字，沒有就 null\",\n     \"stat_caption\": \"數字代表什麼≤40字\",\n     \"takeaways\": [\"卡3：2-3條，每條≤20字的具體判斷或動作\"],\n     \"reader_question\": \"卡3唯一一個可具體回答的問題≤42字\",\n     \"key_figures\": []\n  }"""
+        carousel_prompt = """**carousel 欄位（必填）= 固定 3 張可滑動圖卡。每張卡有固定任務，務必遵守字數上限**
 （圖卡字一多就擠成小字、沒人看完）：
   · 卡1 封面 = 直接用該平台 variant 的 title 當鉤子（≤20 字，別照抄新聞標題）。
-  · 卡2 核心洞察 = insight_statement(≤30 字、單句、不條列、不放數字) + insight_support(≤40 字)。
-  · 卡3 一個數字 = stat_number(≤8 字元) + stat_caption(≤24 字)。**數字集中在這張**；沒有夠力數字就 stat_number=null。
-  · 卡4 帶走的判斷 = takeaways 2-3 條、每條 ≤18 字、條列式。
-  · 卡5 關鍵數據 = key_figures 3-4 個 {{label, value}}。從原文挑**最有力的具體數據**（營收、年增、市佔、估值、毛利、產能…），label≤8字、value 帶單位/符號≤10字元。**數字一定要實、不可瞎掰**；原文沒有足夠數據就回空陣列 []。這張卡讓貼文「有料」，不再只有一句句空話。
+  · 卡2 證據 = insight_statement(≤30 字) + insight_support(≤40 字) + source_attribution(具名來源)。可加一個原文可證明的 stat_number/stat_caption；沒有就 null。
+  · 卡3 判斷與行動 = takeaways 2-3 條、每條 ≤20 字；reader_question 只問一個能具體回答的問題。
   讓人不點文章、滑卡片就懂。所有內容針對本則新聞自己長，禁止套固定句型。
   **每一格都必須是「完整句子」、在字數上限內把話講完**——絕不可以寫超過上限、也不可以用破折號或逗號殘缺收尾（圖卡會被截斷成殘句）。寧可短而完整，不要長而被切。
-  **卡2-4 每格文字自測**：寫完問自己「這句話脫離上下文、單獨在圖卡上，讀者看得懂嗎？」不可用代名詞開頭（這、它、其），不可省略主語。每句要有主詞+動詞+受詞。
+  **卡2-3 每格文字自測**：寫完問自己「這句話脫離上下文、單獨在圖卡上，讀者看得懂嗎？」不可用代名詞開頭（這、它、其），不可省略主語。每句要有主詞+動詞+受詞。
   **卡2 insight_statement 禁止**以「這說明」「這代表」「這意味著」「這顯示」開頭。用主動句指名道姓。
   **卡4 takeaways 每條必須是具體判斷**：❌「留意供應鏈風險」→ ✅「台積電CoWoS產能已吃緊到2027」。
   **觀點優先（借股癌式精華筆記邏輯，禁照抄句型）**：蒸餾的是「判斷」不是中性事實——明說誰受惠、誰危險、下一步該看什麼，像分析師下結論（例：台積電恐當這波多頭的「最後一棒」補漲）。這是推理方向、不是模板。
@@ -651,7 +644,13 @@ async def compose_multi_platform(
     if draft.carousel is not None:
         c = draft.carousel
         c_fixes: List[str] = []
-        for attr in ("insight_statement", "insight_support", "stat_caption"):
+        for attr in (
+            "insight_statement",
+            "insight_support",
+            "source_attribution",
+            "stat_caption",
+            "reader_question",
+        ):
             val = getattr(c, attr, None)
             if val:
                 new_val, fx = fix_mainland_text(val)

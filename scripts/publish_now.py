@@ -82,7 +82,37 @@ _SHORT_PLATFORM = {value: key for key, value in _DB_PLATFORM.items()}
 _ORDER = ("threads", "ig", "fb")
 APPENDIX_VERSION = "1.0"
 
-_TW_STOCK_TITLE_CUES = ("台股", "證交所", "加權指數", "櫃買")
+_TOPIC_TITLE_CUES = (
+    (
+        "food_safety",
+        (
+            "食安",
+            "食品安全",
+            "食藥署",
+            "油脂",
+            "食用油",
+            "農藥殘留",
+            "添加物",
+        ),
+    ),
+    ("military_defense", ("國防", "軍演", "軍購", "台海", "國軍", "共軍")),
+    (
+        "tw_politics",
+        (
+            "立法院",
+            "行政院",
+            "監察院",
+            "總統府",
+            "政府",
+            "市府",
+            "縣府",
+            "預算",
+            "法案",
+        ),
+    ),
+    ("tw_stocks", ("台股", "證交所", "加權指數", "櫃買")),
+    ("current_affairs", ("地震", "颱風", "豪雨", "淹水", "停電", "災情")),
+)
 
 STATUS_PUBLISHED = "published"
 STATUS_PARTIAL = "partial"
@@ -94,8 +124,10 @@ STATUS_SETUP_READY = "setup_ready"
 def _topic_category_for_title(title: str) -> str:
     """Keep immediate-publish cards out of the generic ``other`` bucket."""
 
-    if any(cue in (title or "") for cue in _TW_STOCK_TITLE_CUES):
-        return "tw_stocks"
+    normalized = title or ""
+    for category, cues in _TOPIC_TITLE_CUES:
+        if any(cue in normalized for cue in cues):
+            return category
     return "other"
 
 
@@ -513,6 +545,7 @@ def _quality_issues(
             platform,
             carousel_card_count=card_count,
             recovery=True,
+            stage="compose",
         )
     )
     return visible_text, issues
@@ -555,8 +588,8 @@ def _render_setup_previews(
             subtitle="",
             carousel=bundle.carousel,
         )
-        if len(cards) < 2:
-            raise ValueError(f"{platform}: build_cards <2")
+        if len(cards) != 3:
+            raise ValueError(f"{platform}: build_cards expected 3, got {len(cards)}")
         output_dir = evidence_dir / "cards" / platform
         paths = render_cards(
             cards=cards,
@@ -564,8 +597,8 @@ def _render_setup_previews(
             aspect=platform,
             output_dir=output_dir,
         )
-        if len(paths) < 2:
-            raise ValueError(f"{platform}: render_cards <2")
+        if len(paths) != 3:
+            raise ValueError(f"{platform}: render_cards expected 3, got {len(paths)}")
         previews[platform] = [
             path.resolve().relative_to(evidence_dir.resolve()).as_posix()
             for path in paths
@@ -834,8 +867,8 @@ async def _publish_platform(
     draft_id: str,
 ) -> tuple[bool, str, object]:
     cards = build_cards(title=cover_title or "", subtitle="", carousel=carousel)
-    if len(cards) < 2:
-        return False, "build_cards <2", None
+    if len(cards) != 3:
+        return False, f"build_cards expected 3, got {len(cards)}", None
     output_dir = Path(tempfile.mkdtemp(prefix=f"pn_{platform}_"))
     paths = render_cards(
         cards=cards,
@@ -845,8 +878,10 @@ async def _publish_platform(
     )
     slug = re.sub(r"[^A-Za-z0-9_]", "", f"{draft_id[:20]}_{platform}")[:40]
     urls = upload_cards(paths, slug)
-    if len(urls) < 2:
-        return False, f"card upload failed ({len(urls)})", None
+    if len(paths) != 3:
+        return False, f"render_cards expected 3, got {len(paths)}", None
+    if len(urls) != 3:
+        return False, f"card upload expected 3, got {len(urls)}", None
     result = await _PUB[platform](urls, caption)
     return bool(result.get("success")), str(result.get("error") or "")[:200], result.get("id")
 

@@ -1,4 +1,4 @@
-# Taiwan Daily Meta Editorial Contract v5
+# Taiwan Daily Meta Editorial Contract v6
 
 This contract has highest priority while `AUTOMATION_MODE=recovery`.
 
@@ -32,7 +32,8 @@ This contract has highest priority while `AUTOMATION_MODE=recovery`.
 
 - Threads — 08:00 Asia/Taipei morning-commute experiment. Target 180–300 Chinese characters in 2–4 short paragraphs. Consequence first; named evidence second; original interpretation third; one answerable question last. One topic tag only.
 - Facebook — 18:00 evening-commute experiment. Target 280–500 Chinese characters in 3–5 short paragraphs. Use a compact evidence-led explainer: event, record, affected people, evidence gap, and one answerable question. Native text; 2–3 topic tags; no routine outbound link.
-- Instagram — 20:00 post-commute experiment. Caption target 160–340 Chinese characters in 2–4 short paragraphs, with 3–5 topic tags. The carousel must stand alone: card 1 verified consequence, card 2 what happened, card 3 primary-source number, card 4 who pays or benefits, card 5 what to check next. The caption supports the cards and does not merely paste the Facebook version.
+- Instagram — 20:00 post-commute experiment. Caption target 160–340 Chinese characters in 2–4 short paragraphs, with 3–5 topic tags. The caption supports the cards and does not merely paste the Facebook version.
+- All three platforms require exactly three native-size cards in this order: (1) existing mascot + verified hot-topic hook, (2) named primary source + bounded evidence or number, (3) reader judgement/action + exactly one answerable question. Missing cards, wrong order, failed rendering, or failed upload blocks publishing; no single-image or text fallback is allowed.
 
 ## Experiment and exit gate
 
