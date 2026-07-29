@@ -73,6 +73,14 @@ def _wrap(draw, text: str, font, max_w: int) -> list:
             moved = lines[index - 1][-1]
             lines[index - 1] = lines[index - 1][:-1]
             lines[index] = moved + lines[index]
+    # A one-character final CJK line reads like a rendering defect on a cover.
+    # Pull one ideograph from the previous line so the last line remains a
+    # meaningful two-character unit (for example, "因" + "素" -> "因素").
+    if len(lines) >= 2 and len(lines[-1]) == 1 and len(lines[-2]) >= 2:
+        tail = lines[-2][-1]
+        if not (tail.isascii() and tail.isalnum()):
+            lines[-2] = lines[-2][:-1]
+            lines[-1] = tail + lines[-1]
     return lines
 
 

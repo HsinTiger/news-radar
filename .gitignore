@@ -99,6 +99,7 @@ test-results/
 *.log
 tmp/
 .tmp/
+.remote-canary-*/
 AGENT_WORKLOG.md
 
 # --- Cover-renderer assets (large + per-machine) ---
