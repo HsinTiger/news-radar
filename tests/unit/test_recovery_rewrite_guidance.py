@@ -247,6 +247,26 @@ def test_deterministic_market_utility_repair_is_concrete() -> None:
     assert "missing_reader_utility" not in codes
 
 
+def test_deterministic_generic_utility_repair_is_claim_free_and_actionable() -> None:
+    body = (
+        "根據中央社報導，主管機關今天公布調查結果。\n\n"
+        "你會先查哪一項資料？"
+    )
+
+    repaired = _deterministic_recovery_utility_repair(
+        body,
+        topic="current_affairs",
+        source_evidence_text="中央社報導主管機關公布調查結果。",
+    )
+    codes = {
+        issue.code
+        for issue in check_quality(repaired, recovery=True)
+    }
+
+    assert "你可以先查詢具名來源的日期與適用範圍" in repaired
+    assert "missing_reader_utility" not in codes
+
+
 def test_v35_deterministic_food_safety_utility_is_concrete() -> None:
     body = (
         "食藥署公布中聯油脂案調查結果。\n\n"
