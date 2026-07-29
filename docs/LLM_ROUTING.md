@@ -142,6 +142,14 @@ flowchart TD
 
 寫稿沒出來的時候，**由外往內**查，不要一上來就懷疑模型額度：
 
+**先看投稿頁上那筆卡在哪一段**，決定往哪邊查：
+
+| 頁面狀態 | 卡在哪 | 去看 |
+|---|---|---|
+| 「已受理，等待受治理 poller」 | 還在 Cloudflare 控制台，GitHub 都還沒收到 | §4.2 |
+| 「Substack 素材已入庫（尚未建立草稿）」 | Actions 跑完了，Mac 沒接手 | §4.1 / 下面流程圖 |
+| 「Substack 草稿已建立」 | 沒卡，遠端草稿 ID 已回寫 | — |
+
 ```mermaid
 flowchart TD
     X["沒有草稿"] --> Q1{"launchctl list<br/>substack-fast 的 exit code？"}
@@ -189,6 +197,39 @@ gh api repos/HsinTiger/news-radar --jq .permissions
 ```
 
 `push` 必須是 `true`。
+
+### 4.2 GitHub 排程 cron 被延後（2026-07-29 同日第二個問題）
+
+**症狀**：投稿頁停在「已受理，等待受治理 poller」，GitHub Actions 上根本沒有對應的
+`substack-submit.yml` run —— 因為素材連 GitHub 都還沒進去。
+
+**根因**：`submission-poller.yml` 宣告五分鐘 cron，但 GitHub 對排程 workflow 在負載高時
+會大量延後併單。當天實測 tick 間隔（UTC）：
+
+```
+14:41  12:23  10:12  07:26  04:33  01:11  23:42  22:39   ← 1~3 小時，不是 5 分鐘
+```
+
+這是平台行為，不是設定錯，`*/5` 改成什麼都一樣。
+
+**修法（已上線）**：Cloudflare Worker 的 `createSubmission()` 在寫進 D1 之後
+**直接 dispatch `submission-poller.yml`**，用的是 scheduler watchdog 本來就在用的
+`GITHUB_ACTIONS_TOKEN`。cron 保留當安全網。
+
+踢失敗**不會**讓投稿失敗 —— 已經安全落地的投稿不該因為通知沒送到就被報成 failed，
+失敗只寫進 `audit_events`（`action='nudge_submission_poller'`），cron 之後照樣會撿。
+
+驗證：投稿後 `submission-poller.yml` 應該立刻多一筆 **event=workflow_dispatch** 的 run。
+
+```bash
+gh run list --workflow=submission-poller.yml --limit 3 --json createdAt,event
+```
+
+手動急救（worker 沒上線 / 想立刻踢一次）：
+
+```bash
+gh workflow run submission-poller.yml --repo HsinTiger/news-radar
+```
 
 ---
 
