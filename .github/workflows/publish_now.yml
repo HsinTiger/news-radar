@@ -48,6 +48,11 @@ on:
         required: true
         default: true
         type: boolean
+      report_submission_state:
+        description: "Report terminal state to an existing Social Ops submission row"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: news-radar-production
@@ -251,7 +256,7 @@ jobs:
             --lease-file .runtime-state-lease.json
 
       - name: Report truthful submission state
-        if: always() && inputs.submission_id != ''
+        if: always() && inputs.report_submission_state && inputs.submission_id != ''
         env:
           SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
           SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}

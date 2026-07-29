@@ -1,0 +1,126 @@
+name: "Meta Carousel · Remote Readback"
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_id:
+        description: "Canonical draft ID"
+        required: true
+        type: string
+      facebook_id:
+        description: "Exact Facebook post ID"
+        required: true
+        type: string
+      instagram_id:
+        description: "Exact Instagram media ID"
+        required: true
+        type: string
+      threads_id:
+        description: "Exact Threads media ID"
+        required: true
+        type: string
+      record_canonical:
+        description: "After remote proof, persist actual_format=carousel and sync Social Ops"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: news-radar-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip -q
+          pip install -r requirements.txt -q
+
+      - name: Acquire canonical state write lease
+        if: inputs.record_canonical
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
+            --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Restore verified runtime state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/state_store.py pull --repo "$GITHUB_REPOSITORY" --root .
+
+      - name: Verify three remote carousel children and permalinks
+        env:
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          INPUT_DRAFT_ID: ${{ inputs.draft_id }}
+          INPUT_FACEBOOK_ID: ${{ inputs.facebook_id }}
+          INPUT_INSTAGRAM_ID: ${{ inputs.instagram_id }}
+          INPUT_THREADS_ID: ${{ inputs.threads_id }}
+          RECORD_CANONICAL: ${{ inputs.record_canonical }}
+        run: |
+          EXTRA_ARGS=()
+          if [[ "$RECORD_CANONICAL" == "true" ]]; then
+            EXTRA_ARGS+=(--record-canonical)
+          fi
+          python scripts/verify_meta_carousel.py \
+            --draft-id "$INPUT_DRAFT_ID" \
+            --facebook-id "$INPUT_FACEBOOK_ID" \
+            --instagram-id "$INPUT_INSTAGRAM_ID" \
+            --threads-id "$INPUT_THREADS_ID" \
+            --evidence-json logs/meta-carousel-readback.json \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Persist remotely verified canonical state
+        if: inputs.record_canonical
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py push --repo "$GITHUB_REPOSITORY" --root . \
+            --producer "meta_carousel_readback:${{ github.run_id }}" \
+            --lease-file .runtime-state-lease.json
+
+      - name: Sync remotely verified format to Social Ops
+        if: inputs.record_canonical
+        env:
+          SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
+          SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
+          AUTOMATION_MODE: ${{ vars.AUTOMATION_MODE }}
+          SUBMISSION_PROCESSOR_MODE: ${{ vars.SUBMISSION_PROCESSOR_MODE }}
+        run: python scripts/sync_social_ops.py --knowledge-limit 500
+
+      - name: Upload owner-auditable readback evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: meta-carousel-readback-${{ github.run_id }}
+          path: logs/meta-carousel-readback.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Release canonical state write lease
+        if: always() && inputs.record_canonical
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/state_store.py unlock --repo "$GITHUB_REPOSITORY" \
+            --lease-file .runtime-state-lease.json

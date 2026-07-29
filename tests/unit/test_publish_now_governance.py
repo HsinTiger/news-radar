@@ -98,6 +98,10 @@ def test_threads_only_persists_lineage_and_retry_is_idempotent(
         tags = json.loads(conn.execute("SELECT tags FROM news_items").fetchone()[0])
         assert "control_submission:submission-test-001" in tags
         assert conn.execute("SELECT COUNT(*) FROM publish_log WHERE success=1").fetchone()[0] == 1
+        experiment = conn.execute(
+            "SELECT content_format,actual_format FROM recovery_experiments"
+        ).fetchone()
+        assert tuple(experiment) == ("carousel", "carousel")
     finally:
         conn.close()
 
