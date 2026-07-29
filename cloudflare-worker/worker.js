@@ -14,6 +14,7 @@ const META_MODES = new Set(["publish_now", "queue"]);
 const PLATFORMS = new Set(["facebook", "instagram", "threads"]);
 const WATCHDOG_REPOSITORY = "HsinTiger/news-radar";
 const WATCHDOG_WORKFLOW = "adaptive-scheduler.yml";
+const POLLER_WORKFLOW = "submission-poller.yml";
 
 const LATEST_AUDIENCE_SQL = `WITH ranked AS (
   SELECT *,ROW_NUMBER() OVER(PARTITION BY platform ORDER BY captured_at DESC) AS rn
@@ -267,6 +268,62 @@ async function dispatchSchedulerWatchdog(controller, env) {
   );
 }
 
+/**
+ * Kick the submission poller the moment a submission lands.
+ *
+ * 2026-07-29: submission-poller.yml is declared as a five-minute cron, but
+ * GitHub coalesces and deprioritises scheduled workflows under load — observed
+ * actual cadence was 1–3 HOURS between ticks. A submission therefore sat in
+ * `queued` for hours before anything claimed it, which reads on the console as
+ * "投稿了但沒在寫稿". The cron stays as the safety net; this makes the common
+ * case immediate.
+ *
+ * Never throws: a submission that is safely persisted must not be reported as
+ * failed just because the nudge did not land. The cron will still pick it up.
+ */
+async function nudgeSubmissionPoller(env, submissionId) {
+  const now = new Date().toISOString();
+  const note = async (status, detail) => {
+    try {
+      await env.DB.prepare(
+        "INSERT INTO audit_events(actor,action,subject_id,status,metadata_json,created_at) VALUES('system','nudge_submission_poller',?,?,?,?)",
+      )
+        .bind(submissionId, status, JSON.stringify({ detail, workflow: POLLER_WORKFLOW }), now)
+        .run();
+    } catch {
+      /* audit must never break the submission path */
+    }
+  };
+
+  if (!env.GITHUB_ACTIONS_TOKEN) {
+    await note("skipped", "github_actions_token_missing");
+    return;
+  }
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${WATCHDOG_REPOSITORY}/actions/workflows/${POLLER_WORKFLOW}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${env.GITHUB_ACTIONS_TOKEN}`,
+          "Content-Type": "application/json",
+          "User-Agent": "hsintiger-news-radar-submission-nudge",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify({ ref: "main" }),
+      },
+    );
+    if (response.status !== 204) {
+      await note("error", `github_status=${response.status}`);
+      return;
+    }
+    await note("accepted", "dispatched");
+  } catch (error) {
+    await note("error", `network_error=${String(error).slice(0, 120)}`);
+  }
+}
+
 function corsHeaders(request) {
   const origin = request.headers.get("Origin");
   const headers = {
@@ -513,6 +570,10 @@ async function createSubmission(request, env, cors) {
     }
     throw error;
   }
+  // Immediate hand-off; the */5 cron remains the fallback. Awaited (not
+  // waitUntil) so the nudge is guaranteed to be attempted before the response,
+  // and swallowed internally so it can never fail an accepted submission.
+  await nudgeSubmissionPoller(env, id);
   return reply(
     { ok: true, submission: { id, target, status: "queued", mode, platforms, created_at: now } },
     202,
