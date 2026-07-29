@@ -18,6 +18,7 @@ class PlatformDecision:
     reason: str
     posts_today: int
     quality_attempts_today: int
+    max_quality_attempts_per_day: int | None
     retryable_queue: int
     last_success: str | None
     target_posts_per_day: int
@@ -199,6 +200,20 @@ def decide_schedule(
         if mode == "recovery"
         else policy["platforms"]
     )
+    max_quality_attempts_per_day: int | None = None
+    if mode == "recovery":
+        configured_attempt_limit = policy["recovery"].get(
+            "max_quality_attempts_per_day", 1
+        )
+        if (
+            isinstance(configured_attempt_limit, bool)
+            or not isinstance(configured_attempt_limit, int)
+            or not 1 <= configured_attempt_limit <= 3
+        ):
+            raise ValueError(
+                "recovery max_quality_attempts_per_day must be an integer from 1 to 3"
+            )
+        max_quality_attempts_per_day = configured_attempt_limit
     for platform, base_config in platform_policy.items():
         config, policy_source = _effective_platform_config(
             conn, platform, base_config, mode=mode
@@ -263,7 +278,7 @@ def decide_schedule(
         post_quota_ok = posts_today < int(config["target_posts_per_day"])
         attempt_quota_ok = (
             mode != "recovery"
-            or quality_attempts_today == 0
+            or quality_attempts_today < int(max_quality_attempts_per_day or 1)
             or retryable_queue > 0
         )
         interval_ok = last is None or now_utc - last >= interval
@@ -290,6 +305,7 @@ def decide_schedule(
                 reason=",".join(reasons),
                 posts_today=posts_today,
                 quality_attempts_today=quality_attempts_today,
+                max_quality_attempts_per_day=max_quality_attempts_per_day,
                 retryable_queue=retryable_queue,
                 last_success=last_value,
                 target_posts_per_day=int(config["target_posts_per_day"]),

@@ -38,5 +38,6 @@ This contract has highest priority while `AUTOMATION_MODE=recovery`.
 ## Experiment and exit gate
 
 - Every post records one primary hypothesis: `interest`, `trust`, `utility`, or `format`. Do not change topic, hook style, format, and time simultaneously inside one platform cohort.
+- A platform may compose at most two distinct Recovery drafts per local day so one quality-held attempt does not erase the daily slot. Publishing remains capped at one successful post per platform per day; a second failed compose is held until the next local day.
 - Capture 1h, 24h, and 168h results. Do not move a platform slot or exceed one post per day until at least seven posts on that platform have complete 168h evidence.
 - A green workflow, generated carousel, or successful API call proves delivery only. It does not prove reach, trust, follower conversion, or editorial correctness.

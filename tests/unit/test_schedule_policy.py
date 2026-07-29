@@ -61,7 +61,7 @@ def test_daily_quota_prevents_duplicate_dispatch() -> None:
     assert "daily_quota_reached" in fb.reason
 
 
-def test_recovery_quality_attempt_prevents_same_day_retry() -> None:
+def test_recovery_allows_one_bounded_same_day_quality_retry() -> None:
     conn = _conn()
     conn.execute(
         """CREATE TABLE content_quality_evaluations(
@@ -96,9 +96,49 @@ def test_recovery_quality_attempt_prevents_same_day_retry() -> None:
     instagram = next(
         item for item in decision.platform_decisions if item.platform == "instagram"
     )
-    assert "instagram" not in decision.platforms
+    assert decision.platforms == ["instagram"]
     assert instagram.quality_attempts_today == 1
+    assert instagram.max_quality_attempts_per_day == 2
     assert instagram.retryable_queue == 0
+    assert "daily_attempt_quota_reached" not in instagram.reason
+
+
+def test_recovery_stops_after_second_same_day_quality_attempt() -> None:
+    conn = _conn()
+    conn.execute(
+        """CREATE TABLE content_quality_evaluations(
+        draft_id TEXT,platform TEXT,stage TEXT,checked_at TEXT,guard_version TEXT)"""
+    )
+    conn.executemany(
+        "INSERT INTO content_quality_evaluations VALUES(?,?,?,?,?)",
+        [
+            (
+                draft_id,
+                "instagram",
+                "compose",
+                checked_at,
+                "2026-07-29.taiwan-daily-v38",
+            )
+            for draft_id, checked_at in (
+                ("held-draft-1", "2026-07-23T12:02:00+00:00"),
+                ("held-draft-2", "2026-07-23T12:12:00+00:00"),
+            )
+        ],
+    )
+
+    decision = decide_schedule(
+        conn,
+        load_policy(POLICY),
+        datetime(2026, 7, 23, 12, 22, tzinfo=timezone.utc),
+        mode="recovery",
+    )
+    instagram = next(
+        item for item in decision.platform_decisions if item.platform == "instagram"
+    )
+
+    assert "instagram" not in decision.platforms
+    assert instagram.quality_attempts_today == 2
+    assert instagram.max_quality_attempts_per_day == 2
     assert "daily_attempt_quota_reached" in instagram.reason
 
 
