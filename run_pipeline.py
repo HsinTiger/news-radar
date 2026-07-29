@@ -73,7 +73,7 @@ RESCUE_PUBLISH_THRESHOLD = 0.65 # Rescue 模式放寬門檻（距上次發文 �
 MIN_SCORE_THRESHOLD = 0.65      # 低於此分數直接捨棄，不佔用 token
                                 # ⚠️ RESCUE == MIN：rescue 時段等於「composer 產出全發」
 MAX_POSTS_PER_SLOT = 8          # 每 cycle 最多掃描 N 篇候選（直到獵殺 1 篇為止）
-RECOVERY_MAX_POSTS_PER_SLOT = 3 # 三個受限候選；仍只允許一篇通過並發布
+RECOVERY_MAX_POSTS_PER_SLOT = 1 # 每次 dispatch 僅一個候選；每日最多兩次受限 compose
 MAX_PUBLISH_PER_SLOT = 1        # 每 cycle 最多自動發布 N 篇，避免洗版
 MAX_QUALITY_REWRITE_ATTEMPTS = 2  # 新 issue 可再修一次；仍有問題就 fail-closed
 
@@ -632,7 +632,9 @@ def _deterministic_recovery_utility_repair(
     elif topic == "tw_stocks":
         utility = "若你的報酬跑輸大盤，先比較產業配置與個股選擇，不要只看單日漲跌。"
     else:
-        return body
+        # Source-agnostic and claim-free fallback: it adds a concrete media-
+        # literacy action without inventing a policy, number, or consequence.
+        utility = "這會直接影響你的判斷；你可以先查詢具名來源的日期與適用範圍。"
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     trailing_hashtags: list[str] = []
     while paragraphs and all(
@@ -1793,7 +1795,7 @@ async def process_item(
                 for issues in quality_findings.values()
             )
             print(
-                "   ↳ [QualityGuard·deterministic] 僅剩可安全修復的 closing/tags"
+                "   ↳ [QualityGuard·deterministic] 僅剩可安全修復的 closing/tags/utility"
                 + (
                     "/title/inference/stats/utility"
                     if topic_cls.category_id == "tw_stocks"

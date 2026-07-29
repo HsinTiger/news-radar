@@ -25,6 +25,7 @@ This contract has highest priority while `AUTOMATION_MODE=recovery`.
 - Be sharp, specific, and emotionally legible. It is acceptable to write `政府多花了 12 億，通勤者仍多等 20 分鐘` when both numbers are sourced. It is not acceptable to write `黑箱掏空全民` without attributed evidence.
 - Ban reusable AI frames: `市場以為…真正的賽局…`, `大家以為…`, `護城河`, `底層邏輯`, `信任崩塌`, and generic `神話破滅／揭露／代價` packaging.
 - Name who benefits, who pays, and what changes next. Include one concrete consequence for a Taiwan reader plus one usable next action, record to inspect, product batch to check, policy date to watch, or risk signal to monitor.
+- If the source supports no more specific action, the safe fallback is to ask the reader to verify the named source's date and scope. Never invent an application step, investment action, or policy consequence merely to satisfy the utility gate.
 - End with one specific, answerable question or a falsifiable forecast. Do not ask `你怎麼看？`, request likes, or manufacture anger.
 - During Recovery, keep the post native. Do not inject a Substack link or generic off-platform CTA into the regular daily post.
 
