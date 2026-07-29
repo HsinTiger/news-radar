@@ -238,7 +238,6 @@ def decide_schedule(
                     SELECT COUNT(DISTINCT draft_id) AS attempts
                       FROM content_quality_evaluations
                      WHERE platform=? AND stage='compose'
-                       AND guard_version LIKE '%.taiwan-daily-%'
                        AND datetime(checked_at) >= datetime(?)
                        AND datetime(checked_at) < datetime(?)
                     """,

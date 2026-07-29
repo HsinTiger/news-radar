@@ -113,16 +113,19 @@ def test_recovery_stops_after_second_same_day_quality_attempt() -> None:
         "INSERT INTO content_quality_evaluations VALUES(?,?,?,?,?)",
         [
             (
-                draft_id,
+                "held-draft-1",
                 "instagram",
                 "compose",
-                checked_at,
+                "2026-07-23T12:02:00+00:00",
                 "2026-07-29.taiwan-daily-v38",
-            )
-            for draft_id, checked_at in (
-                ("held-draft-1", "2026-07-23T12:02:00+00:00"),
-                ("held-draft-2", "2026-07-23T12:12:00+00:00"),
-            )
+            ),
+            (
+                "held-draft-2",
+                "instagram",
+                "compose",
+                "2026-07-23T12:12:00+00:00",
+                "2026-07-29.meta-three-card-v37",
+            ),
         ],
     )
 
