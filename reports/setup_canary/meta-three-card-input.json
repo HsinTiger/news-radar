@@ -1,0 +1,38 @@
+{
+  "fb": {
+    "title": "食藥署調查：超標不是單一失守",
+    "body": "食藥署公布第三方調查結果，超標涉及多個管理環節。讀者可核對後續公告與修法進度。你最想先看到哪一項規則公開？",
+    "hashtags": ["#食品安全"],
+    "primary_topic_tag": "#食品安全",
+    "char_count": 54
+  },
+  "ig": {
+    "title": "食安超標，問題不只一關",
+    "body": "食藥署公布第三方調查結果，超標涉及多個管理環節。讀者可核對後續公告與修法進度。你最想先看到哪一項規則公開？",
+    "hashtags": ["#食品安全"],
+    "primary_topic_tag": "#食品安全",
+    "char_count": 54
+  },
+  "threads": {
+    "title": "食藥署：超標不是單一因素",
+    "body": "食藥署公布第三方調查結果，超標涉及多個管理環節。讀者可核對後續公告與修法進度。你最想先看到哪一項規則公開？",
+    "hashtags": ["#食品安全"],
+    "primary_topic_tag": "#食品安全",
+    "char_count": 54
+  },
+  "image_url": null,
+  "carousel": {
+    "insight_statement": "超標不是單一環節失守",
+    "insight_support": "第三方調查列出原料、製程與檢驗缺口",
+    "source_attribution": "來源：食藥署第三方調查",
+    "stat_number": "5大方向",
+    "stat_caption": "修法草案聚焦的治理方向",
+    "takeaways": [
+      "追蹤立法院審議",
+      "查看食藥署後續公告",
+      "核對管理規則是否落地"
+    ],
+    "reader_question": "你最想先看到哪一項管理規則公開？",
+    "key_figures": []
+  }
+}

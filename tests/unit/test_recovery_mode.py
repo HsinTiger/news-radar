@@ -19,29 +19,29 @@ from src.recovery_mode import (
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
 
-def test_recovery_carousel_scope_is_instagram_only() -> None:
+def test_recovery_carousel_scope_covers_all_meta_platforms() -> None:
     cards = object()
     assert platform_uses_carousel("instagram", recovery=True)
     assert platform_uses_carousel("ig", recovery=True)
-    assert not platform_uses_carousel("facebook", recovery=True)
-    assert not platform_uses_carousel("threads", recovery=True)
+    assert platform_uses_carousel("facebook", recovery=True)
+    assert platform_uses_carousel("threads", recovery=True)
     assert visible_carousel_for_platform(
         "instagram", cards, recovery=True
     ) is cards
-    assert visible_carousel_for_platform("facebook", cards, recovery=True) is None
+    assert visible_carousel_for_platform("facebook", cards, recovery=True) is cards
     assert platform_uses_carousel("facebook", recovery=False)
 
 
-def test_recovery_content_format_is_platform_specific() -> None:
+def test_recovery_content_format_is_carousel_for_every_meta_platform() -> None:
     assert content_format_for_platform(
         "instagram", carousel_available=True, recovery=True
     ) == "carousel"
     assert content_format_for_platform(
         "facebook", carousel_available=True, recovery=True
-    ) == "feed"
+    ) == "carousel"
     assert content_format_for_platform(
         "threads", carousel_available=True, recovery=True
-    ) == "feed"
+    ) == "carousel"
     assert content_format_for_platform(
         "facebook", carousel_available=True, recovery=False
     ) == "carousel"
@@ -420,7 +420,7 @@ def test_record_experiments_is_platform_specific() -> None:
         draft_id="draft-1",
         platforms={"threads", "instagram"},
         topic="tech_product_launch",
-        content_format={"instagram": "carousel", "threads": "feed"},
+        content_format={"instagram": "carousel", "threads": "carousel"},
         created_at="2026-07-24T00:00:00Z",
     )
     rows = conn.execute(
@@ -429,7 +429,7 @@ def test_record_experiments_is_platform_specific() -> None:
     ).fetchall()
     assert [tuple(row) for row in rows] == [
         ("instagram", "utility", 9, "carousel"),
-        ("threads", "utility", 3748, "feed"),
+        ("threads", "format", 3748, "carousel"),
     ]
     dbmod.mark_recovery_actual_format(
         conn, "draft-1", "instagram", "feed", "2026-07-24T01:00:00Z"
@@ -443,7 +443,7 @@ def test_editorial_mandate_matches_persisted_experiment_type() -> None:
     mandate = editorial_mandate_for(
         {"threads", "instagram"}, "tech_product_launch"
     )
-    assert "threads: type=utility" in mandate
+    assert "threads: type=format" in mandate
     assert "instagram: type=utility" in mandate
     assert "Instagram visual utility test" in mandate
     assert "same evidence/response/correction standard" in mandate

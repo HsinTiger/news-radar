@@ -772,6 +772,13 @@ def step_mark_published(draft_id: str, news_id: str, any_success: bool) -> None:
 # ---------- main ----------------------------------------------------------
 
 async def main_async(args) -> int:
+    if not args.dry_run:
+        fail(
+            2,
+            "Legacy emergency live publishing is retired because it can emit "
+            "single-image posts. Use scripts/publish_now.py or publish_now.yml; "
+            "--dry-run remains available for draft inspection.",
+        )
     # 環境檢查：DB、soul 檔存在
     if not DB_PATH.exists():
         fail(2, f"DB 不存在：{DB_PATH}")

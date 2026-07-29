@@ -321,6 +321,12 @@ async def main():
              "也可在 --from-json 的 JSON 裡放 top-level video_url 欄位。",
     )
     args = parser.parse_args()
+    if not args.dry_run:
+        raise SystemExit(
+            "Legacy first_batch_publish live path is retired: it cannot satisfy "
+            "the governed three-card Meta contract. Use scripts/publish_now.py "
+            "or the publish_now.yml workflow. --dry-run remains preview-only."
+        )
 
     item = load_item(args.id)
 

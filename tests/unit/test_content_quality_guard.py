@@ -41,22 +41,31 @@ def test_official_reserve_requires_dated_non_breaking_framing() -> None:
     assert all(issue.severity == "rewrite" for issue in issues)
 
 
-def test_recovery_instagram_requires_exactly_five_rendered_cards() -> None:
+def test_every_meta_platform_requires_exactly_three_rendered_cards() -> None:
     issues = check_platform_format(
         "instagram", carousel_card_count=4, recovery=True
     )
     assert [issue.code for issue in issues] == [
-        "missing_recovery_five_card_carousel"
+        "invalid_meta_three_card_carousel"
     ]
-    assert should_request_rewrite(issues)
-    assert not check_platform_format(
-        "instagram", carousel_card_count=5, recovery=True
+    assert has_blocking_issues(issues)
+    compose_issues = check_platform_format(
+        "instagram", carousel_card_count=0, recovery=True, stage="compose"
     )
+    assert [issue.severity for issue in compose_issues] == ["rewrite"]
+    assert should_request_rewrite(compose_issues)
+    assert not has_blocking_issues(compose_issues)
     assert not check_platform_format(
+        "instagram", carousel_card_count=3, recovery=True
+    )
+    assert check_platform_format(
         "facebook", carousel_card_count=0, recovery=True
     )
-    assert not check_platform_format(
+    assert check_platform_format(
         "instagram", carousel_card_count=0, recovery=False
+    )
+    assert not check_platform_format(
+        "threads", carousel_card_count=3, recovery=False
     )
 
 

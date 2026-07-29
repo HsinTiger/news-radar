@@ -583,11 +583,12 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> None:
 
 
 def set_carousel_json(conn: sqlite3.Connection, draft_id: str, carousel_json: Optional[str]) -> None:
-    """Persist the 2–4 card carousel content (CarouselCards JSON) on the draft row.
+    """Persist governed three-card content on the draft row.
 
     Stored at draft level (shared by all platforms). Called by run_pipeline right
     after insert_draft so the cloud publisher (run_publish_queue) can render+post
-    carousels. NULL/empty → cloud falls back to single-image, same as before.
+    carousels. NULL/empty is publish-blocking; no Meta path may degrade to a
+    single image or text post.
     """
     conn.execute(
         "UPDATE drafts SET carousel_json = ? WHERE id = ?",

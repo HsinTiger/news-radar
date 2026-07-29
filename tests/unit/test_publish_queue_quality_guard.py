@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src import content_quality_guard as guard_mod
+from src.schema import CarouselCards
 
 
 # ---------- 共用 in-memory DB + schema ----------
@@ -34,6 +35,41 @@ def _fresh_memory_conn():
     if "carousel_json" not in cols:
         conn.execute("ALTER TABLE drafts ADD COLUMN carousel_json TEXT")
     return conn
+
+
+def _three_card_carousel() -> CarouselCards:
+    return CarouselCards(
+        insight_statement="具名來源讓讀者能驗證核心判斷",
+        insight_support="原始公告交代事件範圍與可檢查的限制",
+        source_attribution="來源：測試機關原始公告",
+        stat_number="3項",
+        stat_caption="公告列出的可檢查項目",
+        takeaways=["核對原始公告", "比較受影響範圍"],
+        reader_question="你會先核對哪一項？",
+    )
+
+
+def _arm_three_card_carousel(conn, draft_id: str) -> None:
+    conn.execute(
+        "UPDATE drafts SET carousel_json=? WHERE id=?",
+        (_three_card_carousel().model_dump_json(), draft_id),
+    )
+    conn.commit()
+
+
+def _mock_three_card_render(monkeypatch, module) -> None:
+    monkeypatch.setattr(
+        module,
+        "render_cards",
+        lambda **_kwargs: [Path(f"card-{index}.png") for index in range(1, 4)],
+    )
+    monkeypatch.setattr(
+        module,
+        "upload_cards",
+        lambda *_args, **_kwargs: [
+            f"https://example.com/card-{index}.png" for index in range(1, 4)
+        ],
+    )
 
 
 def _seed_one_templated_draft(conn):
@@ -80,9 +116,9 @@ def test_publish_queue_blocks_templated_draft(monkeypatch):
     # Mock publisher to explode if called (proves guard short-circuits before network)
     async def _never_called(*a, **kw):
         raise AssertionError("publisher must NOT be called when guard blocks")
-    monkeypatch.setattr(rpq, "publish_to_fb", _never_called)
-    monkeypatch.setattr(rpq, "publish_to_ig", _never_called)
-    monkeypatch.setattr(rpq, "publish_to_threads", _never_called)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _never_called)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _never_called)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _never_called)
 
     # Build a fake 'row' like pick_freshest_queued returns (SELECT joined columns)
     row = conn.execute(
@@ -136,9 +172,9 @@ def test_publish_queue_guard_includes_rendered_carousel_text(monkeypatch):
         raise AssertionError("publisher must not receive unguarded carousel text")
 
     monkeypatch.setattr(rpq, "check_quality", _guard)
-    monkeypatch.setattr(rpq, "publish_to_fb", _never_called)
-    monkeypatch.setattr(rpq, "publish_to_ig", _never_called)
-    monkeypatch.setattr(rpq, "publish_to_threads", _never_called)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _never_called)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _never_called)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _never_called)
     row = conn.execute(
         """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
                   n.og_image_url,n.topic_category
@@ -184,21 +220,20 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
             (pl, healthy, now),
         )
     conn.commit()
+    _arm_three_card_carousel(conn, "d2")
 
     # Track publisher calls
     call_log = []
     async def _fake_ok(*a, **kw):
         call_log.append(1)
         return {"success": True, "id": f"post_{len(call_log)}"}
-    monkeypatch.setattr(rpq, "publish_to_fb", _fake_ok)
-    monkeypatch.setattr(rpq, "publish_to_ig", _fake_ok)
-    monkeypatch.setattr(rpq, "publish_to_threads", _fake_ok)
-    async def _fake_prepare(**kwargs):
-        return {"image_url": kwargs.get("original_image_url")}
-    monkeypatch.setattr(rpq, "prepare_publish_image", _fake_prepare)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _fake_ok)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _fake_ok)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _fake_ok)
+    _mock_three_card_render(monkeypatch, rpq)
 
     row = conn.execute(
-        """SELECT d.id, d.news_id, n.title AS news_title,
+        """SELECT d.*, n.title AS news_title,
                   n.published_at AS news_published_at, n.og_image_url
              FROM drafts d JOIN news_items n ON d.news_id = n.id
             WHERE d.id='d2'"""
@@ -208,7 +243,7 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
     conn.execute("UPDATE news_items SET og_image_url='https://example.com/x.jpg' WHERE id='n2'")
     conn.commit()
     row = conn.execute(
-        """SELECT d.id, d.news_id, n.title AS news_title,
+        """SELECT d.*, n.title AS news_title,
                   n.published_at AS news_published_at, n.og_image_url
              FROM drafts d JOIN news_items n ON d.news_id = n.id
             WHERE d.id='d2'"""
@@ -219,8 +254,8 @@ def test_publish_queue_lets_healthy_draft_through(monkeypatch):
     assert len(call_log) == 3, f"expected 3 publisher calls, got {len(call_log)}"
 
 
-def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
-    """FB/Threads stay native feed posts while IG receives the five cards."""
+def test_recovery_publishes_three_card_carousel_to_all_platforms(monkeypatch):
+    """FB, IG and Threads all receive the governed three-card sequence."""
     import run_publish_queue as rpq
     from src.schema import CarouselCards
 
@@ -241,9 +276,11 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
     cards = CarouselCards(
         insight_statement="食藥署公布具體後果",
         insight_support="食藥署公告說明事件經過",
+        source_attribution="來源：食藥署產品公告",
         stat_number="19批",
         stat_caption="食藥署公布的合格批次",
-        takeaways=["消費者先核對產品批號"],
+        takeaways=["消費者先核對產品批號", "追蹤業者改善進度"],
+        reader_question="你會先查產品批號還是改善進度？",
         key_figures=[
             {"label": "合格批次", "value": "19批"},
             {"label": "產品項目", "value": "501項"},
@@ -279,7 +316,7 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
                 "utility",
                 "native-format-test",
                 now,
-                "carousel" if platform == "instagram" else "feed",
+                "carousel",
                 now,
             ),
         )
@@ -287,38 +324,16 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
 
     calls: list[str] = []
 
-    async def _feed_ok(*_args, **_kwargs):
-        calls.append("feed")
-        return {"success": True, "id": f"feed-{len(calls)}"}
-
-    async def _ig_carousel_ok(*_args, **_kwargs):
-        calls.append("instagram-carousel")
-        return {"success": True, "id": "ig-carousel"}
-
-    async def _forbidden_carousel(*_args, **_kwargs):
-        raise AssertionError("Recovery FB/Threads must not publish a carousel")
-
-    async def _forbidden_ig_feed(*_args, **_kwargs):
-        raise AssertionError("Recovery Instagram must not fall back to feed")
-
-    async def _prepare(**kwargs):
-        return {"image_url": kwargs.get("original_image_url")}
+    async def _carousel_ok(*_args, **_kwargs):
+        calls.append("carousel")
+        return {"success": True, "id": f"carousel-{len(calls)}"}
 
     monkeypatch.setattr(rpq, "check_quality", lambda *_a, **_kw: [])
     monkeypatch.setattr(rpq, "check_platform_style", lambda *_a, **_kw: [])
-    monkeypatch.setattr(rpq, "prepare_publish_image", _prepare)
-    monkeypatch.setattr(rpq, "render_cards", lambda **_kw: [Path(f"{i}.png") for i in range(5)])
-    monkeypatch.setattr(
-        rpq,
-        "upload_cards",
-        lambda *_a, **_kw: [f"https://example.com/{i}.png" for i in range(5)],
-    )
-    monkeypatch.setattr(rpq, "publish_to_fb", _feed_ok)
-    monkeypatch.setattr(rpq, "publish_to_threads", _feed_ok)
-    monkeypatch.setattr(rpq, "publish_to_ig", _forbidden_ig_feed)
-    monkeypatch.setattr(rpq, "publish_ig_carousel", _ig_carousel_ok)
-    monkeypatch.setattr(rpq, "publish_fb_carousel", _forbidden_carousel)
-    monkeypatch.setattr(rpq, "publish_threads_carousel", _forbidden_carousel)
+    _mock_three_card_render(monkeypatch, rpq)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _carousel_ok)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _carousel_ok)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _carousel_ok)
 
     row = conn.execute(
         """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
@@ -335,8 +350,7 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
     )
 
     assert outcome == rpq.OUTCOME_PUBLISHED
-    assert calls.count("feed") == 2
-    assert calls.count("instagram-carousel") == 1
+    assert calls == ["carousel", "carousel", "carousel"]
     formats = {
         row["platform"]: row["actual_format"]
         for row in conn.execute(
@@ -344,9 +358,9 @@ def test_recovery_publishes_carousel_only_to_instagram(monkeypatch):
         )
     }
     assert formats == {
-        "facebook": "feed",
+        "facebook": "carousel",
         "instagram": "carousel",
-        "threads": "feed",
+        "threads": "carousel",
     }
 
     # A failed IG carousel must remain queued for retry; Recovery may not
@@ -438,18 +452,17 @@ def test_publish_queue_all_platforms_fail_returns_all_failed_outcome(monkeypatch
             (pl, healthy, now),
         )
     conn.commit()
+    _arm_three_card_carousel(conn, "d3")
 
     async def _fake_fail(*a, **kw):
         return {"success": False, "error": {"code": 500, "msg": "simulated API outage"}}
-    monkeypatch.setattr(rpq, "publish_to_fb", _fake_fail)
-    monkeypatch.setattr(rpq, "publish_to_ig", _fake_fail)
-    monkeypatch.setattr(rpq, "publish_to_threads", _fake_fail)
-    async def _fake_prepare(**kwargs):
-        return {"image_url": kwargs.get("original_image_url")}
-    monkeypatch.setattr(rpq, "prepare_publish_image", _fake_prepare)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _fake_fail)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _fake_fail)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _fake_fail)
+    _mock_three_card_render(monkeypatch, rpq)
 
     row = conn.execute(
-        """SELECT d.id, d.news_id, n.title AS news_title,
+        """SELECT d.*, n.title AS news_title,
                   n.published_at AS news_published_at, n.og_image_url
              FROM drafts d JOIN news_items n ON d.news_id = n.id
             WHERE d.id='d3'"""
@@ -494,9 +507,7 @@ def test_partial_failure_retries_only_missing_platforms(monkeypatch):
             (platform, healthy, now),
         )
     conn.commit()
-
-    async def _prepare(**kwargs):
-        return {"image_url": kwargs.get("original_image_url")}
+    _arm_three_card_carousel(conn, "d-part")
 
     async def _fb_ok(*_args, **_kwargs):
         return {"success": True, "id": "fb-ok"}
@@ -504,10 +515,10 @@ def test_partial_failure_retries_only_missing_platforms(monkeypatch):
     async def _fail(*_args, **_kwargs):
         return {"success": False, "error": {"code": 500}}
 
-    monkeypatch.setattr(rpq, "prepare_publish_image", _prepare)
-    monkeypatch.setattr(rpq, "publish_to_fb", _fb_ok)
-    monkeypatch.setattr(rpq, "publish_to_ig", _fail)
-    monkeypatch.setattr(rpq, "publish_to_threads", _fail)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _fb_ok)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _fail)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _fail)
+    _mock_three_card_render(monkeypatch, rpq)
     row = conn.execute(
         """SELECT d.*,n.title AS news_title,n.published_at AS news_published_at,
                   n.og_image_url,n.topic_category
@@ -536,9 +547,9 @@ def test_partial_failure_retries_only_missing_platforms(monkeypatch):
     async def _ok(*_args, **_kwargs):
         return {"success": True, "id": "retry-ok"}
 
-    monkeypatch.setattr(rpq, "publish_to_fb", _fb_must_not_repeat)
-    monkeypatch.setattr(rpq, "publish_to_ig", _ok)
-    monkeypatch.setattr(rpq, "publish_to_threads", _ok)
+    monkeypatch.setattr(rpq, "publish_fb_carousel", _fb_must_not_repeat)
+    monkeypatch.setattr(rpq, "publish_ig_carousel", _ok)
+    monkeypatch.setattr(rpq, "publish_threads_carousel", _ok)
     second = asyncio.run(
         rpq._publish_one(
             conn,

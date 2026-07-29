@@ -43,9 +43,11 @@ def _bundle(platforms) -> MultiPlatformDraft:
         carousel=CarouselCards(
             insight_statement="真正差異在可驗證的執行",
             insight_support="每個平台都要有獨立成功證據",
+            source_attribution="來源：測試機關執行公告",
             stat_number="3",
             stat_caption="三個平台分別追蹤",
             takeaways=["失敗平台單獨重試", "成功平台不重複發文"],
+            reader_question="你會先查哪一個平台的成功證據？",
         ),
     )
 
@@ -208,13 +210,16 @@ def test_setup_only_renders_evidence_without_db_upload_or_meta(monkeypatch, tmp_
     monkeypatch.setattr(publish_now, "check_quality", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(publish_now, "check_platform_style", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(publish_now, "check_platform_format", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(publish_now, "build_cards", lambda **_kwargs: [object(), object()])
+    monkeypatch.setattr(
+        publish_now, "build_cards", lambda **_kwargs: [object(), object(), object()]
+    )
     monkeypatch.setattr(
         publish_now,
         "render_cards",
         lambda *, output_dir, **_kwargs: [
             output_dir / "card-1.png",
             output_dir / "card-2.png",
+            output_dir / "card-3.png",
         ],
     )
     args = _args(platforms="fb,ig,threads", submission_id="")
@@ -241,6 +246,15 @@ def test_immediate_publish_classifies_tw_stock_card_titles() -> None:
     assert publish_now._topic_category_for_title(
         "證交所外資統計：賣超不等於持股市值下降"
     ) == "tw_stocks"
+    assert publish_now._topic_category_for_title(
+        "食藥署：中聯油脂案超標不是單一因素"
+    ) == "food_safety"
+    assert publish_now._topic_category_for_title(
+        "立法院審議政府預算時程"
+    ) == "tw_politics"
+    assert publish_now._topic_category_for_title(
+        "台海軍演後，國防部公開最新統計"
+    ) == "military_defense"
     assert publish_now._topic_category_for_title("一般生活觀察") == "other"
 
 
@@ -254,11 +268,17 @@ def test_exact_copy_uses_no_composer_and_cannot_broaden_platform_scope(
     monkeypatch.setattr(publish_now, "check_quality", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(publish_now, "check_platform_style", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(publish_now, "check_platform_format", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(publish_now, "build_cards", lambda **_kwargs: [object(), object()])
+    monkeypatch.setattr(
+        publish_now, "build_cards", lambda **_kwargs: [object(), object(), object()]
+    )
     monkeypatch.setattr(
         publish_now,
         "render_cards",
-        lambda *, output_dir, **_kwargs: [output_dir / "one.png", output_dir / "two.png"],
+        lambda *, output_dir, **_kwargs: [
+            output_dir / "one.png",
+            output_dir / "two.png",
+            output_dir / "three.png",
+        ],
     )
     args = _args(platforms="threads", submission_id="")
     args.setup_only = True
@@ -309,4 +329,4 @@ def test_source_bounded_food_safety_override_passes_all_platform_gates() -> None
         assert "未來可追蹤" not in item["full_text"]
     assert len(publish_now.build_cards(
         title=finalized["ig"]["title"], subtitle="", carousel=bundle.carousel
-    )) == 5
+    )) == 3

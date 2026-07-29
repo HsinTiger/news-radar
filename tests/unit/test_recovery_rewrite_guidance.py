@@ -4,6 +4,7 @@ from run_pipeline import (
     _deterministic_food_safety_carousel,
     _deterministic_food_safety_variant,
     _deterministic_recovery_closing_repair,
+    _deterministic_recovery_hashtag_fields,
     _deterministic_recovery_hashtag_prune,
     _deterministic_recovery_inference_prune,
     _deterministic_reserve_framing_repair,
@@ -364,6 +365,33 @@ def test_deterministic_facebook_repairs_question_before_hashtags() -> None:
     assert "generic_engagement_bait" not in codes
 
 
+def test_deterministic_repair_prunes_structured_hashtag_fields() -> None:
+    variant = PlatformVariant(
+        title="立法院審預算",
+        body="根據立法院議事資料，本週將審議新年度預算。",
+        primary_topic_tag="#公共監督",
+        hashtags=["#公共監督", "#立法院", "#預算", "#政治", "#台灣"],
+        char_count=0,
+    )
+
+    repaired = _deterministic_recovery_hashtag_fields(variant, platform="fb")
+    finalized, full_text, ok = finalize_variant(repaired, "fb")
+
+    assert ok is True
+    assert finalized.primary_topic_tag == "#公共監督"
+    assert finalized.hashtags == ["#公共監督", "#立法院", "#預算"]
+    assert full_text.count("#") == 3
+    assert "platform_hashtag_overload" not in {
+        issue.code
+        for issue in check_platform_style(
+            "facebook",
+            full_text,
+            title=finalized.title,
+            recovery=True,
+        )
+    }
+
+
 def test_deterministic_market_inference_prune_keeps_sourced_fact() -> None:
     body = (
         "根據證交所統計，加權指數上漲2.3%，總市值達142.58兆元。"
@@ -539,7 +567,7 @@ def test_deterministic_food_safety_copy_is_source_bounded() -> None:
         assert not [issue for issue in issues if issue.severity == "rewrite"]
 
     carousel = _deterministic_food_safety_carousel()
-    assert len(build_cards(title="中聯油脂食安調查", subtitle="", carousel=carousel)) == 5
+    assert len(build_cards(title="中聯油脂食安調查", subtitle="", carousel=carousel)) == 3
 
 
 def test_deterministic_market_benchmark_copy_is_source_bounded() -> None:
@@ -578,4 +606,4 @@ def test_deterministic_market_benchmark_copy_is_source_bounded() -> None:
 
     carousel = _deterministic_market_benchmark_carousel(source)
     assert carousel is not None
-    assert len(build_cards(title="台股週報", subtitle="", carousel=carousel)) == 5
+    assert len(build_cards(title="台股週報", subtitle="", carousel=carousel)) == 3
