@@ -91,16 +91,34 @@ async def generate_image(
     out_path: Path,
     size: Tuple[int, int] = (1024, 576),  # 16:9 default
 ) -> Optional[Path]:
-    """誠實回退模式：因目前 Google AI Studio API 不支援直接呼叫 Imagen 3，在此直接回傳 None。
-    
-    2026-06-01: 經過完整驗證，Gemini API Key (含 Pro) 在目前的 v1beta/v1alpha 
-    API 端點中，皆會對 imagen-3.0-generate-001 報 404 錯誤。
-    為了遵守「誠實且不可欺瞞」的原則，絕不使用外部免費 API (如 Pollinations) 偷底。
-    
-    因此，本函數直接放棄自動生圖，保留 Markdown 中的 prompt 標記，交由使用者後續手動於 Web UI 生成。
+    """內文插圖生成。委派給 ``src.image_engines`` 的本機 CLI 後端。
+
+    2026-08-01 改寫。歷史（保留以免下一手重踩）：
+
+      2026-06-01 起這裡是硬 ``return None`` 的樁，理由寫的是「Imagen 3 打不通」。
+      那個理由只對了一半——``imagen-3.0-generate-001`` 確實不吃 API key（要
+      Vertex AI 認證），但同期 ``DEFAULT_IMAGE_MODEL`` 預設值是 ``gemini-2.0-flash``，
+      那是**純文字模型**，本來就不可能回圖。當時觀察到的「Response had no
+      inline image part」是這個設定造成的，跟 Imagen 的 404 是兩件事。
+
+      當時的另一句原則「絕不使用外部免費 API 偷底」現在依然成立，而且不衝突：
+      新路徑走的是 Hsin **自己 Mac 上、自己登入、自己付訂閱**的 CLI
+      （codex / agy），不是匿名白嫖第三方端點。
+
+    失敗一律回 None 並保留 markdown 裡的 prompt 標記——這是既有契約，
+    ``compose.generate_inline_images`` 依賴它來決定要不要換掉標記區塊。
     """
-    print(f"[image_brain] ⚠️ Skipping image generation (API limitation). Falling back to text prompt only.")
-    return None
+    try:
+        from src import image_engines
+    except Exception as exc:  # 例如缺 Pillow
+        print(f"[image_brain] ⚠️ image_engines 不可用 ({exc})；保留 prompt 標記。")
+        return None
+
+    if image_engines.resolve_engine() is None:
+        # 正常狀態，不是錯誤：未啟用，或這台機器（雲端 runner）沒裝 CLI。
+        return None
+
+    return await image_engines.generate(prompt=prompt, out_path=out_path, size=size)
 
 
 def _get_aesthetic_tail() -> str:
