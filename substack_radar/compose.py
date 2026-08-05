@@ -1353,73 +1353,6 @@ async def run(args: argparse.Namespace) -> int:
 # Inline Image Generation (2026-06-01 Hsin directive)
 # ---------------------------------------------------------------------------
 
-async def generate_inline_images(
-    *,
-    article_md_path: Path,
-    output_dir: Path,
-) -> None:
-    """Scan markdown for 🖼 markers, generate images via Pro account tokens, and embed them.
-
-    2026-06-01 Update: Uses the new image_brain.generate_image which extracts 
-    OAuth tokens from the CLI login to perform Pro-account image generation.
-    """
-    if not article_md_path.exists():
-        return
-
-    from src.image_brain import generate_image
-
-    content = article_md_path.read_text(encoding="utf-8")
-    blocks = content.split("\n\n")
-    new_blocks = []
-    img_idx = 1
-
-    try:
-        rel_output_dir = output_dir.relative_to(_REPO_ROOT)
-    except Exception:
-        rel_output_dir = output_dir
-
-    for block in blocks:
-        if "🖼 視覺位置" in block:
-            lines = block.strip().split("\n")
-            label = ""
-            for line in lines:
-                if "🖼 視覺位置" in line:
-                    label = line.split("·")[-1].strip()
-                    break
-
-            prompt = ""
-            for i, line in enumerate(lines):
-                if "Path C" in line and i + 1 < len(lines):
-                    prompt = lines[i + 1].replace("> ", "").strip()
-                    break
-
-            if not prompt:
-                prompt = label
-
-            img_filename = f"inline_{img_idx}_{label}.png".replace(" ", "_")
-            img_path = output_dir / img_filename
-
-            print(f"[Images] Generating inline_{img_idx} (Pro Account): {label}...")
-            # This calls the new token-based generator
-            success_path = await generate_image(
-                prompt=prompt,
-                out_path=img_path,
-                size=(1024, 576),
-            )
-
-            if success_path:
-                img_rel_path = rel_output_dir / img_filename
-                new_blocks.append(f"![{label}]({img_rel_path})\n\n*{label}*")
-                img_idx += 1
-                continue
-            else:
-                print(f"[Images] Skipped inline_{img_idx} (Pro quota exhausted/not auth).")
-
-        new_blocks.append(block)
-
-    article_md_path.write_text("\n\n".join(new_blocks), encoding="utf-8")
-
-
 async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
@@ -1728,14 +1661,21 @@ async def _run_inner(args: argparse.Namespace) -> int:
         mode=mode,  # → pick_expression maps 發文類別 → 角色表情
     )
     
-    # 5d) AI Inline images (2026-06-01 Hsin directive)
-    # Scan for 🖼 markers and replace them with actual generated images.
-    # Non-essential: image-gen failure (Pro quota exhausted, no temp dir, …) must
-    # NOT flip an otherwise-successful draft run to exit 1 (2026-06-03 evening fix).
-    try:
-        await generate_inline_images(article_md_path=article_md, output_dir=local_dir)
-    except Exception as exc:
-        print(f"[Images] ⚠️ inline image gen failed (continuing): {exc}")
+    # 5d) 內文生圖已於 2026-08-05 移除（信哥決策：專注寫稿）。
+    #
+    # 它從 2026-06-01 起就沒產出過任何一張圖——image_brain.generate_image 當時
+    # 被刻意寫成永遠回傳 None（Imagen 3 對該 key 回 404，作者不願改用免費 API 造假）。
+    # 之後每次組稿都印兩行「Pro quota exhausted」，看起來像故障，其實是設計如此。
+    #
+    # 移除而非修復的理由：這些欄位產生的是**場景插畫**（「第一線現場的瓦解」這類），
+    # 屬裝飾不承載資訊；而這類文章的數字密度（實測一篇 2,321 漢字內僅 6 個帶單位
+    # 數字，且多為散落的比較值）也不足以支撐圖表——把四個百分比畫成圖只會製造
+    # 假精確，讓讀者以為背後有序列數據。
+    #
+    # 需要圖時能力仍在，不必重建：substack_radar/cards.py 有六個確定性繪製器
+    # （_draw_stat/_draw_evidence/_draw_figures/_draw_insight/_draw_takeaway/
+    # _draw_action，Meta 輪播在用），不吃 API 額度、品牌一致，可單篇取用。
+    # 封面不受影響，仍走 render_substack_cover 的角色素材合成路徑。
 
     print(f"[Files] wrote {local_dir}")
 
