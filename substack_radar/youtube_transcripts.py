@@ -56,7 +56,12 @@ DEFAULT_MAX_AGE_DAYS = 21
 # channel — so the original English caption (manual + auto) is the best and most
 # reliable fuel. `_download_subs` returns the highest-priority language present.
 # To support a Spanish (or other) source later, just append e.g. "es", "es-orig".
-DEFAULT_SUB_LANGS = ["en", "en-orig"]
+# 2026-08-05：原本只有 ["en", "en-orig"]，漏掉地區變體。實測 Goldman Sachs 的
+# -DbeNiD_Ews 只提供 en-US（人工）與 en-en-US（自動、由 en 轉錄），兩者都不匹配，
+# 於是被誤報成「no subtitles, skip」。
+# 不用 "en.*" 萬用字元：它會展開成多個語言各發一次請求（實測會觸發 HTTP 429），
+# 與本清單「LEAN、按偏好排序、一個語言一次請求」的設計相衝突。
+DEFAULT_SUB_LANGS = ["en", "en-orig", "en-US", "en-en-US"]
 MIN_TRANSCRIPT_CHARS = 200  # below this it's not worth composing from
 
 # --- Wall-clock budgets (2026-06-01) -------------------------------------
@@ -73,7 +78,27 @@ META_TIMEOUT_S = 20          # title/date lookup (was 90)
 
 
 def _yt_dlp_bin() -> Optional[str]:
-    """Locate the yt-dlp binary (PATH first, then known OneDrive copy)."""
+    """Locate the yt-dlp binary. **venv 優先**，PATH 只是後備。
+
+    2026-08-05：這裡原本是 `shutil.which("yt-dlp")` 先行，於是抓到
+    /Users/hsin/opt/anaconda3/bin/yt-dlp（2025.10.14），而 venv 內是
+    2026.06.09。YouTube 已不接受舊版，舊版對每支影片都回
+    「ERROR: The page needs to be reloaded.」。
+
+    後果是靜默且嚴重：呼叫端只看得到 _download_subs 回 None，於是印出
+    「no subtitles, skip」——把**工具過期**誤報成**影片沒字幕**。
+    每支影片都被跳過 → podcast 素材池永遠是空的 → 每日草稿無稿可寫。
+    實測 Morgan Stanley / Goldman Sachs 的影片都確實有 en/en-orig/en-US
+    字幕，只是舊版 yt-dlp 拿不到。
+
+    yt-dlp 必須跟著 YouTube 的改版走，所以「哪一支」比「有沒有」重要得多：
+    venv 是 requirements.txt 管的、會跟著更新，PATH 上的可能是任何年份的殘留。
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    for candidate in (repo_root / ".venv" / "bin" / "yt-dlp",
+                      repo_root / "venv" / "bin" / "yt-dlp"):
+        if candidate.exists():
+            return str(candidate)
     found = shutil.which("yt-dlp")
     if found:
         return found
