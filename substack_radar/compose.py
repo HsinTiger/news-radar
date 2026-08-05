@@ -1353,24 +1353,104 @@ async def run(args: argparse.Namespace) -> int:
 # Inline Image Generation (2026-06-01 Hsin directive)
 # ---------------------------------------------------------------------------
 
+_INLINE_PROMPT_MARK = "<!-- inline-image-prompt"
+
+
+def _parse_visual_marker(block: str) -> tuple:
+    """從一個 🖼 標記區塊抽出 ``(label, prompt)``。
+
+    標記格式（由 ``substack_radar/composer.py:706-711`` 的 prompt 定義）：
+
+        > 🖼 視覺位置 · {3-8 字標題}
+        > 場景描述：{1-3 句}
+        > 🔍 Path B · Google 搜：「...」｜推薦來源：...
+        > 🎨 Path C · 生圖 prompt：{英文 prompt}
+
+    2026-08-01 修正：舊版把 Path C 的下一行當 prompt（``lines[i + 1]``），
+    但 prompt 是寫在「生圖 prompt：」**同一行**、而且 Path C 就是區塊最後一行，
+    所以舊版永遠抽到空字串、退回用 3-8 字的 label 去生圖。這裡改成取同一行
+    冒號之後的內容，並容許 prompt 換行續寫到區塊結尾。
+    """
+    lines = [ln.strip() for ln in block.strip().split("\n")]
+    label = ""
+    prompt_parts: list = []
+    collecting = False
+    for line in lines:
+        body = line.lstrip("> ").strip()
+        if "🖼 視覺位置" in body:
+            label = body.split("·", 1)[-1].strip() if "·" in body else ""
+            continue
+        # 觸發條件刻意收緊：只認「生圖 prompt」這個標籤，或帶 🎨 的 Path C 行。
+        # 光看 "Path C" 會被場景描述裡順口提到的 "Path C" 騙走（單元測試涵蓋）。
+        is_path_c = ("生圖 prompt" in body) or ("Path C" in body and "🎨" in body)
+        if is_path_c:
+            collecting = True
+            for sep in ("生圖 prompt：", "生圖 prompt:", "：", ":"):
+                if sep in body:
+                    tail = body.split(sep, 1)[1].strip()
+                    if tail:
+                        prompt_parts.append(tail)
+                    break
+            continue
+        if collecting and body and "Path B" not in body:
+            prompt_parts.append(body)
+    return label, " ".join(prompt_parts).strip()
+
+
+def _safe_slug(text: str, limit: int = 24) -> str:
+    """檔名安全化：保留中英數，其餘換底線。避免標題裡的 / : ？ 炸掉路徑。"""
+    out = []
+    for ch in (text or "").strip():
+        out.append(ch if (ch.isalnum() or ch in "-_") else "_")
+    slug = "".join(out).strip("_") or "visual"
+    return slug[:limit]
+
+
 async def generate_inline_images(
     *,
     article_md_path: Path,
     output_dir: Path,
 ) -> None:
-    """Scan markdown for 🖼 markers, generate images via Pro account tokens, and embed them.
+    """掃描 markdown 的 🖼 標記，用本機 CLI 生圖並嵌入，**同時保留生成用的 prompt**。
 
-    2026-06-01 Update: Uses the new image_brain.generate_image which extracts 
-    OAuth tokens from the CLI login to perform Pro-account image generation.
+    2026-08-01 改版（Hsin directive）三件事：
+
+      1. 生圖後端改為 ``src.image_engines``（本機 codex / agy CLI，走既有訂閱，
+         不需要新 API key）。未啟用或 CLI 不在這台機器 → 本函式完全不動檔案。
+      2. **保留 prompt**。舊版成功換圖時會把整個 🖼 區塊丟掉，prompt 就消失了。
+         現在改成在圖片後面補一段 HTML comment 記下 prompt 與引擎，
+         Substack 不會顯示（與 ``build_footer_block`` 的 ``<!-- substack-editor: -->``
+         同一個既有慣例），另外再寫一份 ``inline_images.json`` 機讀清單。
+      3. 每次 run 有張數上限（``SUBSTACK_IMAGE_MAX_PER_RUN``），保護訂閱額度。
+
+    封面不在本函式範圍內——封面走 ``render_substack_cover()`` 的確定性合成路徑。
     """
     if not article_md_path.exists():
         return
 
+    try:
+        from src import image_engines
+    except Exception as exc:
+        print(f"[Images] ⚠️ image_engines 不可用 ({exc})；保留 🖼 標記。")
+        return
+
+    engine = image_engines.resolve_engine()
+    if engine is None:
+        # 未啟用 / 雲端 runner 沒裝 CLI。不改檔案 → markdown 位元組不變。
+        st = image_engines.engine_status()
+        print(
+            f"[Images] ℹ️ 生圖未啟用（engine={st['configured']}, "
+            f"bin_exists={st['bin_exists']}）；🖼 標記原樣保留給手動生圖。"
+        )
+        return
+
     from src.image_brain import generate_image
 
+    budget = image_engines.max_images_per_run()
     content = article_md_path.read_text(encoding="utf-8")
     blocks = content.split("\n\n")
-    new_blocks = []
+    new_blocks: list = []
+    manifest: list = []
     img_idx = 1
 
     try:
@@ -1379,45 +1459,81 @@ async def generate_inline_images(
         rel_output_dir = output_dir
 
     for block in blocks:
-        if "🖼 視覺位置" in block:
-            lines = block.strip().split("\n")
-            label = ""
-            for line in lines:
-                if "🖼 視覺位置" in line:
-                    label = line.split("·")[-1].strip()
-                    break
+        if "🖼 視覺位置" not in block or _INLINE_PROMPT_MARK in block:
+            # 第二個條件 = 冪等：這塊已經生過圖了，重跑不再燒一次額度。
+            new_blocks.append(block)
+            continue
 
-            prompt = ""
-            for i, line in enumerate(lines):
-                if "Path C" in line and i + 1 < len(lines):
-                    prompt = lines[i + 1].replace("> ", "").strip()
-                    break
+        if len(manifest) >= budget:
+            print(f"[Images] ℹ️ 已達本次上限 {budget} 張，其餘 🖼 標記保留。")
+            new_blocks.append(block)
+            continue
 
-            if not prompt:
-                prompt = label
+        label, prompt = _parse_visual_marker(block)
+        if not prompt:
+            print(f"[Images] ⚠️ inline_{img_idx} 抽不到 Path C prompt，保留標記。")
+            new_blocks.append(block)
+            continue
 
-            img_filename = f"inline_{img_idx}_{label}.png".replace(" ", "_")
-            img_path = output_dir / img_filename
+        img_filename = f"inline_{img_idx}_{_safe_slug(label)}.png"
+        img_path = output_dir / img_filename
 
-            print(f"[Images] Generating inline_{img_idx} (Pro Account): {label}...")
-            # This calls the new token-based generator
-            success_path = await generate_image(
-                prompt=prompt,
-                out_path=img_path,
-                size=(1024, 576),
-            )
+        print(f"[Images] 生成 inline_{img_idx} via {engine}：{label or '(無標題)'} …")
+        success_path = await generate_image(
+            prompt=prompt,
+            out_path=img_path,
+            size=(1024, 576),
+        )
 
-            if success_path:
-                img_rel_path = rel_output_dir / img_filename
-                new_blocks.append(f"![{label}]({img_rel_path})\n\n*{label}*")
-                img_idx += 1
-                continue
-            else:
-                print(f"[Images] Skipped inline_{img_idx} (Pro quota exhausted/not auth).")
+        if success_path is None:
+            # 失敗不是災難：標記原樣留著，Hsin 仍可照 prompt 手動生。
+            print(f"[Images] ⚠️ inline_{img_idx} 未產出，保留 🖼 標記供手動生圖。")
+            new_blocks.append(block)
+            continue
 
-        new_blocks.append(block)
+        alt = label or "內文插圖"
+        img_rel_path = rel_output_dir / img_filename
+        # prompt 留在 HTML comment：Substack 不渲染，但打開原始 markdown 就看得到
+        # 「這張圖是照什麼 prompt 生的」。comment 內先把 "--" 中和，避免提早結束註解。
+        safe_prompt = prompt.replace("--", "—")
+        new_blocks.append(
+            f"![{alt}]({img_rel_path})\n\n"
+            f"*{alt}*\n\n"
+            f"{_INLINE_PROMPT_MARK} · engine={engine} · file={img_filename}\n"
+            f"{safe_prompt}\n-->"
+        )
+        manifest.append(
+            {
+                "index": img_idx,
+                "label": label,
+                "file": img_filename,
+                "prompt": prompt,
+                "engine": engine,
+                "size": [1024, 576],
+            }
+        )
+        img_idx += 1
+
+    if not manifest:
+        # 一張都沒生成 → 不寫檔，保證 markdown 位元組不變。
+        return
 
     article_md_path.write_text("\n\n".join(new_blocks), encoding="utf-8")
+
+    # Post-condition（scoped-vdd）：宣告成功之前，先確認每個 manifest 條目的圖
+    # 真的在磁碟上、非 0 byte，而且 markdown 真的引用到它。任一不成立就不印 ✅。
+    written = article_md_path.read_text(encoding="utf-8")
+    for entry in manifest:
+        p = output_dir / entry["file"]
+        assert p.exists() and p.stat().st_size > 0, f"inline image missing: {p}"
+        assert entry["file"] in written, f"markdown 未引用 {entry['file']}"
+        assert _INLINE_PROMPT_MARK in written, "prompt 未保留在 markdown"
+
+    image_engines.write_manifest(output_dir=output_dir, entries=manifest)
+    print(
+        f"[Images] ✅ {len(manifest)} 張內文圖已生成並嵌入（engine={engine}），"
+        f"prompt 保留於 markdown 註解 + inline_images.json"
+    )
 
 
 async def _run_inner(args: argparse.Namespace) -> int:
