@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -21,6 +22,18 @@ def test_unified_dashboard_exposes_owner_workflow_views() -> None:
     assert "ops-core.mjs" in app
     assert "clearToken()" not in app
     assert "response.status === 401" in app
+
+
+def test_dashboard_versions_runtime_modules_to_avoid_stale_publish_capabilities() -> None:
+    html = (REPO / "dashboard" / "index.html").read_text(encoding="utf-8")
+    app = (REPO / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    script_version = re.search(r'src="app\.js\?v=([^"]+)"', html)
+    core_version = re.search(r'from "\./ops-core\.mjs\?v=([^"]+)"', app)
+
+    assert script_version, "dashboard entry script must be cache-versioned"
+    assert core_version, "dashboard core module must be cache-versioned"
+    assert script_version.group(1) == core_version.group(1)
 
 
 def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:

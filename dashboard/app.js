@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs";
+} from "./ops-core.mjs?v=20260806-substack-publish-now-v1";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
