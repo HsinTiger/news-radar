@@ -34,9 +34,9 @@ def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:
     assert "morning / evening" in html
     assert "不是投稿時段" in html
     assert "立即進優先處理，不等 12:00 排程" in html
-    assert "只有選擇「立即發布」才會直接送三平台" in html
-    assert "立即送出 Substack 草稿任務" in app
-    assert "完成仍以遠端 draft ID 為準" in app
+    assert "Substack 與 Meta 都只有在你明確選擇「立即發布」時才會公開" in html
+    assert "立即發布到 Substack" in app
+    assert "公開 URL 與 post ID" in app
 
 
 def test_worker_contract_carries_substack_metadata_and_editorial_contract() -> None:

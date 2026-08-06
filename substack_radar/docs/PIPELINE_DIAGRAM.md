@@ -31,8 +31,11 @@ flowchart TD
 
     S5["STAGE 5 · MIRROR  ⟨0 token⟩<br/>in: 本地資料夾<br/>fn: 複製到 OneDrive<br/>out: …/substack/autogen/{date}/{mode}_{slug}/"]
 
-    S6["STAGE 6 · PUSH DRAFT  ⟨0 token · opt-in SUBSTACK_AUTO_DRAFT=1⟩<br/>in: Article_Substack.md + cover.png + SUBSTACK_COOKIES_STRING<br/>fn: python-substack Api.post_draft (建立草稿, 不自動發佈)<br/>out: Substack 草稿 id / URL"]
+    S6["STAGE 6 · PUSH DRAFT  ⟨0 token · opt-in SUBSTACK_AUTO_DRAFT=1⟩<br/>in: Article_Substack.md + cover.png + SUBSTACK_COOKIES_STRING<br/>fn: python-substack Api.post_draft (所有路徑先保存草稿)<br/>out: Substack 草稿 id / URL"]
+    S6B["STAGE 6B · OWNER PUBLISH-NOW  ⟨one-off only⟩<br/>in: explicit publish_now + saved draft id<br/>fn: prepublish_draft → intent receipt → publish_draft → public readback<br/>out: public post id / URL or partial"]
     S6 --> S7
+    S6 -. explicit publish_now .-> S6B
+    S6B --> S7
 
     S7["STAGE 7 · NOTIFY  ⟨0 token⟩<br/>fn: Gmail / macOS 通知 (標題 + 草稿URL + 警告)"]
 
@@ -97,7 +100,7 @@ stages:
     token: 0
     opt_in: "SUBSTACK_AUTO_DRAFT=1 + SUBSTACK_COOKIES_STRING + SUBSTACK_PUBLICATION_URL"
     input:  ["Article_Substack.md", "cover.png", "cookies"]
-    function: "Api.post_draft — creates a DRAFT (never auto-publishes)"
+    function: "Api.post_draft always creates the durable draft first; only explicit one-off publish_now continues to prepublish/publish/readback"
     output: ["Substack draft id / URL"]
   - id: 7_notify
     impl: "src/notify.py"

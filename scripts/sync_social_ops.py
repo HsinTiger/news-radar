@@ -32,6 +32,7 @@ from src.content_quality_guard import QUALITY_GUARD_VERSION
 PLATFORMS = {"facebook", "instagram", "threads"}
 CONTROL_SUBMISSION_PREFIX = "control_submission:"
 CONTROL_ROUTE_PREFIX = "control_route:"
+CONTROL_SUBSTACK_ROUTE_PREFIX = "control_substack_route:"
 CONTROL_SOURCE_URL_PREFIX = "control_source_url:"
 DEFAULT_PROPOSALS_DIR = Path("data/05_reflect/proposals")
 SOCIAL_POLICY_PATH = (
@@ -203,20 +204,28 @@ def build_substack_drafts(
     }
     if not required <= columns:
         return []
+    published_at_sql = (
+        "substack_published_at" if "substack_published_at" in columns else "NULL"
+    )
+    post_id_sql = "substack_post_id" if "substack_post_id" in columns else "NULL"
+    post_url_sql = "substack_post_url" if "substack_post_url" in columns else "NULL"
     freshness = "" if full else (
-        "AND COALESCE(substack_drafted_at,substack_written_at,'') "
+        f"AND COALESCE({published_at_sql},substack_drafted_at,substack_written_at,'') "
         ">= datetime('now','-45 day')"
     )
     rows = conn.execute(
         f"""
         SELECT id,title,url,source_type,feed_name,tags,substack_written_at,
-               substack_draft_id,substack_drafted_at
+               substack_draft_id,substack_drafted_at,
+               {post_id_sql} AS substack_post_id,
+               {post_url_sql} AS substack_post_url,
+               {published_at_sql} AS substack_published_at
           FROM news_items
          WHERE (substack_written_at IS NOT NULL
             OR substack_draft_id IS NOT NULL
             OR substack_drafted_at IS NOT NULL)
            {freshness}
-         ORDER BY COALESCE(substack_drafted_at,substack_written_at) DESC
+         ORDER BY COALESCE({published_at_sql},substack_drafted_at,substack_written_at) DESC
         """
     ).fetchall()
     result = []
@@ -233,8 +242,19 @@ def build_substack_drafts(
         else:
             kind = "editorial"
         remote_proven = bool(row["substack_draft_id"] and row["substack_drafted_at"])
+        published_proven = bool(
+            row["substack_post_id"]
+            and row["substack_post_url"]
+            and row["substack_published_at"]
+        )
+        parsed_tags = _json(tags, [])
+        publish_requested = isinstance(parsed_tags, list) and "publish_now" in parsed_tags
         status = (
-            "draft_created"
+            "published"
+            if published_proven
+            else "partial"
+            if publish_requested and remote_proven
+            else "draft_created"
             if remote_proven
             else "local_written"
             if row["substack_written_at"]
@@ -250,9 +270,12 @@ def build_substack_drafts(
                 "source_title": row["title"] or "(untitled source)",
                 "source_url": row["url"] or None,
                 "remote_draft_id": row["substack_draft_id"] or None,
+                "remote_post_id": row["substack_post_id"] or None,
+                "public_url": row["substack_post_url"] or None,
                 "status": status,
                 "written_at": row["substack_written_at"] or None,
                 "drafted_at": row["substack_drafted_at"] or None,
+                "published_at": row["substack_published_at"] or None,
             }
         )
     return result
@@ -994,22 +1017,72 @@ def build_submission_updates(conn: sqlite3.Connection) -> list[dict[str, str]]:
     has_quality = "content_quality_evaluations" in tables
     updates: dict[str, dict[str, str]] = {}
     if {"substack_draft_id", "substack_drafted_at"} <= columns:
+        post_id_sql = "substack_post_id" if "substack_post_id" in columns else "NULL"
+        post_url_sql = "substack_post_url" if "substack_post_url" in columns else "NULL"
+        published_at_sql = (
+            "substack_published_at" if "substack_published_at" in columns else "NULL"
+        )
         rows = conn.execute(
-            """
-            SELECT tags,substack_drafted_at FROM news_items
+            f"""
+            SELECT tags,substack_draft_id,substack_drafted_at,
+                   {post_id_sql} AS substack_post_id,
+                   {post_url_sql} AS substack_post_url,
+                   {published_at_sql} AS substack_published_at
+              FROM news_items
             WHERE feed_name='user_substack' AND substack_draft_id IS NOT NULL
               AND substack_drafted_at IS NOT NULL
               AND tags LIKE '%control_submission:%'
             """
         ).fetchall()
         for row in rows:
-            for submission_id in _tag_values(
-                row["tags"], CONTROL_SUBMISSION_PREFIX
-            ):
-                updates[submission_id] = {
-                    "status": "draft_created",
-                    "observed_at": row["substack_drafted_at"],
+            tags = _json(row["tags"], [])
+            publish_requested = isinstance(tags, list) and "publish_now" in tags
+            published_proven = bool(
+                row["substack_post_id"]
+                and row["substack_post_url"]
+                and row["substack_published_at"]
+            )
+            routes: dict[str, str] = {}
+            for route in _tag_values(row["tags"], CONTROL_SUBSTACK_ROUTE_PREFIX):
+                if ":" not in route:
+                    continue
+                submission_id, requested_mode = route.split(":", 1)
+                if requested_mode in {"draft", "draft_priority", "publish_now"}:
+                    routes[submission_id] = requested_mode
+            if not routes:
+                fallback_mode = "publish_now" if publish_requested else "draft_priority"
+                routes = {
+                    submission_id: fallback_mode
+                    for submission_id in _tag_values(
+                        row["tags"], CONTROL_SUBMISSION_PREFIX
+                    )
                 }
+            else:
+                for submission_id in _tag_values(
+                    row["tags"], CONTROL_SUBMISSION_PREFIX
+                ):
+                    routes.setdefault(submission_id, "draft_priority")
+            for submission_id, requested_mode in routes.items():
+                if requested_mode == "publish_now" and published_proven:
+                    updates[submission_id] = {
+                        "status": "published",
+                        "observed_at": row["substack_published_at"],
+                        "external_post_id": row["substack_post_id"],
+                        "result_url": row["substack_post_url"],
+                        "published_at": row["substack_published_at"],
+                    }
+                elif requested_mode == "publish_now":
+                    updates[submission_id] = {
+                        "status": "partial",
+                        "observed_at": row["substack_drafted_at"],
+                        "external_post_id": row["substack_draft_id"],
+                        "error": "remote draft exists; public publication is unproven",
+                    }
+                else:
+                    updates[submission_id] = {
+                        "status": "draft_created",
+                        "observed_at": row["substack_drafted_at"],
+                    }
 
     meta_rows = conn.execute(
         """
@@ -1161,10 +1234,15 @@ def report_submission_updates(
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     reported = 0
     for update in updates:
+        payload = {
+            key: value
+            for key, value in update.items()
+            if key not in {"submission_id", "observed_at"}
+        }
         response = client.post(
             f"{api_url.rstrip('/')}/api/service/submissions/{update['submission_id']}/status",
             headers=headers,
-            json={"status": update["status"]},
+            json=payload,
         )
         if response.status_code == 404:
             print(

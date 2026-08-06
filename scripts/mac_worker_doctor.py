@@ -110,11 +110,18 @@ def _receipt_evidence(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         receipts = payload.get("receipts") if isinstance(payload, dict) else None
-        if payload.get("schema_version") != 1 or not isinstance(receipts, dict):
+        if payload.get("schema_version") not in {1, 2} or not isinstance(receipts, dict):
             raise ValueError("invalid schema")
         for receipt in receipts.values():
             if not isinstance(receipt, dict) or not receipt.get("draft_id"):
                 raise ValueError("incomplete receipt")
+            publication = [
+                receipt.get("post_id"),
+                receipt.get("public_url"),
+                receipt.get("published_at"),
+            ]
+            if any(publication) and not all(publication):
+                raise ValueError("incomplete publication receipt")
         return {"valid": True, "pending": len(receipts)}
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {"valid": False, "pending": None, "error": type(exc).__name__}
@@ -140,6 +147,18 @@ def inspect_runtime(
         ["launchctl", "print", f"gui/{uid}/{LABEL_HOURLY}"], runner=runner
     )
     gh_ready = _command_ok(["gh", "auth", "status"], runner=runner)
+    publish_api_ready = _command_ok(
+        [
+            str(runtime_repo / ".venv" / "bin" / "python"),
+            "-c",
+            (
+                "from substack import Api; "
+                "assert all(hasattr(Api,n) for n in "
+                "('post_draft','prepublish_draft','publish_draft','get_published_posts'))"
+            ),
+        ],
+        runner=runner,
+    )
     source_fast = repo_root / "scripts" / "drain_substack_fast.sh"
     installed_fast = home / "bin" / "news_radar_substack_fast.sh"
     fast_script_current = (
@@ -167,6 +186,7 @@ def inspect_runtime(
         [
             is_macos,
             gh_ready,
+            publish_api_ready,
             fast_script_current,
             fast_plist.is_file(),
             fast_loaded,
@@ -183,6 +203,7 @@ def inspect_runtime(
         "platform": platform_name,
         "checks": {
             "github_auth": gh_ready,
+            "python_substack_publish_api": publish_api_ready,
             "fast_script_current": fast_script_current,
             "fast_plist_installed": fast_plist.is_file(),
             "fast_launchagent_loaded": fast_loaded,

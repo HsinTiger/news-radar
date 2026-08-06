@@ -67,6 +67,7 @@ def _submission_url(conn, url: str | None, news_id: str) -> str | None:
 def _save_substack_item(news_id: str, *, url: str | None, title: str,
                         body: str, source_type: str, extra_tags: list[str],
                         immediate: bool = False,
+                        publish_now: bool = False,
                         submission_id: str = "") -> dict:
     conn = dbmod.get_conn()
     if submission_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", submission_id):
@@ -77,7 +78,17 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
         "user_submission_substack",
         *extra_tags,
         *([f"control_submission:{submission_id}"] if submission_id else []),
+        *(
+            [
+                "control_substack_route:"
+                f"{submission_id}:"
+                f"{'publish_now' if publish_now else 'draft_priority' if immediate else 'draft'}"
+            ]
+            if submission_id
+            else []
+        ),
         *(["immediate"] if immediate else []),
+        *(["publish_now"] if publish_now else []),
     ]
     if dbmod.news_exists(conn, news_id):
         row = conn.execute(
@@ -124,6 +135,7 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
 
 
 def process_url(url: str, note: str = "", immediate: bool = False,
+                publish_now: bool = False,
                 submission_id: str = "") -> dict:
     news_id = _make_news_id("substack_" + url)
     body = _fetch_page_text(url) or ""
@@ -135,10 +147,12 @@ def process_url(url: str, note: str = "", immediate: bool = False,
     title = note or (url.split("/")[-1][:80] or "Substack submission")
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="article", extra_tags=[], immediate=immediate,
+                               publish_now=publish_now,
                                submission_id=submission_id)
 
 
 def process_text(text: str, note: str = "", immediate: bool = False,
+                 publish_now: bool = False,
                  submission_id: str = "") -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
@@ -149,10 +163,12 @@ def process_text(text: str, note: str = "", immediate: bool = False,
     synthetic_url = f"manual-text://{h}"
     return _save_substack_item(news_id, url=synthetic_url, title=title, body=text,
                                source_type="text", extra_tags=["user_text"], immediate=immediate,
+                               publish_now=publish_now,
                                submission_id=submission_id)
 
 
 def process_youtube(url: str, note: str = "", immediate: bool = False,
+                    publish_now: bool = False,
                     submission_id: str = "") -> dict:
     info = _extract_yt_transcript(url)
     if not info:
@@ -163,16 +179,19 @@ def process_youtube(url: str, note: str = "", immediate: bool = False,
         return _save_substack_item(news_id, url=url, title=note or "YouTube (no transcript)",
                                    body=body, source_type="youtube",
                                    extra_tags=["youtube", "video", "enrich_yt", "no_caption"],
-                                   immediate=immediate, submission_id=submission_id)
+                                   immediate=immediate, publish_now=publish_now,
+                                   submission_id=submission_id)
     news_id = _make_news_id("substack_yt_" + info["video_id"])
     title = note or info["title"]
     body = f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}"
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"],
-                               immediate=immediate, submission_id=submission_id)
+                               immediate=immediate, publish_now=publish_now,
+                               submission_id=submission_id)
 
 
 def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = False,
+                          publish_now: bool = False,
                           submission_id: str = "") -> dict:
     """多支 YouTube 種子（巨人之聲多源）：把全部網址寫進 body，讓 Mac 端 drain
     觸發 enrich_youtube_sources.py 建『一主題 × 多一手源 + 書面深度報告』素材包。"""
@@ -180,7 +199,10 @@ def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = Fal
     if not urls:
         return {"status": "error", "error": "no youtube urls"}
     if len(urls) == 1:
-        return process_youtube(urls[0], note, immediate=immediate, submission_id=submission_id)
+        return process_youtube(
+            urls[0], note, immediate=immediate, publish_now=publish_now,
+            submission_id=submission_id,
+        )
     key = hashlib.md5("|".join(sorted(urls)).encode()).hexdigest()
     news_id = _make_news_id("substack_ytmulti_" + key)
     seeds = "\n".join(urls)
@@ -190,13 +212,15 @@ def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = Fal
     return _save_substack_item(news_id, url=urls[0], title=title, body=body,
                                source_type="youtube",
                                extra_tags=["youtube", "video", "enrich_yt", "multi_source"],
-                               immediate=immediate, submission_id=submission_id)
+                               immediate=immediate, publish_now=publish_now,
+                               submission_id=submission_id)
 
 
 _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
 
 
 def process_images(paths: list[str], note: str = "", immediate: bool = False,
+                   publish_now: bool = False,
                    submission_id: str = "") -> dict:
     """One or more uploaded screenshots → ONE Substack draft seed.
 
@@ -216,7 +240,8 @@ def process_images(paths: list[str], note: str = "", immediate: bool = False,
     body = f"# {note}\n\n（使用者上傳 {len(paths)} 張截圖作為素材，主題：{note}）\n\n{refs}"
     return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=note, body=body,
                                source_type="image", extra_tags=["user_image", f"images:{len(paths)}"],
-                               immediate=immediate, submission_id=submission_id)
+                               immediate=immediate, publish_now=publish_now,
+                               submission_id=submission_id)
 
 
 def main():
@@ -229,21 +254,30 @@ def main():
     p.add_argument("--note", type=str, default="")
     p.add_argument("--immediate", action="store_true",
                    help="標記 immediate → Mac 端快速 drain（每 5 分鐘）優先立刻寫稿，不等每小時排程")
+    p.add_argument(
+        "--publish-now",
+        action="store_true",
+        help="完成寫稿、封面與品質閘門後發布同一個 Substack draft",
+    )
     p.add_argument("--submission-id", default="",
                    help="Social Ops control-plane ID; stored as metadata for truthful draft reporting")
     args = p.parse_args()
 
     if args.url:
         result = process_url(args.url, args.note, immediate=args.immediate,
+                             publish_now=args.publish_now,
                              submission_id=args.submission_id)
     elif args.text:
         result = process_text(args.text, args.note, immediate=args.immediate,
+                              publish_now=args.publish_now,
                               submission_id=args.submission_id)
     elif args.yt:
         result = process_youtube_multi(args.yt.split(","), args.note, immediate=args.immediate,
+                                       publish_now=args.publish_now,
                                        submission_id=args.submission_id)
     elif args.images:
         result = process_images(args.images.split(","), args.note, immediate=args.immediate,
+                                publish_now=args.publish_now,
                                 submission_id=args.submission_id)
     else:
         result = {"status": "error", "error": "one of --url / --text / --yt / --images required"}

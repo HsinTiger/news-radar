@@ -45,8 +45,30 @@ def test_substack_ui_defaults_to_the_remote_proven_fast_lane() -> None:
 
     assert '../dashboard/?view=submit' in page
     assert 'name="target" value="substack" checked' in dashboard
-    assert 'target === "substack" ? "draft_priority" : metaMode' in core
-    assert "建立優先草稿，不自動發布" in dashboard
+    assert 'name="substack-mode" value="draft_priority" checked' in dashboard
+    assert 'name="substack-mode" value="publish_now"' in dashboard
+    assert 'target === "substack" ? substackMode : metaMode' in core
+    assert "預設建立草稿" in dashboard
+    assert "完成寫稿、封面與品質閘門後公開發布" in dashboard
+
+
+def test_substack_publish_now_is_capability_gated_and_requires_public_evidence() -> None:
+    worker = (ROOT / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
+    app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    migration = (
+        ROOT / "cloudflare-worker" / "migrations" / "0010_substack_publish_now.sql"
+    ).read_text(encoding="utf-8")
+    local_db = (ROOT / "src" / "db.py").read_text(encoding="utf-8")
+
+    assert "substack_publish_now_enabled" in worker
+    assert "substack_publish_now_ready" in worker
+    assert "Substack publish-now requires public post evidence" in worker
+    assert "Substack published sync requires public post evidence" in worker
+    assert "external_post_id" in worker
+    assert "result_url" in worker
+    assert "substack_publish_now_ready === true" in app
+    assert "ADD COLUMN external_post_id" in migration
+    assert "substack_post_url" in local_db
 
 
 def test_dashboard_classifies_scheduler_delivery_against_expected_ticks() -> None:

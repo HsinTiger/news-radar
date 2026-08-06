@@ -230,6 +230,95 @@ def test_substack_sync_exports_remote_receipt_metadata_without_article_body() ->
     assert all("body" not in row and "clean_markdown" not in row for row in rows)
 
 
+def test_substack_publish_now_exports_public_evidence_and_terminal_status() -> None:
+    conn = _db()
+    for column in (
+        "substack_post_id TEXT",
+        "substack_post_url TEXT",
+        "substack_published_at TEXT",
+    ):
+        conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
+    conn.execute(
+        """
+        INSERT INTO news_items(
+          id,source_type,url,title,topic_category,status,fetched_at,word_count,
+          weighted_score,feed_name,tags,substack_written_at,substack_draft_id,
+          substack_drafted_at,substack_post_id,substack_post_url,
+          substack_published_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            "owner-publish", "text", "manual://publish", "Owner publish",
+            "other", "fetched", "2099-01-01T00:00:00Z", 100, 1.0,
+            "user_substack",
+            '["substack_source","publish_now","control_submission:publish-001"]',
+            "2099-01-02T00:00:00Z", "draft-314", "2099-01-03T00:00:00Z",
+            "post-314", "https://writer.substack.com/p/deep-analysis",
+            "2099-01-03T00:05:00Z",
+        ),
+    )
+
+    draft = build_substack_drafts(conn, full=True)[0]
+    assert draft["status"] == "published"
+    assert draft["remote_post_id"] == "post-314"
+    assert draft["public_url"] == "https://writer.substack.com/p/deep-analysis"
+    assert build_submission_updates(conn) == [
+        {
+            "submission_id": "publish-001",
+            "status": "published",
+            "observed_at": "2099-01-03T00:05:00Z",
+            "external_post_id": "post-314",
+            "result_url": "https://writer.substack.com/p/deep-analysis",
+            "published_at": "2099-01-03T00:05:00Z",
+        }
+    ]
+
+
+def test_substack_mixed_lineage_preserves_each_requested_mode() -> None:
+    conn = _db()
+    for column in (
+        "substack_post_id TEXT",
+        "substack_post_url TEXT",
+        "substack_published_at TEXT",
+    ):
+        conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
+    tags = json.dumps(
+        [
+            "substack_source",
+            "publish_now",
+            "control_submission:draft-request",
+            "control_submission:publish-request",
+            "control_substack_route:draft-request:draft_priority",
+            "control_substack_route:publish-request:publish_now",
+        ]
+    )
+    conn.execute(
+        """
+        INSERT INTO news_items(
+          id,source_type,url,title,topic_category,status,fetched_at,word_count,
+          weighted_score,feed_name,tags,substack_written_at,substack_draft_id,
+          substack_drafted_at,substack_post_id,substack_post_url,
+          substack_published_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            "shared", "text", "manual://shared", "Shared source", "other",
+            "fetched", "2099-01-01T00:00:00Z", 100, 1.0, "user_substack",
+            tags, "2099-01-02T00:00:00Z", "draft-1",
+            "2099-01-03T00:00:00Z", "post-1",
+            "https://writer.substack.com/p/shared", "2099-01-04T00:00:00Z",
+        ),
+    )
+
+    updates = {row["submission_id"]: row for row in build_submission_updates(conn)}
+    assert updates["draft-request"] == {
+        "submission_id": "draft-request",
+        "status": "draft_created",
+        "observed_at": "2099-01-03T00:00:00Z",
+    }
+    assert updates["publish-request"]["status"] == "published"
+
+
 def test_automation_detail_is_versioned_editorial_contract(monkeypatch) -> None:
     monkeypatch.setenv("AUTOMATION_MODE", "recovery")
     monkeypatch.setenv("SUBMISSION_PROCESSOR_MODE", "live")

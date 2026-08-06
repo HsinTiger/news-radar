@@ -39,6 +39,8 @@ BUNDLE_DIR = REPO / "data" / "source_bundles"
 PY = REPO / ".venv" / "bin" / "python"
 RECEIPTS_FILE = DEFAULT_RECEIPTS_PATH
 REMOTE_DRAFT_EVIDENCE_PENDING = 6
+SUBSTACK_PUBLISH_UNPROVEN = 7
+REMOTE_PUBLICATION_EVIDENCE_PENDING = 8
 
 # YouTube 種子偵測：submit 進來的 url 欄位 + 內文裡的 youtube 連結都算。
 _YT_RE = re.compile(r"https?://(?:www\.)?(?:youtube\.com/[^\s)\]]+|youtu\.be/[^\s)\]]+)", re.I)
@@ -78,11 +80,16 @@ def _candidates(
     conn = sqlite3.connect(str(DB))
     try:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
-        remote_filter = (
-            " AND substack_drafted_at IS NULL "
-            if "substack_drafted_at" in columns
-            else " "
-        )
+        if {"substack_drafted_at", "substack_published_at"} <= columns:
+            remote_filter = (
+                " AND (substack_drafted_at IS NULL "
+                "OR (INSTR(COALESCE(tags,''),'\"publish_now\"') > 0 "
+                "AND substack_published_at IS NULL)) "
+            )
+        elif "substack_drafted_at" in columns:
+            remote_filter = " AND substack_drafted_at IS NULL "
+        else:
+            remote_filter = " "
         rows = conn.execute(
             "SELECT id, title, word_count, url, clean_markdown, COALESCE(tags,'') FROM news_items "
             "WHERE feed_name='user_substack' "
@@ -105,8 +112,8 @@ def _candidates(
     # Priority remains meaningful: explicit immediate requests go first, while old
     # rows without control_submission lineage are never admitted to this lane.
     tagged.sort(key=lambda item: 0 if "immediate" in item[1] else 1)
-    # 回傳維持 5 元組（id, title, word_count, url, clean_markdown），下游解包不變。
-    return [row[:5] for row, _tags in tagged]
+    # Include parsed tags so the caller can pass the explicit publish-now mode.
+    return [(*row[:5], tags) for row, tags in tagged]
 
 
 def _yt_seeds(url, body) -> list:
@@ -186,7 +193,12 @@ def main():
         only_immediate=args.only_immediate,
         only_current_control=args.only_current_control,
     )
-    pending = [r for r in rows if r[0] not in done and r[0] not in receipt_ids]
+    pending = [
+        row
+        for row in rows
+        if (row[0] not in done or "publish_now" in row[5])
+        and row[0] not in receipt_ids
+    ]
     scope = (
         " (immediate only)"
         if args.only_immediate
@@ -195,7 +207,7 @@ def main():
     print(f"[drain] {len(rows)} user_substack item(s){scope}, {len(pending)} pending compose")
     if (args.only_immediate or args.only_current_control) and not pending:
         return 0  # 快速通道沒事就安靜結束（每 5 分鐘跑一次，不洗 log）
-    for rid, title, wc, url, body in pending:
+    for rid, title, wc, url, body, tags in pending:
         tag = "  🎥yt" if (not args.no_enrich and _yt_seeds(url, body)) else ""
         print(f"  · {rid[:12]}  {wc:>6}w  {title[:50]}{tag}")
 
@@ -205,7 +217,7 @@ def main():
 
     composed = 0
     evidence_pending = 0
-    for rid, title, wc, url, body in pending:
+    for rid, title, wc, url, body, tags in pending:
         print(f"[drain] composing {rid[:12]} …")
         cmd = [
             str(PY),
@@ -216,6 +228,8 @@ def main():
             rid,
             "--require-substack-draft",
         ]
+        if "publish_now" in tags:
+            cmd.append("--publish-now")
         if not args.no_enrich:
             seeds = _yt_seeds(url, body)
             if seeds:
@@ -223,7 +237,11 @@ def main():
                 if bundle:
                     cmd += ["--bundle", str(bundle)]
         r = subprocess.run(cmd, cwd=str(REPO))
-        if r.returncode in (0, REMOTE_DRAFT_EVIDENCE_PENDING):
+        if r.returncode in (
+            0,
+            REMOTE_DRAFT_EVIDENCE_PENDING,
+            REMOTE_PUBLICATION_EVIDENCE_PENDING,
+        ):
             done.add(rid)
             _save_done(done)          # persist after each success (crash-safe)
             if r.returncode == 0:
@@ -231,8 +249,8 @@ def main():
             else:
                 evidence_pending += 1
                 print(
-                    f"[drain] ⚠️ remote draft exists for {rid[:12]}; "
-                    "receipt will reconcile canonical evidence next run"
+                    f"[drain] ⚠️ remote Substack evidence exists for {rid[:12]}; "
+                    "receipt will reconcile canonical state next run"
                 )
         else:
             print(f"[drain] ⚠️ compose failed for {rid[:12]} (rc={r.returncode}); will retry next run")

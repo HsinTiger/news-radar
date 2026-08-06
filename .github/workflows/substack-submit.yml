@@ -34,6 +34,11 @@ on:
         required: false
         default: "false"
         type: string
+      publish_now:
+        description: "After reader-ready and cover gates, publish the same remote draft"
+        required: false
+        default: "false"
+        type: string
       submission_id:
         description: "Control-plane submission ID"
         required: false
@@ -95,10 +100,12 @@ jobs:
           esac
           IMM=""
           [ "${{ inputs.immediate }}" = "true" ] && IMM="--immediate"
+          PUB=""
+          [ "${{ inputs.publish_now }}" = "true" ] && PUB="--publish-now"
           python scripts/submit_substack.py \
             "$FLAG" "${{ inputs.content }}" \
             --note "${{ inputs.note }}" \
-            --submission-id "${{ inputs.submission_id }}" $IMM 2>&1
+            --submission-id "${{ inputs.submission_id }}" $IMM $PUB 2>&1
 
       - name: Persist verified runtime state
         id: persist

@@ -64,6 +64,8 @@ import unicodedata
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 # Make src/ importable when running as a script
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -98,6 +100,9 @@ from substack_radar.composer import (  # noqa: E402
 )
 from substack_radar.draft_receipts import (  # noqa: E402
     clear_remote_receipt,
+    get_remote_receipt,
+    store_publication_receipt,
+    store_publish_intent,
     store_remote_receipt,
 )
 
@@ -239,7 +244,11 @@ def _mark_used(news_id: str, limit: int = 300) -> None:
         _release_lock(lock)
 
 
-def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> bool:
+def _record_substack_evidence(
+    news_id: str,
+    draft_id: Optional[int | str] = None,
+    publication: Optional[Dict[str, str]] = None,
+) -> bool:
     """Persist local-written and remote-draft evidence as distinct facts."""
     from datetime import datetime, timezone
 
@@ -251,6 +260,9 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> b
                 "substack_written_at TEXT",
                 "substack_draft_id TEXT",
                 "substack_drafted_at TEXT",
+                "substack_post_id TEXT",
+                "substack_post_url TEXT",
+                "substack_published_at TEXT",
             ):
                 try:
                     conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
@@ -276,6 +288,21 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> b
                     """,
                     (str(draft_id), now, news_id),
                 )
+            if publication:
+                post_id = str(publication.get("post_id") or "").strip()
+                public_url = str(publication.get("public_url") or "").strip()
+                if not post_id or not public_url.startswith("https://"):
+                    raise ValueError("publication evidence requires post id and HTTPS URL")
+                conn.execute(
+                    """
+                    UPDATE news_items
+                       SET substack_post_id=?,
+                           substack_post_url=?,
+                           substack_published_at=COALESCE(substack_published_at,?)
+                     WHERE id=?
+                    """,
+                    (post_id, public_url, now, news_id),
+                )
             conn.commit()
             return True
         finally:
@@ -283,6 +310,34 @@ def _record_substack_evidence(news_id: str, draft_id: Optional[int] = None) -> b
     except Exception as exc:
         print(f"[_record_substack_evidence] ⚠️ DB evidence write failed: {exc}")
         return False
+
+
+def _existing_substack_evidence(news_id: Optional[str]) -> Dict[str, Optional[str]]:
+    if not news_id or not NEWS_DB_PATH.exists():
+        return {"draft_id": None, "post_id": None, "public_url": None}
+    try:
+        conn = sqlite3.connect(str(NEWS_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
+            names = {
+                "draft_id": "substack_draft_id",
+                "post_id": "substack_post_id",
+                "public_url": "substack_post_url",
+            }
+            select = [
+                f"{column} AS {alias}" if column in columns else f"NULL AS {alias}"
+                for alias, column in names.items()
+            ]
+            row = conn.execute(
+                f"SELECT {','.join(select)} FROM news_items WHERE id=?",
+                (news_id,),
+            ).fetchone()
+            return dict(row) if row else {key: None for key in names}
+        finally:
+            conn.close()
+    except Exception:
+        return {"draft_id": None, "post_id": None, "public_url": None}
 
 
 def _signal_density(text: str) -> float:
@@ -898,10 +953,9 @@ def push_to_substack_draft(
         )
         post.from_markdown(body_md, api=api)
 
-        # Optional: upload cover and prepend as captionedImage.
-        # We deliberately do NOT auto-publish — only create draft. Hsin
-        # eyeballs the cover placement in the Substack editor and Publish
-        # manually.
+        # Optional: upload cover and prepend as captionedImage.  This function
+        # only creates the durable draft.  The caller may separately continue
+        # through explicit one-off publish-now after the draft receipt exists.
         if cover_path and cover_path.exists():
             try:
                 image = api.get_image(str(cover_path))
@@ -939,6 +993,179 @@ def push_to_substack_draft(
             f"    - python-substack version mismatch with Substack backend\n"
             f"    Article still saved on disk; paste manually from OneDrive."
         )
+        return None
+
+
+def _iter_dicts(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_dicts(child)
+
+
+def _published_identity(
+    payload: Any,
+    *,
+    draft_id: int | str,
+    publication_url: str,
+) -> Optional[Dict[str, str]]:
+    expected = str(draft_id)
+    for row in _iter_dicts(payload):
+        raw_id = row.get("id") or row.get("post_id") or row.get("draft_id")
+        if raw_id is not None and str(raw_id) != expected:
+            continue
+        public_url = next(
+            (
+                str(row.get(key) or "").strip()
+                for key in ("canonical_url", "public_url", "post_url", "url")
+                if str(row.get(key) or "").startswith("https://")
+            ),
+            "",
+        )
+        slug = str(row.get("slug") or "").strip().strip("/")
+        if not public_url and slug:
+            public_url = f"{publication_url.rstrip('/')}/p/{slug}"
+        if public_url and (
+            raw_id is not None
+            or slug
+            or "/p/" in urlparse(public_url).path
+        ):
+            return {"post_id": str(raw_id or expected), "public_url": public_url}
+    return None
+
+
+def _public_url_is_live(public_url: str) -> bool:
+    parsed = urlparse(public_url)
+    if parsed.scheme != "https" or not parsed.netloc or "/publish/" in parsed.path:
+        return False
+    try:
+        request = Request(
+            public_url,
+            headers={"User-Agent": "news-radar-publication-readback/1.0"},
+        )
+        with urlopen(request, timeout=30) as response:  # no Substack cookies
+            status = int(getattr(response, "status", 0) or response.getcode())
+            final_url = str(response.geturl())
+        return 200 <= status < 400 and "/publish/" not in urlparse(final_url).path
+    except Exception as exc:
+        print(f"[Substack] ⚠️ public URL readback failed: {type(exc).__name__}: {exc}")
+        return False
+
+
+def publish_substack_draft(
+    draft_id: int | str,
+    *,
+    source_id: str,
+) -> Optional[Dict[str, str]]:
+    """Publish one existing draft and return only publicly read-back evidence.
+
+    A durable intent is written immediately before ``publish_draft``.  If the
+    process then crashes or the response is ambiguous, later runs query the
+    published-post endpoint but never blindly resend the newsletter request.
+    """
+    cookies = os.getenv("SUBSTACK_COOKIES_STRING")
+    publication_url = os.getenv("SUBSTACK_PUBLICATION_URL")
+    if not cookies or not publication_url:
+        print("[Substack] ❌ publish-now requires cookies and publication URL")
+        return None
+    try:
+        from substack import Api  # type: ignore
+    except ImportError as exc:
+        print(f"[Substack] ❌ python-substack not installed: {exc}")
+        return None
+
+    try:
+        api = Api(cookies_string=cookies, publication_url=publication_url)
+        receipt = get_remote_receipt(source_id) or {}
+        if receipt.get("draft_id") and receipt["draft_id"] != str(draft_id):
+            raise ValueError("publish receipt points to a different Substack draft")
+
+        existing = _published_identity(
+            receipt,
+            draft_id=draft_id,
+            publication_url=publication_url,
+        )
+        if existing and _public_url_is_live(existing["public_url"]):
+            return existing
+
+        # A draft may already have been published manually or by a previous
+        # process that crashed before saving its intent.  Read back first so we
+        # never resend an already-delivered newsletter.
+        try:
+            already_published = api.get_published_posts(
+                offset=0,
+                limit=25,
+                order_by="post_date",
+                order_direction="desc",
+            )
+            existing = _published_identity(
+                already_published,
+                draft_id=draft_id,
+                publication_url=publication_url,
+            )
+        except Exception:
+            existing = None
+        if existing and _public_url_is_live(existing["public_url"]):
+            store_publication_receipt(
+                source_id,
+                draft_id,
+                existing["post_id"],
+                existing["public_url"],
+            )
+            return existing
+
+        payload: Any = None
+        if receipt.get("publish_attempted_at"):
+            print("[Substack] previous publish result ambiguous; readback only, no resend")
+        else:
+            api.prepublish_draft(draft_id)
+            store_publish_intent(source_id, draft_id)
+            send = os.getenv("SUBSTACK_PUBLISH_SEND", "1") != "0"
+            payload = api.publish_draft(
+                draft_id,
+                send=send,
+                share_automatically=False,
+            )
+
+        identity = _published_identity(
+            payload,
+            draft_id=draft_id,
+            publication_url=publication_url,
+        )
+        if not identity:
+            published = api.get_published_posts(
+                offset=0,
+                limit=25,
+                order_by="post_date",
+                order_direction="desc",
+            )
+            identity = _published_identity(
+                published,
+                draft_id=draft_id,
+                publication_url=publication_url,
+            )
+        if not identity or not _public_url_is_live(identity["public_url"]):
+            print(
+                f"[Substack] ⚠️ draft {draft_id} exists but public publication "
+                "readback is not proven"
+            )
+            return None
+        store_publication_receipt(
+            source_id,
+            draft_id,
+            identity["post_id"],
+            identity["public_url"],
+        )
+        print(
+            f"[Substack] ✅ Published. post_id={identity['post_id']} "
+            f"url={identity['public_url']}"
+        )
+        return identity
+    except Exception as exc:
+        print(f"[Substack] ⚠️ publish-now failed or is ambiguous: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -1194,7 +1421,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
 
-    if getattr(args, "require_substack_draft", False):
+    remote_required = bool(
+        getattr(args, "require_substack_draft", False)
+        or getattr(args, "publish_now", False)
+    )
+    if remote_required:
         missing = []
         if args.no_draft:
             missing.append("--no-draft conflicts with --require-substack-draft")
@@ -1206,7 +1437,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             missing.append("SUBSTACK_PUBLICATION_URL")
         if missing:
             print(
-                "[Substack] ❌ remote draft is required but preflight failed: "
+                "[Substack] ❌ remote Substack write is required but preflight failed: "
                 + ", ".join(missing)
             )
             return 5
@@ -1516,22 +1747,34 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 6) Mirror to OneDrive
     mirror_to_onedrive(local_dir, mirror_dir)
 
-    # 7) Optional Substack draft push (opt-in via SUBSTACK_AUTO_DRAFT=1)
+    # 7) Optional Substack draft push, followed by explicit publish-now.
     source_id = source.get("id")
-    draft_id: Optional[int] = None
+    existing_evidence = _existing_substack_evidence(source_id)
+    draft_id: Optional[int | str] = existing_evidence.get("draft_id")
+    if draft_id:
+        print(f"[Substack] reusing canonical remote draft id={draft_id}")
     if not args.no_draft:
-        draft_id = push_to_substack_draft(
-            article_md_path=article_md,
-            title=draft.title,
-            subtitle=draft.subtitle,
-            cover_path=cover_path,
-            source_id=source_id,
-        )
+        if draft_id is None:
+            draft_id = push_to_substack_draft(
+                article_md_path=article_md,
+                title=draft.title,
+                subtitle=draft.subtitle,
+                cover_path=cover_path,
+                source_id=source_id,
+            )
+    publication: Optional[Dict[str, str]] = None
+    if getattr(args, "publish_now", False) and draft_id is not None and source_id:
+        publication = publish_substack_draft(draft_id, source_id=source_id)
     evidence_recorded = True
     if source_id:
         _mark_used(source_id)
-        evidence_recorded = _record_substack_evidence(source_id, draft_id=draft_id)
-        if draft_id is not None and evidence_recorded:
+        evidence_recorded = _record_substack_evidence(
+            source_id,
+            draft_id=draft_id,
+            publication=publication,
+        )
+        receipt_complete = not getattr(args, "publish_now", False) or publication is not None
+        if draft_id is not None and evidence_recorded and receipt_complete:
             try:
                 clear_remote_receipt(source_id, draft_id)
             except Exception as exc:
@@ -1539,6 +1782,16 @@ async def _run_inner(args: argparse.Namespace) -> int:
     if getattr(args, "require_substack_draft", False) and draft_id is None:
         print("[Substack] ❌ local article exists but remote draft creation is unproven")
         return 5
+    if (
+        getattr(args, "publish_now", False)
+        and publication is not None
+        and not evidence_recorded
+    ):
+        print(
+            "[Substack] ⚠️ public post exists but canonical evidence is pending "
+            "receipt reconciliation"
+        )
+        return 8
     if (
         getattr(args, "require_substack_draft", False)
         and draft_id is not None
@@ -1549,6 +1802,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "receipt reconciliation; do not call post_draft again"
         )
         return 6
+    if getattr(args, "publish_now", False) and publication is None:
+        print(
+            "[Substack] ⚠️ remote draft is preserved, but public publication "
+            "is unproven; status must remain partial"
+        )
+        return 7
 
     # 8) Notify Hsin via configured channel (Gmail / macOS / both).
     # Read the final reader-ready article (public footer already appended).
@@ -1557,7 +1816,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
     except Exception:
         final_body_md = draft.body_markdown
     pub_url = os.getenv("SUBSTACK_PUBLICATION_URL", "https://hsin73.substack.com")
-    draft_url = f"{pub_url}/publish/post/{draft_id}" if draft_id else None
+    draft_url = (
+        publication["public_url"]
+        if publication
+        else f"{pub_url}/publish/post/{draft_id}" if draft_id else None
+    )
     from substack_radar.composer import _count_chinese_chars
     notify_substack_success(
         mode=mode,
@@ -1636,6 +1899,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Fail unless Substack returns a remote draft id. Used by governed "
             "control-plane submissions; never publishes the draft."
+        ),
+    )
+    p.add_argument(
+        "--publish-now",
+        action="store_true",
+        help=(
+            "After all reader-ready, cover, and audit gates, publish the same "
+            "remote draft and require public URL readback."
         ),
     )
     p.add_argument(

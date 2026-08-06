@@ -15,7 +15,25 @@ def test_substack_priority_maps_to_draft_workflow() -> None:
     )
     assert result.workflow == "substack-submit.yml"
     assert result.inputs["immediate"] == "true"
+    assert result.inputs["publish_now"] == "false"
     assert result.inputs["submission_id"] == "s1"
+
+
+def test_substack_publish_now_reaches_the_mac_workflow() -> None:
+    result = build_dispatch(
+        {
+            "id": "submission-publish-12345678",
+            "target": "substack",
+            "source_type": "youtube",
+            "content": "https://youtube.com/watch?v=example",
+            "note": "延伸核心交鋒",
+            "platforms": [],
+            "mode": "publish_now",
+        }
+    )
+    assert result.workflow == "substack-submit.yml"
+    assert result.inputs["immediate"] == "true"
+    assert result.inputs["publish_now"] == "true"
 
 
 def test_meta_text_publish_now_maps_platform_names() -> None:

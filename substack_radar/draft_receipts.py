@@ -23,7 +23,7 @@ def _read(path: Path = DEFAULT_RECEIPTS_PATH) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
         raise ValueError("unsupported Substack receipt schema")
     receipts = payload.get("receipts")
     if not isinstance(receipts, dict):
@@ -42,6 +42,24 @@ def _read(path: Path = DEFAULT_RECEIPTS_PATH) -> dict[str, dict[str, str]]:
             "draft_id": draft_id,
             "created_at": created_at,
         }
+        for key in (
+            "publish_attempted_at",
+            "post_id",
+            "public_url",
+            "published_at",
+        ):
+            value = str(receipt.get(key) or "").strip()
+            if value:
+                normalized[source_id][key] = value
+        publication_fields = (
+            normalized[source_id].get("post_id"),
+            normalized[source_id].get("public_url"),
+            normalized[source_id].get("published_at"),
+        )
+        if any(publication_fields) and not all(publication_fields):
+            raise ValueError(f"incomplete Substack publication receipt for {source_id}")
+        if all(publication_fields) and not str(publication_fields[1]).startswith("https://"):
+            raise ValueError(f"invalid Substack publication URL for {source_id}")
     return normalized
 
 
@@ -54,7 +72,7 @@ def _write(
         path.unlink(missing_ok=True)
         return
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "receipts": dict(sorted(receipts.items())),
     }
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -80,9 +98,65 @@ def store_remote_receipt(
             f"{current['draft_id']} != {draft_id}"
         )
     receipts[str(source_id)] = {
+        **(current or {}),
         "draft_id": str(draft_id),
-        "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+        "created_at": (
+            (current or {}).get("created_at")
+            or created_at
+            or datetime.now(timezone.utc).isoformat()
+        ),
     }
+    _write(receipts, path)
+
+
+def get_remote_receipt(
+    source_id: str,
+    *,
+    path: Path = DEFAULT_RECEIPTS_PATH,
+) -> dict[str, str] | None:
+    receipt = _read(path).get(str(source_id))
+    return dict(receipt) if receipt else None
+
+
+def store_publish_intent(
+    source_id: str,
+    draft_id: int | str,
+    *,
+    path: Path = DEFAULT_RECEIPTS_PATH,
+    attempted_at: str | None = None,
+) -> None:
+    store_remote_receipt(source_id, draft_id, path=path)
+    receipts = _read(path)
+    receipt = receipts[str(source_id)]
+    receipt["publish_attempted_at"] = (
+        receipt.get("publish_attempted_at")
+        or attempted_at
+        or datetime.now(timezone.utc).isoformat()
+    )
+    _write(receipts, path)
+
+
+def store_publication_receipt(
+    source_id: str,
+    draft_id: int | str,
+    post_id: int | str,
+    public_url: str,
+    *,
+    path: Path = DEFAULT_RECEIPTS_PATH,
+    published_at: str | None = None,
+) -> None:
+    if not str(post_id).strip() or not str(public_url).startswith("https://"):
+        raise ValueError("public Substack post id and HTTPS URL are required")
+    store_publish_intent(source_id, draft_id, path=path)
+    receipts = _read(path)
+    receipt = receipts[str(source_id)]
+    receipt.update(
+        {
+            "post_id": str(post_id),
+            "public_url": str(public_url),
+            "published_at": published_at or datetime.now(timezone.utc).isoformat(),
+        }
+    )
     _write(receipts, path)
 
 
@@ -117,6 +191,7 @@ def reconcile_remote_receipts(
         return set(receipts), 0
 
     remaining = dict(receipts)
+    protected: set[str] = set()
     applied = 0
     conn = sqlite3.connect(str(db_path), timeout=30)
     try:
@@ -124,6 +199,9 @@ def reconcile_remote_receipts(
             "substack_written_at TEXT",
             "substack_draft_id TEXT",
             "substack_drafted_at TEXT",
+            "substack_post_id TEXT",
+            "substack_post_url TEXT",
+            "substack_published_at TEXT",
         ):
             try:
                 conn.execute(f"ALTER TABLE news_items ADD COLUMN {column}")
@@ -148,11 +226,42 @@ def reconcile_remote_receipts(
                     receipt["draft_id"],
                 ),
             )
-            if cursor.rowcount == 1:
+            if cursor.rowcount != 1:
+                protected.add(source_id)
+                continue
+            publication_complete = all(
+                receipt.get(key)
+                for key in ("post_id", "public_url", "published_at")
+            )
+            if publication_complete:
+                published = conn.execute(
+                    """
+                    UPDATE news_items
+                       SET substack_post_id=?,
+                           substack_post_url=?,
+                           substack_published_at=COALESCE(substack_published_at,?)
+                     WHERE id=?
+                       AND (substack_post_id IS NULL OR substack_post_id=?)
+                       AND (substack_post_url IS NULL OR substack_post_url=?)
+                    """,
+                    (
+                        receipt["post_id"],
+                        receipt["public_url"],
+                        receipt["published_at"],
+                        source_id,
+                        receipt["post_id"],
+                        receipt["public_url"],
+                    ),
+                )
+                if published.rowcount != 1:
+                    protected.add(source_id)
+                    continue
                 remaining.pop(source_id, None)
-                applied += 1
+            elif not receipt.get("publish_attempted_at"):
+                remaining.pop(source_id, None)
+            applied += 1
         conn.commit()
     finally:
         conn.close()
     _write(remaining, path)
-    return set(remaining), applied
+    return protected, applied

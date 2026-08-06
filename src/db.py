@@ -154,6 +154,15 @@ def init_db() -> None:
         _migrate_add_column_if_missing(
             conn, "news_items", "substack_drafted_at", "TEXT"
         )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_post_id", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_post_url", "TEXT"
+        )
+        _migrate_add_column_if_missing(
+            conn, "news_items", "substack_published_at", "TEXT"
+        )
         try:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_topic ON news_items(topic_category)"

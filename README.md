@@ -14,7 +14,8 @@
 | Meta scheduled publishing | **RECOVERY** | One post/day/platform under source, quality, quota, readback, and shared-lock gates |
 | Submission processor | **LIVE** | Poller claims one-off work; target-specific evidence remains required |
 | Meta publish-now | **ARMED** | Owner submissions still pass editorial gates before any platform write |
-| Substack | **DRAFT ONLY** | Never auto-publishes; `draft_created` requires a remote Substack draft id |
+| Substack schedules | **DRAFT ONLY** | Podcast/company schedules never publish; `draft_created` requires a remote draft id |
+| Substack one-off publish-now | **CANARY PENDING** | Explicit owner choice only; `published` requires post id, public URL, timestamp, and unauthenticated readback |
 | Social Ops API | **DEPLOYED** | Cloudflare Worker + authenticated D1 |
 | Runtime SQLite | **CANONICAL RELEASE STATE** | Versioned GitHub Release bundle, SHA-256 + `PRAGMA quick_check` + readback |
 | Dashboard data | **SEEDED** | 29,219 knowledge metadata rows, 807 post records, 381 engagement snapshots |
@@ -49,7 +50,7 @@ The Pages UI is authenticated with an owner token stored only in browser
 - A successful workflow is not automatically a successful post. `published`
   means the platform publish path returned success and the result was recorded.
 
-### Substack: high-quality drafts, never auto-publish
+### Substack: draft-first, with explicit one-off publish-now
 
 - Submitted URLs, text, and YouTube sources enter the canonical runtime DB.
 - Planned editorial cadence is one daily **Podcast batch** at 12:00 plus one
@@ -64,7 +65,12 @@ The Pages UI is authenticated with an owner token stored only in browser
 - Only a successful Substack `post_draft` response writes
   `substack_draft_id` + `substack_drafted_at`; operational sync converts that
   remote evidence to `draft_created` in D1.
-- The owner reviews and publishes in Substack.
+- One-time submissions default to `draft_priority`. The owner may explicitly
+  choose `publish_now`; after reader-ready, cover, and audit gates the Mac calls
+  `prepublish_draft` and `publish_draft` on that same saved draft ID.
+- `published` additionally requires `substack_post_id`, `substack_post_url`,
+  `substack_published_at`, and a successful public readback without cookies.
+  An ambiguous API result remains `partial` and is never blindly resent.
 
 ### Governed learning loop
 

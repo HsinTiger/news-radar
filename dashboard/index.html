@@ -233,7 +233,7 @@
       <section class="view" data-view="submit" aria-labelledby="submit-heading" hidden>
         <div class="page-intro">
           <div><p class="eyebrow">OWNER INBOX</p><h2 id="submit-heading">把素材送進正確的生產線</h2></div>
-          <p>這是一次性投稿入口，不是另一組早報／晚報排程。Substack 立即進優先草稿通道；Meta 才有佇列與立即發布兩種選擇。</p>
+          <p>這是一次性投稿入口，不是另一組早報／晚報排程。Substack 與 Meta 都只有在你明確選擇「立即發布」時才會公開。</p>
         </div>
 
         <section class="route-explainer" id="submission-boundary" aria-labelledby="submission-boundary-heading">
@@ -242,7 +242,7 @@
             <p><code>morning / evening</code> 只是舊 CLI 寫稿模式，不是投稿時段；這個頁面不會要求你選早上或下午。</p>
           </div>
           <div class="route-grid">
-            <article><span>SUBSTACK</span><strong>立即進優先處理，不等 12:00 排程</strong><p>目標是建立遠端草稿，不會自動發布；完成仍以 Substack draft ID 為準。</p></article>
+            <article><span>SUBSTACK</span><strong>立即進優先處理，不等 12:00 排程</strong><p>預設建立草稿；選擇立即發布時，完成寫稿、封面與品質閘門後公開發布，最終以公開 URL 與 post ID 為準。</p></article>
             <article><span>META · QUEUE</span><strong>預設排入佇列</strong><p>送出只代表素材入列，不代表 Facebook、Instagram 或 Threads 已發布。</p></article>
             <article><span>META · NOW</span><strong>明確選擇才直接發布</strong><p>只有選擇「立即發布」才會直接送三平台，最終仍以各平台 post ID 回讀為準。</p></article>
           </div>
@@ -253,7 +253,7 @@
             <fieldset>
               <legend>要送去哪裡？</legend>
               <div class="choice-cards">
-                <label><input type="radio" name="target" value="substack" checked><span><strong>Substack</strong><small>立即進優先處理；建立優先草稿，不自動發布</small></span></label>
+                <label><input type="radio" name="target" value="substack" checked><span><strong>Substack</strong><small>立即進優先處理；可建立草稿或明確選擇立即發布</small></span></label>
                 <label><input type="radio" name="target" value="meta"><span><strong>Meta 三平台</strong><small>進佇列，或在可用時立即發布</small></span></label>
               </div>
             </fieldset>
@@ -271,6 +271,15 @@
             <label class="field" id="source-text-field" hidden><span>原始素材</span><textarea id="source-text" rows="8" placeholder="貼上值得延伸的內容，不必先整理。"></textarea></label>
             <label class="field"><span>你希望怎麼處理？ <small>選填</small></span><textarea id="submission-note" rows="3" maxlength="500" placeholder="例如：不要摘要整集，深挖來賓對 AI capex 回報週期的分歧。"></textarea></label>
 
+            <fieldset id="substack-options">
+              <legend>Substack 發布設定</legend>
+              <div class="inline-choices mode-choices">
+                <label><input type="radio" name="substack-mode" value="draft_priority" checked><span>建立草稿</span></label>
+                <label id="substack-publish-now-option"><input type="radio" name="substack-mode" value="publish_now"><span>立即發布</span></label>
+              </div>
+              <p class="field-help" id="substack-publish-now-help">正在確認 production runtime。</p>
+            </fieldset>
+
             <fieldset id="meta-options" hidden>
               <legend>Meta 發布設定</legend>
               <div class="platform-choices">
@@ -286,7 +295,7 @@
             </fieldset>
 
             <div class="submit-footer">
-              <p id="submission-route">送出後立即進優先處理，不等 12:00 排程；完成仍以遠端 draft ID 為準，交由你最後審稿與發布。</p>
+              <p id="submission-route">送出後立即進優先處理，不等 12:00 排程；預設只建立遠端草稿。</p>
               <button class="button button-primary" id="submit-button" type="submit" disabled>先解鎖再投稿</button>
             </div>
             <div class="form-message" id="form-message" role="status" hidden></div>

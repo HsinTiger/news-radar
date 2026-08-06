@@ -6,7 +6,7 @@
 #   pip install -r requirements.txt -r requirements-mac.txt
 #
 # ============================================================
-# Substack draft API (Phase 1, 2026-05-12)
+# Substack draft/publish API (owner-selected publish-now)
 # ============================================================
 # ma2za/python-substack：非官方但活躍維護的 Substack draft API wrapper。
 # 走 cookie auth（從 Chrome DevTools 抓），不存密碼。
@@ -14,5 +14,6 @@
 #
 # 版本選擇：不 pin 版本，讓 pip 自動取最新可用版（避免 0.1.18 偶爾 PyPI 拉
 # 不到的問題）。0.1.18+ 的 API 表面穩定，from_markdown / post_draft /
-# put_draft 都 backward compatible。
+# put_draft / prepublish_draft / publish_draft 都存在於已檢查的 0.1.18 與
+# 0.2.0；發布成功仍以公開 URL 的無 cookie 回讀為準。
 python-substack>=0.1.18

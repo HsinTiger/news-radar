@@ -6,7 +6,8 @@ legacy `state` branch is not used.
 
 ## Safety contract
 
-- Substack may create drafts only. It never publishes them.
+- Scheduled Substack work creates drafts only. One-time owner submissions may
+  publish only when they carry explicit `publish_now` lineage.
 - Meta composition may create reversible queue records, but cloud publishing
   remains paused until the owner approves a live canary.
 - Both workers use the same remote lease and a local lock, so they do not write
@@ -59,7 +60,9 @@ bash ~/bin/news_radar_compose.sh --setup-only
 Place runtime-only credentials in `~/news_radar/.env`. At minimum, Substack
 draft creation needs the existing Substack session configuration and
 `SUBSTACK_AUTO_DRAFT=1`. That flag means create a draft through `post_draft`;
-there is no auto-publish path.
+scheduled Podcast/company work remains draft-only. One-time owner submissions
+may separately carry `publish_now`; only those rows call `prepublish_draft` and
+`publish_draft` on the same saved draft ID. No new token or cookie is required.
 
 ## Stage 1: immediate canary only
 
@@ -194,11 +197,20 @@ also show all of these:
 5. `substack_draft_id` and `substack_drafted_at` are non-null after Substack accepts the remote draft.
 6. D1 submission status becomes `draft_created` only after operational sync sees that remote evidence.
 
+For an owner-selected `publish_now` canary, require four additional items:
+
+7. The source has both `control_substack_route:<submission>:publish_now` and `publish_now` lineage.
+8. `substack_post_id`, `substack_post_url`, and `substack_published_at` are all non-null.
+9. The public URL succeeds without sending the Substack cookie.
+10. D1 becomes `published` with the same public post ID and URL. A draft ID alone is `partial`, never publication proof.
+
 Normally `data/substack_drafts/.substack_remote_receipts.json` is absent because
 the receipt is cleared immediately after the SQLite update. If it exists, do
 not manually re-run composition for that source: the next worker tick will
 reconcile the saved draft ID into SQLite. A malformed or conflicting receipt
-stops the drain fail-closed and must be inspected before retrying.
+stops the drain fail-closed and must be inspected before retrying. A receipt
+with `publish_attempted_at` but no public post evidence represents an ambiguous
+publish: later ticks perform readback only and do not blindly resend the email.
 
 ## Pause or rollback
 

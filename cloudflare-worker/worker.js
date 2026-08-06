@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-08-06.operations-cockpit-v1";
+const API_VERSION = "2026-08-06.substack-publish-now-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -354,6 +354,7 @@ async function currentRuntime(env) {
   const mode = row?.mode || env.AUTOMATION_MODE || "paused";
   const submissionProcessor = row?.submission_processor || env.SUBMISSION_PROCESSOR_MODE || "paused";
   const metaPublishNowEnabled = env.ENABLE_META_PUBLISH_NOW === "true";
+  const substackPublishNowEnabled = env.ENABLE_SUBSTACK_PUBLISH_NOW === "true";
   return {
     mode,
     submission_processor: submissionProcessor,
@@ -361,6 +362,8 @@ async function currentRuntime(env) {
     updated_at: row?.updated_at || null,
     meta_publish_now_enabled: metaPublishNowEnabled,
     meta_publish_now_ready: metaPublishNowEnabled && submissionProcessor === "live",
+    substack_publish_now_enabled: substackPublishNowEnabled,
+    substack_publish_now_ready: substackPublishNowEnabled && submissionProcessor === "live",
     substack_auto_publish: false,
   };
 }
@@ -480,8 +483,8 @@ async function createSubmission(request, env, cors) {
   const content = cleanString(body.content, "content", 50_000, true);
   const note = cleanString(body.note, "note", 500);
   let mode = cleanString(body.mode, "mode", 20) || (target === "substack" ? "draft" : "queue");
-  if (target === "substack" && !new Set(["draft", "draft_priority"]).has(mode)) {
-    throw new HTTPError(400, "Substack mode must be draft or draft_priority", "invalid_input");
+  if (target === "substack" && !new Set(["draft", "draft_priority", "publish_now"]).has(mode)) {
+    throw new HTTPError(400, "Substack mode must be draft, draft_priority, or publish_now", "invalid_input");
   }
   if (target === "meta" && !META_MODES.has(mode)) {
     throw new HTTPError(400, "Meta mode must be publish_now or queue", "invalid_input");
@@ -514,6 +517,19 @@ async function createSubmission(request, env, cors) {
         400,
         "immediate text publishing requires at least 80 characters of source material",
         "source_too_short",
+      );
+    }
+  }
+  if (target === "substack" && mode === "publish_now") {
+    const runtime = await currentRuntime(env);
+    if (!runtime.substack_publish_now_enabled) {
+      throw new HTTPError(409, "Substack publish-now is disabled", "publish_now_disabled");
+    }
+    if (!runtime.substack_publish_now_ready) {
+      throw new HTTPError(
+        409,
+        "Substack publish-now is unavailable because the submission processor is not live",
+        "processor_unavailable",
       );
     }
   }
@@ -585,7 +601,8 @@ async function listSubmissions(url, env, cors) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 25), 1), 100);
   const { results } = await env.DB.prepare(
     `SELECT id,target,source_type,note,platforms_json,requested_mode,status,
-            workflow_run_url,error,created_at,updated_at
+            workflow_run_url,error,external_post_id,result_url,published_at,
+            created_at,updated_at
        FROM submissions ORDER BY created_at DESC LIMIT ?`,
   )
     .bind(limit)
@@ -662,7 +679,7 @@ async function updateSubmissionStatus(request, env, id, cors) {
   ]);
   if (!allowed.has(status)) throw new HTTPError(400, "invalid status", "invalid_input");
   const existing = await env.DB.prepare(
-    "SELECT target,status,updated_at FROM submissions WHERE id=?",
+    "SELECT target,requested_mode,status,updated_at FROM submissions WHERE id=?",
   ).bind(id).first();
   if (!existing) throw new HTTPError(404, "submission not found", "not_found");
   if (existing.status === status) {
@@ -671,11 +688,14 @@ async function updateSubmissionStatus(request, env, id, cors) {
   if (status === "draft_created" && existing.target !== "substack") {
     throw new HTTPError(409, "draft_created is only valid for Substack", "invalid_transition");
   }
-  if (status === "published" && existing.target !== "meta") {
-    throw new HTTPError(409, "published is only valid for Meta", "invalid_transition");
+  if (status === "published" && existing.target === "substack" && existing.requested_mode !== "publish_now") {
+    throw new HTTPError(409, "published requires a Substack publish_now request", "invalid_transition");
   }
-  if (new Set(["partial", "quality_held"]).has(status) && existing.target !== "meta") {
-    throw new HTTPError(409, `${status} is only valid for Meta`, "invalid_transition");
+  if (status === "partial" && existing.target === "substack" && existing.requested_mode !== "publish_now") {
+    throw new HTTPError(409, "partial requires a Substack publish_now request", "invalid_transition");
+  }
+  if (status === "quality_held" && existing.target !== "meta") {
+    throw new HTTPError(409, "quality_held is only valid for Meta", "invalid_transition");
   }
   const transitions = {
     queued: new Set(["claimed", "rejected", "failed"]),
@@ -683,7 +703,7 @@ async function updateSubmissionStatus(request, env, id, cors) {
     dispatched: new Set(["processing", "content_queued", "source_queued", "published", "partial", "quality_held", "draft_created", "failed"]),
     processing: new Set(["content_queued", "source_queued", "published", "partial", "quality_held", "draft_created", "failed"]),
     content_queued: new Set(["processing", "published", "partial", "quality_held", "failed"]),
-    source_queued: new Set(["processing", "draft_created", "failed"]),
+    source_queued: new Set(["processing", "draft_created", "published", "partial", "failed"]),
     partial: new Set(["processing", "published", "quality_held", "failed"]),
     quality_held: new Set(["processing", "published", "partial", "failed"]),
   };
@@ -696,13 +716,38 @@ async function updateSubmissionStatus(request, env, id, cors) {
   }
   const workflowRunUrl = cleanString(body.workflow_run_url, "workflow_run_url", 500);
   const error = cleanString(body.error, "error", 2000);
+  const externalPostId = cleanString(body.external_post_id, "external_post_id", 200);
+  const resultUrl = cleanString(body.result_url, "result_url", 1000);
+  const publishedAt = cleanString(body.published_at, "published_at", 60);
+  if (existing.target === "substack" && status === "published") {
+    if (!externalPostId || !resultUrl || !publishedAt || !/^https:\/\//.test(resultUrl)) {
+      throw new HTTPError(
+        409,
+        "Substack publish-now requires public post evidence",
+        "publication_evidence_required",
+      );
+    }
+  }
+  if (existing.target === "substack" && status === "partial" && !externalPostId) {
+    throw new HTTPError(409, "Substack partial requires a remote draft id", "draft_evidence_required");
+  }
   const now = new Date().toISOString();
   const result = await env.DB.prepare(
     `UPDATE submissions
-        SET status=?,workflow_run_url=?,error=?,lease_until=NULL,updated_at=?
+        SET status=?,workflow_run_url=?,error=?,external_post_id=?,result_url=?,
+            published_at=?,lease_until=NULL,updated_at=?
       WHERE id=?`,
   )
-    .bind(status, workflowRunUrl || null, error || null, now, id)
+    .bind(
+      status,
+      workflowRunUrl || null,
+      error || null,
+      externalPostId || null,
+      resultUrl || null,
+      publishedAt || null,
+      now,
+      id,
+    )
     .run();
   if (Number(result.meta?.changes || 0) !== 1) throw new HTTPError(409, "status update conflict", "update_conflict");
   await audit(env, "service", "update_submission", id, status, {
@@ -800,14 +845,24 @@ async function syncOperationalData(request, env, cors) {
   for (const row of groups.substack_drafts) {
     const kind = cleanString(row.editorial_kind, "substack.editorial_kind", 20, true);
     const status = cleanString(row.status, "substack.status", 20, true);
+    const remoteDraftId = cleanString(row.remote_draft_id, "substack.remote_draft_id", 200);
+    const remotePostId = cleanString(row.remote_post_id, "substack.remote_post_id", 200);
+    const publicUrl = cleanString(row.public_url, "substack.public_url", 1000);
+    const publishedAt = cleanString(row.published_at, "substack.published_at", 60);
     if (!new Set(["submission", "podcast", "company", "editorial"]).has(kind)) {
       throw new HTTPError(400, "invalid Substack editorial kind", "invalid_input");
     }
-    if (!new Set(["draft_created", "local_written", "unknown"]).has(status)) {
+    if (!new Set(["published", "partial", "draft_created", "local_written", "unknown"]).has(status)) {
       throw new HTTPError(400, "invalid Substack draft status", "invalid_input");
     }
+    if (status === "published" && (!remotePostId || !publicUrl || !publishedAt || !/^https:\/\//.test(publicUrl))) {
+      throw new HTTPError(409, "Substack published sync requires public post evidence", "publication_evidence_required");
+    }
+    if (status === "partial" && !remoteDraftId) {
+      throw new HTTPError(409, "Substack partial sync requires a remote draft id", "draft_evidence_required");
+    }
     const updatedAt = cleanString(
-      row.drafted_at || row.written_at || new Date().toISOString(),
+      row.published_at || row.drafted_at || row.written_at || new Date().toISOString(),
       "substack.updated_at",
       60,
       true,
@@ -816,13 +871,17 @@ async function syncOperationalData(request, env, cors) {
       env.DB.prepare(
         `INSERT INTO substack_drafts(
           id,source_id,submission_id,editorial_kind,source_type,source_title,
-          source_url,remote_draft_id,status,written_at,drafted_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+          source_url,remote_draft_id,remote_post_id,public_url,status,written_at,
+          drafted_at,published_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET submission_id=excluded.submission_id,
           editorial_kind=excluded.editorial_kind,source_type=excluded.source_type,
           source_title=excluded.source_title,source_url=excluded.source_url,
-          remote_draft_id=excluded.remote_draft_id,status=excluded.status,
+          remote_draft_id=excluded.remote_draft_id,
+          remote_post_id=excluded.remote_post_id,public_url=excluded.public_url,
+          status=excluded.status,
           written_at=excluded.written_at,drafted_at=excluded.drafted_at,
+          published_at=excluded.published_at,
           updated_at=excluded.updated_at`,
       ).bind(
         cleanString(row.id, "substack.id", 160, true),
@@ -832,10 +891,13 @@ async function syncOperationalData(request, env, cors) {
         cleanString(row.source_type, "substack.source_type", 40, true),
         cleanString(row.source_title, "substack.source_title", 500, true),
         cleanString(row.source_url, "substack.source_url", 2000),
-        cleanString(row.remote_draft_id, "substack.remote_draft_id", 200),
+        remoteDraftId,
+        remotePostId,
+        publicUrl,
         status,
         cleanString(row.written_at, "substack.written_at", 60),
         cleanString(row.drafted_at, "substack.drafted_at", 60),
+        publishedAt,
         updatedAt,
       ),
     );
@@ -1217,7 +1279,8 @@ async function dashboard(env, cors) {
   ] = await env.DB.batch([
     env.DB.prepare("SELECT target,status,COUNT(*) AS count FROM submissions GROUP BY target,status"),
     env.DB.prepare(`SELECT id,target,source_type,note,platforms_json,requested_mode,status,
-      workflow_run_url,error,created_at,updated_at FROM submissions ORDER BY created_at DESC LIMIT 25`),
+      workflow_run_url,error,external_post_id,result_url,published_at,created_at,updated_at
+      FROM submissions ORDER BY created_at DESC LIMIT 25`),
     env.DB.prepare("SELECT platform,status,COUNT(*) AS count,MAX(posted_at) AS last_posted_at FROM platform_posts GROUP BY platform,status"),
     env.DB.prepare(`WITH ranked_engagement AS (
       SELECT *,ROW_NUMBER() OVER(
@@ -1232,11 +1295,12 @@ async function dashboard(env, cors) {
         ON e.platform=p.platform AND e.platform_post_id=p.platform_post_id AND e.rn=1
       ORDER BY COALESCE(p.posted_at,p.created_at) DESC LIMIT 30`),
     env.DB.prepare(`SELECT editorial_kind,status,COUNT(*) AS count,
-      MAX(drafted_at) AS last_drafted_at FROM substack_drafts
+      MAX(COALESCE(published_at,drafted_at)) AS last_drafted_at FROM substack_drafts
       GROUP BY editorial_kind,status ORDER BY editorial_kind,status`),
     env.DB.prepare(`SELECT id,submission_id,editorial_kind,source_type,source_title,
-      source_url,remote_draft_id,status,written_at,drafted_at,updated_at
-      FROM substack_drafts ORDER BY COALESCE(drafted_at,written_at,updated_at) DESC LIMIT 30`),
+      source_url,remote_draft_id,remote_post_id,public_url,status,written_at,
+      drafted_at,published_at,updated_at FROM substack_drafts
+      ORDER BY COALESCE(published_at,drafted_at,written_at,updated_at) DESC LIMIT 30`),
     env.DB.prepare(LATEST_ENGAGEMENT_SQL),
     env.DB.prepare(`WITH daily_post AS (
       SELECT platform,platform_post_id,substr(captured_at,1,10) AS day,MAX(captured_at) AS captured_at

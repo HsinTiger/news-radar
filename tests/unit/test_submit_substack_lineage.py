@@ -43,6 +43,34 @@ def test_duplicate_substack_source_merges_priority_and_submission_tags(
     }
 
 
+def test_publish_now_is_explicit_source_lineage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        submit_substack.dbmod,
+        "DB_PATH",
+        tmp_path / "news_radar.db",
+    )
+    submit_substack.dbmod.init_db()
+    result = submit_substack.process_text(
+        "這是一篇要在品質閘門通過後立即公開的長文素材。",
+        "owner publish",
+        immediate=True,
+        publish_now=True,
+        submission_id="substack-publish-001",
+    )
+    assert result["status"] == "created"
+    conn = submit_substack.dbmod.get_conn()
+    try:
+        tags = set(json.loads(conn.execute("SELECT tags FROM news_items").fetchone()[0]))
+    finally:
+        conn.close()
+    assert {
+        "immediate",
+        "publish_now",
+        "control_submission:substack-publish-001",
+        "control_substack_route:substack-publish-001:publish_now",
+    } <= tags
+
+
 def test_unreadable_url_fails_before_false_source_queue(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         submit_substack.dbmod,

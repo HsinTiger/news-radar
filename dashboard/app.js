@@ -273,7 +273,9 @@ function renderRuntime() {
   $("runtime-updated").textContent = runtime.updated_at ? `更新於 ${age(runtime.updated_at)}` : "尚無持久化時間證據";
   $("runtime-processor").textContent = runtime.submission_processor === "live" ? "運行中" : (runtime.submission_processor || "未知");
   $("runtime-meta").textContent = runtime.meta_publish_now_ready === true ? "可用" : "不可用";
-  $("runtime-substack").textContent = runtime.substack_auto_publish === true ? "開啟" : "關閉（僅草稿）";
+  $("runtime-substack").textContent = runtime.substack_publish_now_ready === true
+    ? "一次性發布入口已開放"
+    : "排程僅草稿；立即發布未就緒";
   const orb = $("runtime-orb");
   orb.className = `runtime-orb ${mode === "live" ? "good" : (mode === "recovery" ? "warn" : "bad")}`;
   updateAuthUi();
@@ -320,7 +322,7 @@ function renderDraftPreview() {
     const item = node("div", "compact-row");
     const content = node("div");
     content.append(node("strong", "", row.source_title || "未命名草稿"), node("small", "", `${editorialKind(row.editorial_kind)} · ${STATUS_COPY[row.status] || row.status}`));
-    item.append(content, node("time", "", age(row.drafted_at || row.written_at || row.updated_at)));
+    item.append(content, node("time", "", age(row.published_at || row.drafted_at || row.written_at || row.updated_at)));
     box.append(item);
   });
 }
@@ -388,13 +390,20 @@ function renderSubstack() {
         link.href = row.source_url; link.target = "_blank"; link.rel = "noreferrer";
         title.append(link);
       }
-      const proof = row.remote_draft_id ? `draft ID · ${row.remote_draft_id}` : "尚無遠端 draft ID";
-      tr.append(title, node("td", "", editorialKind(row.editorial_kind)), node("td"), node("td", "", when(row.drafted_at || row.written_at || row.updated_at)), node("td", "", proof));
+      const proofCell = node("td");
+      if (row.public_url && row.remote_post_id) {
+        const link = node("a", "", `公開 post · ${row.remote_post_id}`);
+        link.href = row.public_url; link.target = "_blank"; link.rel = "noreferrer";
+        proofCell.append(link);
+      } else {
+        proofCell.textContent = row.remote_draft_id ? `draft ID · ${row.remote_draft_id}` : "尚無遠端 draft ID";
+      }
+      tr.append(title, node("td", "", editorialKind(row.editorial_kind)), node("td"), node("td", "", when(row.published_at || row.drafted_at || row.written_at || row.updated_at)), proofCell);
       tr.children[2].append(statusChip(row.status));
       body.append(tr);
     });
   }
-  const latest = newest(rows.map((row) => row.drafted_at || row.written_at || row.updated_at));
+  const latest = newest(rows.map((row) => row.published_at || row.drafted_at || row.written_at || row.updated_at));
   $("substack-data-stamp").textContent = latest ? `最新 ${age(latest)}` : "尚無同步證據";
 }
 
@@ -663,6 +672,11 @@ function renderHistory() {
     const head = node("div", "history-head");
     head.append(node("strong", "", row.note || (row.target === "substack" ? "Substack 素材" : "Meta 素材")), node("time", "", age(row.created_at)));
     item.append(head, node("p", "", `${row.target === "substack" ? "Substack" : "Meta"} · ${row.source_type} · ${row.requested_mode}`), statusChip(row.status));
+    if (row.result_url) {
+      const link = node("a", "", "查看公開文章");
+      link.href = row.result_url; link.target = "_blank"; link.rel = "noreferrer";
+      item.append(link);
+    }
     if (row.error) item.append(node("p", "", row.error));
     box.append(item);
   });
@@ -685,7 +699,9 @@ function selected(name) {
 }
 
 function submissionButtonCopy() {
-  if (selected("target") === "substack") return "立即送出 Substack 草稿任務";
+  if (selected("target") === "substack") {
+    return selected("substack-mode") === "publish_now" ? "立即發布到 Substack" : "立即建立 Substack 草稿";
+  }
   return selected("meta-mode") === "publish_now" ? "立即發布到 Meta" : "排入 Meta 佇列";
 }
 
@@ -693,6 +709,7 @@ function updateSubmissionUi() {
   const target = selected("target") || "substack";
   const source = selected("source") || "url";
   const meta = target === "meta";
+  $("substack-options").hidden = meta;
   $("meta-options").hidden = !meta;
   $("source-line-field").hidden = source === "text";
   $("source-text-field").hidden = source !== "text";
@@ -705,8 +722,19 @@ function updateSubmissionUi() {
   $("publish-now-help").textContent = ready
     ? "Production runtime 顯示立即發布可用；送出後仍須等待三平台 post ID 回讀。"
     : "Production runtime 未顯示 ready，因此只開放排入佇列。";
+  const substackReady = (state.dashboard?.automation || state.publicHealth?.automation || {}).substack_publish_now_ready === true;
+  const substackPublishInput = document.querySelector('input[name="substack-mode"][value="publish_now"]');
+  substackPublishInput.disabled = !substackReady;
+  if (!substackReady && substackPublishInput.checked) {
+    document.querySelector('input[name="substack-mode"][value="draft_priority"]').checked = true;
+  }
+  $("substack-publish-now-help").textContent = substackReady
+    ? "立即發布入口已開放；Mac 寫稿與封面完成後才送出，只有公開 URL 與 post ID 回讀才算成功。"
+    : "Production runtime 未顯示立即發布就緒，因此目前只開放建立草稿。";
   $("submission-route").textContent = target === "substack"
-    ? "送出後立即進優先處理，不等 12:00 排程；完成仍以遠端 draft ID 為準，交由你最後審稿與發布。"
+    ? (selected("substack-mode") === "publish_now"
+      ? "這會立即進入 Mac 快速寫稿與發布流程；只有公開 URL 與 post ID 回讀後才算已發布。"
+      : "送出後立即進優先處理，不等 12:00 排程；完成以遠端 draft ID 為準，不會公開發布。")
     : (selected("meta-mode") === "publish_now"
       ? "這會要求 production runtime 立即發布；平台送達仍以 post ID 為準。"
       : "素材會先進入 Meta 佇列，不代表已經發布。 ");
@@ -730,6 +758,7 @@ async function submitMaterial(event) {
   const note = $("submission-note").value.trim();
   const platforms = [...document.querySelectorAll('input[name="platform"]:checked')].map((input) => input.value);
   const metaMode = selected("meta-mode") || "queue";
+  const substackMode = selected("substack-mode") || "draft_priority";
   if (!content) return formMessage("請提供網址、YouTube 或原始文字。", "bad");
   if (target === "meta" && !platforms.length) return formMessage("Meta 至少要選一個平台。", "bad");
   if (target === "meta" && metaMode === "publish_now" && sourceType === "text" && !note) return formMessage("立即發布純文字時，處理說明會作為編輯標題，不能留白。", "bad");
@@ -740,7 +769,7 @@ async function submitMaterial(event) {
   button.textContent = "正在送出…";
   formMessage("正在建立可追蹤的投稿紀錄。", "");
   try {
-    const payload = buildSubmissionPayload({target, sourceType, content, note, platforms, metaMode});
+    const payload = buildSubmissionPayload({target, sourceType, content, note, platforms, metaMode, substackMode});
     const idempotency = window.crypto?.randomUUID?.().replaceAll("-", "") || `owner${Date.now()}${Math.random().toString(16).slice(2)}`;
     const result = await request("/api/submissions", {
       method: "POST",
@@ -818,7 +847,7 @@ function bindEvents() {
   $("auth-form").addEventListener("submit", unlock);
   $("forget-token").addEventListener("click", explicitForget);
   $("submission-form").addEventListener("submit", submitMaterial);
-  document.querySelectorAll('input[name="target"], input[name="source"], input[name="meta-mode"]').forEach((input) => input.addEventListener("change", updateSubmissionUi));
+  document.querySelectorAll('input[name="target"], input[name="source"], input[name="meta-mode"], input[name="substack-mode"]').forEach((input) => input.addEventListener("change", updateSubmissionUi));
   $("metric-tabs").addEventListener("click", (event) => {
     const button = event.target.closest("[data-metric]");
     if (!button) return;

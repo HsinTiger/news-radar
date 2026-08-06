@@ -33,7 +33,8 @@ def build_dispatch(submission: dict[str, Any]) -> Dispatch:
             "substack-submit.yml",
             {
                 **common,
-                "immediate": "true" if submission.get("mode") == "draft_priority" else "false",
+                "immediate": "true" if submission.get("mode") in {"draft_priority", "publish_now"} else "false",
+                "publish_now": "true" if submission.get("mode") == "publish_now" else "false",
             },
         )
     if submission["target"] != "meta":

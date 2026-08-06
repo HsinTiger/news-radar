@@ -107,6 +107,10 @@ test("submission payload preserves existing API modes", () => {
     target: "meta", sourceType: "text", content: "內容", note: "標題",
     platforms: ["facebook", "threads"], metaMode: "publish_now",
   }).mode, "publish_now");
+  assert.equal(buildSubmissionPayload({
+    target: "substack", sourceType: "text", content: "值得延伸的素材",
+    substackMode: "publish_now",
+  }).mode, "publish_now");
 });
 
 

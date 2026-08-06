@@ -7,6 +7,7 @@ workers_dev = true
 AUTOMATION_MODE = "recovery"
 SUBMISSION_PROCESSOR_MODE = "live"
 ENABLE_META_PUBLISH_NOW = "true"
+ENABLE_SUBSTACK_PUBLISH_NOW = "true"
 
 [observability]
 enabled = true

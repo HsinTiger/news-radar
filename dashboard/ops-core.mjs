@@ -263,6 +263,7 @@ export function buildSubmissionPayload({
   note = "",
   platforms = [],
   metaMode = "queue",
+  substackMode = "draft_priority",
 }) {
   return {
     target,
@@ -270,7 +271,7 @@ export function buildSubmissionPayload({
     content,
     note,
     platforms: target === "meta" ? [...new Set(platforms)] : [],
-    mode: target === "substack" ? "draft_priority" : metaMode,
+    mode: target === "substack" ? substackMode : metaMode,
   };
 }
 
