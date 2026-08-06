@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""每日公司分析選股（每天 11:25，由 substack_company job 串接 pick && compose 呼叫）：
+"""每週公司分析選股（週日 09:00 compose job 的第一步）：
 從 company_pool.txt（S&P500 + Russell3000）挑「還沒分析過」的一家，寫進 .company_next，
-並 append 到 .company_done（永久去重 → 每天不同公司、慢慢走完整個池，絕不重複）。
+並 append 到 .company_done（永久去重 → 每週不同公司、慢慢走完整個池，絕不重複）。
 
 挑法：未分析過的公司裡，近 7 天新聞熱度最高者優先（夠即時）；都沒熱度 → 取池中下一個未分析的。
-once-per-day guard：今天已挑過（.company_done 末筆是今天）→ 不重挑、exit 1，讓串接的 compose
-跳過，避免「一天兩篇」（手動先跑一次 + 11:30 排程又跑）。
-信哥要指定 → 改 .company_next 第一行 ticker；要重分析某股 → 從 .company_done 移除該行。
+same-day guard：今天已挑過（.company_done 末筆是今天）→ 不重挑，避免手動重跑改掉候選。
+信哥要指定 → 在排程前改 .company_next 第一行 ticker；要重分析某股 → 從 .company_done 移除該行。
 """
 from __future__ import annotations
 import sqlite3, subprocess, sys, datetime
@@ -75,14 +74,14 @@ def main() -> int:
     tk, nm = max(hot, key=lambda x: heat[x[0]]) if hot else undone[0]
     NEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
     NEXT_PATH.write_text(
-        "# 今日公司分析（每天 11:30 自動）。改第一行的 ticker 可指定要分析的公司。\n"
+        "# 本週公司分析（週日 09:00 自動建草稿）。改第一行 ticker 可指定公司。\n"
         f"{tk}    # {nm}（近7天新聞熱度 {heat[tk]}）\n", encoding="utf-8")
     with open(DONE_PATH, "a", encoding="utf-8") as f:
         f.write(f"{tk}\t{nm}\t{today}\n")
     print(f"[pick] 今日：{tk}（{nm}）熱度 {heat[tk]} | 池 {len(items)}・已分析 {len(done)+1}・剩 {len(undone)-1}")
     try:
         subprocess.run(["osascript", "-e",
-            f'display notification "今日：{tk} {nm}" with title "News Radar 每日財報分析"'], timeout=10)
+            f'display notification "本週候選：{tk} {nm}" with title "News Radar 週報公司分析"'], timeout=10)
     except Exception:
         pass
     return 0

@@ -2,113 +2,280 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#07111f">
-  <title>HsinTiger Social Ops</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#11110f">
+  <meta name="description" content="HsinTiger 的 Substack 與 Meta 三平台營運駕駛艙">
+  <title>HsinTiger · 營運駕駛艙</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
-  <script src="app.js" defer></script>
 </head>
 <body>
-  <div class="glow glow-a"></div><div class="glow glow-b"></div>
-  <header class="topbar">
-    <a class="brand" href="./"><span class="brand-mark">HT</span><span><strong>Social Ops</strong><small>governed attention system</small></span></a>
-    <nav>
-      <a href="../substack-submit/">一次性投稿</a>
-      <button id="refresh" type="button">重新整理</button>
-      <button id="lock" type="button">鎖定</button>
-    </nav>
-  </header>
+  <a class="skip-link" href="#main">跳到主要內容</a>
 
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <div class="eyebrow">OWNER CONTROL PLANE</div>
-        <h1>社群營運儀表板</h1>
-        <p>用平台原生訊號追蹤內容、觀眾與學習迴圈。未知資料明確標示，不用漂亮數字掩蓋缺口。</p>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主要導覽">
+      <a class="brand" href="?view=overview" aria-label="HsinTiger 營運駕駛艙首頁">
+        <span class="brand-mark" aria-hidden="true">虎</span>
+        <span><strong>HsinTiger</strong><small>OPERATIONS</small></span>
+      </a>
+
+      <nav class="primary-nav" id="primary-nav">
+        <button class="nav-item is-active" type="button" data-nav="overview">
+          <span class="nav-icon" aria-hidden="true">◫</span><span>總覽</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="substack">
+          <span class="nav-icon" aria-hidden="true">S</span><span>Substack</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="meta">
+          <span class="nav-icon" aria-hidden="true">M</span><span>Meta 三平台</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="health">
+          <span class="nav-icon" aria-hidden="true">◇</span><span>資料健康</span>
+        </button>
+        <button class="nav-item nav-submit" type="button" data-nav="submit">
+          <span class="nav-icon" aria-hidden="true">＋</span><span>新增投稿</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-note">
+        <span class="eyebrow">營運原則</span>
+        <p>草稿與發布分開；沒有證據的數字，顯示未知，不補成零。</p>
       </div>
-      <div class="hero-state">
-        <span class="state-dot paused" id="mode-dot"></span>
-        <div><small>Automation</small><strong id="automation-mode">LOCKED</strong></div>
+    </aside>
+
+    <main class="main" id="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="view-kicker">TODAY'S CONTROL ROOM</p>
+          <h1 id="view-title">營運總覽</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="connection-pill" id="connection-pill" data-state="loading">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span id="connection-copy">正在確認系統</span>
+          </div>
+          <button class="button button-quiet" id="open-auth" type="button">解鎖營運資料</button>
+        </div>
+      </header>
+
+      <div class="notice notice-error" id="global-error" role="alert" hidden></div>
+      <div class="notice notice-info" id="auth-notice" role="status" hidden></div>
+
+      <section class="view is-active" data-view="overview" aria-labelledby="overview-heading">
+        <div class="hero-grid">
+          <article class="hero-card">
+            <div class="hero-heading">
+              <div>
+                <p class="eyebrow">SYSTEM POSTURE</p>
+                <h2 id="overview-heading">今天需要你注意什麼？</h2>
+              </div>
+              <button class="icon-button" id="refresh-all" type="button" aria-label="重新整理全部資料" title="重新整理">↻</button>
+            </div>
+            <p class="hero-lede" id="attention-summary">正在讀取公開系統狀態。解鎖後會補上草稿、數據與投稿佇列。</p>
+            <div class="attention-list" id="attention-list" aria-live="polite">
+              <div class="skeleton tall"></div>
+            </div>
+          </article>
+
+          <aside class="runtime-card">
+            <p class="eyebrow">AUTOMATION</p>
+            <div class="runtime-state">
+              <span class="runtime-orb" id="runtime-orb" aria-hidden="true"></span>
+              <div><strong id="runtime-mode">讀取中</strong><small id="runtime-updated">尚無時間證據</small></div>
+            </div>
+            <dl class="fact-list">
+              <div><dt>投稿處理器</dt><dd id="runtime-processor">—</dd></div>
+              <div><dt>Meta 立即發布</dt><dd id="runtime-meta">—</dd></div>
+              <div><dt>Substack 自動發布</dt><dd id="runtime-substack">關閉</dd></div>
+            </dl>
+            <p class="boundary-copy">「可投稿」不等於「已發布」；最終狀態仍以平台 post ID 或 Substack draft ID 為準。</p>
+          </aside>
+        </div>
+
+        <div class="section-heading">
+          <div><p class="eyebrow">EDITORIAL RHYTHM</p><h2>內容生產節奏</h2></div>
+          <button class="text-button" type="button" data-jump="substack">查看完整寫手設計 →</button>
+        </div>
+        <div class="schedule-strip" id="overview-schedule">
+          <article class="schedule-card"><span class="day-chip">每日</span><strong>12:00</strong><h3>Podcast 延伸文 × 2</h3><p>最近 7 天候選，同批完成；以週刊深度寫，不做逐字稿摘要。</p></article>
+          <article class="schedule-card"><span class="day-chip">週日</span><strong>09:00</strong><h3>公司深度文 × 1</h3><p>選題與寫作合併，同一輪完成，避免多一個無產出的排程。</p></article>
+        </div>
+
+        <div class="two-column">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">SUBSTACK</p><h2>最近草稿</h2></div><button class="text-button" type="button" data-jump="substack">全部</button></div>
+            <div id="overview-drafts" class="compact-list"><div class="locked-placeholder">解鎖後顯示遠端草稿證據。</div></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">META</p><h2>三平台快照</h2></div><button class="text-button" type="button" data-jump="meta">全部</button></div>
+            <div id="overview-meta" class="mini-platform-grid"><div class="locked-placeholder">解鎖後顯示 Facebook、Instagram、Threads。</div></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="substack" aria-labelledby="substack-heading" hidden>
+        <div class="page-intro">
+          <div><p class="eyebrow">EDITORIAL OPERATIONS</p><h2 id="substack-heading">Substack：先看寫什麼，再看有沒有送達</h2></div>
+          <p>排程設計、寫手方法與 live 草稿證據分開呈現，避免把 repo 設定誤認成實際執行。</p>
+        </div>
+
+        <div class="schedule-strip schedule-large" id="substack-schedule"></div>
+
+        <div class="two-column editorial-columns">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">WRITER CONTRACT</p><h2>目前的文章性格</h2></div><span class="evidence-tag">設計契約</span></div>
+            <div class="principle-list" id="writer-contract"></div>
+          </section>
+          <section class="panel voice-card">
+            <p class="eyebrow">HOW IT SHOULD FEEL</p>
+            <blockquote>像一位做過功課、願意把判斷邊界說清楚的真人編輯，帶讀者從一場頂尖對談走到一個更值得追問的問題。</blockquote>
+            <div class="voice-do-dont">
+              <div><strong>保留</strong><p>場景感、張力、作者判斷、第二視角、真問題。</p></div>
+              <div><strong>拔除</strong><p>逐段摘要、空泛金句、術語堆疊、制式結論、假裝確定。</p></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">DELIVERY EVIDENCE</p><h2>最近草稿</h2></div>
+            <span class="data-stamp" id="substack-data-stamp">尚未載入</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>內容</th><th>類型</th><th>狀態</th><th>寫成</th><th>遠端證據</th></tr></thead>
+              <tbody id="substack-draft-rows"><tr><td colspan="5" class="table-empty">解鎖後顯示草稿 metadata；文章全文不會進入儀表板。</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" data-view="meta" aria-labelledby="meta-heading" hidden>
+        <div class="page-intro">
+          <div><p class="eyebrow">META OPERATIONS</p><h2 id="meta-heading">三個平台，三種原生訊號</h2></div>
+          <p>Facebook 看點擊、Instagram 看觸及、Threads 看瀏覽；缺資料就標未知，不混成一個漂亮但無法行動的總分。</p>
+        </div>
+
+        <div class="platform-grid" id="platform-grid">
+          <div class="locked-placeholder wide">解鎖後顯示平台原生指標與資料時間。</div>
+        </div>
+
+        <section class="insight-grid" id="meta-insights" aria-label="近期 Meta 內容分析">
+          <div class="locked-placeholder wide">解鎖後整理近期發文數、平台回讀覆蓋與可行動訊號。</div>
+        </section>
+
+        <section class="panel trend-panel">
+          <div class="panel-heading trend-heading">
+            <div><p class="eyebrow">30-DAY SIGNAL</p><h2>每日內容訊號</h2></div>
+            <div class="metric-tabs" id="metric-tabs" aria-label="趨勢指標">
+              <button type="button" data-metric="actions" class="is-active">互動</button>
+              <button type="button" data-metric="views">瀏覽</button>
+              <button type="button" data-metric="reach">觸及</button>
+              <button type="button" data-metric="clicks">點擊</button>
+            </div>
+          </div>
+          <div class="trend-chart" id="trend-chart"><div class="locked-placeholder">解鎖後顯示；缺少日期會保留為斷點。</div></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">RECENT CONTENT</p><h2>近期文章近況</h2></div><span class="data-stamp" id="meta-data-stamp">尚未載入</span></div>
+          <div id="recent-posts" class="post-list"><div class="locked-placeholder">解鎖後顯示最近發布內容。</div></div>
+        </section>
+      </section>
+
+      <section class="view" data-view="health" aria-labelledby="health-heading" hidden>
+        <div class="page-intro">
+          <div><p class="eyebrow">EVIDENCE, NOT VIBES</p><h2 id="health-heading">資料健康與執行證據</h2></div>
+          <p>健康訊號、workflow 結果與資料新鮮度分開。workflow 失敗不會被翻譯成「所有 collector 都壞了」。</p>
+        </div>
+
+        <div class="two-column health-columns">
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">COLLECTORS & SYNC</p><h2>資料接線狀態</h2></div><span class="data-stamp" id="health-data-stamp">尚未解鎖</span></div>
+            <div id="health-list" class="health-list"><div class="locked-placeholder">解鎖後逐項顯示 collector、sync 與 cadence。</div></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">GITHUB ACTIONS</p><h2>最近工作流程</h2></div><span class="evidence-tag">公開證據</span></div>
+            <div id="workflow-list" class="workflow-list"><div class="skeleton"></div></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="submit" aria-labelledby="submit-heading" hidden>
+        <div class="page-intro">
+          <div><p class="eyebrow">OWNER INBOX</p><h2 id="submit-heading">把素材送進正確的生產線</h2></div>
+          <p>Substack 永遠先建立草稿；Meta 可排入佇列，只有 runtime 明確 ready 時才開放立即發布。</p>
+        </div>
+
+        <div class="submit-layout">
+          <form class="panel submit-form" id="submission-form">
+            <fieldset>
+              <legend>要送去哪裡？</legend>
+              <div class="choice-cards">
+                <label><input type="radio" name="target" value="substack" checked><span><strong>Substack</strong><small>建立優先草稿，不自動發布</small></span></label>
+                <label><input type="radio" name="target" value="meta"><span><strong>Meta 三平台</strong><small>進佇列，或在可用時立即發布</small></span></label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>素材形式</legend>
+              <div class="inline-choices">
+                <label><input type="radio" name="source" value="url" checked><span>網址</span></label>
+                <label><input type="radio" name="source" value="youtube"><span>YouTube</span></label>
+                <label><input type="radio" name="source" value="text"><span>貼上文字</span></label>
+              </div>
+            </fieldset>
+
+            <label class="field" id="source-line-field"><span id="source-line-label">來源網址</span><input id="source-line" type="url" inputmode="url" placeholder="https://…" autocomplete="off"></label>
+            <label class="field" id="source-text-field" hidden><span>原始素材</span><textarea id="source-text" rows="8" placeholder="貼上值得延伸的內容，不必先整理。"></textarea></label>
+            <label class="field"><span>你希望怎麼處理？ <small>選填</small></span><textarea id="submission-note" rows="3" maxlength="500" placeholder="例如：不要摘要整集，深挖來賓對 AI capex 回報週期的分歧。"></textarea></label>
+
+            <fieldset id="meta-options" hidden>
+              <legend>Meta 發布設定</legend>
+              <div class="platform-choices">
+                <label><input type="checkbox" name="platform" value="facebook"><span>Facebook</span></label>
+                <label><input type="checkbox" name="platform" value="instagram"><span>Instagram</span></label>
+                <label><input type="checkbox" name="platform" value="threads" checked><span>Threads</span></label>
+              </div>
+              <div class="inline-choices mode-choices">
+                <label><input type="radio" name="meta-mode" value="queue" checked><span>排入佇列</span></label>
+                <label id="publish-now-option"><input type="radio" name="meta-mode" value="publish_now"><span>立即發布</span></label>
+              </div>
+              <p class="field-help" id="publish-now-help">正在確認 production runtime。</p>
+            </fieldset>
+
+            <div class="submit-footer">
+              <p id="submission-route">系統會建立 Substack 優先草稿，交由你最後審稿與發布。</p>
+              <button class="button button-primary" id="submit-button" type="submit" disabled>先解鎖再投稿</button>
+            </div>
+            <div class="form-message" id="form-message" role="status" hidden></div>
+          </form>
+
+          <aside class="panel history-panel">
+            <div class="panel-heading"><div><p class="eyebrow">RECENT INBOX</p><h2>最近投稿</h2></div><button class="icon-button" id="refresh-history" type="button" aria-label="重新整理投稿紀錄">↻</button></div>
+            <div id="submission-history" class="history-list"><div class="locked-placeholder">解鎖後顯示投稿進度。</div></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="auth-dialog" id="auth-dialog">
+    <form method="dialog" class="dialog-card" id="auth-form">
+      <div class="dialog-heading"><div><p class="eyebrow">OWNER ACCESS</p><h2>解鎖營運資料</h2></div><button class="icon-button" value="cancel" aria-label="關閉">×</button></div>
+      <p>沿用你既有的一次性投稿授權。Token 只會送往既有 Cloudflare Worker，不會出現在網址或分析紀錄。</p>
+      <label class="field"><span>Owner token</span><input id="owner-token" type="password" autocomplete="current-password" placeholder="貼上 token"></label>
+      <label class="remember-row"><input id="remember-token" type="checkbox"><span>保留在這台裝置（localStorage）</span></label>
+      <div class="dialog-actions">
+        <button class="button button-danger" id="forget-token" type="button" hidden>鎖定此裝置</button>
+        <span class="spacer"></span>
+        <button class="button button-quiet" value="cancel">取消</button>
+        <button class="button button-primary" id="unlock-button" type="submit">驗證並解鎖</button>
       </div>
-    </section>
+      <p class="dialog-status" id="auth-status" role="status"></p>
+    </form>
+  </dialog>
 
-    <section class="unlock panel" id="unlock-panel">
-      <div>
-        <strong>Owner 驗證</strong>
-        <p>預設只存在本分頁的 sessionStorage；勾選「記住此裝置」可跨分頁保存。</p>
-      </div>
-      <div class="unlock-input">
-        <input id="owner-token" type="password" autocomplete="off" placeholder="貼上 owner token">
-        <label class="remember-row" for="remember-device"><input id="remember-device" type="checkbox"> 記住此裝置</label>
-      </div>
-      <button class="primary" id="unlock" type="button">驗證並載入</button>
-      <span class="unlock-state" id="unlock-state">尚未驗證</span>
-    </section>
-
-    <div class="error" id="error" hidden></div>
-
-    <section class="kpi-grid" aria-label="營運摘要">
-      <article class="kpi"><span>已追蹤貼文</span><strong id="kpi-posts">—</strong><small id="kpi-posts-note">等待資料</small></article>
-      <article class="kpi"><span>待處理投稿</span><strong id="kpi-submissions">—</strong><small id="kpi-submissions-note">等待資料</small></article>
-      <article class="kpi"><span>知識資產</span><strong id="kpi-knowledge">—</strong><small id="kpi-knowledge-note">metadata only</small></article>
-      <article class="kpi"><span>待 owner 決策</span><strong id="kpi-proposals">—</strong><small>不自動套用提案</small></article>
-    </section>
-
-    <section class="panel recovery-panel">
-      <div class="panel-head"><div><span class="eyebrow">RECOVERY MODE</span><h2>復甦實驗控制台</h2><p>每篇只驗證一個假設；1h／24h／168h 與 follower delta 不完整時，不自動加頻率。</p></div><span class="evidence">EVIDENCE GATED</span></div>
-      <div class="recovery-summary" id="recovery-summary"></div>
-      <div class="recovery-grid" id="recovery-list"></div>
-    </section>
-
-    <section>
-      <div class="section-head"><div><span class="eyebrow">CHANNEL LENS</span><h2>平台分開看</h2></div><span class="asof" id="asof">尚未載入</span></div>
-      <div class="platform-grid" id="platform-grid"></div>
-    </section>
-
-    <section class="split wide-left">
-      <article class="panel chart-panel">
-        <div class="panel-head"><div><h2>30 日平台原生互動</h2><p>likes / comments / shares / saves / replies / reposts / quotes；只看各平台內趨勢。</p></div><span class="evidence">PROVEN · D1</span></div>
-        <div class="chart-wrap"><canvas id="trend-chart"></canvas><div class="empty" id="trend-empty">尚無趨勢資料</div></div>
-      </article>
-      <article class="panel">
-        <div class="panel-head"><div><h2>資料健康</h2><p>資料不足不會被視為零。</p></div></div>
-        <div class="stack" id="health-list"></div>
-      </article>
-    </section>
-
-    <section class="split">
-      <article class="panel">
-        <div class="panel-head"><div><h2>投稿狀態</h2><p>從受理到真實 terminal state。</p></div><a href="../substack-submit/">新增投稿 ↗</a></div>
-        <div class="stack" id="submission-list"></div>
-      </article>
-      <article class="panel">
-        <div class="panel-head"><div><h2>近期內容</h2><p>分平台的發布證據。</p></div></div>
-        <div class="stack" id="post-list"></div>
-      </article>
-    </section>
-
-    <section class="split">
-      <article class="panel">
-        <div class="panel-head"><div><h2>知識沉澱</h2><p>素材 metadata、採用次數與題材分布。</p></div><span class="evidence">NO ARTICLE BODY</span></div>
-        <div class="topic-list" id="topic-list"></div>
-      </article>
-      <article class="panel">
-        <div class="panel-head"><div><h2>學習提案</h2><p>AI 可以提出，只有 owner 能批准。</p></div></div>
-        <div class="stack" id="proposal-list"></div>
-      </article>
-    </section>
-
-    <section class="panel audit-panel">
-      <div class="panel-head"><div><h2>稽核事件</h2><p>投稿、claim、同步與狀態變更。</p></div><span class="evidence" id="api-version">API —</span></div>
-      <div class="audit-table" id="event-list"></div>
-    </section>
-  </main>
-
-  <footer>HsinTiger Social Ops · Observe → Interpret → Propose → Owner approve → Execute → Verify → Learn</footer>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

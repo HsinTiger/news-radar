@@ -1,44 +1,55 @@
-# News Radar · Dashboard
+# HsinTiger 營運駕駛艙
 
-> 基於 sql.js 的瀏覽器端 SQLite 資料庫閱讀器，用於監控 News Radar 系統狀態、發布佇列、互動數據等。
+`dashboard/` 是 News Radar 的單一 owner 操作介面，整合 Substack 編輯營運、Facebook／Instagram／Threads 數據健康、GitHub workflow 訊號與人工投稿。
 
-## 架構
+## 五個視圖
 
-完全前端的靜態網站，不需要後端伺服器：
+1. **總覽**：runtime、owner attention、內容節奏、最近草稿與三平台快照。
+2. **Substack**：每日兩篇 Podcast 延伸文、週日公司深度文、寫手契約與遠端草稿 metadata。
+3. **Meta 三平台**：各平台原生指標、30 日趨勢、近期貼文與最新 engagement 回讀。
+4. **資料健康**：collector／sync／cadence、預期 scheduler tick、watchdog lineage 與 GitHub Actions。
+5. **新增投稿**：Substack 優先草稿、Meta queue／publish-now 與投稿進度。
 
-1. **DB 來源**：從 `state` branch 的 `data/01_harvest/news_radar.db`（raw.githubusercontent.com CDN）載入
-2. **瀏覽器 SQLite**：使用 [sql.js](https://sql.js.org/)（Emscripten 編譯的 SQLite）直接在瀏覽器中開資料庫
-3. **部署**：GitHub Pages（`dashboard-deploy.yml` 自動部署）
+舊 `/substack-submit/` 保留為同網域相容入口，直接前往 `/dashboard/?view=submit`。
 
-## 頁面
+## 授權不變條件
 
-| 頁面 | 說明 |
-|---|---|
-| 🏠 **首頁** | 系統概覽、上次發布、累計統計、最近 10 條發布 + 素材 |
-| 📋 **發布佇列** | Queue 狀態管理（等待/已發/失敗/過期），可按狀態篩選 |
-| 📚 **歷史存檔** | 已發布貼文卡片列表，附各平台互動數據 |
-| 🗑️ **被擋掉的** | 未通過篩選的素材，可按原因篩選 |
-| 🎭 **寫作風格** | 從 GitHub raw 載入三平台風格指南 |
-| ⚙️ **設定** | 主題權重、Token 用量、Reflection 事件 |
+- Storage key 固定為 `hsintiger_social_ops_owner_token`。
+- 讀取順序為 `localStorage`、`sessionStorage`。
+- 401、網路失敗或 page load 不會刪除 token。
+- 只有 owner 明確按下「鎖定此裝置」才會清除目前裝置的值。
+- Token 只送往既有 Cloudflare Worker，不送往 GitHub API、URL、DOM、log 或 D1。
 
-## 部署
+## 資料來源
 
-每次 push 到 `main` 且 `dashboard/` 目錄有變更時，`dashboard-deploy.yml` 自動部署到 GitHub Pages。
+- 公開：Worker `/health`、GitHub Actions 公開 REST API。
+- Owner protected：Worker `/api/dashboard` 與 `/api/submissions`。
+- `scripts/sync_social_ops.py` 同步版本化 editorial contract、Substack 草稿 metadata、Meta analytics 與 data health 到 D1。
+- 儀表板不接收文章全文、Substack cookie 或平台 credential。
 
-**啟用方式**：
-1. 在 repo Settings → Pages → Source 選「GitHub Actions」
-2. 首次可手動觸發 `Dashboard · Deploy to GitHub Pages` workflow
+缺值必須顯示 `未知`、`STALE` 或 `NOT CONNECTED`；不得自動補成零。
 
 ## 本機開發
 
+從 repository root 啟動靜態 server：
+
 ```bash
-cd news_radar/dashboard
-python3 -m http.server 8080
-# 開瀏覽器 http://localhost:8080
+python -m http.server 8765 --bind 127.0.0.1
 ```
 
-需先讓 `state` branch 有 DB 資料。
+開啟 `http://127.0.0.1:8765/dashboard/`。
 
-## 資料延遲
+## 驗證
 
-DB 由 `full_pipeline.yml` 每 2 小時更新一次並推送至 `state` branch。Dashboard 會自動每隔 5 分鐘重新載入 DB。
+```bash
+node --check dashboard/app.js
+node --check dashboard/ops-core.mjs
+node --test tests/js/dashboard_ops.test.mjs
+python -m pytest tests -q
+```
+
+單元測試不等於 production proof。正式上線需依序完成 D1 migration、Worker deploy、operational sync、Pages deploy，再以實際 owner 授權回讀 protected payload，並驗證桌機與手機版畫面。
+
+## 部署
+
+`.github/workflows/pages-deploy.yml` 會同時組裝根目錄 dashboard、`/dashboard/` 與所有相容 submit 頁。不要單獨部署其中一個資料夾，避免 GitHub Pages 被另一個 artifact 覆蓋。

@@ -1,28 +1,28 @@
 # substack_radar · Pipeline Block Diagram
 
-> AI-readable single source of truth for the twice-daily Substack draft pipeline.
+> AI-readable single source of truth for the noon two-draft Podcast batch + Weekly Substack pipeline.
 > Two representations below: (1) a Mermaid flowchart (renders in GitHub/IDE), and
 > (2) a machine-readable stage I/O contract (YAML). Keep both in sync with the code.
-> Entry point: `python substack_radar/compose.py {morning|evening} --harvest`.
+> Entry point: `python substack_radar/compose.py {morning|evening|podcast|company}`.
 > **Only STAGE 2 consumes LLM tokens; every other stage is deterministic (0 token).**
 
 ## Mermaid flowchart
 
 ```mermaid
 flowchart TD
-    T["⏰ launchd · morning 08:00 / evening 17:00<br/>python substack_radar/compose.py {mode} --harvest"]
+    T["⏰ governed launchd<br/>Podcast batch daily 12:00 / Weekly company Sun 09:00<br/>scripts/substack_editorial_worker.sh {podcast-batch|weekly}"]
     T --> S0
 
     S0["STAGE 0 · HARVEST  ⟨0 token⟩<br/>in: config.yaml (38 feeds) + substack_youtube_sources.yaml<br/>fn: RSS (feedparser+httpx+trafilatura) ; YouTube 字幕 (yt-dlp VTT→text)<br/>out: news_items(status=fetched) → news_radar.db"]
     S0 --> S1
 
-    S1["STAGE 1 · SOURCE PICK (_pick_top_from_pool)  ⟨0 token⟩<br/>in: news_items (morning ≤3d / evening ≤7d) + .substack_used.json<br/>fn: 確定性評分 video+1.5 · feed+1.0 · 新鮮度衰減 · 數字密度×0.15 · 字數甜蜜區+0.5 → 排除已用 → top-1 → 標記used<br/>out: (id, title, clean_markdown, topic_category)<br/>override: --source-file / --news-id / --topic"]
+    S1["STAGE 1 · PODCAST SOURCE PICK  ⟨0 token⟩<br/>in: dedicated YouTube Podcast pool (≤7d) + shared used IDs<br/>fn: 排除已用 → 訪談長度（封頂）+ 新鮮度 → top-1 → 標記used；同一 batch 執行兩次<br/>out: two different (id, title, full transcript, topic_category) picks<br/>12:00 refreshes pool, then sequentially writes both drafts"]
     S1 --> S2
 
-    S2["STAGE 2 · COMPOSE (compose_substack_article)  ★ 唯一 LLM 呼叫 · 吃掉全部 token<br/>in: 素材 + system(精簡soul + voice_anchor) + user(舉一反三步驟 + §13內文視覺標記指令 + JSON schema)<br/>fn: Claude CLI -p · minimal-context · WebSearch/WebFetch 關閉 · 只用離線素材<br/>out: SubstackDraft( title, subtitle, body_markdown[含3-6內文視覺標記], cover_image_prompt, hook_type, metaphor_domain, open_ending_form, reading_time )<br/>→ 成本/tokens 寫入 token_usage_daily"]
+    S2["STAGE 2 · COMPOSE (compose_substack_article)  ★ 唯一 LLM 呼叫<br/>in: 素材 + editorial_voice + Daily/Weekly brief + compact JSON contract<br/>fn: configured writer chain · WebSearch/WebFetch 關閉 · 只用離線素材<br/>out: SubstackDraft(title, subtitle, body_markdown, cover_character, cover_image_prompt)<br/>→ 成本/tokens 寫入 token_usage_daily"]
     S2 --> S3
 
-    S3["STAGE 3 · AUTOFIX + AUDIT  ⟨0 token⟩<br/>in: SubstackDraft<br/>fn: 自動修正明確大陸用語(帶寬→頻寬…) + audit警告(破折號/對仗/填充詞/模糊用語/字數)<br/>out: 清理後 draft + warnings[]"]
+    S3["STAGE 3 · AUTOFIX + AUDIT  ⟨0 token⟩<br/>in: SubstackDraft + EditorialProfile<br/>fn: 台灣用語修正 + profile字數 + 段落/回信問題/舊視覺marker檢查<br/>out: 清理後 draft + warnings[]"]
     S3 --> S4
 
     S4["STAGE 4 · WRITE FILES  ⟨0 token⟩<br/>in: draft + warnings + source<br/>fn: Article_Substack.md(貼上版 + footer + 單一封面prompt) · Article_Full.md(metadata) · metadata.json · cover.png(PIL, 副標換行已修)<br/>out: data/substack_drafts/{date}/{mode}_{slug}/"]
@@ -51,8 +51,8 @@ flowchart TD
 
 ```yaml
 pipeline: substack_radar
-entrypoint: "python substack_radar/compose.py {morning|evening} --harvest"
-schedule: { morning: "08:00", evening: "17:00", via: launchd }
+entrypoint: "python substack_radar/compose.py {morning|evening|podcast|company}"
+schedule: { podcast_batch: "daily 12:00, two sequential drafts", weekly_company: "Sun 09:00 pick then compose", via: governed_launchd }
 token_stages: [stage_2_compose]   # everything else is deterministic / 0 token
 stages:
   - id: 0_harvest
@@ -69,16 +69,16 @@ stages:
     output: ["(id, title, clean_markdown, topic_category)"]
     overrides: ["--source-file", "--news-id", "--topic"]
   - id: 2_compose
-    impl: "substack_radar/composer.py::compose_substack_article → src/llm_brain.py::call_for_json (Claude CLI)"
+    impl: "substack_radar/composer.py::compose_substack_article → src/llm_brain.py::call_for_json"
     token: ALL          # the entire token budget of the pipeline
-    input:  ["picked source text", "system = trimmed soul + voice_anchor", "user = mode hint + 舉一反三 step + §13 inline-image marker spec + JSON schema"]
-    function: "Claude CLI -p, minimal-context flags, WebSearch/WebFetch disabled, writes from supplied material only"
-    output: ["SubstackDraft{title, subtitle, body_markdown(with 3-6 inline image markers), cover_image_prompt, hook_type, metaphor_domain_used, open_ending_form, reading_time_minutes}", "usage → token_usage_daily"]
+    input:  ["picked source text", "system = editorial_voice + selected Daily/Weekly brief", "user = compact task + fact discipline + JSON contract"]
+    function: "configured writer chain (Antigravity first by default), WebSearch/WebFetch disabled, writes from supplied material only"
+    output: ["SubstackDraft{title, subtitle, body_markdown, cover_character, cover_image_prompt}", "usage → token_usage_daily"]
   - id: 3_autofix_audit
     impl: "substack_radar/composer.py::autofix_mainland_terms + audit_substack_draft"
     token: 0
-    input:  ["SubstackDraft"]
-    function: "auto-replace unambiguous mainland terms; warn on dash/parallelism/filler/ambiguous-terms/wordcount"
+    input:  ["SubstackDraft", "EditorialProfile"]
+    function: "auto-replace unambiguous mainland terms; warn on word range, paragraph length, generic/missing reply question, obsolete inline markers, and language issues"
     output: ["cleaned draft", "warnings[]"]
   - id: 4_write_files
     impl: "substack_radar/compose.py::write_* + render_substack_cover"

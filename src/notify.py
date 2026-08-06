@@ -68,8 +68,8 @@ def notify_substack_success(
         draft_url: e.g. https://hsin73.substack.com/publish/post/<id>
                    None if --no-draft mode
         body_markdown: 全文 markdown（含 footer + cover prompts）
-        metadata: dict with keys like 字數 / hook_type / metaphor_domain_used
-                  / reading_time_minutes / source_file（可選）
+        metadata: dict with keys like chinese_chars / word_floor / word_cap /
+                  editorial_profile / source_file（可選）
         audit_warnings: list of warning strings from audit_substack_draft
         onedrive_path: OneDrive autogen folder absolute path（如有 mirror 成功）
         cover_prompts_block: 額外的 cover prompt 區塊（給 email 容易看的）
@@ -256,10 +256,7 @@ def _success_body(
 {audit_block}
 
   字數: {metadata.get('chinese_chars', '?')} (target {metadata.get('word_floor','?')}-{metadata.get('word_cap','?')})
-  Metaphor: {metadata.get('metaphor_domain_used', '?')}
-  Hook type: {metadata.get('hook_type', '?')}
-  Open ending: {metadata.get('open_ending_form', '?')}
-  Reading time: {metadata.get('reading_time_minutes', '?')} min
+  Profile: {metadata.get('editorial_profile', '?')}
 
 🔗 連結
   Substack draft: {url_line}
@@ -289,8 +286,7 @@ def _success_body(
         f"<ul>"
         f"<li>Audit: <b>{len(warnings)} warning(s)</b></li>"
         f"<li>字數: {metadata.get('chinese_chars','?')} (target {metadata.get('word_floor','?')}-{metadata.get('word_cap','?')})</li>"
-        f"<li>Metaphor: <code>{metadata.get('metaphor_domain_used','?')}</code></li>"
-        f"<li>Hook: <code>{metadata.get('hook_type','?')}</code></li>"
+        f"<li>Profile: <code>{metadata.get('editorial_profile','?')}</code></li>"
         f"</ul>"
         f"<h3>🔗 連結</h3>"
         f"<p>Substack: <a href='{url or '#'}'>{url or 'n/a'}</a></p>"

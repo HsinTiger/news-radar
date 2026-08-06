@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -37,6 +39,7 @@ SOCIAL_POLICY_PATH = (
     / "config"
     / "social_automation_policy.json"
 )
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _json(value: str | None, fallback: Any) -> Any:
@@ -172,6 +175,84 @@ def build_posts(conn: sqlite3.Connection, *, full: bool = False) -> list[dict[st
                 "posted_at": row["posted_at"] or None,
                 "created_at": row["generated_at"] or row["posted_at"] or datetime.now(timezone.utc).isoformat(),
                 "updated_at": row["posted_at"] or row["generated_at"] or datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    return result
+
+
+def build_substack_drafts(
+    conn: sqlite3.Connection,
+    *,
+    full: bool = False,
+) -> list[dict[str, Any]]:
+    """Export receipt metadata for scheduled and owner-routed Substack drafts.
+
+    Article bodies, cookies, prompts, and credentials never cross this boundary.
+    A remote draft ID plus drafted_at is the only terminal success evidence.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "news_items" not in tables:
+        return []
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(news_items)")}
+    required = {
+        "id", "title", "url", "source_type", "feed_name", "tags",
+        "substack_written_at", "substack_draft_id", "substack_drafted_at",
+    }
+    if not required <= columns:
+        return []
+    freshness = "" if full else (
+        "AND COALESCE(substack_drafted_at,substack_written_at,'') "
+        ">= datetime('now','-45 day')"
+    )
+    rows = conn.execute(
+        f"""
+        SELECT id,title,url,source_type,feed_name,tags,substack_written_at,
+               substack_draft_id,substack_drafted_at
+          FROM news_items
+         WHERE (substack_written_at IS NOT NULL
+            OR substack_draft_id IS NOT NULL
+            OR substack_drafted_at IS NOT NULL)
+           {freshness}
+         ORDER BY COALESCE(substack_drafted_at,substack_written_at) DESC
+        """
+    ).fetchall()
+    result = []
+    for row in rows:
+        feed = str(row["feed_name"] or "")
+        tags = str(row["tags"] or "")
+        submission_ids = _tag_values(tags, CONTROL_SUBMISSION_PREFIX)
+        if feed == "user_substack" or submission_ids:
+            kind = "submission"
+        elif feed == "YouTube Podcast":
+            kind = "podcast"
+        elif "company" in feed.lower() or "company" in tags.lower():
+            kind = "company"
+        else:
+            kind = "editorial"
+        remote_proven = bool(row["substack_draft_id"] and row["substack_drafted_at"])
+        status = (
+            "draft_created"
+            if remote_proven
+            else "local_written"
+            if row["substack_written_at"]
+            else "unknown"
+        )
+        result.append(
+            {
+                "id": _stable_id("substack", row["id"]),
+                "source_id": row["id"],
+                "submission_id": submission_ids[0] if submission_ids else None,
+                "editorial_kind": kind,
+                "source_type": row["source_type"] or "unknown",
+                "source_title": row["title"] or "(untitled source)",
+                "source_url": row["url"] or None,
+                "remote_draft_id": row["substack_draft_id"] or None,
+                "status": status,
+                "written_at": row["substack_written_at"] or None,
+                "drafted_at": row["substack_drafted_at"] or None,
             }
         )
     return result
@@ -344,6 +425,67 @@ def build_recovery_experiments(conn: sqlite3.Connection) -> list[dict[str, Any]]
     return [dict(row) for row in rows]
 
 
+def _plist_schedule(path: Path) -> dict[str, int]:
+    try:
+        value = plistlib.loads(path.read_bytes()).get("StartCalendarInterval", {})
+        return {str(key): int(item) for key, item in value.items()}
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return {}
+
+
+def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Build the owner-visible contract from the tracked runtime files."""
+    podcast_plist = repo_root / "scripts" / "com.hsin.news-radar.substack-podcast-noon.plist"
+    company_plist = repo_root / "scripts" / "com.hsin.news-radar.company-compose.plist"
+    worker_path = repo_root / "scripts" / "substack_editorial_worker.sh"
+    compose_path = repo_root / "substack_radar" / "compose.py"
+    weekly_path = repo_root / "substack_radar" / "config" / "editorial_weekly.md"
+    worker = worker_path.read_text(encoding="utf-8") if worker_path.exists() else ""
+    compose = compose_path.read_text(encoding="utf-8") if compose_path.exists() else ""
+    weekly = weekly_path.read_text(encoding="utf-8") if weekly_path.exists() else ""
+    window_match = re.search(r"pick_podcast_interview\(window_days: int = (\d+)\)", compose)
+    range_match = re.search(r"長度：([\d,]+)–([\d,]+)", weekly)
+    target_chars = (
+        [int(range_match.group(1).replace(",", "")), int(range_match.group(2).replace(",", ""))]
+        if range_match
+        else [2800, 4200]
+    )
+    podcast_schedule = _plist_schedule(podcast_plist)
+    company_schedule = _plist_schedule(company_plist)
+    podcast_time = f"{podcast_schedule.get('Hour', 12):02d}:{podcast_schedule.get('Minute', 0):02d}"
+    company_day = "Sun" if company_schedule.get("Weekday", 0) == 0 else f"weekday-{company_schedule.get('Weekday')}"
+    company_time = f"{company_day} {company_schedule.get('Hour', 9):02d}:{company_schedule.get('Minute', 0):02d}"
+    return {
+        "schema_version": 1,
+        "publication_mode": "draft_only",
+        "podcast": {
+            "local_time": podcast_time,
+            "drafts": worker.count("substack_radar/compose.py podcast"),
+            "candidate_window_days": int(window_match.group(1)) if window_match else 7,
+            "depth": "weekly",
+            "target_chars": target_chars,
+        },
+        "company": {
+            "local_time": company_time,
+            "drafts": 1,
+            "pick_and_compose": (
+                worker.find("scripts/pick_company_candidate.py") >= 0
+                and worker.find("scripts/pick_company_candidate.py")
+                < worker.find("substack_radar/compose.py company")
+            ),
+            "depth": "weekly",
+            "target_chars": target_chars,
+        },
+        "writer": {
+            "positioning": "可信任的真人編輯式深度分析",
+            "podcast_method": "從一個訪談交鋒延伸成獨立問題，不摘要整集",
+            "evidence_boundary": "區分素材事實、來賓主張、作者推論與未知",
+            "source_strategy": "逐字稿加書面深度報告作第二視角",
+            "ending": "以本文特有的具體回信問題收尾",
+        },
+    }
+
+
 def build_automation_state() -> list[dict[str, Any]]:
     raw_mode = os.environ.get("AUTOMATION_MODE")
     raw_processor = os.environ.get("SUBMISSION_PROCESSOR_MODE")
@@ -363,7 +505,11 @@ def build_automation_state() -> list[dict[str, Any]]:
             "mode": mode,
             "submission_processor": processor,
             "source": "github_repository_variables",
-            "detail": "Synced by canonical news-radar operational workflow",
+            "detail": json.dumps(
+                {"schema_version": 1, "substack": build_editorial_contract()},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     ]
@@ -1049,6 +1195,7 @@ def main() -> int:
         groups = {
             "automation": build_automation_state(),
             "posts": build_posts(conn, full=args.full),
+            "substack_drafts": build_substack_drafts(conn, full=args.full),
             "engagement": build_engagement(conn, full=args.full),
             "quality": build_quality(conn, full=args.full),
             "experiments": build_recovery_experiments(conn),

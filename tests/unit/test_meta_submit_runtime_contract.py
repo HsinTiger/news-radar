@@ -27,33 +27,38 @@ def test_direct_publish_sync_does_not_invent_submission_foreign_keys() -> None:
 
 def test_submit_ui_uses_runtime_instead_of_a_permanent_pause() -> None:
     page = (ROOT / "substack-submit" / "index.html").read_text(encoding="utf-8")
+    dashboard = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+    app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
-    assert "async function loadRuntime()" in page
-    assert "publishNowInput.disabled = !metaRuntime.ready" in page
-    assert "automation.meta_publish_now_ready === true" in page
+    assert '../dashboard/?view=submit' in page
+    assert 'name="meta-mode" value="publish_now"' in dashboard
+    assert "meta_publish_now_ready === true" in app
+    assert "publishInput.disabled = !ready" in app
     assert "目前正式發布仍為 paused" not in page
-    assert "品質檢查後立即發布到 Meta" in page
+    assert "立即發布到 Meta" in app
 
 
 def test_substack_ui_defaults_to_the_remote_proven_fast_lane() -> None:
     page = (ROOT / "substack-submit" / "index.html").read_text(encoding="utf-8")
+    dashboard = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+    core = (ROOT / "dashboard" / "ops-core.mjs").read_text(encoding="utf-8")
 
-    assert 'name="substack-mode" value="draft_priority" checked' in page
-    assert 'name="substack-mode" value="draft" checked' not in page
-    assert "已有遠端實證的快速通道" in page
+    assert '../dashboard/?view=submit' in page
+    assert 'name="target" value="substack" checked' in dashboard
+    assert 'target === "substack" ? "draft_priority" : metaMode' in core
+    assert "建立優先草稿，不自動發布" in dashboard
 
 
 def test_dashboard_classifies_scheduler_delivery_against_expected_ticks() -> None:
-    source = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = (ROOT / "dashboard" / "ops-core.mjs").read_text(encoding="utf-8")
+    app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
-    assert 'scheduler_delivery: "GitHub 排程送達"' in source
-    assert 'scheduler_watchdog_dispatch: "Cloudflare watchdog 派送"' in source
-    assert 'scheduler_watchdog_delivery: "Cloudflare watchdog 到達 Actions"' in source
-    assert "const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13]" in source
-    assert "scheduler_delivery: { minute:17, toleranceMs:4 * 60 * 60 * 1000 }" in source
-    assert "function ensureExpectedSchedulerHealth(rows,nowMs=Date.now())" in source
-    assert 'detail:"heartbeat_not_persisted"' in source
+    assert "SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13]" in source
+    assert "scheduler_delivery: Object.freeze({minute: 17" in source
+    assert "function ensureExpectedSchedulerHealth(" in source
+    assert 'detail: "heartbeat_not_persisted"' in source
     assert 'waiting ? "unknown" : "degraded"' in source
+    assert "ensureExpectedSchedulerHealth(state.dashboard.data_health" in app
 
 
 def test_cloudflare_watchdog_dispatches_only_the_governed_scheduler() -> None:
@@ -71,8 +76,9 @@ def test_cloudflare_watchdog_dispatches_only_the_governed_scheduler() -> None:
     assert "watchdog_dispatch_id: dispatchId" in worker
     assert '"scheduler_watchdog_dispatch"' in worker
     assert "env.GITHUB_ACTIONS_TOKEN" in worker
-    assert "function reconcileWatchdogLineage(rows)" in dashboard
-    assert "dispatch_lineage_mismatch" in dashboard
+    core = (ROOT / "dashboard" / "ops-core.mjs").read_text(encoding="utf-8")
+    assert "function reconcileWatchdogLineage(rows)" in core
+    assert "dispatch_lineage_mismatch" in core
 
 
 def test_publish_now_setup_job_has_no_canonical_or_meta_write_authority() -> None:

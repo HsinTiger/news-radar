@@ -361,6 +361,38 @@ def _agy_home_dirs() -> list:
     return [d.strip() for d in raw.split(",")]
 
 
+def _compact_schema_for_prompt(response_model: Type[T]) -> tuple[str, tuple[str, ...]]:
+    """Build the small, writer-visible schema used by the Antigravity CLI.
+
+    ``SkipJsonSchema`` fields are pipeline metadata, so derive visibility and
+    requiredness from Pydantic's public JSON schema instead of ``model_fields``.
+    """
+    import typing as _typing
+
+    public_schema = response_model.model_json_schema()
+    visible_names = tuple(public_schema.get("properties", {}).keys())
+    required_set = set(public_schema.get("required", ()))
+    field_descriptions = []
+    for name in visible_names:
+        field = response_model.model_fields[name]
+        core = field.annotation
+        args = _typing.get_args(core)
+        if args and type(None) in args:
+            core = next((arg for arg in args if arg is not type(None)), str)
+            args = _typing.get_args(core)
+        if args and all(isinstance(arg, str) for arg in args):
+            spec = "|".join(args)
+        elif core is int:
+            spec = "整數"
+        else:
+            spec = "字串"
+        optional = "" if name in required_set else "（可省略）"
+        field_descriptions.append(f'  "{name}": <{spec}>{optional}')
+    compact = "{\n" + ",\n".join(field_descriptions) + "\n}"
+    required = tuple(name for name in visible_names if name in required_set)
+    return compact, required
+
+
 async def _try_agy(
     *,
     system: str,
@@ -375,34 +407,17 @@ async def _try_agy(
     model_name = model_name or AGY_MODEL
     # agy 的 -p 約 32K 字截斷（2026-06-21 實測：company prompt 34.5K → 後段被截、agy 看不到任務）。
     # 故用「精簡欄位表」取代冗長的 pydantic json schema dump（5.5K→~0.6K），欄位說明本就在 user prompt。
-    import typing as _typing
-    _fdesc = []
-    for _n, _f in response_model.model_fields.items():
-        _core = _f.annotation
-        _args = _typing.get_args(_core)
-        if _args and type(None) in _args:  # 解 Optional
-            _core = next((a for a in _args if a is not type(None)), str)
-            _args = _typing.get_args(_core)
-        if _args and all(isinstance(a, str) for a in _args):
-            _spec = "|".join(_args)
-        elif _core is int:
-            _spec = "整數"
-        else:
-            _spec = "字串"
-        _fdesc.append(f'  "{_n}": <{_spec}>{"" if _f.is_required() else "（可省略）"}')
-    schema_compact = "{\n" + ",\n".join(_fdesc) + "\n}"
-    required = ", ".join(response_model.model_fields.keys())
-    # 把「任務 + 必填欄位 + 禁抄範例」放在最後（最高注意力）。
+    schema_compact, required_names = _compact_schema_for_prompt(response_model)
+    required = ", ".join(required_names) or "（無）"
+    # 把任務與目前 schema 的必填欄位放在最後（最高注意力）。
     full_prompt = (
         f"{system}\n\n"
         f"輸出 JSON 欄位表（值照欄位說明寫；<a|b|c> 表示三選一）：\n{schema_compact}\n\n"
         f"--- 任務素材 / USER PROMPT ---\n{prompt}\n\n"
         f"=== 最終指令（最高優先，覆蓋以上任何衝突）===\n"
-        f"1. 只根據上面『任務素材 / USER PROMPT』指定的那一篇來寫；**嚴禁照抄或改寫『聲音錨點』、"
-        f"§6 標題公式庫等任何示範/範例文章**——那些只是學語氣用的，不是你要寫的主題。\n"
+        f"1. 只根據上面『任務素材 / USER PROMPT』指定的那一篇來寫；不要把寫作規則或輸出示例當成文章內容。\n"
         f"2. 只輸出一個 raw JSON 物件（無 markdown 圍欄、無任何說明或思考過程）。\n"
-        f"3. JSON **必含 schema 全部必填欄位**：{required}。其中 hook_type / metaphor_domain_used / "
-        f"open_ending_form 必為 schema 列舉值之一、reading_time_minutes 為整數，缺一不可。"
+        f"3. JSON **必含 schema 全部必填欄位**：{required}。所有欄位遵守上方標示的型別與列舉值。"
     )
     cmd = [
         AGY_BIN, "-p", full_prompt,

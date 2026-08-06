@@ -1,15 +1,13 @@
 """
-News Radar · Substack Composer (Phase 1 — long-form Visionary Analyst)
-======================================================================
+News Radar · Substack Editorial Composer
+=========================================
 
 為什麼獨立於 src/composer.py（三平台社群文）：
 
-    1. 規格根本不同——三平台合計 ~2000 字（FB 700 + IG 700 + TH 480），
-       Substack 單篇 1500 字。共用 system_instruction 會互相妥協。
-    2. 語氣根本不同——Substack 是「深夜導師」的長文 essay，社群是「白天
-       通勤路上 90 秒」的短打報導。
-    3. 校驗根本不同——Substack 要嚴格 1400–1600 字檢查 + Anti-Conclusion
-       結尾形式檢查 + Metaphor domain 多樣性檢查，這些校驗社群版用不到。
+    1. 規格根本不同——三平台是短貼文，Substack 分為 Daily 1400–2200 字
+       與 Weekly 2800–4200 字。共用 system_instruction 會互相妥協。
+    2. 語氣根本不同——Substack 是有人味的分析信，社群是 90 秒短打。
+    3. 校驗根本不同——Substack 要檢查 profile 字數、段落、證據邊界與回信問題。
 
 落地介面：
     draft = await compose_substack_article(
@@ -18,25 +16,26 @@ News Radar · Substack Composer (Phase 1 — long-form Visionary Analyst)
         mode="morning",      # "morning"(type a 深度新聞) or "evening"(type b 獨立選題)
         topic_category="ai_model",  # 對應 topic_taxonomy.py 的 category_id
         editorial_note="",
-        recent_metaphor_domains=[],  # 最近 7 篇用過的 metaphor domains（避免重複）
+        editorial_profile="auto",   # morning/evening=daily; podcast/company=weekly
     )
     if draft is None:
         # LLM 兩條路都失敗，呼叫端 skip 並通知 user
         return
     # 用 draft.title / draft.body_markdown / draft.cover_prompt ...
 
-Anti-Conclusion enforcement：本檔額外做後置 regex 檢查，命中黑名單 →
-log warning（不自動 reject，但 CLI 端會把這個 warning 顯示給 user）。
+後置 audit 只做可機械判斷的檢查並輸出 warning；文章判斷仍由 owner review。
 """
 
 from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from src.llm_brain import call_for_json
 
@@ -50,8 +49,8 @@ class SubstackDraft(BaseModel):
 
     title: str = Field(
         ...,
-        description="文章標題＝一個 HOOK，**≤15 字**（吸睛 > 講完）。數字/公司名/結論全讓給副標與內文，標題只留讓人想點的那一下。一個焦點、口語、一個畫面字；**禁用冒號拼兩段**（冒號只准掛人名）。詳見 §6。",
-        min_length=8,
+        description="文章標題，≤15 字，只承諾一件事；禁用冒號拼兩個焦點（人物訪談除外）。",
+        min_length=4,
         max_length=24,
     )
     subtitle: str = Field(
@@ -63,43 +62,8 @@ class SubstackDraft(BaseModel):
     body_markdown: str = Field(
         ...,
         description=(
-            "本文正體中文 markdown。目標字數由 env SUBSTACK_WORD_CAP 控制（預設"
-            " 2000–3500 字，含全形標點不含 hashtag）。長文允許多層展開、"
-            "deep-research 結果可以攤開細節，但仍受反 AI 味與 Anti-Conclusion 規範。"
-            "使用 §4 Mode A 結構（▉ 為小節錨點）或 Mode B 敘事結構。"
-            "Anti-Conclusion：結尾必須是提問／懸念／更深觀察，禁止『總而言之』收尾。"
-        ),
-    )
-    metaphor_domain_used: Literal[
-        "signal_processing",
-        "music_theory",
-        "contrarian_markets",
-        "cinematic_pacing",
-        "street_culture",
-        "architecture_space",
-        "none",
-    ] = Field(
-        ...,
-        description="本篇核心比喻 domain（最多一個、點到為止）。**完全不靠比喻就填 'none'**（鼓勵——比喻過多會文謅謅）。",
-    )
-    hook_type: Literal[
-        "contrarian_question",
-        "contrarian_reframe",
-        "concrete_punch",
-        "narrative_hook",
-        "provocative_statement",
-        "insider_question",
-    ] = Field(
-        ...,
-        description=(
-            "標題 hook 型態。嚴格輪流使用不同類型，不可連續兩篇同型態。\n"
-            '  "contrarian_question": 反直覺問句（有時自然產生為什麼，但不必每篇如此）\n'
-            '  "contrarian_reframe": 把常識翻轉成全新框架\n'
-            '  "concrete_punch": 以一個具體數字/日期/事實直接開場，不做鋪陳\n'
-            '  "narrative_hook": 以一段簡潔的觀察/矛盾場景切入，不是問句\n'
-            '  "provocative_statement": 一個看起來不對但很可能正確的斷言\n'
-            '  "insider_question": 把讀者放在決策者位置——"你要怎麼選"類的問句\n'
-            "**不要連續兩篇用同一種 hook_type。**"
+            "台灣繁體中文 markdown。字數與深度由 Daily/Weekly profile 決定；"
+            "使用內容型小標與短段落，清楚區分證據、推論、未知，最後提出具體回信問題。"
         ),
     )
     cover_character: Optional[Literal["robot", "owl"]] = Field(
@@ -120,24 +84,7 @@ class SubstackDraft(BaseModel):
             "留空也可，Python 會用角色招牌動作 + 標題補一張。"
         ),
     )
-    chart_prompt: Optional[str] = Field(
-        default=None,
-        description=(
-            "（可選）機制解構示意圖／數據圖的提示詞，位於文章中段轉折處。"
-            "如果文章主題天生沒有可視化的數據／機制，留空。"
-        ),
-    )
-    reading_time_minutes: int = Field(
-        ...,
-        ge=4,
-        le=7,
-        description="估算閱讀時長（分鐘）。目標 5 分鐘。",
-    )
-    open_ending_form: Literal["question", "paradox", "deeper_observation", "silent_hint"] = Field(
-        ...,
-        description="結尾的開放形式。對應 §7 四種允許句式。",
-    )
-    generated_by: Optional[str] = Field(
+    generated_by: SkipJsonSchema[Optional[str]] = Field(
         default=None,
         description="（非 LLM 欄位）pipeline 在生成後填入的『產文路線/模型』標記。LLM 不要填，留 null。",
     )
@@ -164,110 +111,63 @@ class SubstackDraft(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _heal_metadata(cls, v):
-        """metadata 自我修復（2026-06-21）：agy 等模型偶爾只給 title/subtitle/body、漏掉這 4 個
-        列舉/數值欄。它們是 housekeeping、不是文章內容 → 缺或非法就補預設，別讓整篇出稿失敗。"""
+        """Normalize the optional cover character without rejecting the article."""
         if not isinstance(v, dict):
             return v
-        _META = {"signal_processing", "music_theory", "contrarian_markets", "cinematic_pacing",
-                 "street_culture", "architecture_space", "none"}
-        _HOOK = {"contrarian_question", "contrarian_reframe", "concrete_punch",
-                 "narrative_hook", "provocative_statement", "insider_question"}
-        _END = {"question", "paradox", "deeper_observation", "silent_hint"}
-        if v.get("metaphor_domain_used") not in _META:
-            v["metaphor_domain_used"] = "none"
-        if v.get("hook_type") not in _HOOK:
-            v["hook_type"] = "contrarian_reframe"
-        if v.get("open_ending_form") not in _END:
-            v["open_ending_form"] = "question"
         cc = v.get("cover_character")
         if isinstance(cc, str):
             cc = cc.strip().lower()
         v["cover_character"] = cc if cc in {"robot", "owl"} else None  # 非法/缺 → Python 依 topic 補
-        rt = v.get("reading_time_minutes")
-        if not isinstance(rt, int):
-            try:
-                v["reading_time_minutes"] = int(float(rt))
-            except Exception:
-                body = v.get("body_markdown") or ""
-                v["reading_time_minutes"] = max(1, len(body) // 600)
         return v
 
 
 # --------------------------------------------------------------------------
-# Soul loading
+# Editorial profiles
 # --------------------------------------------------------------------------
 
-CONFIG_DIR = Path(__file__).resolve().parent / "config"  # substack/config (2026-05-30 moved)
-SOUL_PATH = CONFIG_DIR / "substack_soul.md"
-COMPANY_SOUL_PATH = CONFIG_DIR / "company_analysis_soul.md"  # company mode 專屬方法論
-VOICE_ANCHOR_PATH = CONFIG_DIR / "substack_voice_anchor.md"
-MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"  # 曼報 KB 蒸餾的分析框架（唯讀副本）
-# company mode 主要吃四段式拆解；另外兩個框架是它判定「不適用」時的去處，
-# 一併載入才有東西可換。順序即注入順序。
-COMPANY_FRAMEWORKS = ("company-teardown.md", "capital-allocation-engine.md",
-                      "cycle-and-capital-flow.md", "counter-case-construction.md")
+CONFIG_DIR = Path(__file__).resolve().parent / "config"
+COMMON_EDITORIAL_PATH = CONFIG_DIR / "editorial_voice.md"
+DAILY_EDITORIAL_PATH = CONFIG_DIR / "editorial_daily.md"
+WEEKLY_EDITORIAL_PATH = CONFIG_DIR / "editorial_weekly.md"
 
 
-def load_substack_soul() -> str:
-    """Single source of truth — config/substack_soul.md。"""
-    if not SOUL_PATH.exists():
-        raise FileNotFoundError(
-            f"substack_soul.md not found at {SOUL_PATH}. "
-            "Run from news_radar repo root, or check config/ exists."
-        )
-    return SOUL_PATH.read_text(encoding="utf-8")
+@dataclass(frozen=True)
+class EditorialProfile:
+    name: Literal["daily", "weekly"]
+    word_floor: int
+    word_cap: int
+    reading_minutes: str
+    brief_path: Path
 
 
-def load_company_soul() -> str:
-    """company mode 的分析方法論（疊在 substack_soul 之上）。缺檔回空字串。"""
-    try:
-        return COMPANY_SOUL_PATH.read_text(encoding="utf-8")
-    except Exception:
-        return ""
+DAILY_PROFILE = EditorialProfile("daily", 1400, 2200, "6–8", DAILY_EDITORIAL_PATH)
+WEEKLY_PROFILE = EditorialProfile("weekly", 2800, 4200, "12–16", WEEKLY_EDITORIAL_PATH)
 
 
-def load_manny_frameworks() -> str:
-    """曼報 KB 蒸餾的分析框架（manny-li-pro-kb skills/ 的唯讀副本）。
-
-    company_analysis_soul.md 講的是「這個專欄怎麼寫」（體例、語氣、篇幅）；
-    這裡疊的是「一家公司怎麼拆」（四段式、複利引擎四閘門、資金四終點）。
-    兩者互補，故疊加而非取代。
-
-    缺檔回空字串——框架是加分項，不該讓寫稿因為副本沒同步就整個停擺。
-    副本由上游 manny-li-pro-kb 的 skills/sync-skills.sh 產生，請勿在此編輯。
-    """
-    if not MANNY_SKILLS_DIR.is_dir():
-        return ""
-    blocks = []
-    for name in COMPANY_FRAMEWORKS:
-        try:
-            text = (MANNY_SKILLS_DIR / name).read_text(encoding="utf-8").strip()
-        except Exception:
-            continue
-        if text:
-            blocks.append(text)
-    if not blocks:
-        return ""
-    header = (
-        "===== 分析框架層（來自曼報 Pro 知識庫的蒸餾，manny-li-pro-kb skills/）=====\n"
-        "以下是「怎麼看」的框架，不是「看到什麼」的內容。三條硬規則：\n"
-        "1. 框架的舉例（Roper、Bending Spoons、薩莉亞等）只是示範拆法，"
-        "絕對不可以當成本期標的的事實寫進文章。本期一切數據以素材為準。\n"
-        "2. 每個框架都有「什麼情況下會失效」一節。若標的不符合前提，"
-        "正確做法是明說不適用並改用另一個框架，不要硬套。\n"
-        "3. 引用曼報觀點時要標明來源；不可整段照抄框架文字充當原創分析。\n"
-    )
-    return header + "\n\n" + "\n\n---\n\n".join(blocks)
+def resolve_editorial_profile(
+    mode: str,
+    *,
+    override: Optional[str] = None,
+    has_deep_bundle: bool = False,
+) -> EditorialProfile:
+    """Resolve writing depth without changing the source-selection mode."""
+    if override and override != "auto":
+        if override not in {"daily", "weekly"}:
+            raise ValueError(f"unknown editorial profile: {override}")
+        return DAILY_PROFILE if override == "daily" else WEEKLY_PROFILE
+    if has_deep_bundle or mode in {"podcast", "company"}:
+        return WEEKLY_PROFILE
+    return DAILY_PROFILE
 
 
-def load_voice_anchor() -> str:
-    """Voice exemplars distilled from Hsin's best articles. Teaches the model the
-    TARGET voice by example (not by rule) — the lever against stiff / AI-sounding
-    prose. Optional: returns '' if the file is absent."""
-    try:
-        return VOICE_ANCHOR_PATH.read_text(encoding="utf-8") if VOICE_ANCHOR_PATH.exists() else ""
-    except Exception:
-        return ""
+def load_editorial_brief(profile: EditorialProfile) -> str:
+    """Load only the common voice plus the selected cadence brief."""
+    missing = [path for path in (COMMON_EDITORIAL_PATH, profile.brief_path) if not path.exists()]
+    if missing:
+        raise FileNotFoundError("missing editorial brief: " + ", ".join(str(path) for path in missing))
+    common = COMMON_EDITORIAL_PATH.read_text(encoding="utf-8").strip()
+    cadence = profile.brief_path.read_text(encoding="utf-8").strip()
+    return f"{common}\n\n{cadence}"
 
 
 # --------------------------------------------------------------------------
@@ -292,7 +192,7 @@ _AI_FILLER_WORDS = ["其實", "很清楚", "很簡單"]
 
 # 大陸用法 banned list — 2026-05-12 加入；2026-06-02 抽到 src/locale_tw.py 共用
 # （substack 與 meta 三平台同表）。命中時為 warning（非 hard reject）。
-# 完整對應表見 config/substack_soul.md §11。排序：(found, replacement, category)
+# Human-readable mapping lives in config/substack_reference.md.
 from src.locale_tw import MAINLAND_TERMS as _MAINLAND_TERMS, to_traditional
 
 
@@ -315,9 +215,8 @@ def autofix_mainland_terms(draft: "SubstackDraft") -> List[str]:
     """Deterministically replace unambiguous mainland terms in title/subtitle/body.
 
     2026-05-30 (Optimization B): the full 大陸→台灣 lookup table used to live in
-    substack_soul.md §11 and was shipped to the LLM on every call (~hundreds of
-    tokens of pure reference). That table is now enforced here at zero token cost
-    so the soul prompt can drop it.
+    The lookup table is enforced here at zero token cost rather than being sent
+    to the writer on every call.
 
     Split rule:
       - replacement WITHOUT "／" → unambiguous → auto-replace here.
@@ -358,13 +257,12 @@ def autofix_mainland_terms(draft: "SubstackDraft") -> List[str]:
 
 def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
     """Convert excess 破折號 (em-dashes —/―) in body PROSE to 逗號 — a deterministic
-    de-AI cleanup (the model over-uses em-dashes; soul 限 ≤1). 2026-05-30.
+    cleanup for a common model habit.
 
     Discipline:
       - Each maximal run of em-dashes (「—」「——」…) counts as ONE dash unit.
-      - Keep the first `keep` units (soul allows ≤1); convert the rest to 「，」.
-      - **Skip blockquote lines** (start with 「>」) so §13 inline-image markers and
-        the footer (which carry English gen-prompts / hyphens) are left untouched.
+      - Keep the first `keep` units; convert the rest to 「，」.
+      - Skip blockquote lines so deterministic footer/cover instructions stay untouched.
       - Collapse any 「，，」 the swap produces.
     Mutates draft.body_markdown; returns one fix message (or []).
     """
@@ -381,7 +279,7 @@ def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
 
     out_lines = []
     for line in draft.body_markdown.split("\n"):
-        if line.lstrip().startswith(">"):   # §13 marker / footer blockquote → leave alone
+        if line.lstrip().startswith(">"):   # deterministic footer / cover blockquote
             out_lines.append(line)
             continue
         new_line = re.sub(r"[—―]+", _repl, line)
@@ -411,7 +309,7 @@ def autofix_cjk_spacing(draft: "SubstackDraft") -> List[str]:
 
     紀律（與 autofix_dashes 同精神）：
       - 逐行處理；**跳過 fenced code block（``` 圍起）與 blockquote 行（>）**，
-        §13 視覺標記/footer 的英文 prompt 與 URL 不動。
+        deterministic footer/cover blockquote 的英文 prompt 與 URL 不動。
       - 行內先把 code span / markdown 連結 / 裸 URL 抽成 placeholder 再補空格，
         還原後不會在網址或連結裡塞空格。
       - 全形標點不在 CJK 表意文字範圍內，故「中，A」「）GPT」不會被加空格。
@@ -454,13 +352,26 @@ def autofix_cjk_spacing(draft: "SubstackDraft") -> List[str]:
     return []
 
 
-# Word cap envelope (2026-05-12 升級):
-#   Hsin 把 1500 字 hard cap 撤掉，因為 deep-research 後的素材值得長文展開。
-#   新預設 3500 字上限，下限按 60% 比例縮為 ~2000 字（避免短打硬填到上限）。
-#   可由 env override：SUBSTACK_WORD_CAP=N。
-#   下限自動 = max(1200, cap * 0.55)，讓使用者只需設一個值。
-SUBSTACK_WORD_CAP = int(os.getenv("SUBSTACK_WORD_CAP", "3500"))
-SUBSTACK_WORD_FLOOR = max(1200, int(SUBSTACK_WORD_CAP * 0.55))
+# Backward-compatible exports for old callers. New composition and audit code
+# always use the resolved EditorialProfile instead of one global envelope.
+SUBSTACK_WORD_FLOOR = DAILY_PROFILE.word_floor
+SUBSTACK_WORD_CAP = DAILY_PROFILE.word_cap
+
+
+def word_range_for(profile: EditorialProfile) -> tuple[int, int]:
+    """Return the cadence range, with an explicit emergency cap override.
+
+    SUBSTACK_DAILY_WORD_CAP / SUBSTACK_WEEKLY_WORD_CAP are preferred. The old
+    SUBSTACK_WORD_CAP remains a compatibility fallback for installed workers.
+    """
+    raw_cap = os.getenv(f"SUBSTACK_{profile.name.upper()}_WORD_CAP") or os.getenv(
+        "SUBSTACK_WORD_CAP"
+    )
+    if not raw_cap:
+        return profile.word_floor, profile.word_cap
+    cap = max(1200, int(raw_cap))
+    floor = min(profile.word_floor, max(1200, int(cap * 0.65)))
+    return floor, cap
 
 
 def _count_chinese_chars(text: str) -> int:
@@ -473,7 +384,11 @@ def _count_chinese_chars(text: str) -> int:
     )
 
 
-def audit_substack_draft(draft: SubstackDraft) -> List[str]:
+def audit_substack_draft(
+    draft: SubstackDraft,
+    *,
+    profile: EditorialProfile = DAILY_PROFILE,
+) -> List[str]:
     """Return list of soft-fail warnings (empty = clean).
 
     呼叫端決定要 hard-reject 還是只 log warning。CLI 預設只 log。
@@ -481,20 +396,54 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
     warnings: List[str] = []
     body = draft.body_markdown
 
-    # 1. 字數 — 上下限由 SUBSTACK_WORD_CAP env 控制
+    word_floor, word_cap = word_range_for(profile)
+
+    # 0. 列表頁承諾：短標題只承諾一件事，副標不能只是重複一次。
+    if len(draft.title) > 15:
+        warnings.append(f"[標題過長] {len(draft.title)} 字 > 15；請只留一個閱讀承諾。")
+    if any(mark in draft.title for mark in ("：", ":")):
+        warnings.append("[標題雙焦點] 標題含冒號；除人物訪談外，通常代表塞了兩件事。")
+    if draft.title.strip("？?。！! ") in draft.subtitle:
+        warnings.append("[副標重複] 副標應補具體反差或 payoff，不要重述主標。")
+
+    # 1. 字數 — Daily / Weekly 各自有獨立 envelope。
     n = _count_chinese_chars(body)
-    if n < SUBSTACK_WORD_FLOOR:
+    if n < word_floor:
         warnings.append(
-            f"[字數低於下限] {n} 字 < {SUBSTACK_WORD_FLOOR}。需擴寫。"
-            f" (上限 {SUBSTACK_WORD_CAP}，env: SUBSTACK_WORD_CAP)"
+            f"[字數低於下限] {n} 字 < {word_floor}（{profile.name}）。需補證據或刪題。"
         )
-    elif n > SUBSTACK_WORD_CAP:
+    elif n > word_cap:
         warnings.append(
-            f"[字數超過上限] {n} 字 > {SUBSTACK_WORD_CAP}。需精煉。"
-            f" (env: SUBSTACK_WORD_CAP)"
+            f"[字數超過上限] {n} 字 > {word_cap}（{profile.name}）。需精煉。"
         )
 
-    # 2. Anti-Conclusion 收尾
+    # 1b. 2026-08-05 已移除內文生圖。舊 marker 留在稿內只會把內部製程
+    #     洩漏給讀者，也不會再被替換成圖片。
+    if any(marker in body for marker in ("🖼 視覺位置", "Path B", "Path C", "chart_prompt")):
+        warnings.append("[舊內文視覺標記] writer 仍輸出已移除的生圖／搜尋指令，必須刪除。")
+
+    # 1c. Substack 是 email 關係，不用籠統 CTA 收尾。問題必須留在最後一屏。
+    tail = body.strip()[-400:]
+    if "？" not in tail and "?" not in tail:
+        warnings.append("[缺少具體回信問題] 最後一屏沒有可讓讀者真正回覆的問題。")
+    if any(generic in tail for generic in ("歡迎留言", "你怎麼看", "大家怎麼看")):
+        warnings.append("[空泛互動問題] 請改問本文特有的取捨、經驗或觀測訊號。")
+
+    # 1d. 手機閱讀：一段只傳達一件事。Markdown blockquote / list 不在此限。
+    for paragraph in re.split(r"\n\s*\n", body):
+        compact = paragraph.strip()
+        if compact and not compact.startswith((">", "- ", "* ", "#")) and len(compact) > 320:
+            warnings.append("[段落過長] 有單段超過 320 字，請拆成一段一件事。")
+            break
+
+    opening = re.sub(r"[#>*_`\s]", "", body[:160])
+    if any(
+        generic in opening
+        for generic in ("在這個快速變動的時代", "在這個充滿變化的時代", "隨著科技快速發展")
+    ):
+        warnings.append("[空泛開場] 前兩段應交代具體背景與本文問題，不要用時代感暖場。")
+
+    # 2. Generic closing blacklist
     last_para = body.strip().split("\n")[-1] if body.strip() else ""
     for pat in _BAD_CLOSING_PATTERNS:
         if pat in last_para[-200:]:
@@ -514,7 +463,7 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
             warnings.append(f"[填充詞濫用] 『{filler}』出現 {c} 次 (≥ 2)。重寫")
 
     # 5. 破折號 — 最多 1 次。只數「內文 (非 blockquote) 的破折號單位」，與
-    #    autofix_dashes 同範圍同計法：§13 視覺標記/footer 的英文 prompt 含「—」不算，
+    #    autofix_dashes 同範圍同計法：footer/cover blockquote 的英文 prompt 含「—」不算，
     #    舊版 count("——")+count("—") 掃全文又重複計數，會誤報。
     _prose = "\n".join(l for l in body.split("\n") if not l.lstrip().startswith(">"))
     dash_count = len(re.findall(r"[—―]+", _prose))
@@ -525,10 +474,7 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
     if re.search(r"不是.{1,15}[、，,]\s*[而是是].{1,15}", body):
         warnings.append("[對仗濫用] 發現『不是 X、是 Y』對仗句。改寫成『而』+ 具體脈絡。")
 
-    # 7. 同篇重複用同 domain（透過 cover_image_prompt 偵測）
-    #   這條由 caller 在 history 比對更準，這裡略
-
-    # 8. 大陸用法檢查 (2026-05-12) — soul.md §11 規範
+    # 7. 大陸用法檢查（human-readable mapping: substack_reference.md）
     # title + subtitle + body 都掃。命中為 warning (false-positive 可能存在,
     # 例如「質量」在物理脈絡是合法的；作者看到警告自己判斷)。
     full_text = f"{draft.title}\n{draft.subtitle}\n{body}"
@@ -553,34 +499,25 @@ def audit_substack_draft(draft: SubstackDraft) -> List[str]:
 # Prompt builder
 # --------------------------------------------------------------------------
 
-def _build_system_instruction(soul: str) -> str:
-    anchor = load_voice_anchor()
-    anchor_block = (
-        f"\n=== 聲音錨點（用『範例』學聲音，比規則更重要）===\n{anchor}\n"
-        if anchor else ""
-    )
+def _build_system_instruction(profile: EditorialProfile) -> str:
+    word_floor, word_cap = word_range_for(profile)
+    brief = load_editorial_brief(profile)
     return (
-        "你是 News Radar 的 Substack 長文寫手——Visionary Analyst。\n"
-        f"輸出 {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字長文，採用『硬商業邏輯 × 暖哲學靈魂』。\n"
-        "\n"
-        "=== 唯一靈魂源（必須完整內化）===\n"
-        f"{soul}\n"
-        f"{anchor_block}"
-        "\n"
-        "=== 重申最高優先級規則 ===\n"
-        "1. §0 品牌宣言：替讀者咀嚼。讀完累 → 重寫。\n"
-        "2. §2.6 Anti-Conclusion：結尾禁『總而言之』，必須提問／懸念。\n"
-        "3. §3 比喻節制：**預設不用比喻**（metaphor_domain_used=none）；真要用一篇最多一個、點到為止；多用具體事實／數據。絕不用熱力學／建築／演化。\n"
-        "   從 6 個 domain 抽 1 個（不重複近 7 篇用過的）。\n"
-        "4. §5 黑名單：「不是 X、是 Y」「○○感」「穩／撐／懂」一律不准。\n"
-        f"5. §6 字數區間：{SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 字（含全形標點）。"
-        f"超過上限必砍，低於下限必擴。env: SUBSTACK_WORD_CAP。\n"
-        "6. §8 五秒拍片測試：每段抽象論述後必須有具體場景錨點。\n"
-        "7. §9 完美 = AI：句子長短刻意不平均、留一個沒講完的暗示。\n"
+        "你是 HsinTiger Substack 的資深中文編輯與分析寫手。你的工作不是展示 AI 能力，"
+        "而是替一位忙碌、聰明的讀者把複雜問題想清楚。\n\n"
+        f"本次採 {profile.name.upper()} profile：{word_floor}–{word_cap} 個中文字，"
+        f"約 {profile.reading_minutes} 分鐘。\n\n"
+        "=== 寫作契約 ===\n"
+        f"{brief}\n\n"
+        "若規則互相衝突，依序採用：事實正確與證據邊界 > 讀者理解 > 編輯指令 > 風格。"
     )
 
 
-def _material_for_prompt(raw_content: str, mode: str) -> str:
+def _material_for_prompt(
+    raw_content: str,
+    mode: str,
+    profile: EditorialProfile,
+) -> str:
     """How much source material to feed the writer, by mode.
 
     morning/evening are short articles/news → first 6000 chars is plenty.
@@ -595,8 +532,10 @@ def _material_for_prompt(raw_content: str, mode: str) -> str:
     rare outlier above that keeps the whole front + tail, eliding the least possible.
     """
     text = raw_content or ""
+    if profile.name == "daily" and mode != "podcast":
+        return text[:12_000]
     if mode != "podcast":
-        return text[:6000]
+        return text[:120_000]
     PODCAST_CAP = 500_000
     if len(text) <= PODCAST_CAP:
         return text
@@ -610,143 +549,54 @@ def _build_user_prompt(
     mode: str,
     topic_category: str,
     editorial_note: str,
-    recent_metaphor_domains: List[str],
-    recent_hook_types: Optional[List[str]] = None,
+    profile: EditorialProfile,
 ) -> str:
-    avoid = (
-        f"最近 7 篇用過的 metaphor domain（請避開）：{recent_metaphor_domains}"
-        if recent_metaphor_domains
-        else "目前無歷史 domain，自由選擇。"
-    )
-    if recent_hook_types:
-        avoid += (
-            f"\n最近幾篇的標題 hook_type（**強制避開、換一種**）：{recent_hook_types}"
-            "——這篇務必選一個沒在這串裡的 hook_type（見 soul §6/§6.1）。"
-        )
+    word_floor, word_cap = word_range_for(profile)
     mode_hint = {
         "morning": (
-            "【Mode: morning / Type A 深度新聞】"
-            "這是從 News Radar 24 小時候選池抽出的高分新聞。"
-            "你的任務是把這則『短打用過』的新聞，**轉譯**成有商業洞察的長文："
-            "不是再寫一遍社群版，而是把深層的商業／人性意涵挖出來。"
+            "這是近期新聞素材。找出真正改變了什麼、機制是什麼，以及讀者接下來該觀察什麼；"
+            "不要重寫新聞摘要。"
         ),
         "evening": (
-            "【Mode: evening / Type B 獨立選題】"
-            "這是一個獨立的選題（書、Podcast、概念、Hsin 的私房題目）。"
-            "不必受限於『最新新聞』的時效，可以拉到更遠的時間軸與哲學層次。"
+            "這是較耐久的獨立選題。用一個具體問題串起材料，不要為了顯得深刻而拉高到空泛哲學。"
         ),
         "podcast": (
-            "【Mode: podcast / Type C 長訪談萃取】"
-            "下面的素材是一集 YouTube 長訪談 podcast 的**完整逐字稿**（自動字幕、無講者標記，全長皆在，"
-            "需自行從上下文判斷誰在說話）。這類內容的價值在主持人與來賓**一來一回的問答**："
-            "一個好問題逼出一個反直覺的回答，追問再把它推深。\n"
-            "你的任務**不是**摘要整集訪談，而是：①從這場對話裡挑出**一個**最反直覺、最有洞察的觀點或"
-            "交鋒（某個被追問出來的真話、某個與主流相反的判斷）；②以它為文章骨幹，把來賓的論證"
-            "重新組織成你自己的深度推論（可改寫、濃縮對話，但不可捏造他沒說的數字或主張）；"
-            "③點出這個觀點對讀者的決策或對某個更大模式的意義。寧可深挖一點，也不要面面俱到的流水帳。"
+            "這是長訪談或逐字稿。Podcast 是起點，不是文章主題：挑一個最值得追問的交鋒，"
+            "先還原主持人的問題與來賓的主張，再把它推成一個離開節目也成立的延伸問題。"
+            "清楚區分來賓的主張、素材中的旁證與作者的推論；不要摘要整集，也不要替來賓補話。"
         ),
         "company": (
-            "【Mode: company / 每週公司營運分析】"
-            "下面素材含一段標『📊 財報事實』的 yfinance 數字 + 參考書面分析。"
-            "**嚴格按 soul §C0-§C3 的方法論寫**：六段結構（開場評等→§A 商業模式→§B 財務解析→"
-            "§C 競爭風險→§D 未來情境→可遷移反思）。**所有財務數字一律引用『財報事實』區塊、逐字對齊，"
-            "不准用記憶/網搜的數字取代它，缺的標『資料未揭露』。** 商業模式與競爭可用你的知識 + 參考分析，"
-            "但要 steelman 多空、最後下明確評等。3000-4500 字。"
+            "這是每週公司分析。依序回答：怎麼賺錢、優勢能否維持、數字是否支持、最強反方是什麼、"
+            "接下來看哪兩三個領先訊號。所有財務數字只准引用素材中的『財報事實』；缺值就寫『資料未揭露』。"
         ),
     }.get(mode, "")
 
     return (
-        f"{mode_hint}\n\n"
-        f"=== 編輯指令 ===\n{editorial_note or '按既有靈魂風格自由發揮。'}\n\n"
-        f"=== 原始素材 ===\n標題：{raw_title}\n本文：{_material_for_prompt(raw_content, mode)}\n\n"
-        f"=== 主題分類 ===\n{topic_category}\n\n"
-        f"=== 多樣性提醒 ===\n{avoid}\n\n"
-        # === 2026-06-22 標題大改（Hsin：吸睛 > 講完，標題只是 HOOK；移除過度約束）===
-        "=== 第零步：標題＝一個 HOOK，≤15 字 ===\n"
-        "標題只是鉤子、不是摘要：**≤15 字、一個焦點、口語、一個畫面字**，數字/公司名/結論全讓給副標與內文。"
-        "**禁用冒號把標題拼成兩段**（「名詞短語：升級問句？」是過去最大的毛病；冒號只准掛人名）。"
-        "為什麼／嗎／？ 都可以用，只要是**一個**自然口語問句。5 種自然形狀與範例見 soul §6；別連兩篇用同一種形狀。\n\n"
-        "=== 第一步：先跑一條『舉一反三推理鏈』，再動筆（這步決定這篇是不是模板貨）===\n"
-        "**最重要的元規則：本提示裡所有的範例字串（標題範例、thesis 句型、小標範例、§6 標題範例、"
-        "metaphor domain 清單、各種「像『…』」舉例）全部只是『示意原理』用的，嚴禁照抄、嚴禁套殼填空。** "
-        "它們的用途是讓你『寫完後回頭檢查方向對不對』，不是讓你挑一個套上去。**若你的標題、開場句、小標或"
-        "收尾跟範例幾乎一樣，就是失敗**——代表你在輪轉固定句型，而不是針對這份素材思考。\n"
-        "動筆前，先針對**這一份具體素材**在心裡推一條鏈（不要寫進文章）：\n"
-        "  (1) 這份素材最反直覺、最違反多數人預期的**那一個**點是什麼？（要具體到這份素材本身，不能是通用大道理）\n"
-        "  (2) 往下推一層：它影響誰、改變哪個賽局、推到極端會怎樣？背後真實的機制／數字是什麼？\n"
-        "  (3) 它照到讀者的哪個決策、或哪個更大的模式？\n"
-        "  (4) 用 (1)–(3) 長出**這篇獨有**的角度、骨架與句法，再回頭用下面的原則檢查方向——\n"
-        "      **不是**反過來先挑一個公式／句型再把素材填進去。\n"
-        "每篇的角度、結構、開場與收尾句法都應該因素材而不同；明顯在固定幾種句型裡輪轉 = 失敗。\n"
-        "**風格硬規範（違反任一條都算失敗；以下舉的例子都是『不要這樣』或『示意』，同樣禁照抄）：**\n"
-        "  1. **禁止用比喻／類比／擬人當骨幹。** 不要『像一把還能開火的舊武器』『街頭的規矩』『一場微小的反叛』"
-        "這種跨域比喻或文學意象。全篇最多 0–1 個比喻，能不用就不用；metaphor_domain_used 預設填 \"none\"。\n"
-        "  2. **禁止場景灌水與帶入式開場。** 不要『凌晨一點半你盯著螢幕』『你正站在展場前』這種虛構第二人稱情境"
-        "來鋪陳或充字數。開門見山講事實與判斷。\n"
-        "  3. **禁止後設碎念。** 不要寫『我寫到這裡也卡住了』『說來慚愧』這種自我對話填充。\n"
-        "  4. **要數據與具名事實。** 每個論點儘量綁一個素材裡的具體數字／型號／日期／金額；用事實推進，"
-        "少用形容詞堆疊（『令人咋舌』『眼花撩亂』『天價』這類盡量不用）。\n"
-        "  5. **要人類分析師的明確判斷。** 該下結論就下，講清楚『所以對讀者意味著什麼、該怎麼做』，可以有立場；"
-        "結尾給判斷或一個真實的取捨，不要用空泛反問句收尾充數。\n"
-        "只複述素材 = 失敗；靠比喻與情境鋪陳假裝深刻 = 文謅謅，也是失敗。目標：像一個懂行、冷靜、有觀點的人"
-        "在跟你分析，而不是抒情散文。\n\n"
-        # === 2026-05-30 token-free 改版：研究改為「離線預抓素材」、不再 agentic 上網 ===
-        "=== 事實紀律：只用上面的『原始素材』，不要上網查 ===\n"
-        "本任務**沒有** WebSearch / WebFetch 工具（已停用）。上面的『原始素材』已由離線\n"
-        "harvester（RSS / YouTube 逐字稿 / 文章正文）預先抓好清洗，是你**唯一**的事實來源。\n"
-        "  (a) 具體金額／百分比／日期／人名職稱：素材裡有 → 照用；素材裡沒有 → 寫定性描述\n"
-        "      （『近期』『數家公司』『幅度可觀』），**絕不可**自己掰一個數字或日期。\n"
-        "  (b) **禁止幻覺背書**：「據業內傳出」「業界專家認為」「市場普遍預期」一律不可寫。\n"
-        "  (c) 不需要外部佐證的：自家論述、比喻、§3 metaphor domain 的類比、抽象推論——放手寫。\n"
-        "把事實自然寫進 body_markdown（不要列『資料來源』或附 URL，這是 essay 不是學術論文）。\n\n"
-        # === 2026-06-02 §13 視覺標記 = 重新抓注意力的節點（取自 MrBeast 留存框架）===
-        "=== 內文視覺標記（你兼任視覺編輯）===\n"
-        "在 body_markdown 插入 **2-3 個**內文視覺標記（不要更多，過多會稀釋）。把它們當『重新抓住注意力的節點』來放：\n"
-        "  - 落點：① 開場兌現後第一個「抽象概念→具體場景」的轉折；② **文章中段、全篇最強數據／最反直覺對比的旁邊**（re-engagement spike）；③（可選）某個主要小節開頭。**不要**放在開場 hook 之前與結尾。\n"
-        "  - 不要自己畫圖或附真實 URL，只插下面這個 markdown blockquote 標記：\n"
-        "> 🖼 視覺位置 · {3-8 字標題}\n"
-        "> 場景描述：{1-3 句、第三人稱、含具體 time/place/物件}\n"
-        "> 🔍 Path B · Google 搜：「{真實英文搜尋字串}」｜推薦來源：{2-3 個，Wikipedia→大刊 archive→stock}\n"
-        "> 🎨 Path C · 生圖 prompt：{可直接貼 ChatGPT image 的英文 prompt，含 B&W documentary / side profile / 1960s LIFE 等風格約束}\n"
-        "  - 這些標記**算進 body_markdown 字串**（用真實換行），不要另開欄位。\n\n"
-        # === 2026-06-02 互動工程 scaffold（對抗 CTR/讚率下滑；取自 MrBeast 注意力框架）===
-        "=== 結構與留存（CTR 靠標題/副標，讚率靠下面這套，務必照做）===\n"
-        "  1. **開場 2 句內兌現標題的承諾**——不要鋪陳虛構場景、不要暖場。第一段就把標題答應的衝突／數字直接端出來。\n"
-        "  2. **前置一句反直覺 thesis**（你的判斷）放在開場前三段內，是一句強斷言。"
-        "（句型示意、禁照抄：「X 根本不是 A，而是偽裝成 A 的 B」只是示範『強度』，請自己長一句。）\n"
-        "  3. **每個 ▉ 小節用『具名資訊型小標』**：▉ 後接一句能單獨讀懂、帶鉤子的短句，不要用「第二層含義」這種抽象標籤。"
-        "每個小節 = 一個讓讀者覺得『有在前進』的微目標。（示意、禁照抄：別每篇都長成「平台不想要下一個 X」那種句型。）\n"
-        "  4. **中段安排一個 spike**：把全篇最猛的數據或最反直覺的對比放在文章中段引爆（搭配上面 §13 的中段視覺）。\n"
-        "  5. **結尾用『這告訴我們什麼』收**：把個案推成**可套用到其他產業／讀者決策的通用框架**，並給 1-2 個具體的跨領域例子，讓讀者『帶走一個框架』。\n"
-        "  6. 結尾最後加一句**邀請讀者回應的鉤子**（針對文章拋一個具體問題請讀者思考），不要只有訂閱鈕。\n\n"
-        "=== 輸出格式：直接回一個 JSON object，欄位如下（缺一不可）===\n"
+        f"=== 本次任務 ===\nProfile：{profile.name}（{word_floor}–{word_cap} 字）\n"
+        f"素材類型：{mode}\n主題分類：{topic_category}\n{mode_hint}\n\n"
+        f"=== 編輯指令 ===\n{editorial_note or '沒有額外指令；依本次素材做最佳編輯判斷。'}\n\n"
+        f"=== 原始素材 ===\n標題：{raw_title}\n本文：{_material_for_prompt(raw_content, mode, profile)}\n\n"
+        "=== 動筆前（只在心裡完成，不要輸出提綱）===\n"
+        "1. 用一句話寫出本文要回答的問題，以及讀者為何現在要在意。\n"
+        "2. 分開列出：素材直接支持的證據、你的推論、目前未知；不要把三者混寫。\n"
+        "3. 找出最強反方。若素材無法裁決，就誠實保留；不要用語氣掩蓋證據缺口。\n"
+        "4. 刪掉不能推進理解的背景、術語、比喻與形容詞。先說人話，術語只在能增加解析度時補在後面。\n\n"
+        "=== 事實紀律 ===\n"
+        "只使用原始素材中的外部事實。素材沒有的數字、日期、人名、職稱與引述不可補寫。"
+        "可以做分析，但要用『我傾向』『目前看來』『仍待觀察』等自然語句讓推論與未知可辨。"
+        "不要寫『據業內傳出』『市場普遍認為』這類無來源背書。\n\n"
+        "=== 呈現 ===\n"
+        "標題 ≤15 字，只承諾一件事；副標補上最重要的具體反差。開頭兩段交代背景與本文問題。"
+        "正文使用 3–5 個能單獨讀懂的內容型小標，短段落、一段一件事。"
+        "不要輸出內部製程、圖片位置、搜尋指令、圖表 prompt、資料來源清單、footer 或訂閱 CTA。"
+        "最後用一個本文特有、讀者能以經驗或判斷回答的**具體回信問題**收尾；禁用『你怎麼看？』。\n\n"
+        "=== 輸出格式：直接回一個 JSON object ===\n"
         "{\n"
-        '  "title": "...",                  // **≤15 字、一個 HOOK**（吸睛 > 講完）。一個焦點、口語、一個畫面字；'
-        '數字/公司名/結論全讓給副標與內文。**禁用冒號拼兩段**（冒號只准掛人名）。為什麼/嗎/? 可用，但只准一個自然口語問句。'
-        '別連兩篇同形狀；禁新聞稿陳述式/震驚體/listicle。見 §6。\n'
-        '  "subtitle": "...",               // 10-80 字。不可重複 title。這裡才放最有力的「具體數字+反差」當 Substack 列表頁勾子。\n'
-        f'  "body_markdown": "...",          // {SUBSTACK_WORD_FLOOR}-{SUBSTACK_WORD_CAP} 中文字。\n'
-        "                                   //   開場2句兌現承諾+前置 thesis；▉ 具名小標；中段 spike。\n"
-        "                                   //   結尾禁『總而言之』：先給可帶走的通用框架+具體例子，再以提問/懸念收，末句邀請讀者回應。\n"
-        '  "metaphor_domain_used": "...",   // ENUM：6 domain 之一，或 "none"（不靠比喻，鼓勵）：\n'
-        '                                   //     "signal_processing" | "music_theory" |\n'
-        '                                   //     "contrarian_markets" | "cinematic_pacing" |\n'
-        '                                   //     "street_culture" | "architecture_space" | "none"\n'
-        "                                   //   **預設 none**；真要用最多一個、點到為止；絕不用熱力學/化學/生物演化。\n"
-        '  "hook_type": "...",              // ENUM 以下其一，**不要連續兩篇同一種**：\n'
-        '                                   //     "contrarian_question" | "contrarian_reframe" |\n'
-        '                                   //     "concrete_punch" | "narrative_hook" |\n'
-        '                                   //     "provocative_statement" | "insider_question"\n'
-        '  "cover_character": "...",        // ENUM "robot"|"owl"：本篇封面固定 IP 出場角色。\n'
-        '                                   //   robot=瑞瑞·雷達機器人(好奇探索)→硬科技/數據/財報；\n'
-        '                                   //   owl=達達·雷達貓頭鷹(智慧洞察)→人文/反共識/訪談/輕主題。依本篇氣質選一隻。\n'
-        '  "cover_image_prompt": "...",     // 一句中文：上面那隻角色『在本篇場景做什麼』(動作/道具/場景)；\n'
-        '                                   //   不要重寫造型或美學(Python 會補)。例：「瑞瑞 舉放大鏡盯著一張急殺的股價K線得意奸笑」。\n'
-        '  "chart_prompt": null,            // 可選；若無數據可視化，填 null。\n'
-        '  "reading_time_minutes": 5,       // 整數 4-7。目標 5。\n'
-        '  "open_ending_form": "..."        // ENUM，必為以下其一：\n'
-        '                                   //     "question" | "paradox" |\n'
-        '                                   //     "deeper_observation" | "silent_hint"\n'
+        '  "title": "...",\n'
+        '  "subtitle": "...",\n'
+        '  "body_markdown": "...",\n'
+        '  "cover_character": "robot",\n'
+        '  "cover_image_prompt": "一句中文，只描述角色在本篇場景的動作與物件"\n'
         "}\n"
         "不要回 markdown fence、不要加註解、不要加任何 JSON 以外的文字。"
     )
@@ -756,20 +606,10 @@ def _build_user_prompt(
 # Public API
 # --------------------------------------------------------------------------
 
-# Backend selection (2026-05-12 architecture shift):
-#   "claude_cli"  → ONLY Claude CLI; no Gemini fallback. **預設、推薦。**
-#                   理由：Gemini 2.5-flash-lite 實測寫長文時不守 1500 字 hard cap
-#                   且爆破折號 / 「不是 X 是 Y」對仗；Claude CLI 對 prompt 約束
-#                   遵守度高很多 + 帶 WebSearch / WebFetch 工具可以查網路數據。
-#   "default"     → 維持 llm_brain 既有兩段式行為（Claude 主 → Gemini 備）。
-#                   緊急逃生口；不建議長期使用。
-#
-#   Override via env: SUBSTACK_COMPOSER_BACKEND=claude_cli|default
-#
-# 2026-06-20 (Hsin)：Gemini CLI 個人版被 Google 在 6/18 收掉，AI Pro 額度改由 Antigravity CLI
-# (agy) 取用 → 主寫換成 antigravity_cli(本機 agy -p，token-free gemini-3.1-pro)，倒了才退
-# gemini API(2.5-flash 免費)→opencode(長文兜底)→cerebras→groq。雲端沒裝 agy 會自動略過。
-# 注意：.lower() 會把模型名小寫化但 backend 名稱本就全小寫，agy 的 --model 在 _try_agy 內另給。
+# Backend selection. The default starts with the local Antigravity CLI and then
+# falls through the configured API/CLI writers. A comma-separated env override
+# controls order; the successful provider/model is recorded on the draft.
+# WebSearch/WebFetch remain disabled regardless of route.
 SUBSTACK_BACKEND = os.getenv(
     "SUBSTACK_COMPOSER_BACKEND", "antigravity_cli,gemini,opencode,cerebras,groq"
 ).lower()
@@ -781,9 +621,8 @@ _KNOWN_BACKENDS = {"antigravity_cli", "claude_cli", "gemini_cli", "gemini", "ope
 def _resolve_backends() -> Optional[tuple]:
     """Map env-var string → call_for_json `backends` tuple (按序嘗試).
 
-    2026-06-01 (Hsin directive): Substack 寫文**拿掉 claude_cli**，改 gemini CLI
-    (AI Pro 帳號，由 GEMINI_CLI_CONFIG_DIRS 多帳號輪替) → 免費 Gemini API key。
-    支援逗號清單，例：SUBSTACK_COMPOSER_BACKEND="gemini_cli,gemini"。
+    Supports a comma-separated chain, for example
+    ``SUBSTACK_COMPOSER_BACKEND=antigravity_cli,gemini``.
     """
     # 逗號清單 → tuple（最彈性、最直白）
     if "," in SUBSTACK_BACKEND:
@@ -791,7 +630,7 @@ def _resolve_backends() -> Optional[tuple]:
         if chain:
             return chain
     if SUBSTACK_BACKEND in ("default", "auto", "fallback"):
-        # 預設寫文鏈：gemini CLI(Pro，多帳號) → 免費 API key。**不含 claude_cli。**
+        # Compatibility alias retained for older operator environments.
         return ("gemini_cli", "gemini")
     if SUBSTACK_BACKEND == "claude_cli":
         # 顯式要 claude 才用（手動 override）；仍掛 gemini 備援。
@@ -842,38 +681,34 @@ async def compose_substack_article(
     mode: Literal["morning", "evening", "podcast", "company"] = "morning",
     topic_category: str = "other",
     editorial_note: str = "",
-    recent_metaphor_domains: Optional[List[str]] = None,
-    recent_hook_types: Optional[List[str]] = None,
+    editorial_profile: Literal["auto", "daily", "weekly"] = "auto",
+    has_deep_bundle: bool = False,
     temperature: float = 0.4,
 ) -> Optional[SubstackDraft]:
     """產出單篇 Substack 長文草稿。
 
-    Architecture (2026-05-12):
-      - 預設只走 Claude CLI（SUBSTACK_COMPOSER_BACKEND=claude_cli）。Claude CLI
-        在 -p mode 預設啟用 WebSearch / WebFetch / Read 等工具；prompt 內鼓勵
-        composer 在寫關鍵數據前先做網路查證。
-      - Gemini 不再是 fallback（除非顯式設 SUBSTACK_COMPOSER_BACKEND=default）。
-        理由見模組頂部註解。
+    Architecture:
+      - 預設依 SUBSTACK_COMPOSER_BACKEND 的 writer chain 依序嘗試。
+      - WebSearch / WebFetch 明確停用；外部事實只來自預抓素材。
+      - Daily / Weekly profile 決定深度與字數，不改變 source-selection mode。
 
     Returns:
         SubstackDraft on success.
         None on LLM failure (caller 必須 skip 並 notify user).
     """
-    soul = load_substack_soul()
-    if mode == "company":                       # 疊上公司分析方法論（§C0-§C3）+ 曼報分析框架
-        soul = soul + "\n\n\n" + load_company_soul()
-        frameworks = load_manny_frameworks()
-        if frameworks:
-            soul = soul + "\n\n\n" + frameworks
-    system = _build_system_instruction(soul)
+    profile = resolve_editorial_profile(
+        mode,
+        override=editorial_profile,
+        has_deep_bundle=has_deep_bundle,
+    )
+    system = _build_system_instruction(profile)
     prompt = _build_user_prompt(
         raw_title=title,
         raw_content=content,
         mode=mode,
         topic_category=topic_category,
         editorial_note=editorial_note,
-        recent_metaphor_domains=recent_metaphor_domains or [],
-        recent_hook_types=recent_hook_types or [],
+        profile=profile,
     )
 
     backends = _resolve_backends()
@@ -882,8 +717,7 @@ async def compose_substack_article(
         prompt=prompt,
         response_model=SubstackDraft,
         temperature=temperature,
-        timeout_s=1300,  # ~22 分鐘：字數上限 3500（≈30-35K output tokens），實測 1000s
-                         # 仍會撞牆；無 web research 競爭時間，拉高給純長文生成餘裕（retry 仍在）。
+        timeout_s=1300,  # Weekly 最長 4200 字；保留本機 CLI 排隊與一次 retry 的餘裕。
         backends=backends,
         # 2026-05-30: 關掉 agentic 上網，逼 composer 只用預抓素材（token-free 改版）。
         disallowed_tools=("WebSearch", "WebFetch"),
@@ -947,9 +781,6 @@ if __name__ == "__main__":
             return
         print(f"TITLE: {d.title}")
         print(f"SUBTITLE: {d.subtitle}")
-        print(f"METAPHOR: {d.metaphor_domain_used}")
-        print(f"HOOK: {d.hook_type}")
-        print(f"OPEN-ENDING: {d.open_ending_form}")
         print(f"BODY LEN: {_count_chinese_chars(d.body_markdown)} 字")
         print(f"COVER PROMPT: {(d.cover_image_prompt or '(disabled)')[:120]}")
         warnings = audit_substack_draft(d)

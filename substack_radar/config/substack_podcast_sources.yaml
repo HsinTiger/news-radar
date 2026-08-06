@@ -1,8 +1,8 @@
-# News Radar · Substack PODCAST inspiration sources (13:00 slot, token-free)
+# News Radar · Substack PODCAST inspiration sources (daily 12:00 batch, token-free)
 # ===========================================================================
-# Long-form interview podcasts on YouTube. The 13:00 "podcast" slot harvests
-# these into news_items tagged feed_name='YouTube Podcast', and the podcast
-# composer picks the longest fresh interview to write a Q&A-driven essay from.
+# Long-form interview podcasts on YouTube. The noon batch harvests these into
+# news_items tagged feed_name='YouTube Podcast', then the podcast composer picks
+# two different unused interviews published within the last 7 days.
 #
 # Schema:
 #   - url:            required. @handle or @handle/videos
@@ -147,7 +147,7 @@ sources:
 
   # ======================================================================
   # 第七類：華爾街 / 高影響力長談（2026-06-16）
-  # 這些頻道主要提供長篇高品質訪談，是 13:00 podcast slot 的重點素材
+  # 這些頻道主要提供長篇高品質訪談，是 noon podcast slots 的重點素材
   # ======================================================================
 
   # Joe Rogan Experience：2026 年全長集回歸 YouTube，auto 字幕 100-200 萬字

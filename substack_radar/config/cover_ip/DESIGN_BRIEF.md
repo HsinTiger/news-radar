@@ -11,7 +11,7 @@
 產出**模板 + tokens + prompt 鷹架**，能被自動化管線每天套用、且通過縮圖可讀性測試。
 
 ## 1. 背景脈絡
-- **品牌**：News Radar（IG @smartmmmoney、Substack）。每天 5 篇日更（早報/晚報/3× podcast 萃取）+ 週日 1 篇公司營運分析。
+- **品牌**：News Radar（IG @smartmmmoney、Substack）。排程為每天中午兩篇 Podcast 對談延伸 + 週日 Weekly 公司深度分析；morning / evening 保留手動選用。
 - **受眾**：關注美國/台灣科技、商業、投資、AI 的中文讀者。
 - **調性**：硬商業邏輯 × 暖哲學靈魂。**可愛但可信（GitHub Octocat 等級的專業萌），絕非幼稚 chibi。**
 - **撰稿端已上線**：AI 寫稿時會自動選角（程式已 merge），規則見 `cover_characters.md`：

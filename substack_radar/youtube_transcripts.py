@@ -42,7 +42,7 @@ from src.fetcher import make_news_id  # noqa: E402
 from src.schema import NewsItem  # noqa: E402
 
 YT_SOURCES_PATH = Path(__file__).resolve().parent / "config" / "substack_youtube_sources.yaml"
-# Long-form interview podcasts for the 13:00 "podcast" slot (separate pool so the
+# Long-form interview podcasts for the daily noon batch (separate pool so the
 # podcast composer only ever picks real interviews, tagged feed_name='YouTube Podcast').
 PODCAST_SOURCES_PATH = Path(__file__).resolve().parent / "config" / "substack_podcast_sources.yaml"
 
@@ -291,7 +291,7 @@ def harvest_youtube_transcripts(
 ) -> List[NewsItem]:
     """Harvest transcripts per yaml → NewsItem list (also upserts to DB unless dry_run).
 
-    Parametrized (2026-06-01) so the 13:00 podcast slot can reuse this with its own
+    Parametrized so the noon podcast batch can reuse this with its own
     `sources_path` (long-form interview channels) and a distinct `feed_name`
     ('YouTube Podcast') + higher `min_chars`, keeping podcast items in their own
     pool that only `pick_podcast_interview()` draws from.

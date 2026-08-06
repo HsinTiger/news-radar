@@ -1,12 +1,11 @@
 """
-News Radar · Substack Compose CLI (Phase 1)
-============================================
+News Radar · Substack Compose CLI
+=================================
 
-Daily 2-draft pipeline 的 driver。每天兩班：
-- 09:00 morning（type A 深度新聞）— 從 news_radar 24h 高分 pool 抽 1
-- 18:00 evening（type B 獨立選題）— 從 config/substack_evening_topics.yaml 抽 1
+Daily / Weekly 寫稿 driver。排程預設每天中午兩篇 Podcast Weekly 延伸文，
+週日一篇 Weekly 公司分析；morning/evening 仍保留給手動取材與相容舊入口。
 
-每次跑出 1 篇 1500 字長文草稿 + 封面圖 + 全套 metadata report，
+每次跑出 1 篇草稿 + 封面圖 + 精簡 metadata report，
 同時寫到 **兩個位置**讓 Hsin 從家裡／公司都看得到：
 
     Path A (本地 repo)：~/news_radar/data/substack_drafts/<date>/<mode>_<slug>/
@@ -16,10 +15,9 @@ Daily 2-draft pipeline 的 driver。每天兩班：
 每個資料夾長這樣：
 
     Article_Substack.md   # 貼到 Substack 的純淨版（標題＋副標＋本文）
-    Article_Full.md       # 完整 metadata（含 hook type、metaphor domain、audit warnings、原料來源）
+    Article_Full.md       # 完整 review 版（profile、audit warnings、原料來源）
     cover.png             # 1456×816 Substack hero
     cover_prompt.txt      # 視覺架構師的提示詞（給 nano-banana 之類的 AI 繪圖工具用）
-    chart_prompt.txt      # (可選) 機制解構示意圖提示詞
     metadata.json         # 機讀格式
 
 可選步驟（環境變數開關，**opt-in 模式**）：
@@ -33,19 +31,16 @@ Daily 2-draft pipeline 的 driver。每天兩班：
     SUBSTACK_AUDIENCE — 草稿目標讀者（everyone / only_paid / founding / only_free）
                         預設 everyone。
 
-LLM backend 架構（2026-05-12 重構）：
-    SUBSTACK_COMPOSER_BACKEND=gemini_cli  # 2026-06-01: Pro accounts priority
-        - 文章寫作優先走 Gemini CLI (tingsyuan -> hsin)
-        - Claude CLI 不再負責 Substack draft
-    SUBSTACK_COMPOSER_BACKEND=default
-        - 備援路徑
+LLM backend 架構：
+    SUBSTACK_COMPOSER_BACKEND=antigravity_cli,gemini,opencode,cerebras,groq
+        - 預設依序嘗試；可用逗號清單顯式覆寫
+        - 實際成功的 provider/model 會寫入 generated_by，不預先假定是哪一個模型
+        - WebSearch / WebFetch 關閉，寫手只使用已預抓素材
 
     SUBSTACK_AI_COVER=1  # 預設 0（關）
-        - 啟用 Gemini 生成 Moleskine 風格封面底圖（visual_soul.md aesthetic）
+        - 封面仍由 deterministic cover renderer 產生，不要求 writer 生成內文圖片
         - 失敗自動退回 photo-overlay / 合成噪點 base，不會 block 整個流程
         - 模型：gemini-2.5-flash-image-preview（可用 SUBSTACK_IMAGE_MODEL override）
-
-    Gemini 在新架構中**唯一**的角色：image generation。文字／JSON 路徑全走 Claude CLI。
 
 注意：python-substack 是社群非官方 wrapper，Substack 沒有公開 Write API。
 若哪天失效或你想退出，OneDrive autogen/ 的 Article_Substack.md 永遠是手動 paste 後備。
@@ -98,6 +93,8 @@ from substack_radar.composer import (  # noqa: E402
     autofix_mainland_terms,
     autofix_traditional,
     compose_substack_article,
+    resolve_editorial_profile,
+    word_range_for,
 )
 from substack_radar.draft_receipts import (  # noqa: E402
     clear_remote_receipt,
@@ -119,11 +116,8 @@ ONEDRIVE_BASE = Path(
 )
 
 EVENING_TOPICS_PATH = Path(__file__).resolve().parent / "config" / "substack_evening_topics.yaml"
-METAPHOR_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".metaphor_history.json"
-HOOK_HISTORY_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".hook_history.json"
 
-# 科技/商業題材加重（2026-06-20 Hsin：每天 5 篇想多著重美/台科技商業；3 篇 podcast 不動，
-# 只偏 morning+evening 兩槽）。只影響 _score_pool_item 的挑文偏好。
+# 科技/商業題材加重，只影響 Daily source pool 的挑文偏好。
 _TECH_TOPICS = {"us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
                 "tech_product_launch", "supply_chain", "earnings"}
 _TECH_BOOST = 1.2
@@ -443,12 +437,12 @@ def pick_evening_inspiration() -> Optional[Tuple[str, str, str, str]]:
     return _pick_top_from_pool(window_days=7, label="EveningPick")
 
 
-def pick_podcast_interview(window_days: int = 21) -> Optional[Tuple[str, str, str, str]]:
-    """Type-C podcast source (13:00 slot). Draws ONLY from the dedicated podcast
+def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str, str]]:
+    """Podcast source for the daily noon batch. Draws ONLY from the dedicated podcast
     pool (feed_name='YouTube Podcast'), preferring the longest fresh, unused
     interview — length is the best proxy for a substantive Q&A episode (vs. a clip).
-    Wider 21-day window since podcasts aren't time-sensitive. Shares the used-set
-    so it won't collide with morning/evening picks."""
+    The seven-day window stays fresh while two daily slots provide enough
+    throughput. Shares the used-set so the batch cannot select one episode twice."""
     if not NEWS_DB_PATH.exists():
         print(f"[PodcastPick] ⚠️ News DB not found at {NEWS_DB_PATH}")
         return None
@@ -492,7 +486,7 @@ def pick_podcast_interview(window_days: int = 21) -> Optional[Tuple[str, str, st
             best_score, best = score, r
     if best is None:
         print("[PodcastPick] ⚠️ no unused podcast interview in pool "
-              f"(last {window_days}d). Has the 13:00 harvest run?")
+              f"(last {window_days}d). Has the noon harvest run?")
         return None
     nid, title, body, topic, *_ = best
     _mark_used(nid)
@@ -522,8 +516,8 @@ def pick_evening_topic(override_topic: Optional[str] = None) -> Tuple[str, str, 
             override_topic,
             (
                 f"使用者指定的選題：{override_topic}\n"
-                f"請按 substack_soul.md 的方法論：先抓一個常識→打破它→提供更高解析度的"
-                f"思維模型→留一個開放結尾。"
+                "先說清楚它回應哪個現實問題，再用具體證據拆機制、處理反方，"
+                "最後提出一個讀者能真正回信回答的問題。"
             ),
             "other",
         )
@@ -636,65 +630,6 @@ def _parse_yaml_topics(text: str) -> List[Dict[str, str]]:
     return topics
 
 
-# ---------------------------------------------------------------------------
-# Metaphor history (avoid repeating the same domain)
-# ---------------------------------------------------------------------------
-
-def load_recent_metaphor_domains(limit: int = 7) -> List[str]:
-    if not METAPHOR_HISTORY_PATH.exists():
-        return []
-    try:
-        data = json.loads(METAPHOR_HISTORY_PATH.read_text(encoding="utf-8"))
-        return data.get("recent", [])[-limit:]
-    except Exception:
-        return []
-
-
-def append_metaphor_domain(domain: str, limit: int = 30) -> None:
-    METAPHOR_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    data: Dict[str, Any] = {"recent": []}
-    if METAPHOR_HISTORY_PATH.exists():
-        try:
-            data = json.loads(METAPHOR_HISTORY_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            data = {"recent": []}
-    data["recent"].append(domain)
-    data["recent"] = data["recent"][-limit:]
-    METAPHOR_HISTORY_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def load_recent_hook_types(limit: int = 5) -> List[str]:
-    """最近幾篇用過的標題 hook_type（鏡像 metaphor 機制，2026-06-20）→ 餵給下一篇強制避開，
-    讓 soul §6.1 的『連兩篇別同型』真正跨篇生效。"""
-    if not HOOK_HISTORY_PATH.exists():
-        return []
-    try:
-        data = json.loads(HOOK_HISTORY_PATH.read_text(encoding="utf-8"))
-        return data.get("recent", [])[-limit:]
-    except Exception:
-        return []
-
-
-def append_hook_type(hook: str, limit: int = 30) -> None:
-    if not hook:
-        return
-    HOOK_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    data: Dict[str, Any] = {"recent": []}
-    if HOOK_HISTORY_PATH.exists():
-        try:
-            data = json.loads(HOOK_HISTORY_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            data = {"recent": []}
-    data["recent"].append(hook)
-    data["recent"] = data["recent"][-limit:]
-    HOOK_HISTORY_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
 def _resolve_company_ticker(args) -> str:
     """company mode ticker：--ticker > .company_next（信哥從候選挑的）> watchlist top（永不卡稿）。"""
     if getattr(args, "ticker", None):
@@ -762,35 +697,18 @@ async def maybe_generate_ai_cover(
     )
 
 
-# 2026-05-12 Hsin directive — every Substack article ends with this tagline +
-# subscribe placeholder. Tagline is fixed text per substack_soul.md §12.
-BRAND_TAGLINE = (
-    "「我專門拆解：那些你已經被市場說服、但其實正在害你的共識。」"
-)
+# Footer is deterministic and intentionally outside the writer prompt.
+BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的部分。」"
 
 
 def build_footer_block() -> str:
-    """Brand tagline + Cadence promise + Substack subscribe placeholder.
-
-    Path A markdown approach: emit visible placeholder text + HTML comment.
-    Hsin opens draft in Substack editor and replaces the placeholder block
-    with the native Subscribe button widget (slash menu / + button).
-    Path B (auto-insert via python-substack subscribeWithCaption node) is
-    a future enhancement; for now Path A is reliable and idempotent.
-
-    2026-05-16 加入 Cadence Promise 兩行 (per substack_soul.md §12.1):
-    - 每天 3 分鐘 · 拿走一個被市場藏起來的共識
-    - 365 天複利一個眼光
-    Why: Hsin 5/16 觀察開信率 + 訂閱率不振、insight 是「讀者擔心的不是值不
-    值得讀、是有沒有時間讀」。3 分鐘是低於 commute / 茶水間 friction 線下的
-    數字。「複利」對齊 brand DNA。
-    """
+    """Brand promise + native Subscribe placeholder, added deterministically."""
     return (
         "\n\n---\n\n"
         f"> **{BRAND_TAGLINE}**\n"
         "> \n"
-        "> 📅 每天 3 分鐘 · 拿走一個被市場藏起來的共識\n"
-        "> 🔄 365 天複利一個眼光\n\n"
+        "> 📅 每天兩篇對談延伸 · 每週一篇公司深拆\n"
+        "> ✉️ 你可以直接回信，告訴我哪個判斷值得再追\n\n"
         "<!-- substack-editor: 將此段替換為 Subscribe button widget "
         "(toolbar 的 + → Subscribe button) -->\n\n"
         "*點此訂閱 → 不錯過下一篇拆解。*\n"
@@ -1137,6 +1055,7 @@ def write_article_full_md(
     draft: SubstackDraft,
     *,
     mode: str,
+    editorial_profile: str,
     source: Dict[str, Any],
     audit_warnings: List[str],
 ) -> Path:
@@ -1153,8 +1072,7 @@ def write_article_full_md(
 
 **🧠 產文路線 / Generated by:** `{getattr(draft, "generated_by", None) or "unknown"}`
 
-**Mode:** `{mode}`  |  **Hook:** `{draft.hook_type}`  |  **Open-ending:** `{draft.open_ending_form}`
-**Metaphor domain:** `{draft.metaphor_domain_used}`  |  **Estimated reading time:** {draft.reading_time_minutes} min
+**Mode:** `{mode}`  |  **Editorial profile:** `{editorial_profile}`
 
 ---
 
@@ -1183,11 +1101,6 @@ id: {source.get("id", "n/a")}
 **封面 IP 角色**：{getattr(draft, "cover_character", None) or "（自動依主題選 robot/owl）"}
 **封面 scene**：{getattr(draft, "cover_image_prompt", None) or "（留空 → 用角色招牌動作 + 標題自動補）"}
 完整封面 prompt（含固定造型 + 黏土美學）見 Article_Substack.md 末段「📸 封面圖 Prompt」與 cover_prompts.md。
-內文視覺建議見本文中的 🖼 標記。
-
-### 機制解構示意圖 prompt
-
-{draft.chart_prompt or "(本篇未提供)"}
 """
     path.write_text(md, encoding="utf-8")
     return path
@@ -1197,22 +1110,18 @@ def write_prompts_and_metadata(
     out_dir: Path,
     draft: SubstackDraft,
     mode: str,
+    editorial_profile: str,
     source: Dict[str, Any],
     audit_warnings: List[str],
 ) -> None:
-    if draft.chart_prompt:
-        (out_dir / "chart_prompt.txt").write_text(draft.chart_prompt, encoding="utf-8")
     metadata = {
         "title": draft.title,
         "subtitle": draft.subtitle,
         "mode": mode,
+        "editorial_profile": editorial_profile,
         "generated_by": getattr(draft, "generated_by", None),
-        "hook_type": draft.hook_type,
-        "open_ending_form": draft.open_ending_form,
-        "metaphor_domain_used": draft.metaphor_domain_used,
         "cover_character": getattr(draft, "cover_character", None),  # 2026-06-21 封面 IP
         "cover_image_prompt": getattr(draft, "cover_image_prompt", None),
-        "reading_time_minutes": draft.reading_time_minutes,
         "source": source,
         "audit_warnings": audit_warnings,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1264,9 +1173,8 @@ def _load_bundle_curated(path: str) -> str:
 
 
 def _podcast_reports_block(title: str):
-    """podcast 一手逐字稿之外，自動上網搜對應書面深度報告（SemiAnalysis/Stratechery 等）當
-    第二瞭望台，並抓前 1–2 篇高品質源可讀的正文片段。觸發 soul §14 巨人之聲多源綜合法——
-    讓 13:00 那兩篇 podcast 取材的文章自動加厚、不靠人工。
+    """podcast 一手逐字稿之外，自動搜對應書面深度報告當第二瞭望台，
+    並抓前 1–2 篇高品質源可讀的正文片段，供 Weekly profile 交叉驗證。
     回傳 (context_text, reports)：context_text 疊進素材給 LLM；reports 給文章最上面的來源區塊引用。
     任何失敗回 ("", [])，不阻斷出稿。"""
     if not title:
@@ -1284,7 +1192,7 @@ def _podcast_reports_block(title: str):
     if not reports:
         return "", []
     lines = [
-        "\n\n===== 深度素材包（書面報告層 · 依 substack_soul.md §14 巨人之聲多源綜合法）=====",
+        "\n\n===== 深度素材包（書面報告層）=====",
         "## 對應書面深度報告（自動搜尋 · podcast 主題的第二瞭望台，用來交叉驗證/加厚，不要照抄）",
     ]
     for r in reports:
@@ -1460,15 +1368,15 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "topic_category": topic_category,
         }
     elif mode == "podcast":
-        # podcast (13:00): longest fresh, unused interview from the YouTube Podcast pool.
+        # podcast: longest fresh, unused interview from the dedicated pool.
         pick = pick_podcast_interview()
         if pick is None:
-            print("[ERROR] No suitable podcast interview in the harvested pool (last 21 days).")
+            print("[ERROR] No suitable podcast interview in the harvested pool (last 7 days).")
             notify_substack_failure(
                 mode=mode,
-                error_msg="No suitable podcast interview in pool (last 21 days)",
+                error_msg="No suitable podcast interview in pool (last 7 days)",
                 extra_context={
-                    "likely_cause": "podcast pool empty — 13:00 harvest hasn't run, all episodes used, or none had subtitles",
+                    "likely_cause": "podcast pool empty — noon harvest hasn't run, all episodes used, or none had subtitles",
                     "fix_hint": ".venv/bin/python -m substack_radar.youtube_transcripts (podcast sources)",
                 },
             )
@@ -1489,7 +1397,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         from substack_radar.company_financials import fetch_financials
         print(f"[Company] {ticker} → 抓 yfinance 財報 + 補書面脈絡…")
         fin_data, fin_md = fetch_financials(ticker)
-        raw_title = fin_data.get("name") or ticker          # 占位；composer 依 §6 生真標題
+        raw_title = fin_data.get("name") or ticker          # 占位；composer 依 editorial brief 生標題
         topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
         ctx_md, company_reports = _company_context(raw_title, ticker)
         raw_content = fin_md + ("\n\n" + ctx_md if ctx_md else "")
@@ -1540,12 +1448,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
         except Exception:
             source_url = None
 
-    # 1b) 深度素材包（多源綜合）：有 --bundle 就把其精華疊進素材，啟動 soul §14 巨人之聲多源綜合法。
+    # 1b) 深度素材包：有 --bundle 就把其精華疊進素材並自動升到 Weekly profile。
     if getattr(args, "bundle", None):
         bundle_extra = _load_bundle_curated(args.bundle)
         if bundle_extra:
             raw_content = (raw_content or "") + (
-                "\n\n===== 深度素材包（多源綜合用 · 依 substack_soul.md §14 巨人之聲多源綜合法）=====\n"
+                "\n\n===== 深度素材包（多源綜合用）=====\n"
                 + bundle_extra
             )
             print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
@@ -1566,35 +1474,42 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
 
     # 1c) podcast 自動加書面深度報告層：一手逐字稿已在 raw_content，再上網搜對應書面報告當
-    #     第二瞭望台 → §14 多源綜合，13:00 兩篇 podcast 取材文章自動加厚（你說的「搭配
+    #     第二瞭望台 → Weekly 多源綜合，podcast 取材文章自動加厚（你說的「搭配
     #     SemiAnalysis 查證」）。給了 --bundle 就以 bundle 為準、不重複搜。
     elif mode == "podcast" and not getattr(args, "no_reports", False):
         rblock, used_reports = _podcast_reports_block(raw_title)
         if rblock:
             raw_content = (raw_content or "") + rblock
-            print("[Podcast] +書面深度報告層（§14 第二瞭望台）")
+            print("[Podcast] +書面深度報告層（Weekly 第二瞭望台）")
 
     # 2) Compose
-    recent_domains = load_recent_metaphor_domains()
-    recent_hooks = load_recent_hook_types()
-    print(f"[Compose] recent_metaphor_domains={recent_domains} recent_hooks={recent_hooks}")
+    profile = resolve_editorial_profile(
+        mode,
+        override=getattr(args, "editorial_profile", "auto"),
+        has_deep_bundle=bool(getattr(args, "bundle", None)),
+    )
+    word_floor, word_cap = word_range_for(profile)
+    print(f"[Compose] editorial_profile={profile.name} words={word_floor}-{word_cap}")
     draft = await compose_substack_article(
         title=raw_title,
         content=raw_content or "",
         mode=mode,  # type: ignore[arg-type]
         topic_category=topic_category,
         editorial_note=args.editorial_note or "",
-        recent_metaphor_domains=recent_domains,
-        recent_hook_types=recent_hooks,
+        editorial_profile=profile.name,
+        has_deep_bundle=bool(getattr(args, "bundle", None)),
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")
         notify_substack_failure(
             mode=mode,
-            error_msg="LLM 寫稿失敗（Claude CLI + Gemini 兩條路都掛）",
+            error_msg="LLM 寫稿失敗（設定的寫手後端皆未成功）",
             extra_context={
-                "backends": os.getenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli"),
-                "fix_hint": "check claude CLI auth: claude -p --output-format json ping",
+                "backends": os.getenv(
+                    "SUBSTACK_COMPOSER_BACKEND",
+                    "antigravity_cli,gemini,opencode,cerebras,groq",
+                ),
+                "fix_hint": "check the first configured backend's auth and CLI availability",
                 "source_title": raw_title,
             },
         )
@@ -1602,11 +1517,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
     print(f"[Compose] ✅ title={draft.title!r}")
 
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
-    # The 大陸→台灣 lookup table no longer ships in the soul prompt; the
+    # The 大陸→台灣 lookup table does not ship in the writer prompt; the
     # unambiguous half is enforced here at zero token cost, before audit + writes.
     fixes = autofix_traditional(draft)  # 簡→繁台灣 (OpenCC s2tw) — 最後防線，先跑
     fixes += autofix_mainland_terms(draft)
-    fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號 (skip §13 marker/footer blockquotes)
+    fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號（跳過 deterministic blockquotes）
     fixes += autofix_cjk_spacing(draft)  # 盤古之白：中英數間補空格 (skip code/quote/URL)
     if fixes:
         print(f"[AutoFix] 🔧 {len(fixes)} 處自動修正：")
@@ -1614,7 +1529,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"  - {f}")
 
     # 3) Audit (remaining ambiguous terms + blacklist still surface as warnings)
-    warnings = audit_substack_draft(draft)
+    warnings = audit_substack_draft(draft, profile=profile)
     if warnings:
         print(f"[Audit] ⚠️ {len(warnings)} warning(s):")
         for w in warnings:
@@ -1632,10 +1547,17 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 5) Write files
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
-    write_article_full_md(local_dir, draft, mode=mode, source=source, audit_warnings=warnings)
-    write_prompts_and_metadata(local_dir, draft, mode, source, warnings)
+    write_article_full_md(
+        local_dir,
+        draft,
+        mode=mode,
+        editorial_profile=profile.name,
+        source=source,
+        audit_warnings=warnings,
+    )
+    write_prompts_and_metadata(local_dir, draft, mode, profile.name, source, warnings)
 
-    # 5a) Brand footer: tagline + Subscribe placeholder (per soul.md §12).
+    # 5a) Deterministic brand footer + Subscribe placeholder.
     append_footer_block(article_md_path=article_md)
 
     # 5b) Cover IP prompt (2026-06-21, Hsin directive): every draft gets a SHORT
@@ -1716,15 +1638,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         )
         return 6
 
-    # 8) Update metaphor history — best-effort; draft is already pushed, so a
-    # housekeeping failure must not flip the run to exit 1.
-    try:
-        append_metaphor_domain(draft.metaphor_domain_used)
-        append_hook_type(getattr(draft, "hook_type", ""))
-    except Exception as exc:
-        print(f"[PostDraft] ⚠️ append_metaphor_domain/hook failed (continuing): {exc}")
-
-    # 9) Notify Hsin via configured channel (Gmail / macOS / both).
+    # 8) Notify Hsin via configured channel (Gmail / macOS / both).
     # Read final article markdown back (footer + cover prompts already appended).
     try:
         final_body_md = article_md.read_text(encoding="utf-8")
@@ -1732,7 +1646,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         final_body_md = draft.body_markdown
     pub_url = os.getenv("SUBSTACK_PUBLICATION_URL", "https://hsin73.substack.com")
     draft_url = f"{pub_url}/publish/post/{draft_id}" if draft_id else None
-    from substack_radar.composer import SUBSTACK_WORD_FLOOR, SUBSTACK_WORD_CAP, _count_chinese_chars
+    from substack_radar.composer import _count_chinese_chars
     notify_substack_success(
         mode=mode,
         draft_title=draft.title,
@@ -1741,12 +1655,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
         body_markdown=final_body_md,
         metadata={
             "chinese_chars": _count_chinese_chars(draft.body_markdown),
-            "word_floor": SUBSTACK_WORD_FLOOR,
-            "word_cap": SUBSTACK_WORD_CAP,
-            "metaphor_domain_used": draft.metaphor_domain_used,
-            "hook_type": draft.hook_type,
-            "open_ending_form": draft.open_ending_form,
-            "reading_time_minutes": draft.reading_time_minutes,
+            "word_floor": word_floor,
+            "word_cap": word_cap,
+            "editorial_profile": profile.name,
         },
         audit_warnings=warnings,
         onedrive_path=str(mirror_dir),
@@ -1761,7 +1672,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Generate a daily Substack draft (morning type-A / evening type-B)."
+        description="Generate one Daily or Weekly Substack draft."
     )
     p.add_argument("mode", choices=["morning", "evening", "podcast", "company"], help="Which slot to compose")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
@@ -1771,8 +1682,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "(any mode) 深度素材包 markdown 路徑（scripts/enrich_youtube_sources.py 產出）。"
-            "其精華（重點參考資料＋各源關鍵數據與要角）會疊進素材，觸發 substack_soul.md "
-            "§14 巨人之聲·多源綜合法。drain_substack.py 偵測到 YouTube 種子時會自動帶入。"
+            "其精華（重點參考資料＋各源關鍵數據與要角）會疊進素材並自動選用 Weekly profile。"
+            "drain_substack.py 偵測到 YouTube 種子時會自動帶入。"
         ),
     )
     p.add_argument(
@@ -1796,6 +1707,12 @@ def parse_args() -> argparse.Namespace:
         help="(evening) override topic_category (e.g. ai_application / policy_geopolitics). 預設 'other'.",
     )
     p.add_argument("--editorial-note", default="", help="Editor's mandate to the writer")
+    p.add_argument(
+        "--editorial-profile",
+        choices=["auto", "daily", "weekly"],
+        default="auto",
+        help="Writing depth. auto maps morning/evening to daily and podcast/company/deep bundles to weekly.",
+    )
     p.add_argument(
         "--no-draft",
         action="store_true",

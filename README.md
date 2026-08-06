@@ -52,6 +52,13 @@ The Pages UI is authenticated with an owner token stored only in browser
 ### Substack: high-quality drafts, never auto-publish
 
 - Submitted URLs, text, and YouTube sources enter the canonical runtime DB.
+- Planned editorial cadence is one daily **Podcast batch** at 12:00 plus one
+  **Weekly** company analysis on Sunday at 09:00. The noon batch refreshes the
+  dedicated interview pool and then writes two different, unused interviews
+  published within the last seven days. Morning/evening modes remain available
+  for deliberate use.
+- Both scheduled Podcast drafts use Weekly depth (2800–4200 Chinese characters).
+  Daily and Weekly briefs remain available to manual and submission-driven work.
 - The Mac worker records local/OneDrive completion in
   `news_items.substack_written_at`.
 - Only a successful Substack `post_draft` response writes
@@ -154,6 +161,7 @@ write lease as GitHub Actions:
 ```bash
 cp scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
 cp scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
+cp scripts/substack_editorial_worker.sh ~/bin/news_radar_substack_editorial.sh
 ```
 
 The installed launchd copies must be updated on the Mac before Substack draft
@@ -162,6 +170,12 @@ read or force-push the legacy `state` branch. Follow the staged rollout in
 [`scripts/INSTALL_COMPOSE_LAUNCHAGENT.md`](scripts/INSTALL_COMPOSE_LAUNCHAGENT.md):
 bootstrap with `--setup-only`, load the immediate lane, prove one remote draft,
 then enable the hourly backlog lane.
+
+After that canary, `bash scripts/install_substack_daily_agents.sh` installs the
+separate governed editorial cadence (one two-draft Podcast batch daily at 12:00;
+company pick-and-compose Sunday at 09:00). Repository configuration is not proof
+that those launchd agents are loaded on the Mac; verify with the installer
+`--status` and require visible remote drafts plus canonical IDs.
 
 ## Verification
 

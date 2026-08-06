@@ -6,7 +6,7 @@
  */
 
 const ALLOWED_ORIGIN = "https://hsintiger.github.io";
-const API_VERSION = "2026-07-28.direct-post-sync-v1";
+const API_VERSION = "2026-08-06.operations-cockpit-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
@@ -748,6 +748,7 @@ async function syncOperationalData(request, env, cors) {
   const groups = {
     automation: listField(body, "automation"),
     posts: listField(body, "posts"),
+    substack_drafts: listField(body, "substack_drafts"),
     engagement: listField(body, "engagement"),
     quality: listField(body, "quality"),
     experiments: listField(body, "experiments"),
@@ -795,6 +796,51 @@ async function syncOperationalData(request, env, cors) {
     );
   }
   counts.automation = groups.automation.length;
+
+  for (const row of groups.substack_drafts) {
+    const kind = cleanString(row.editorial_kind, "substack.editorial_kind", 20, true);
+    const status = cleanString(row.status, "substack.status", 20, true);
+    if (!new Set(["submission", "podcast", "company", "editorial"]).has(kind)) {
+      throw new HTTPError(400, "invalid Substack editorial kind", "invalid_input");
+    }
+    if (!new Set(["draft_created", "local_written", "unknown"]).has(status)) {
+      throw new HTTPError(400, "invalid Substack draft status", "invalid_input");
+    }
+    const updatedAt = cleanString(
+      row.drafted_at || row.written_at || new Date().toISOString(),
+      "substack.updated_at",
+      60,
+      true,
+    );
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO substack_drafts(
+          id,source_id,submission_id,editorial_kind,source_type,source_title,
+          source_url,remote_draft_id,status,written_at,drafted_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET submission_id=excluded.submission_id,
+          editorial_kind=excluded.editorial_kind,source_type=excluded.source_type,
+          source_title=excluded.source_title,source_url=excluded.source_url,
+          remote_draft_id=excluded.remote_draft_id,status=excluded.status,
+          written_at=excluded.written_at,drafted_at=excluded.drafted_at,
+          updated_at=excluded.updated_at`,
+      ).bind(
+        cleanString(row.id, "substack.id", 160, true),
+        cleanString(row.source_id, "substack.source_id", 200, true),
+        cleanString(row.submission_id, "substack.submission_id", 160),
+        kind,
+        cleanString(row.source_type, "substack.source_type", 40, true),
+        cleanString(row.source_title, "substack.source_title", 500, true),
+        cleanString(row.source_url, "substack.source_url", 2000),
+        cleanString(row.remote_draft_id, "substack.remote_draft_id", 200),
+        status,
+        cleanString(row.written_at, "substack.written_at", 60),
+        cleanString(row.drafted_at, "substack.drafted_at", 60),
+        updatedAt,
+      ),
+    );
+  }
+  counts.substack_drafts = groups.substack_drafts.length;
 
   for (const row of groups.experiments) {
     const platform = cleanString(row.platform, "experiment.platform", 20, true);
@@ -1164,7 +1210,8 @@ async function audit(env, actor, action, subjectId, status, metadata) {
 
 async function dashboard(env, cors) {
   const [
-    submissions, recentSubmissions, posts, recentPosts, engagement, engagementTrend,
+    submissions, recentSubmissions, posts, recentPosts, substackDrafts,
+    recentSubstackDrafts, engagement, engagementTrend,
     audience, quality, proposals, knowledgeTopics, knowledgeTotal, health,
     runtimeState, recoveryExperiments, events,
   ] = await env.DB.batch([
@@ -1172,9 +1219,24 @@ async function dashboard(env, cors) {
     env.DB.prepare(`SELECT id,target,source_type,note,platforms_json,requested_mode,status,
       workflow_run_url,error,created_at,updated_at FROM submissions ORDER BY created_at DESC LIMIT 25`),
     env.DB.prepare("SELECT platform,status,COUNT(*) AS count,MAX(posted_at) AS last_posted_at FROM platform_posts GROUP BY platform,status"),
-    env.DB.prepare(`SELECT id,draft_id,submission_id,platform,format,platform_post_id,
-      status,title,topic,source_url,posted_at FROM platform_posts
-      ORDER BY COALESCE(posted_at,created_at) DESC LIMIT 30`),
+    env.DB.prepare(`WITH ranked_engagement AS (
+      SELECT *,ROW_NUMBER() OVER(
+        PARTITION BY platform,platform_post_id ORDER BY captured_at DESC
+      ) AS rn FROM engagement_snapshots
+    )
+    SELECT p.id,p.draft_id,p.submission_id,p.platform,p.format,p.platform_post_id,
+      p.status,p.title,p.topic,p.source_url,p.posted_at,
+      e.views,e.reach,e.clicks,e.likes,e.comments,e.shares,e.saves,
+      e.replies,e.reposts,e.quotes,e.metric_status,e.captured_at AS metrics_captured_at
+      FROM platform_posts p LEFT JOIN ranked_engagement e
+        ON e.platform=p.platform AND e.platform_post_id=p.platform_post_id AND e.rn=1
+      ORDER BY COALESCE(p.posted_at,p.created_at) DESC LIMIT 30`),
+    env.DB.prepare(`SELECT editorial_kind,status,COUNT(*) AS count,
+      MAX(drafted_at) AS last_drafted_at FROM substack_drafts
+      GROUP BY editorial_kind,status ORDER BY editorial_kind,status`),
+    env.DB.prepare(`SELECT id,submission_id,editorial_kind,source_type,source_title,
+      source_url,remote_draft_id,status,written_at,drafted_at,updated_at
+      FROM substack_drafts ORDER BY COALESCE(drafted_at,written_at,updated_at) DESC LIMIT 30`),
     env.DB.prepare(LATEST_ENGAGEMENT_SQL),
     env.DB.prepare(`WITH daily_post AS (
       SELECT platform,platform_post_id,substr(captured_at,1,10) AS day,MAX(captured_at) AS captured_at
@@ -1233,6 +1295,13 @@ async function dashboard(env, cors) {
     env.DB.prepare("SELECT actor,action,subject_id,status,created_at FROM audit_events ORDER BY id DESC LIMIT 50"),
   ]);
   const runtime = runtimeState.results[0] || {};
+  let editorialContract = {};
+  try {
+    const detail = JSON.parse(runtime.detail || "{}");
+    editorialContract = detail.substack || {};
+  } catch (_error) {
+    editorialContract = {};
+  }
   return reply(
     {
       ok: true,
@@ -1251,6 +1320,9 @@ async function dashboard(env, cors) {
       })),
       platforms: posts.results,
       recent_posts: recentPosts.results,
+      substack: substackDrafts.results,
+      recent_substack_drafts: recentSubstackDrafts.results,
+      editorial_contract: editorialContract,
       engagement: engagement.results,
       engagement_trend: engagementTrend.results,
       audience: audience.results,

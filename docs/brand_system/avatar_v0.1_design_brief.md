@@ -96,7 +96,7 @@ Reference: Doomberg's chicken, Drudge Report's mascot, The Browser's logo — se
 How does the avatar concept connect to:
 - "我錯了 / wrong" wordplay anchor
 - Cold-print editorial aesthetic
-- Newsletter cadence promise (每天 3 分鐘 / 365 天複利)
+- Newsletter cadence promise (每天兩篇對談延伸 / 每週一篇公司深拆)
 
 ### 5.2 5-7 design variants (each at 1024×1024 + 60×60 thumbnail)
 
@@ -166,7 +166,7 @@ How does Hsin (or PM agent) ship a new version if avatar evolves to v0.2?
 
 ### 6.3 Brand voice / soul
 
-- `config/substack_soul.md` (newsletter writing voice + brand declaration)
+- `substack_radar/config/editorial_voice.md` (newsletter writing voice)
 - `feedback_documentary_narrator.md` (5/15 voice update — for-画面騰空間, scene over comment)
 
 ### 6.4 Aspirational visual references (we want to feel like)

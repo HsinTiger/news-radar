@@ -1,8 +1,8 @@
 # News Radar · Substack Reference Tables (NOT sent to the LLM)
 
-> 2026-05-30 (Optimization B): moved out of `substack_soul.md §11` to stop shipping
-> this lookup table on every compose call. The **unambiguous** half is now enforced
-> deterministically by `autofix_mainland_terms()` in `src/substack_composer.py`
+> This lookup table is deliberately not sent to the writer. The **unambiguous**
+> half is enforced deterministically by `autofix_mainland_terms()` in
+> `substack_radar/composer.py`
 > (zero token cost); the ambiguous half (replacement contains 「／」) stays a warning
 > via `audit_substack_draft()`. This file is the human-readable source of truth for
 > the full mapping — keep `_MAINLAND_TERMS` in sync with it.
@@ -121,7 +121,7 @@
 
 ## §11.3 audit / autofix 端詞彙檢查
 
-`src/substack_composer.py`：
+`substack_radar/composer.py`：
 - `autofix_mainland_terms()` 會**自動替換** `_MAINLAND_TERMS` 中替換詞不含「／」的明確詞（特朗普→川普、視頻→影片…）。
 - `audit_substack_draft()` 仍掃描全部 `_MAINLAND_TERMS`，自動修正後只剩含「／」的模糊詞（如互聯網→網際網路／網路）會 warning。
 - 真正 context-sensitive 的詞（數據／質量／智能／移動／用戶）**刻意不放進** `_MAINLAND_TERMS`，永遠不碰，避免誤殺。

@@ -79,7 +79,7 @@
 
 ## 引用此 anchor 的位置
 
-- `config/substack_soul.md §2.8 Aporia Turn`
+- Historical voice example. Current runtime guidance lives in `substack_radar/config/editorial_voice.md`.
 - `feedback_substack_voice.md`
 - `feedback_anti_preacher_voice.md`
 - 未來任何 Substack ad-hoc 寫到結尾 self-coda 時、PM agent 先讀本檔再寫。

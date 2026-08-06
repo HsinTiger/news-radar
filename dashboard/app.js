@@ -1,475 +1,846 @@
-(() => {
-  "use strict";
+import {
+  DEFAULT_EDITORIAL_CONTRACT,
+  PLATFORM_ORDER,
+  TOKEN_KEY,
+  buildSubmissionPayload,
+  buildTrendSeries,
+  deriveAttention,
+  ensureExpectedSchedulerHealth,
+  forgetToken,
+  isPendingStatus,
+  normalizeEditorialContract,
+  platformSnapshot,
+  readStoredToken,
+  rememberToken,
+  summarizeRecentContent,
+} from "./ops-core.mjs";
 
-  const API = "https://news-radar-submit.smartmmmoney.workers.dev";
-  const TOKEN_KEY = "hsintiger_social_ops_owner_token";
-  const PLATFORM_ORDER = ["facebook", "instagram", "threads"];
-  const PLATFORM_META = {
-    facebook: { label: "Facebook", short: "FB", color: "#5a8dee" },
-    instagram: { label: "Instagram", short: "IG", color: "#d977d3" },
-    threads: { label: "Threads", short: "TH", color: "#55d8e6" },
-  };
-  const EXPERIMENT_COPY = { interest:"興趣", trust:"信任", utility:"實用性", format:"格式" };
-  const STATUS_COPY = {
-    queued: "等待 poller", claimed: "已領取", dispatched: "已派送",
-    processing: "處理中", content_queued: "內容已入佇列", source_queued: "素材已入庫",
-    draft_created: "草稿已建立", published: "已發布", partial: "部分平台已發布",
-    quality_held: "品質待複核", failed: "失敗", rejected: "拒絕",
-    planned: "規劃中", measuring: "量測中", complete: "已收滿 168h", deleted: "已刪除", unknown: "未知",
-    proposed: "待 owner 決策", approved: "已批准", applied: "已套用",
-    superseded: "已取代",
-  };
-  const HEALTH_COPY = {
-    daily_publish_cadence: "每日實際發文",
-    scheduler_delivery: "GitHub 排程送達",
-    scheduler_watchdog_dispatch: "Cloudflare watchdog 派送",
-    scheduler_watchdog_delivery: "Cloudflare watchdog 到達 Actions",
-    substack_draft_worker: "Substack 現行草稿 worker",
-    substack_legacy_backlog: "Substack 歷史待核實",
-  };
-  const GOOD = new Set(["published", "complete", "draft_created", "healthy", "approved", "applied"]);
-  const BAD = new Set(["failed", "rejected", "error"]);
-  const PENDING = new Set(["queued", "claimed", "dispatched", "processing", "content_queued", "source_queued", "partial", "quality_held"]);
-  const SCHEDULER_HOURS_UTC = [0, 3, 10, 11, 12, 13];
-  const SCHEDULER_HEALTH = {
-    scheduler_delivery: { minute:17, toleranceMs:4 * 60 * 60 * 1000 },
-    scheduler_watchdog_dispatch: { minute:27, toleranceMs:60 * 60 * 1000 },
-    scheduler_watchdog_delivery: { minute:27, toleranceMs:60 * 60 * 1000 },
-  };
-  let chart = null;
-  let refreshTimer = null;
+const API = "https://news-radar-submit.smartmmmoney.workers.dev";
+const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
+const PLATFORM_META = {
+  facebook: {label: "Facebook", short: "FB", color: "#82a9ff"},
+  instagram: {label: "Instagram", short: "IG", color: "#df8acb"},
+  threads: {label: "Threads", short: "TH", color: "#d8d6cf"},
+};
+const VIEW_COPY = {
+  overview: ["TODAY'S CONTROL ROOM", "營運總覽"],
+  substack: ["EDITORIAL OPERATIONS", "Substack"],
+  meta: ["META OPERATIONS", "Meta 三平台"],
+  health: ["EVIDENCE & HEALTH", "資料健康"],
+  submit: ["OWNER INBOX", "新增投稿"],
+};
+const STATUS_COPY = {
+  queued: "等待處理", claimed: "已領取", dispatched: "已派送", processing: "處理中",
+  content_queued: "內容已入列", source_queued: "素材已入列", draft_created: "遠端草稿已建立",
+  local_written: "本地文章已寫成", published: "已發布", partial: "部分完成",
+  quality_held: "品質閘門暫停", failed: "失敗", rejected: "已拒絕", unknown: "未知",
+  healthy: "正常", degraded: "降級", error: "錯誤", success: "通過", cancelled: "已取消",
+};
+const HEALTH_COPY = {
+  daily_publish_cadence: "每日發布節奏", latest_post_canary: "最新貼文回讀",
+  engagement_api: "互動數據 API", scheduler_delivery: "GitHub 排程送達",
+  scheduler_watchdog_dispatch: "排程 watchdog 派送", scheduler_watchdog_delivery: "watchdog 送達",
+  substack_draft_worker: "Substack 草稿 worker", substack_legacy_backlog: "Substack 舊佇列",
+};
+const GOOD_STATUS = new Set(["healthy", "success", "published", "draft_created", "local_written", "complete"]);
+const BAD_STATUS = new Set(["error", "failed", "failure", "rejected", "cancelled"]);
 
-  const $ = (id) => document.getElementById(id);
-  const token = () => localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || "";
-  const storeToken = (value, remember) => {
-    sessionStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(TOKEN_KEY);
-    (remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, value);
-  };
-  const clearToken = () => { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); };
-  const n = (value) => Number(value || 0);
-  const fmt = (value) => new Intl.NumberFormat("zh-TW", { notation: n(value) >= 10000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(n(value));
-  const when = (value) => value ? new Date(value).toLocaleString("zh-TW", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "未知";
-  const text = (value, fallback = "—") => value === null || value === undefined || value === "" ? fallback : String(value);
+const state = {
+  publicHealth: null,
+  dashboard: null,
+  workflows: [],
+  currentView: "overview",
+  trendMetric: "actions",
+  privateError: "",
+  refreshTimer: null,
+};
 
-  function node(tag, className, content) {
-    const element = document.createElement(tag);
-    if (className) element.className = className;
-    if (content !== undefined) element.textContent = content;
-    return element;
-  }
+const $ = (id) => document.getElementById(id);
+const storage = () => ({local: window.localStorage, session: window.sessionStorage});
+const currentToken = () => readStoredToken(storage());
+const svgNode = (name, attributes = {}) => {
+  const item = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attributes).forEach(([key, value]) => item.setAttribute(key, String(value)));
+  return item;
+};
+const node = (name, className, text) => {
+  const item = document.createElement(name);
+  if (className) item.className = className;
+  if (text !== undefined) item.textContent = text;
+  return item;
+};
+const clear = (item) => item.replaceChildren();
 
-  function clear(element) { element.replaceChildren(); }
-  function empty(element, message) { clear(element); element.appendChild(node("div", "empty", message)); }
-  function badge(status) {
-    const item = node("span", `badge ${GOOD.has(status) ? "good" : (BAD.has(status) ? "bad" : "warn")}`, STATUS_COPY[status] || status || "unknown");
-    return item;
+class ApiError extends Error {
+  constructor(message, status = 0, code = "request_error") {
+    super(message);
+    this.status = status;
+    this.code = code;
   }
-  function lastExpectedSchedulerTick(nowMs, minute) {
-    const now = new Date(nowMs);
-    const starts = [
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    ];
-    return Math.max(...starts.flatMap(start => SCHEDULER_HOURS_UTC.map(hour =>
-      start + hour * 60 * 60 * 1000 + minute * 60 * 1000
-    )).filter(value => value <= nowMs));
+}
+
+function number(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function fmt(value, options = {}) {
+  const parsed = number(value);
+  if (parsed === null) return "未知";
+  return new Intl.NumberFormat("zh-TW", {
+    notation: Math.abs(parsed) >= 10000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+    ...options,
+  }).format(parsed);
+}
+
+function when(value, fallback = "時間未知") {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return fallback;
+  return date.toLocaleString("zh-TW", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"});
+}
+
+function age(value) {
+  if (!value) return "時間未知";
+  const elapsed = Date.now() - Date.parse(value);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return when(value);
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 2) return "剛剛";
+  if (minutes < 60) return `${minutes} 分鐘前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} 小時前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+function newest(values) {
+  return values.filter(Boolean).sort().at(-1) || null;
+}
+
+function statusClass(value) {
+  if (GOOD_STATUS.has(value)) return "good";
+  if (BAD_STATUS.has(value)) return "bad";
+  return "warn";
+}
+
+function statusChip(value, override) {
+  return node("span", `status-chip ${statusClass(value)}`, override || STATUS_COPY[value] || value || "未知");
+}
+
+function showGlobalError(message = "") {
+  $("global-error").hidden = !message;
+  $("global-error").textContent = message;
+}
+
+function showAuthNotice(message = "") {
+  $("auth-notice").hidden = !message;
+  $("auth-notice").textContent = message;
+}
+
+async function publicJson(url) {
+  const response = await fetch(url, {headers: {Accept: "application/json"}, cache: "no-store"});
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new ApiError(body.message || `HTTP ${response.status}`, response.status);
+  return body;
+}
+
+async function request(path, {token = currentToken(), ...options} = {}) {
+  const headers = {Accept: "application/json", ...(options.headers || {})};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (options.body) headers["Content-Type"] = "application/json";
+  const response = await fetch(`${API}${path}`, {...options, headers, cache: "no-store"});
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    throw new ApiError("授權未通過或已過期；本機 token 已保留，請重新驗證。", 401, body.code || "unauthorized");
   }
-  function effectiveHealth(item, nowMs = Date.now()) {
-    const timing=SCHEDULER_HEALTH[item.metric];
-    if(!timing || item.status !== "healthy") return item;
-    const capturedMs = Date.parse(item.captured_at || "");
-    const expectedMs = lastExpectedSchedulerTick(nowMs,timing.minute);
-    if(Number.isFinite(capturedMs) && capturedMs + 5 * 60 * 1000 >= expectedMs) return item;
-    const delayMs = nowMs - expectedMs;
-    const waiting = delayMs <= timing.toleranceMs;
-    return {
-      ...item,
-      status: waiting ? "unknown" : "degraded",
-      detail: `${waiting ? "awaiting_expected_tick" : "expected_tick_missing"}; expected_utc=${new Date(expectedMs).toISOString()}; tolerance_minutes=${timing.toleranceMs/60000}; ${item.detail || "no heartbeat detail"}`,
-    };
+  if (!response.ok) throw new ApiError(body.message || body.error || `HTTP ${response.status}`, response.status, body.code);
+  return body;
+}
+
+function normalizeWorkflows(payload) {
+  return (payload.workflow_runs || []).map((run) => ({
+    id: run.id,
+    workflowName: run.name || run.display_title || "GitHub workflow",
+    conclusion: run.conclusion || run.status || "unknown",
+    status: run.status || "unknown",
+    createdAt: run.created_at || null,
+    updatedAt: run.updated_at || null,
+    url: run.html_url || null,
+    event: run.event || null,
+  }));
+}
+
+async function loadPublicData() {
+  const [healthResult, workflowResult] = await Promise.allSettled([
+    publicJson(`${API}/health`),
+    publicJson(WORKFLOWS_API),
+  ]);
+  if (healthResult.status === "fulfilled") state.publicHealth = healthResult.value;
+  if (workflowResult.status === "fulfilled") state.workflows = normalizeWorkflows(workflowResult.value);
+  renderRuntime();
+  renderWorkflows();
+  renderAttention();
+  if (healthResult.status === "rejected") {
+    showGlobalError(`目前無法讀取公開 runtime：${healthResult.reason.message}`);
+  } else {
+    showGlobalError("");
   }
-  function ensureExpectedSchedulerHealth(rows,nowMs=Date.now()) {
-    const result=[...rows];
-    Object.keys(SCHEDULER_HEALTH).forEach(metric=>{
-      if(result.some(item=>item.metric===metric)) return;
-      result.push(effectiveHealth({
-        platform:"system",metric,status:"healthy",captured_at:null,
-        detail:"heartbeat_not_persisted",
-      },nowMs));
+}
+
+async function loadPrivateData(token = currentToken(), {quiet = false} = {}) {
+  if (!token) {
+    state.dashboard = null;
+    state.privateError = "";
+    renderPrivateViews();
+    updateAuthUi();
+    return false;
+  }
+  try {
+    state.dashboard = await request("/api/dashboard", {token});
+    state.privateError = "";
+    showAuthNotice("");
+    renderPrivateViews();
+    updateAuthUi(true);
+    return true;
+  } catch (error) {
+    state.dashboard = null;
+    state.privateError = error.message;
+    renderPrivateViews();
+    updateAuthUi(false);
+    if (!quiet || error.status === 401) showAuthNotice(error.message);
+    return false;
+  }
+}
+
+async function refreshAll() {
+  const refresh = $("refresh-all");
+  refresh.disabled = true;
+  refresh.textContent = "…";
+  await Promise.all([loadPublicData(), loadPrivateData(currentToken(), {quiet: true})]);
+  refresh.disabled = false;
+  refresh.textContent = "↻";
+}
+
+function updateAuthUi(verified = Boolean(state.dashboard)) {
+  const hasToken = Boolean(currentToken());
+  $("open-auth").textContent = verified ? "已解鎖 · 管理" : (hasToken ? "重新驗證" : "解鎖營運資料");
+  $("forget-token").hidden = !hasToken;
+  $("remember-token").checked = Boolean(localStorage.getItem(TOKEN_KEY));
+  $("submit-button").disabled = !verified;
+  $("submit-button").textContent = verified ? submissionButtonCopy() : "先解鎖再投稿";
+  const connection = $("connection-pill");
+  if (verified) {
+    connection.dataset.state = "good";
+    $("connection-copy").textContent = "營運資料已解鎖";
+  } else if (state.publicHealth?.ok) {
+    connection.dataset.state = hasToken ? "warn" : "good";
+    $("connection-copy").textContent = hasToken ? "公開系統正常 · 授權待驗證" : "公開系統正常";
+  } else {
+    connection.dataset.state = "bad";
+    $("connection-copy").textContent = "公開系統狀態未知";
+  }
+}
+
+function showView(view, {push = true} = {}) {
+  if (!VIEW_COPY[view]) view = "overview";
+  state.currentView = view;
+  document.querySelectorAll("[data-view]").forEach((section) => {
+    const active = section.dataset.view === view;
+    section.hidden = !active;
+    section.classList.toggle("is-active", active);
+  });
+  document.querySelectorAll("[data-nav]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.nav === view);
+    if (button.dataset.nav === view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $("view-kicker").textContent = VIEW_COPY[view][0];
+  $("view-title").textContent = VIEW_COPY[view][1];
+  if (push) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", view);
+    history.pushState({view}, "", url);
+  }
+  window.scrollTo({top: 0, behavior: "smooth"});
+}
+
+function renderRuntime() {
+  const runtime = state.dashboard?.automation || state.publicHealth?.automation || {};
+  const mode = runtime.mode || "unknown";
+  const label = {live: "正式運行", recovery: "恢復模式", paused: "已暫停", unknown: "狀態未知"}[mode] || mode;
+  $("runtime-mode").textContent = label;
+  $("runtime-updated").textContent = runtime.updated_at ? `更新於 ${age(runtime.updated_at)}` : "尚無持久化時間證據";
+  $("runtime-processor").textContent = runtime.submission_processor === "live" ? "運行中" : (runtime.submission_processor || "未知");
+  $("runtime-meta").textContent = runtime.meta_publish_now_ready === true ? "可用" : "不可用";
+  $("runtime-substack").textContent = runtime.substack_auto_publish === true ? "開啟" : "關閉（僅草稿）";
+  const orb = $("runtime-orb");
+  orb.className = `runtime-orb ${mode === "live" ? "good" : (mode === "recovery" ? "warn" : "bad")}`;
+  updateAuthUi();
+}
+
+function renderAttention() {
+  const list = $("attention-list");
+  const attentionDashboard = state.dashboard ? {
+    ...state.dashboard,
+    data_health: ensureExpectedSchedulerHealth(state.dashboard.data_health || []),
+  } : {};
+  const items = deriveAttention({dashboard: attentionDashboard, workflows: state.workflows});
+  clear(list);
+  if (!items.length) {
+    const empty = node("div", "locked-placeholder", state.dashboard
+      ? "目前沒有 workflow 失敗、資料降級或待處理投稿。"
+      : "公開 workflow 沒有可見異常；解鎖後才能檢查資料健康與投稿佇列。");
+    list.append(empty);
+  } else {
+    items.slice(0, 6).forEach((item) => {
+      const row = node(item.url ? "a" : "div", "attention-item");
+      row.dataset.severity = item.severity;
+      if (item.url) { row.href = item.url; row.target = "_blank"; row.rel = "noreferrer"; }
+      row.append(node("span", "attention-dot"));
+      const content = node("div");
+      content.append(node("strong", "", item.title), node("p", "", item.detail));
+      row.append(content, node("time", "", age(item.observedAt)));
+      list.append(row);
     });
-    return reconcileWatchdogLineage(result);
   }
-  function healthDetailField(item,key) {
-    const match=String(item?.detail||"").match(new RegExp(`(?:^|; )${key}=([^;]+)`));
-    return match ? match[1] : "";
-  }
-  function reconcileWatchdogLineage(rows) {
-    const dispatch=rows.find(item=>item.metric==="scheduler_watchdog_dispatch");
-    const deliveryIndex=rows.findIndex(item=>item.metric==="scheduler_watchdog_delivery");
-    if(!dispatch || deliveryIndex<0 || dispatch.status!=="healthy" || rows[deliveryIndex].status!=="healthy") return rows;
-    const dispatchId=healthDetailField(dispatch,"dispatch_id");
-    const deliveryId=healthDetailField(rows[deliveryIndex],"dispatch_id");
-    if(dispatchId && dispatchId===deliveryId) return rows;
-    rows[deliveryIndex]={
-      ...rows[deliveryIndex],status:"degraded",
-      detail:`dispatch_lineage_mismatch; expected_dispatch_id=${dispatchId||"missing"}; ${rows[deliveryIndex].detail||"delivery detail missing"}`,
-    };
-    return rows;
-  }
-  function showError(message) { const box=$("error"); box.hidden=!message; box.textContent=message || ""; }
+  const critical = items.filter((item) => item.severity === "critical").length;
+  $("attention-summary").textContent = items.length
+    ? `目前有 ${items.length} 項需要辨識，其中 ${critical} 項屬於執行或驗證失敗。請依證據逐項處理，不把單一 workflow 失敗擴大解讀成全系統中斷。`
+    : (state.dashboard ? "目前沒有需要立即處理的訊號；仍應以平台回讀證據確認真正送達。" : "公開系統已讀取。解鎖後會補上草稿、數據健康與投稿佇列。 ");
+}
 
-  async function request(path, options = {}) {
-    const headers = { Authorization:`Bearer ${token()}`, ...(options.headers || {}) };
-    if (options.body) headers["Content-Type"] = "application/json";
-    const response = await fetch(`${API}${path}`, { ...options, headers, cache:"no-store" });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
-    return data;
-  }
+function renderDraftPreview() {
+  const box = $("overview-drafts");
+  clear(box);
+  const rows = state.dashboard?.recent_substack_drafts || [];
+  if (!state.dashboard) return box.append(node("div", "locked-placeholder", "解鎖後顯示遠端草稿證據。"));
+  if (!rows.length) return box.append(node("div", "locked-placeholder", "尚未同步到 Substack 草稿 metadata。這代表未知，不代表零草稿。"));
+  rows.slice(0, 4).forEach((row) => {
+    const item = node("div", "compact-row");
+    const content = node("div");
+    content.append(node("strong", "", row.source_title || "未命名草稿"), node("small", "", `${editorialKind(row.editorial_kind)} · ${STATUS_COPY[row.status] || row.status}`));
+    item.append(content, node("time", "", age(row.drafted_at || row.written_at || row.updated_at)));
+    box.append(item);
+  });
+}
 
-  function setLocked(locked) {
-    const remembered = !locked && !!localStorage.getItem(TOKEN_KEY);
-    $("unlock-state").textContent = locked ? "尚未驗證" : (remembered ? "已驗證 · 已記住此裝置" : "已驗證 · token 只存在本分頁");
-    $("unlock-state").className = `unlock-state${locked ? "" : " good"}`;
-    $("automation-mode").textContent = locked ? "LOCKED" : "LOADING";
-    $("mode-dot").className = "state-dot paused";
-  }
+function renderMetaPreview() {
+  const box = $("overview-meta");
+  clear(box);
+  if (!state.dashboard) return box.append(node("div", "locked-placeholder", "解鎖後顯示 Facebook、Instagram、Threads。"));
+  PLATFORM_ORDER.forEach((platform) => {
+    const snapshot = platformSnapshot(platform, state.dashboard);
+    const item = node("div", "mini-platform");
+    item.append(node("span", "", PLATFORM_META[platform].label), node("strong", "", fmt(snapshot.followers)), node("small", "", `7 日 ${deltaCopy(snapshot.followersDelta7d)}`));
+    box.append(item);
+  });
+}
 
-  async function unlock() {
-    const candidate = $("owner-token").value.trim() || token();
-    if (!candidate) { showError("請先貼上 owner token。"); return; }
-    storeToken(candidate, $("remember-device").checked);
-    try {
-      await request("/api/submissions?limit=1");
-      $("owner-token").value = "";
-      setLocked(false);
-      showError("");
-      await load();
-      startRefresh();
-    } catch (error) {
-      clearToken();
-      setLocked(true);
-      showError(`驗證失敗：${error.message}`);
-    }
-  }
+function editorialKind(value) {
+  return {podcast: "Podcast", company: "公司分析", submission: "Owner 投稿", editorial: "編輯稿"}[value] || value || "未知類型";
+}
 
-  async function load() {
-    if (!token()) { setLocked(true); return; }
-    $("refresh").disabled = true;
-    try {
-      const data = await request("/api/dashboard");
-      render(data);
-      showError("");
-    } catch (error) {
-      showError(`Dashboard 載入失敗：${error.message}`);
-      if (/credential|auth|unauthorized/i.test(error.message)) {
-        clearToken();
-        setLocked(true);
+function contractScheduleCard(label, time, title, copy) {
+  const card = node("article", "schedule-card");
+  card.append(node("span", "day-chip", label), node("strong", "", time), node("h3", "", title), node("p", "", copy));
+  return card;
+}
+
+function renderSubstack() {
+  const contract = normalizeEditorialContract(state.dashboard?.editorial_contract || DEFAULT_EDITORIAL_CONTRACT);
+  const schedule = $("substack-schedule");
+  clear(schedule);
+  schedule.append(
+    contractScheduleCard("每日", contract.podcast.local_time || "12:00", `Podcast 延伸文 × ${contract.podcast.drafts || 2}`, `候選限最近 ${contract.podcast.candidate_window_days || 7} 天；兩篇集中同批完成，每篇 ${rangeCopy(contract.podcast.target_chars)} 字。`),
+    contractScheduleCard("週日", (contract.company.local_time || "Sun 09:00").replace("Sun ", ""), `公司深度文 × ${contract.company.drafts || 1}`, `${contract.company.pick_and_compose ? "選題與寫作合併在同一輪" : "先選題後寫作"}；以週刊深度完成，每篇 ${rangeCopy(contract.company.target_chars)} 字。`),
+  );
+  const writer = $("writer-contract");
+  clear(writer);
+  [
+    ["定位", contract.writer.positioning],
+    ["Podcast 方法", contract.writer.podcast_method],
+    ["證據邊界", contract.writer.evidence_boundary],
+    ["第二視角", contract.writer.source_strategy],
+    ["收尾方式", contract.writer.ending],
+  ].forEach(([label, copy]) => {
+    const row = node("div", "principle-row");
+    row.append(node("strong", "", label), node("p", "", copy || "未定義"));
+    writer.append(row);
+  });
+
+  const body = $("substack-draft-rows");
+  clear(body);
+  const rows = state.dashboard?.recent_substack_drafts || [];
+  if (!state.dashboard || !rows.length) {
+    const tr = node("tr");
+    const td = node("td", "table-empty", !state.dashboard ? "解鎖後顯示草稿 metadata；文章全文不會進入儀表板。" : "尚無已同步的草稿 metadata；這不等於沒有本地文章。 ");
+    td.colSpan = 5;
+    tr.append(td);
+    body.append(tr);
+  } else {
+    rows.forEach((row) => {
+      const tr = node("tr");
+      const title = node("td", "table-title");
+      title.append(node("strong", "", row.source_title || "未命名"));
+      if (row.source_url) {
+        const link = node("a", "", row.source_url);
+        link.href = row.source_url; link.target = "_blank"; link.rel = "noreferrer";
+        title.append(link);
       }
-    } finally { $("refresh").disabled = false; }
+      const proof = row.remote_draft_id ? `draft ID · ${row.remote_draft_id}` : "尚無遠端 draft ID";
+      tr.append(title, node("td", "", editorialKind(row.editorial_kind)), node("td"), node("td", "", when(row.drafted_at || row.written_at || row.updated_at)), node("td", "", proof));
+      tr.children[2].append(statusChip(row.status));
+      body.append(tr);
+    });
   }
+  const latest = newest(rows.map((row) => row.drafted_at || row.written_at || row.updated_at));
+  $("substack-data-stamp").textContent = latest ? `最新 ${age(latest)}` : "尚無同步證據";
+}
 
-  function render(data) {
-    renderAutomation(data.automation || {});
-    renderRecovery(data.recovery || {}, data.automation || {});
-    renderKpis(data);
-    renderPlatforms(data);
-    renderTrend(data.engagement_trend || []);
-    renderHealth(data.data_health || []);
-    renderSubmissions(data.recent_submissions || []);
-    renderPosts(data.recent_posts || []);
-    renderKnowledge(data.knowledge || {});
-    renderProposals(data.learning_proposals || []);
-    renderEvents(data.recent_events || []);
-    $("asof").textContent = `更新 ${when(data.generated_at)}`;
-    $("api-version").textContent = text(data.version, "API unknown");
+function rangeCopy(value) {
+  return Array.isArray(value) && value.length === 2 ? `${fmt(value[0])}–${fmt(value[1])}` : "2,800–4,200";
+}
+
+function deltaCopy(value) {
+  const parsed = number(value);
+  if (parsed === null) return "未知";
+  return `${parsed > 0 ? "+" : ""}${fmt(parsed)}`;
+}
+
+function renderMeta() {
+  const grid = $("platform-grid");
+  clear(grid);
+  if (!state.dashboard) {
+    grid.append(node("div", "locked-placeholder wide", "解鎖後顯示平台原生指標與資料時間。"));
+  } else {
+    PLATFORM_ORDER.forEach((platform) => grid.append(platformCard(platform, platformSnapshot(platform, state.dashboard))));
   }
+  const contentSummary = summarizeRecentContent(state.dashboard?.recent_posts || []);
+  renderMetaInsights(contentSummary);
+  renderTrend();
+  renderRecentPosts(contentSummary);
+  const stamps = [
+    ...(state.dashboard?.engagement || []).map((row) => row.last_captured_at),
+    ...(state.dashboard?.audience || []).map((row) => row.captured_at),
+  ];
+  const latest = newest(stamps);
+  $("meta-data-stamp").textContent = latest ? `最新數據 ${age(latest)}` : "尚無數據時間";
+}
 
-  function renderAutomation(automation) {
-    const mode = automation.mode || "unknown";
-    $("automation-mode").textContent = mode.toUpperCase();
-    $("mode-dot").className = `state-dot ${mode === "live" ? "live" : (mode === "recovery" ? "recovery" : (mode === "paused" ? "paused" : "error"))}`;
+function renderMetaInsights(summary) {
+  const box = $("meta-insights");
+  clear(box);
+  if (!state.dashboard) {
+    box.append(node("div", "locked-placeholder wide", "解鎖後整理近期發文數、平台回讀覆蓋與可行動訊號。"));
+    return;
   }
+  const {insights} = summary;
+  const cards = [
+    {
+      label: "近期內容",
+      value: fmt(insights.totalContent),
+      copy: `${fmt(insights.totalPlatformPosts)} 筆平台發布紀錄`,
+    },
+    {
+      label: "數據回讀覆蓋",
+      value: insights.coverageRate === null ? "未知" : `${fmt(insights.coverageRate)}%`,
+      copy: `${fmt(insights.measuredPlatformPosts)} / ${fmt(insights.totalPlatformPosts)} 筆已有 metrics`,
+    },
+    {
+      label: "近期互動較高",
+      value: insights.topActions === null ? "未知" : fmt(insights.topActions),
+      copy: insights.topTitle || "尚無可比較的回讀樣本",
+      caution: "只比較已回讀的互動動作，不等同跨平台觸及成效。",
+    },
+    {
+      label: "最新數據證據",
+      value: insights.latestMetricsAt ? age(insights.latestMetricsAt) : "未接上",
+      copy: insights.latestMetricsAt ? when(insights.latestMetricsAt) : "目前沒有 metrics captured_at",
+    },
+  ];
+  cards.forEach((card) => {
+    const item = node("article", "insight-card");
+    item.append(node("span", "", card.label), node("strong", "", card.value), node("p", "", card.copy));
+    if (card.caution) item.append(node("small", "", card.caution));
+    box.append(item);
+  });
+}
 
-  function renderRecovery(recovery, automation) {
-    const host = $("recovery-list");
-    const summary = $("recovery-summary");
-    clear(host); clear(summary);
-    const rows = recovery.experiments || [];
-    const completed = rows.filter(row => row.status === "complete").length;
-    const measuring = rows.filter(row => row.status === "measuring" || row.status === "published").length;
-    summary.append(
-      metric("Runtime", text(automation.mode, "unknown").toUpperCase(), `來源 ${text(automation.source,"unknown")} · ${when(automation.updated_at)}`),
-      metric("實驗", fmt(rows.length), `${fmt(measuring)} measuring · ${fmt(completed)} complete`),
-      metric("決策規則", "1 / 24 / 168h", "沒有 post ID 或資料退化時禁止放大"),
+function platformCard(platform, snapshot) {
+  const meta = PLATFORM_META[platform];
+  const card = node("article", "platform-card");
+  card.style.setProperty("--platform-color", meta.color);
+  const head = node("div", "platform-head");
+  const name = node("div", "platform-name");
+  name.append(node("span", "platform-badge", meta.short), node("span", "", meta.label));
+  head.append(name, node("span", "platform-freshness", snapshot.audienceCapturedAt ? age(snapshot.audienceCapturedAt) : "受眾未接上"));
+  const main = node("div", "platform-main");
+  main.append(node("span", "", "追蹤者"), node("strong", "", fmt(snapshot.followers)), node("small", "", `7 日變化 ${deltaCopy(snapshot.followersDelta7d)}`));
+  const facts = node("div", "platform-facts");
+  [
+    [snapshot.medianPrimaryLabel, fmt(snapshot.medianPrimary)],
+    ["品質可發布率", snapshot.qualityRate === null ? "未知" : `${fmt(snapshot.qualityRate)}%`],
+    ["已發布紀錄", fmt(snapshot.published)],
+    ["零互動樣本", snapshot.zeroActionRate === null ? "未知" : `${fmt(snapshot.zeroActionRate)}%`],
+  ].forEach(([label, value]) => {
+    const fact = node("div", "platform-fact");
+    fact.append(node("span", "", label), node("strong", "", value));
+    facts.append(fact);
+  });
+  const foot = node("p", "platform-foot", snapshot.engagementCapturedAt
+    ? `互動樣本 ${fmt(snapshot.sampledPosts)} 篇 · ${age(snapshot.engagementCapturedAt)}`
+    : "互動 analytics 尚未接上或尚無有效 snapshot。 ");
+  card.append(head, main, facts, foot);
+  return card;
+}
+
+function renderTrend() {
+  const box = $("trend-chart");
+  clear(box);
+  const rows = state.dashboard?.engagement_trend || [];
+  if (!state.dashboard || !rows.length) return box.append(node("div", "locked-placeholder", state.dashboard ? "尚無 30 日趨勢資料。" : "解鎖後顯示；缺少日期會保留為斷點。"));
+  const days = [...new Set(rows.map((row) => row.day).filter(Boolean))].sort().slice(-30);
+  if (!days.length) return box.append(node("div", "locked-placeholder", "趨勢資料沒有有效日期。"));
+  const series = buildTrendSeries(rows, state.trendMetric, days);
+  const values = Object.values(series).flat().filter((value) => value !== null);
+  if (!values.length) return box.append(node("div", "locked-placeholder", "這個指標目前沒有數值；未把缺值補成零。"));
+
+  const width = 900, height = 220, left = 42, right = 14, top = 12, bottom = 28;
+  const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const max = Math.max(...values, 1);
+  const svg = svgNode("svg", {class: "chart-svg", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Meta 三平台 30 日趨勢"});
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const y = top + (plotHeight * tick / 4);
+    svg.append(svgNode("line", {x1: left, y1: y, x2: width - right, y2: y, class: "chart-grid"}));
+    const label = svgNode("text", {x: left - 8, y: y + 3, "text-anchor": "end", class: "chart-label"});
+    label.textContent = fmt(max * (1 - tick / 4));
+    svg.append(label);
+  }
+  const dateIndexes = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])];
+  dateIndexes.forEach((index) => {
+    const x = days.length === 1 ? left : left + plotWidth * index / (days.length - 1);
+    const label = svgNode("text", {x, y: height - 6, "text-anchor": index === 0 ? "start" : (index === days.length - 1 ? "end" : "middle"), class: "chart-label"});
+    label.textContent = days[index].slice(5).replace("-", "/");
+    svg.append(label);
+  });
+  PLATFORM_ORDER.forEach((platform) => {
+    const color = PLATFORM_META[platform].color;
+    const points = series[platform];
+    const segments = [];
+    let current = [];
+    points.forEach((value, index) => {
+      if (value === null) {
+        if (current.length) segments.push(current);
+        current = [];
+        return;
+      }
+      const x = days.length === 1 ? left : left + plotWidth * index / (days.length - 1);
+      const y = top + plotHeight * (1 - value / max);
+      current.push([x, y]);
+    });
+    if (current.length) segments.push(current);
+    segments.forEach((segment) => {
+      const path = segment.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+      svg.append(svgNode("path", {d: path, class: "chart-line", stroke: color}));
+      segment.forEach(([x, y]) => svg.append(svgNode("circle", {cx: x, cy: y, r: 3.4, fill: color, class: "chart-dot"})));
+    });
+  });
+  const legend = node("div", "chart-legend");
+  PLATFORM_ORDER.forEach((platform) => {
+    const item = node("span", "", PLATFORM_META[platform].label);
+    item.style.color = PLATFORM_META[platform].color;
+    item.prepend(node("i"));
+    legend.append(item);
+  });
+  box.append(svg, legend);
+}
+
+function renderRecentPosts(summary) {
+  const box = $("recent-posts");
+  clear(box);
+  if (!state.dashboard || !summary.items.length) return box.append(node("div", "locked-placeholder", state.dashboard ? "尚無近期貼文 metadata。" : "解鎖後顯示最近發布內容。"));
+  summary.items.slice(0, 12).forEach((content) => {
+    const item = node("article", "content-card");
+    const header = node("div", "content-head");
+    const title = node("div", "content-title");
+    title.append(node("strong", "", content.title), node("small", "", `${content.format || "格式未知"} · 發布於 ${when(content.postedAt)}`));
+    header.append(title);
+    if (content.sourceUrl) {
+      const link = node("a", "source-link", "查看來源 ↗");
+      link.href = content.sourceUrl;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      header.append(link);
+    }
+    const platforms = node("div", "content-platforms");
+    content.platforms.forEach((row) => {
+      const platform = PLATFORM_META[row.platform] || {label: row.platform || "未知", short: "?", color: "#aaa89e"};
+      const platformRow = node("div", "content-platform-row");
+      platformRow.style.setProperty("--platform-color", platform.color);
+      const name = node("div", "content-platform-name");
+      name.append(node("span", "platform-badge", platform.short), node("strong", "", platform.label));
+      const native = node("div", "content-native-metric");
+      native.append(node("span", "", row.primaryLabel), node("strong", "", fmt(row.primaryValue)));
+      const actions = node("div", "content-native-metric");
+      actions.append(node("span", "", "互動"), node("strong", "", fmt(row.actions)));
+      const proof = node("div", "content-proof");
+      proof.append(statusChip(row.status || "published"), node("small", "", row.metrics_captured_at ? `數據 ${age(row.metrics_captured_at)}` : "尚未回讀數據"));
+      platformRow.append(name, native, actions, proof);
+      platforms.append(platformRow);
+    });
+    const footer = node("div", "content-foot");
+    const total = content.totalActions === null ? "互動未知" : `已回讀互動合計 ${fmt(content.totalActions)}`;
+    footer.append(
+      node("span", "", `${content.platforms.length} 個平台 · ${content.measuredPlatforms}/${content.platforms.length} 已回讀`),
+      node("strong", "", total),
     );
-    if (!rows.length) {
-      empty(host, "尚無 Recovery 實驗；paused 狀態下這是預期結果。");
-      return;
-    }
-    rows.slice(0, 18).forEach(item => {
-      const card = node("article", "recovery-card");
-      const head = node("div", "recovery-card-head");
-      head.append(
-        node("div", "row-title", `${PLATFORM_META[item.platform]?.label || item.platform} · ${EXPERIMENT_COPY[item.experiment_type] || item.experiment_type}`),
-        badge(item.status),
-      );
-      const hypothesis = node("div", "row-detail", item.hypothesis || "未記錄 hypothesis");
-      const follower = item.follower_delta === null || item.follower_delta === undefined
-        ? "follower Δ UNKNOWN"
-        : `follower Δ ${item.follower_delta >= 0 ? "+" : ""}${fmt(item.follower_delta)}`;
-      const bucket = item.post_age_hours === null || item.post_age_hours === undefined
-        ? "等待 1h"
-        : `${fmt(item.post_age_hours)}h`;
-      const result = node("div", "recovery-result");
-      result.append(
-        metric(item.baseline_primary_metric || "primary", fmt(item.primary_value), `baseline ${item.baseline_primary_value === null || item.baseline_primary_value === undefined ? "UNKNOWN" : fmt(item.baseline_primary_value)}`),
-        metric("Actions", fmt(item.actions), `${bucket} snapshot`),
-        metric("Followers", item.current_followers === null || item.current_followers === undefined ? "UNKNOWN" : fmt(item.current_followers), follower),
-      );
-      const recommendation = node(
-        "div",
-        `recommendation ${/stop|revise|fix/.test(item.recommendation_code || "") ? "bad" : ""}`,
-        item.recommendation || "等待 evidence",
-      );
-      const formatEvidence = item.actual_format
-        ? `實際 ${item.actual_format}`
-        : `預定 ${item.content_format || "feed"}`;
-      const meta = node("div", "row-meta", `${formatEvidence} · ${item.topic || "unclassified"} · 發布 ${when(item.posted_at)}`);
-      card.append(head, hypothesis, result, recommendation, meta);
-      host.appendChild(card);
+    item.append(header, platforms, footer);
+    box.append(item);
+  });
+}
+
+function dataFreshness(row) {
+  const timestamp = row.captured_at;
+  const hours = timestamp ? (Date.now() - Date.parse(timestamp)) / 3600000 : Infinity;
+  if (!timestamp) return {label: "UNKNOWN", className: "warn"};
+  if (hours > 30 && row.status === "healthy") return {label: "STALE", className: "warn"};
+  return {label: STATUS_COPY[row.status] || String(row.status || "unknown").toUpperCase(), className: statusClass(row.status)};
+}
+
+function renderHealth() {
+  const box = $("health-list");
+  clear(box);
+  const rows = state.dashboard ? ensureExpectedSchedulerHealth(state.dashboard.data_health || []) : [];
+  if (!state.dashboard || !rows.length) {
+    box.append(node("div", "locked-placeholder", state.dashboard ? "尚無 data health snapshot；不能解讀成全部正常。" : "解鎖後逐項顯示 collector、sync 與 cadence。"));
+  } else {
+    rows.forEach((row) => {
+      const item = node("div", "health-row");
+      const content = node("div");
+      const name = node("div", "health-name");
+      name.append(node("strong", "", `${row.platform || "system"} · ${HEALTH_COPY[row.metric] || row.metric}`));
+      content.append(name, node("p", "", row.detail || "沒有補充 detail"));
+      const meta = node("div", "health-meta");
+      const freshness = dataFreshness(row);
+      meta.append(node("span", `status-chip ${freshness.className}`, freshness.label), node("time", "", age(row.captured_at)));
+      item.append(content, meta);
+      box.append(item);
     });
   }
+  const latest = newest(rows.map((row) => row.captured_at));
+  $("health-data-stamp").textContent = latest ? `最新 ${age(latest)}` : "尚無健康快照";
+}
 
-  function renderKpis(data) {
-    const postCount = (data.platforms || []).reduce((sum, row) => sum + n(row.count), 0);
-    const pending = (data.submissions || []).filter(row => PENDING.has(row.status)).reduce((sum, row) => sum + n(row.count), 0);
-    const knowledge = data.knowledge && data.knowledge.total ? data.knowledge.total : {};
-    const proposals = (data.learning_proposals || []).filter(row => row.status === "proposed").length;
-    $("kpi-posts").textContent = fmt(postCount);
-    $("kpi-posts-note").textContent = `${fmt((data.engagement || []).reduce((sum,row)=>sum+n(row.posts),0))} 篇有 engagement`;
-    $("kpi-submissions").textContent = fmt(pending);
-    $("kpi-submissions-note").textContent = pending ? "仍未到 terminal state" : "目前沒有積壓";
-    $("kpi-knowledge").textContent = fmt(knowledge.items);
-    $("kpi-knowledge-note").textContent = `${fmt(knowledge.uses)} 次內容採用`;
-    $("kpi-proposals").textContent = fmt(proposals);
-  }
+function renderWorkflows() {
+  const box = $("workflow-list");
+  clear(box);
+  if (!state.workflows.length) return box.append(node("div", "locked-placeholder", "GitHub workflow 公開資料目前無法讀取。"));
+  const seen = new Set();
+  state.workflows.filter((run) => {
+    if (seen.has(run.workflowName)) return false;
+    seen.add(run.workflowName);
+    return true;
+  }).slice(0, 10).forEach((run) => {
+    const item = node(run.url ? "a" : "div", "workflow-row");
+    if (run.url) { item.href = run.url; item.target = "_blank"; item.rel = "noreferrer"; }
+    const content = node("div");
+    content.append(node("strong", "", run.workflowName), node("p", "", `${run.event || "事件未知"} · ${run.status}`));
+    const meta = node("div", "health-meta");
+    meta.append(statusChip(run.conclusion), node("time", "", age(run.updatedAt)));
+    item.append(content, meta);
+    box.append(item);
+  });
+}
 
-  function renderPlatforms(data) {
-    const host = $("platform-grid"); clear(host);
-    const counts = data.platforms || [];
-    const engagement = data.engagement || [];
-    const audience = data.audience || [];
-    const quality = data.content_quality || [];
-    const health = data.data_health || [];
-    PLATFORM_ORDER.forEach(platform => {
-      const meta = PLATFORM_META[platform];
-      const rows = counts.filter(row => row.platform === platform);
-      const total = rows.reduce((sum,row)=>sum+n(row.count),0);
-      const published = rows.filter(row=>row.status==="published").reduce((sum,row)=>sum+n(row.count),0);
-      const lastPosted = rows.map(row=>row.last_posted_at).filter(Boolean).sort().at(-1);
-      const eng = engagement.find(row=>row.platform===platform) || {};
-      const aud = audience.find(row=>row.platform===platform) || {};
-      const q = quality.find(row=>row.platform===platform) || {};
-      const cadence = health.find(row=>row.platform===platform && row.metric==="daily_publish_cadence");
-      const h = cadence || health.find(row=>row.platform===platform && row.metric==="latest_post_canary") ||
-        health.find(row=>row.platform===platform && row.metric==="engagement_api");
-      const card = node("article", "platform"); card.style.setProperty("--platform-color", meta.color);
-      const head=node("div","platform-head"); const name=node("div","platform-name");
-      name.append(node("span","platform-icon",meta.short),node("span","",meta.label));
-      head.append(name,node("span","metric-state",h ? `${h.status.toUpperCase()} ${cadence ? "cadence" : "data"}` : "UNKNOWN data"));
-      const metrics=node("div","platform-main");
-      const nativeMetrics = platform === "facebook"
-        ? [
-          metric("中位 clicks",eng.median_clicks===null||eng.median_clicks===undefined?"UNKNOWN":fmt(eng.median_clicks),`${fmt(eng.posts)} posts sampled`),
-          metric("中位 actions",eng.median_actions===null||eng.median_actions===undefined?"UNKNOWN":fmt(eng.median_actions),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
-        ]
-        : platform === "instagram"
-          ? [
-            metric("中位 views",eng.median_views===null||eng.median_views===undefined?"UNKNOWN":fmt(eng.median_views),`${fmt(eng.posts)} posts sampled`),
-            metric("中位 reach",eng.median_reach===null||eng.median_reach===undefined?"UNKNOWN":fmt(eng.median_reach),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
-          ]
-          : [
-            metric("中位 views",eng.median_views===null||eng.median_views===undefined?"UNKNOWN":fmt(eng.median_views),`${fmt(eng.posts)} posts sampled`),
-            metric("中位 actions",eng.median_actions===null||eng.median_actions===undefined?"UNKNOWN":fmt(eng.median_actions),eng.zero_action_rate===null||eng.zero_action_rate===undefined?"zero rate UNKNOWN":`${fmt(eng.zero_action_rate)}% zero action`),
-          ];
-      const qualityRate = n(q.evaluated)>0
-        ? `${(n(q.publish_ready_count)/n(q.evaluated)*100).toFixed(0)}%`
-        : "UNKNOWN";
-      const qualityNote = n(q.evaluated)>0
-        ? `${fmt(q.rewrite_count)} rewrite · ${fmt(q.block_count)} block · ${(n(q.evidence_coverage)*100).toFixed(0)}% coverage · ${fmt(q.legacy_excluded_count)} legacy excluded`
-        : n(q.legacy_excluded_count)>0
-          ? `現行 ${q.guard_version || "guard"} 尚無 evidence · ${fmt(q.legacy_excluded_count)} legacy excluded`
-          : "尚無現行品質 evidence";
-      metrics.append(
-        metric("已發布",fmt(published),`${fmt(total)} total records`),
-        ...nativeMetrics,
-        metric("Followers",aud.followers===null||aud.followers===undefined?"UNKNOWN":fmt(aud.followers),aud.followers_delta_7d===null||aud.followers_delta_7d===undefined?"no 7d evidence":`${aud.followers_delta_7d>=0?"+":""}${fmt(aud.followers_delta_7d)} / 7d`),
-        metric(
-          "規則直通率",
-          qualityRate,
-          qualityNote,
-        )
-      );
-      const foot=node("div","platform-foot"); foot.append(node("span","",`最後發布 ${when(lastPosted)}`),node("span","",`資料 ${when(eng.last_captured_at)}`));
-      card.append(head,metrics,foot); host.appendChild(card);
+function renderHistory() {
+  const box = $("submission-history");
+  clear(box);
+  const rows = state.dashboard?.recent_submissions || [];
+  if (!state.dashboard || !rows.length) return box.append(node("div", "locked-placeholder", state.dashboard ? "還沒有投稿紀錄。" : "解鎖後顯示投稿進度。"));
+  rows.slice(0, 15).forEach((row) => {
+    const item = node("article", "history-row");
+    const head = node("div", "history-head");
+    head.append(node("strong", "", row.note || (row.target === "substack" ? "Substack 素材" : "Meta 素材")), node("time", "", age(row.created_at)));
+    item.append(head, node("p", "", `${row.target === "substack" ? "Substack" : "Meta"} · ${row.source_type} · ${row.requested_mode}`), statusChip(row.status));
+    if (row.error) item.append(node("p", "", row.error));
+    box.append(item);
+  });
+}
+
+function renderPrivateViews() {
+  renderRuntime();
+  renderAttention();
+  renderDraftPreview();
+  renderMetaPreview();
+  renderSubstack();
+  renderMeta();
+  renderHealth();
+  renderHistory();
+  updateSubmissionUi();
+}
+
+function selected(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || "";
+}
+
+function submissionButtonCopy() {
+  if (selected("target") === "substack") return "建立 Substack 優先草稿";
+  return selected("meta-mode") === "publish_now" ? "立即發布到 Meta" : "排入 Meta 佇列";
+}
+
+function updateSubmissionUi() {
+  const target = selected("target") || "substack";
+  const source = selected("source") || "url";
+  const meta = target === "meta";
+  $("meta-options").hidden = !meta;
+  $("source-line-field").hidden = source === "text";
+  $("source-text-field").hidden = source !== "text";
+  $("source-line-label").textContent = source === "youtube" ? "YouTube 網址" : "來源網址";
+  $("source-line").placeholder = source === "youtube" ? "https://youtube.com/watch?v=…" : "https://…";
+  const ready = (state.dashboard?.automation || state.publicHealth?.automation || {}).meta_publish_now_ready === true;
+  const publishInput = document.querySelector('input[name="meta-mode"][value="publish_now"]');
+  publishInput.disabled = !ready;
+  if (!ready && publishInput.checked) document.querySelector('input[name="meta-mode"][value="queue"]').checked = true;
+  $("publish-now-help").textContent = ready
+    ? "Production runtime 顯示立即發布可用；送出後仍須等待三平台 post ID 回讀。"
+    : "Production runtime 未顯示 ready，因此只開放排入佇列。";
+  $("submission-route").textContent = target === "substack"
+    ? "系統會建立 Substack 優先草稿，交由你最後審稿與發布。"
+    : (selected("meta-mode") === "publish_now"
+      ? "這會要求 production runtime 立即發布；平台送達仍以 post ID 為準。"
+      : "素材會先進入 Meta 佇列，不代表已經發布。 ");
+  $("submit-button").disabled = !state.dashboard;
+  $("submit-button").textContent = state.dashboard ? submissionButtonCopy() : "先解鎖再投稿";
+}
+
+function formMessage(message, kind = "") {
+  const box = $("form-message");
+  box.hidden = !message;
+  box.className = `form-message ${kind}`;
+  box.textContent = message;
+}
+
+async function submitMaterial(event) {
+  event.preventDefault();
+  if (!state.dashboard || !currentToken()) return formMessage("請先解鎖營運資料。", "bad");
+  const target = selected("target");
+  const sourceType = selected("source");
+  const content = (sourceType === "text" ? $("source-text").value : $("source-line").value).trim();
+  const note = $("submission-note").value.trim();
+  const platforms = [...document.querySelectorAll('input[name="platform"]:checked')].map((input) => input.value);
+  const metaMode = selected("meta-mode") || "queue";
+  if (!content) return formMessage("請提供網址、YouTube 或原始文字。", "bad");
+  if (target === "meta" && !platforms.length) return formMessage("Meta 至少要選一個平台。", "bad");
+  if (target === "meta" && metaMode === "publish_now" && sourceType === "text" && !note) return formMessage("立即發布純文字時，處理說明會作為編輯標題，不能留白。", "bad");
+  if (target === "meta" && metaMode === "publish_now" && sourceType === "text" && content.length < 80) return formMessage("立即發布純文字至少需要 80 字素材。", "bad");
+
+  const button = $("submit-button");
+  button.disabled = true;
+  button.textContent = "正在送出…";
+  formMessage("正在建立可追蹤的投稿紀錄。", "");
+  try {
+    const payload = buildSubmissionPayload({target, sourceType, content, note, platforms, metaMode});
+    const idempotency = window.crypto?.randomUUID?.().replaceAll("-", "") || `owner${Date.now()}${Math.random().toString(16).slice(2)}`;
+    const result = await request("/api/submissions", {
+      method: "POST",
+      headers: {"Idempotency-Key": `owner_${idempotency}`.slice(0, 80)},
+      body: JSON.stringify(payload),
     });
+    const row = result.submission || {};
+    formMessage(`已建立投稿 ${row.id || "（ID 未回傳）"}\n目前狀態：${STATUS_COPY[row.status] || row.status || "未知"}`, "good");
+    $("source-line").value = "";
+    $("source-text").value = "";
+    $("submission-note").value = "";
+    await loadPrivateData(currentToken(), {quiet: true});
+  } catch (error) {
+    if (error.status === 401) showAuthNotice(error.message);
+    formMessage(`投稿未建立：${error.message}`, "bad");
+  } finally {
+    updateSubmissionUi();
   }
+}
 
-  function metric(label,value,note){ const box=node("div","metric"); box.append(node("span","",label),node("strong","",value),node("small","",note)); return box; }
-
-  function renderTrend(rows) {
-    const emptyState = $("trend-empty");
-    if (!rows.length || typeof Chart === "undefined") {
-      emptyState.hidden = false;
-      if (chart) { chart.destroy(); chart=null; }
-      return;
-    }
-    emptyState.hidden = true;
-    const days=[...new Set(rows.map(row=>row.day))].sort();
-    const datasets=PLATFORM_ORDER.map(platform=>({
-      label:PLATFORM_META[platform].label,
-      data:days.map(day=>n((rows.find(row=>row.platform===platform&&row.day===day)||{}).actions)),
-      borderColor:PLATFORM_META[platform].color,
-      backgroundColor:`${PLATFORM_META[platform].color}22`,
-      tension:.3,fill:false,borderWidth:2,pointRadius:2,
-    }));
-    if(chart) chart.destroy();
-    chart=new Chart($("trend-chart"),{type:"line",data:{labels:days,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{labels:{color:"#8fa6bd",usePointStyle:true,boxWidth:8}}},scales:{x:{ticks:{color:"#6f879e",maxTicksLimit:8},grid:{color:"rgba(32,58,90,.35)"}},y:{beginAtZero:true,ticks:{color:"#6f879e"},grid:{color:"rgba(32,58,90,.35)"}}}}});
+async function unlock(event) {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  const candidate = $("owner-token").value.trim() || currentToken();
+  if (!candidate) {
+    $("auth-status").textContent = "請輸入 owner token。";
+    return;
   }
-
-  function renderHealth(rows) {
-    const host=$("health-list"); clear(host);
-    ensureExpectedSchedulerHealth(rows).map(item=>effectiveHealth(item)).forEach(item=>{
-      const severity=item.status==="healthy"?"good":(item.status==="error"?"bad":"warn");
-      const row=node("div","row"); const dot=node("span",`health-dot ${severity}`);
-      const main=node("div","row-main"); main.append(node("div","row-title",`${PLATFORM_META[item.platform]?.label||"System"} · ${HEALTH_COPY[item.metric]||item.metric}`),node("div","row-detail",item.detail||"沒有 detail evidence"),node("div","row-meta",`觀測 ${when(item.captured_at)}`));
-      row.append(dot,main,badge(item.status)); host.appendChild(row);
-    });
+  const button = $("unlock-button");
+  button.disabled = true;
+  button.textContent = "驗證中…";
+  $("auth-status").textContent = "";
+  const valid = await loadPrivateData(candidate, {quiet: true});
+  if (valid) {
+    rememberToken(candidate, {remember: $("remember-token").checked, ...storage()});
+    $("owner-token").value = "";
+    $("auth-dialog").close();
+    showAuthNotice("");
+    updateAuthUi(true);
+    startPolling();
+  } else {
+    $("auth-status").textContent = state.privateError || "驗證失敗；既有 token 未被刪除。";
   }
+  button.disabled = false;
+  button.textContent = "驗證並解鎖";
+}
 
-  function renderSubmissions(rows) {
-    const host=$("submission-list"); clear(host);
-    if(!rows.length){empty(host,"尚無投稿紀錄");return;}
-    rows.slice(0,12).forEach(item=>{
-      const row=node("div","row"); const main=node("div","row-main");
-      const route=item.target==="substack"?"Substack":`Meta · ${(item.platforms||[]).map(p=>PLATFORM_META[p]?.short||p).join("/")}`;
-      main.append(node("div","row-title",item.note||route),node("div","row-meta",`${route} · ${item.source_type} · ${when(item.created_at)}`));
-      if(item.error) main.append(node("div","row-detail",item.error));
-      row.append(main,badge(item.status)); host.appendChild(row);
-    });
+function explicitForget() {
+  forgetToken(storage());
+  state.dashboard = null;
+  state.privateError = "";
+  clearInterval(state.refreshTimer);
+  $("auth-dialog").close();
+  showAuthNotice("已依你的明確操作鎖定這台裝置；其他電腦的授權不受影響。 ");
+  renderPrivateViews();
+  updateAuthUi(false);
+}
+
+function startPolling() {
+  clearInterval(state.refreshTimer);
+  if (!currentToken()) return;
+  state.refreshTimer = setInterval(() => loadPrivateData(currentToken(), {quiet: true}), 60000);
+}
+
+function bindEvents() {
+  document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));
+  document.querySelectorAll("[data-jump]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.jump)));
+  $("refresh-all").addEventListener("click", refreshAll);
+  $("refresh-history").addEventListener("click", () => loadPrivateData(currentToken(), {quiet: false}));
+  $("open-auth").addEventListener("click", () => {
+    $("auth-status").textContent = "";
+    $("auth-dialog").showModal();
+    setTimeout(() => $("owner-token").focus(), 0);
+  });
+  $("auth-form").addEventListener("submit", unlock);
+  $("forget-token").addEventListener("click", explicitForget);
+  $("submission-form").addEventListener("submit", submitMaterial);
+  document.querySelectorAll('input[name="target"], input[name="source"], input[name="meta-mode"]').forEach((input) => input.addEventListener("change", updateSubmissionUi));
+  $("metric-tabs").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-metric]");
+    if (!button) return;
+    state.trendMetric = button.dataset.metric;
+    document.querySelectorAll("[data-metric]").forEach((item) => item.classList.toggle("is-active", item === button));
+    renderTrend();
+  });
+  window.addEventListener("popstate", () => showView(new URL(location.href).searchParams.get("view") || "overview", {push: false}));
+}
+
+async function boot() {
+  bindEvents();
+  const requestedView = new URL(location.href).searchParams.get("view") || "overview";
+  showView(requestedView, {push: false});
+  renderPrivateViews();
+  await loadPublicData();
+  if (currentToken()) {
+    await loadPrivateData(currentToken(), {quiet: true});
+    startPolling();
+  } else {
+    updateAuthUi(false);
   }
+}
 
-  function renderPosts(rows) {
-    const host=$("post-list"); clear(host);
-    if(!rows.length){empty(host,"尚未匯入平台發文紀錄");return;}
-    rows.slice(0,12).forEach(item=>{
-      const row=node("div","row"); const main=node("div","row-main");
-      main.append(node("div","row-title",item.title||item.draft_id||item.platform_post_id||"(untitled)"),node("div","row-meta",`${PLATFORM_META[item.platform]?.label||item.platform} · ${item.topic||"unclassified"} · ${when(item.posted_at)}`));
-      row.append(main,badge(item.status)); host.appendChild(row);
-    });
-  }
-
-  function renderKnowledge(knowledge) {
-    const host=$("topic-list"); clear(host); const rows=knowledge.topics||[];
-    if(!rows.length){empty(host,"尚未匯入知識 metadata");return;}
-    const max=Math.max(...rows.map(row=>n(row.items)),1);
-    rows.slice(0,12).forEach(item=>{
-      const row=node("div","topic"); const label=node("span","",item.topic||"unclassified");
-      const bar=node("div","topic-bar"); const fill=node("div","topic-fill"); fill.style.width=`${Math.max(2,n(item.items)/max*100)}%`; bar.appendChild(fill);
-      row.append(label,bar,node("span","topic-count",`${fmt(item.items)} · ${fmt(item.uses)} uses`)); host.appendChild(row);
-    });
-  }
-
-  function proposalChangeText(item) {
-    const change=item.proposed_change||{};
-    const value=(input)=>input&&typeof input==="object"?JSON.stringify(input):text(input);
-    return change.field
-      ? `${change.field}: ${value(change.current_value)} → ${value(change.proposed_value)}`
-      : "尚無具體 change payload";
-  }
-
-  function proposalEvidenceText(item) {
-    const evidence=item.evidence||{}; const metrics=evidence.metrics||{};
-    const parts=[`信心 ${text(evidence.confidence,"UNKNOWN")}`];
-    if(metrics.total_samples!==undefined) parts.push(`學習樣本 ${fmt(metrics.total_samples)}`);
-    if(metrics.raw_delta!==undefined) parts.push(`raw Δ ${n(metrics.raw_delta).toFixed(3)}`);
-    const platformLikes=[
-      ["FB",metrics.view_fb_avg_likes_30d],
-      ["IG",metrics.view_ig_avg_likes_30d],
-      ["TH",metrics.view_th_avg_likes_30d],
-    ];
-    if(platformLikes.some(([,value])=>value!==undefined&&value!==null)){
-      parts.push(`30d avg likes ${platformLikes.map(([label,value])=>`${label} ${text(value)}`).join(" / ")}`);
-    }
-    if(metrics.current&&metrics.baseline){
-      parts.push(
-        `本期 ${fmt(metrics.current.posts)} 篇／coverage ${(n(metrics.current.metric_coverage)*100).toFixed(0)}%`,
-        `median action ${text(metrics.baseline.median_action_score)} → ${text(metrics.current.median_action_score)}`,
-      );
-      if(metrics.score_ratio!==undefined) parts.push(`ratio ${n(metrics.score_ratio).toFixed(2)}`);
-    }
-    return parts.join(" · ");
-  }
-
-  function renderProposals(rows) {
-    const host=$("proposal-list"); clear(host);
-    if(!rows.length){empty(host,"尚無學習提案");return;}
-    rows.slice(0,12).forEach(item=>{
-      const row=node("div","row"); const main=node("div","row-main");
-      main.append(
-        node("div","row-title",item.summary||item.kind),
-        node("div","row-detail",proposalChangeText(item)),
-        node("div","row-detail",proposalEvidenceText(item)),
-        node("div","row-meta",`${item.kind} · ${when(item.created_at)}`),
-      );
-      const side=node("div","proposal-side"); side.appendChild(badge(item.status));
-      if(item.status==="proposed"){
-        const actions=node("div","proposal-actions");
-        const approve=node("button","proposal-approve","批准下輪套用");
-        const reject=node("button","proposal-reject","拒絕");
-        approve.addEventListener("click",()=>decideProposal(item,"approved",approve,reject));
-        reject.addEventListener("click",()=>decideProposal(item,"rejected",approve,reject));
-        actions.append(approve,reject); side.appendChild(actions);
-      } else if(item.decision_comment) {
-        side.appendChild(node("small","muted",item.decision_comment));
-      }
-      row.append(main,side); host.appendChild(row);
-    });
-  }
-
-  async function decideProposal(item,decision,...buttons){
-    const verb=decision==="approved"?"批准並於下一次 learning review 套用":"拒絕";
-    if(!window.confirm(
-      `確定${verb}這筆提案？\n${item.summary||item.id}\n${proposalChangeText(item)}\n${proposalEvidenceText(item)}`
-    )) return;
-    buttons.forEach(button=>button.disabled=true);
-    try{
-      await request(`/api/learning-proposals/${encodeURIComponent(item.id)}/decision`,{
-        method:"POST",body:JSON.stringify({decision}),
-      });
-      showError(""); await load();
-    }catch(error){
-      showError(`提案決策失敗：${error.message}`);
-      buttons.forEach(button=>button.disabled=false);
-    }
-  }
-
-  function renderEvents(rows) {
-    const host=$("event-list"); clear(host);
-    if(!rows.length){empty(host,"尚無稽核事件");return;}
-    rows.slice(0,25).forEach(item=>{
-      const row=node("div","audit-row"); row.append(node("span","muted",when(item.created_at)),node("span","",item.actor),node("span","",`${item.action}${item.subject_id?` · ${item.subject_id}`:""}`),node("span","muted",item.status)); host.appendChild(row);
-    });
-  }
-
-  function startRefresh(){ clearInterval(refreshTimer); refreshTimer=setInterval(load,60000); }
-  $("unlock").addEventListener("click",unlock);
-  $("owner-token").addEventListener("keydown",event=>{if(event.key==="Enter")unlock();});
-  $("refresh").addEventListener("click",load);
-  $("lock").addEventListener("click",()=>{clearToken();$("remember-device").checked=false;clearInterval(refreshTimer);setLocked(true);showError("");});
-
-  if(localStorage.getItem(TOKEN_KEY)) $("remember-device").checked = true;
-  if(token()){setLocked(false);load();startRefresh();}else setLocked(true);
-})();
+boot();

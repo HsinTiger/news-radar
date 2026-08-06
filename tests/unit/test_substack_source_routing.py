@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from substack_radar import compose
 
@@ -59,3 +59,59 @@ def test_automatic_substack_pool_excludes_owner_routed_submissions(
     picked = compose._pick_top_from_pool(window_days=3, label="RoutingTest")
     assert picked is not None and picked[0] == "public-rss"
     assert marked == ["public-rss"]
+
+
+def test_podcast_pool_default_excludes_candidates_older_than_seven_days(
+    monkeypatch, tmp_path
+) -> None:
+    db_path = tmp_path / "podcast.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE news_items(
+          id TEXT,title TEXT,clean_markdown TEXT,topic_category TEXT,
+          source_type TEXT,feed_name TEXT,word_count INTEGER,published_at TEXT,
+          status TEXT,tags TEXT
+        )
+        """
+    )
+    now = datetime.now(timezone.utc)
+    rows = (
+        (
+            "old-long",
+            "Eight-day-old long interview",
+            "舊訪談" * 30000,
+            "ai_model",
+            "video",
+            "YouTube Podcast",
+            120000,
+            (now - timedelta(days=8)).isoformat(),
+            "fetched",
+            '[]',
+        ),
+        (
+            "fresh",
+            "Fresh interview",
+            "新訪談" * 2000,
+            "ai_model",
+            "video",
+            "YouTube Podcast",
+            8000,
+            (now - timedelta(days=2)).isoformat(),
+            "fetched",
+            '[]',
+        ),
+    )
+    conn.executemany("INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(compose, "NEWS_DB_PATH", db_path)
+    monkeypatch.setattr(compose, "_load_used", lambda: set())
+    marked = []
+    monkeypatch.setattr(compose, "_mark_used", marked.append)
+
+    picked = compose.pick_podcast_interview()
+
+    assert picked is not None and picked[0] == "fresh"
+    assert marked == ["fresh"]

@@ -36,7 +36,9 @@ mkdir -p ~/bin ~/Library/LaunchAgents
 
 cp scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
 cp scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
-chmod +x ~/bin/news_radar_compose.sh ~/bin/news_radar_substack_fast.sh
+cp scripts/substack_editorial_worker.sh ~/bin/news_radar_substack_editorial.sh
+chmod +x ~/bin/news_radar_compose.sh ~/bin/news_radar_substack_fast.sh \
+  ~/bin/news_radar_substack_editorial.sh
 
 sed "s|HOME_DIR|$HOME|g" scripts/com.hsin.news-radar.compose.plist \
   > ~/Library/LaunchAgents/com.hsin.news-radar.compose.plist
@@ -131,36 +133,51 @@ Worth installing. Measured on one 3-minute Mandarin clip (M1):
 領域 as 旅渔, 發表 as 坟表, and OpenAI as 欧浩人爱. Override the model
 with `MLX_WHISPER_MODEL` if needed; default is `whisper-small-mlx`.
 
-## Weekly company analysis (independent of Stage 1/2)
+## Stage 3: planned Podcast + Weekly editorial cadence
 
-Two agents, installed the same way (`sed HOME_DIR` → `plutil -lint` →
+Only after the remote-draft canary is proven, install the planned editorial
+schedule:
+
+```bash
+bash scripts/install_substack_daily_agents.sh
+bash scripts/install_substack_daily_agents.sh --status
+```
+
+Despite the compatibility filename, this no longer installs the old five-slot
+topology. It installs one noon batch that sequentially writes two Podcast
+extension drafts, plus one Weekly company job. Morning and evening modes remain
+manual tools.
+
+Two agents are installed (`sed HOME_DIR` → `plutil -lint` →
 `launchctl bootstrap`):
 
 | Agent | When | What |
 |---|---|---|
-| `com.hsin.news-radar.company-pick` | Sat 10:00 | rank watchlist × news heat → `.company_next` |
-| `com.hsin.news-radar.company-compose` | Sun 09:00 | one deep company draft |
+| `com.hsin.news-radar.substack-podcast-noon` | Daily 12:00 | refresh the Podcast pool, then sequentially write two different 2800–4200 character extensions from interviews published within the last 7 days |
+| `com.hsin.news-radar.company-compose` | Sun 09:00 | pick one company, then immediately write one 2800–4200 character Weekly draft |
 
-The gap between them is deliberate: it is the window in which the owner
-can edit `.company_next` to override the pick. Leaving it alone is safe —
-`compose.py:_resolve_company_ticker` falls back to the watchlist top, so
-composition never blocks on a human decision.
+Company selection and composition intentionally share one job. The picker
+writes `.company_next`, and the composer consumes it immediately. A deliberate
+manual override can still be placed in `.company_next` before the Sunday run;
+otherwise the job uses its deterministic watchlist/news-heat choice.
 
-These replace the legacy `com.newsradar.company_pick` /
-`com.newsradar.substack_company` pair, which had a real bug: pick was
-weekly (Sat) but compose was **daily** at 11:30, so a single candidate
-would be rewritten six times over. Both legacy plists are left on disk
-but unloaded; do not bootstrap them.
+These replace both the five-drafts-per-day direct compose topology and the
+legacy `com.newsradar.company_pick` / `com.newsradar.substack_company` pair,
+which had a real bug: pick was weekly (Sat) but compose was **daily** at 11:30,
+so a single candidate would be rewritten six times over. The installer unloads
+and removes both legacy naming families, as well as the former split noon
+agents, so an old schedule cannot remain active beside the new one.
 
-This pair is independent of the Stage 1/Stage 2 gating above — company
-mode draws from the watchlist, not from the Substack submission backlog,
-so enabling it cannot trigger a backlog flush.
+The editorial worker uses the same local lock and Release lease as every other
+state writer. It creates drafts only and cannot publish. It is independent of
+the owner-submission backlog, so enabling it cannot flush that backlog.
 
 ## Verification
 
 ```bash
 shasum -a 256 scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
 shasum -a 256 scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
+shasum -a 256 scripts/substack_editorial_worker.sh ~/bin/news_radar_substack_editorial.sh
 
 tail -100 /tmp/news-radar-compose.err.log
 tail -100 /tmp/news-radar-substack-fast.err.log

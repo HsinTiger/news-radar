@@ -18,11 +18,10 @@ SAME footer + cover-prompt path as the official compose pipeline.
 
 **Discipline guaranteed by this helper**:
   1. Brand tagline appended (substack_compose.BRAND_TAGLINE)
-  2. Cadence promise appended (📅 每天 3 分鐘 · 🔄 365 天複利)
+  2. Cadence promise appended (每天兩篇對談延伸 · 每週一篇公司深拆)
   3. Subscribe widget injected
   4. 3-version cover prompt block appended (場景 / 概念 / 抽象, cold-print v0.2.2)
-  5. Optional §13 inline image markers injected before specified H2 boundaries
-  6. **Hard assertion** before push: body MUST contain tagline + all 3 cover prompts
+  5. **Hard assertion** before push: body MUST contain tagline + all 3 cover prompts
 
 Usage::
 
@@ -35,10 +34,6 @@ Usage::
         scene_prompt="場景式 · 鉛筆橡皮擦停在...",
         concept_prompt="概念式 · 50.75% 的扁平柱狀圖...",
         abstract_prompt="抽象式 (T01) · 「對一半。」hero...",
-        markers={  # optional — inject §13 markers before these H2 texts
-            "1561 張考卷": "🖼 視覺位置 · ...",
-            "對一半就夠": "🖼 視覺位置 · ...",
-        },
     )
 """
 
@@ -48,7 +43,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Make repo importable when this is run directly
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -121,8 +115,8 @@ def _make_footer_blockquote() -> dict:
     tagline = BRAND_TAGLINE.strip("「」")
     return _make_bq(
         f"{tagline}\n\n"
-        "📅 每天 3 分鐘 · 拿走一個被市場藏起來的共識\n"
-        "🔄 365 天複利一個眼光"
+        "📅 每天兩篇對談延伸 · 每週一篇公司深拆\n"
+        "✉️ 你可以直接回信，告訴我哪個判斷值得再追"
     )
 
 
@@ -182,41 +176,6 @@ def _build_cover_prompt_nodes(
 
 
 # ---------------------------------------------------------------------------
-# §13 marker injection
-# ---------------------------------------------------------------------------
-
-def _inject_markers(nodes: list[dict], markers: dict[str, str]) -> list[dict]:
-    """Insert blockquote markers BEFORE H2 headings whose text matches a key.
-
-    markers = {h2_text_substring: marker_blockquote_text}
-
-    Each marker is rendered as a single blockquote with one paragraph. The key
-    is matched as a substring of the H2 heading text — first match wins per
-    H2. Markers not matched produce a printed warning (caller may have typos)
-    but don't fail the push.
-    """
-    if not markers:
-        return nodes
-    remaining = dict(markers)
-    out: list[dict] = []
-    for n in nodes:
-        if n.get("type") == "heading" and n.get("attrs", {}).get("level") == 2:
-            h_text = "".join(
-                c.get("text", "") for c in n.get("content", [])
-                if c.get("type") == "text"
-            )
-            matched_key = next(
-                (k for k in remaining if k in h_text), None
-            )
-            if matched_key:
-                out.append(_make_bq(remaining.pop(matched_key)))
-        out.append(n)
-    for unmatched in remaining:
-        print(f"[push_pasted_draft] ⚠️ marker key not found in any H2: {unmatched!r}")
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Brand-discipline assertions
 # ---------------------------------------------------------------------------
 
@@ -230,7 +189,7 @@ class BrandDisciplineError(RuntimeError):
 
 
 def _assert_hero_text_in_prompt(prompt_text: str, version_label: str) -> list[str]:
-    """Check a single cover prompt encodes 大字 rule (substack_soul.md §10.2 #1).
+    """Check a single cover prompt against visual_brand_system.md.
 
     Per Hsin 2026-05-16 alignment check + repaved §10.1, all 3 versions
     (scene/concept/abstract) must encode hero text occupying 40-60% of canvas,
@@ -287,7 +246,7 @@ def _assert_brand_discipline(body_json: dict, cover_prompts: dict[str, str]) -> 
             problems.append(f"cover prompt version missing: {label}")
     if "📸 封面圖 Prompt" not in raw:
         problems.append("📸 封面圖 Prompt heading missing")
-    if "📅 每天 3 分鐘" not in raw:
+    if "📅 每天兩篇對談延伸" not in raw:
         problems.append("cadence promise missing")
     if BRAND_AESTHETIC_VERSION not in raw:
         problems.append(
@@ -304,7 +263,7 @@ def _assert_brand_discipline(body_json: dict, cover_prompts: dict[str, str]) -> 
             "Brand discipline assertion failed before push:\n  - "
             + "\n  - ".join(problems)
             + "\n\nDo NOT remove this check. Fix the prompt instead. "
-            "See substack_soul.md §10.1 + §10.2 #1 for context."
+            "See config/visual_brand_system.md for context."
         )
 
 
@@ -320,7 +279,6 @@ def push_pasted_draft(
     scene_prompt: str,
     concept_prompt: str,
     abstract_prompt: str,
-    markers: Optional[dict[str, str]] = None,
     audience: str = "everyone",
 ) -> tuple[int, str]:
     """Push a Hsin-pasted / PM-written body as a new Substack draft, with full
@@ -335,8 +293,6 @@ def push_pasted_draft(
         scene_prompt: Cover version A — documentary / scene-based prompt.
         concept_prompt: Cover version B — visual metaphor / infographic prompt.
         abstract_prompt: Cover version C — T01 typography-only prompt.
-        markers: Optional {h2_text_substring: marker_text} for §13 inline image
-            markers. Inserted as blockquotes BEFORE the matched H2 heading.
         audience: Substack audience setting (default "everyone").
 
     Returns:
@@ -373,16 +329,12 @@ def push_pasted_draft(
     body = json.loads(draft_dict["draft_body"])
     nodes: list[dict] = body["content"]
 
-    # 1) Inject §13 markers (before from_markdown's H2s, so they're in body flow)
-    if markers:
-        nodes = _inject_markers(nodes, markers)
-
-    # 2) Append brand footer + subscribe widget
+    # 1) Append brand footer + subscribe widget
     nodes.append(_make_hr())
     nodes.append(_make_footer_blockquote())
     nodes.append(_make_subscribe_widget())
 
-    # 3) Append cover prompt authoring section (HR + H2 + intro + 3 blockquotes)
+    # 2) Append cover prompt authoring section (HR + H2 + intro + 3 blockquotes)
     nodes.extend(_build_cover_prompt_nodes(
         scene_prompt=scene_prompt,
         concept_prompt=concept_prompt,
@@ -393,14 +345,14 @@ def push_pasted_draft(
 
     body["content"] = nodes
 
-    # 4) **Brand discipline assertion** — last line of defense.
+    # 3) **Brand discipline assertion** — last line of defense.
     _assert_brand_discipline(body, {
         "scene": scene_prompt,
         "concept": concept_prompt,
         "abstract": abstract_prompt,
     })
 
-    # 5) Push
+    # 4) Push
     draft_dict["draft_body"] = json.dumps(body, ensure_ascii=False)
     result = api.post_draft(draft_dict)
     draft_id = result.get("id")
@@ -411,7 +363,7 @@ def push_pasted_draft(
     print(f"[push_pasted_draft] ✅ draft created id={draft_id}")
     print(f"  title: {title}")
     print(f"  URL:   {url}")
-    print(f"  nodes: {len(nodes)} (markers: {len(markers or {})})")
+    print(f"  nodes: {len(nodes)}")
     return draft_id, url
 
 

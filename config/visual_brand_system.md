@@ -18,7 +18,7 @@
 4. Contrarian（單一立場、不左右兩面討好）
 5. Quiet authority（不喊不吼、用 typography 撐權威）
 
-Voice 對齊：跟 `substack_soul.md` §2 Tone 完全一致（Wise & Warm + Contrarian + Anti-Conclusion + Aporia Turn）。
+Voice 對齊：以 `substack_radar/config/editorial_voice.md` 為準；本檔只管理視覺，不把視覺規則塞回寫手 prompt。
 
 ---
 
@@ -237,7 +237,7 @@ Hero 句尾的句號（「越便宜，越貴。」）是 hero 的一部分、**�
 
 ## §7 Hero Text Extraction · 從標題抽 4-8 字
 
-`PM agent 寫文章後、視覺編輯角色（substack_soul.md §10.1）做這個動作`
+文章完成後，由 deterministic cover path 或人工視覺編輯做這個動作；寫手只提供一句封面 scene。
 
 ### 規則
 
@@ -316,84 +316,20 @@ Dark cover (T04 / invert mode) 同樣規則、masthead 用 Paper #F2EEE5 色。
 
 ---
 
-## §11 與 substack_soul.md 的關係
+## §11 Voice 與 visual 的責任邊界
 
-- **`substack_soul.md` §10** 是 voice / 紀律 source of truth（5 條封面紀律 + 5 條標題紀律 + 視覺編輯角色）
-- **本檔 (`visual_brand_system.md`)** 是 visual implementation source of truth（顏色 / 字體 / 模板 / hex code）
-- 兩者互補、不衝突
-- 衝突時優先 substack_soul.md（voice 規則）、本檔細化執行
-
-`substack_soul.md §10` 應加 cross-ref 指向本檔。
+- **`substack_radar/config/editorial_voice.md`** 是文章 voice 的 source of truth。
+- **本檔 (`visual_brand_system.md`)** 是封面 implementation 的 source of truth（顏色、字體、模板、hex code）。
+- 寫手輸出文章與一句 cover scene；角色選擇、模板、排版與品牌細節由 deterministic cover path 負責。
+- 衝突時，文章可信度與讀者理解優先；視覺不得反向改寫論點。
 
 ---
 
-## §13 Inline Image Workflow · Body 內嵌圖片標記（2026-05-15 加入）
+## §13 Inline Image Workflow（2026-08-05 除役）
 
-### 設計原則
+Writer 不再輸出 body marker、搜尋字串或生圖 prompt。舊 marker 會在 audit 被標成 warning，避免內部製程混進公開文章。
 
-封面是 hero、inline image 是 body 內的視覺輔助。兩者規範分開：
-
-- 封面：規範在 §1-§12、走 `prompt_library/T01-T06` 模板
-- Inline image：本節規範、**不上傳實際圖、只在 markdown body 插 markers**
-
-### 為什麼不上傳實際圖（5/15 實測 retro）
-
-Path D (PIL placeholder + `api.get_image()` upload + `post.captioned_image()`) 技術上 100% 通（test draft 197911590, 197912645 驗過）。但「找實際好圖」是真正的高摩擦點：
-
-- Sandbox 網路限制 / Wikimedia hot-link block / 版權判斷需 case-by-case
-- Hsin 5 秒看穿的品味我做不到
-- token cost: Path D 17k/篇 vs Path B+C marker 3-5k/篇
-
-**結論**：圖片來源 + 上傳留給 Hsin、PM agent 只做「標記 + 提示」。
-
-### Marker 格式（每個 inline point）
-
-Markdown blockquote、Substack 編輯器渲染為灰底引用區塊：
-
-```markdown
-> 🖼 視覺位置 · {image_label}
->
-> 場景描述：{detailed_scene_description}
->
-> 🔍 Path B · Google 搜：「{search_query}」
-> 📰 推薦 source：{2-3 source recommendations}
->
-> 🎨 Path C · 找不到 → 生圖 prompt：
-> {ready-to-paste prompt for ChatGPT image / NanoBanana}
-```
-
-### 5 個欄位的撰寫紀律
-
-| 欄位 | 規範 |
-|---|---|
-| **image_label** | 3-8 字 short title、用 ` · ` 分隔（例：「Walter Schloss · 1980s 辦公室」）|
-| **scene description** | 1-3 句、第三人稱描述「應該出現什麼畫面」、含具體 time/place/物件 |
-| **search query** | 真實 Google 搜尋字串、英文優先、含 1-2 specific keywords |
-| **sources** | 2-3 個 source 名字、優先序：Wikipedia → 大刊物 archive → photographer 個人 → stock |
-| **gen prompt** | Ready-to-paste、英文、含 brand 風格約束（B&W documentary, no glamour, side profile, 1960s LIFE style 等）|
-
-### Insertion 規則
-
-- **每篇 inline points 3-6 個**（過少視覺單調、過多打斷閱讀）
-- **每個 ▉ section 0-2 個**、總和 ≤ 6
-- 落點挑「概念抽象 → 具體場景」轉折處（讀者最需要視覺錨點）
-- **不要插在開場 hook 跟結尾**（這兩處純文字才有 punch）
-
-### Workflow Integration
-
-`substack_soul.md §10.1` 視覺編輯角色 4 動作擴成 **5 動作**：
-
-1. 標題兩版並陳
-2. 抽 hero text（封面）
-3. 選 cover template
-4. 從 `prompt_library/` 填 cover prompt
-5. **NEW · 標記 3-6 個 inline image points + 寫 marker blockquotes 進 markdown body**
-
-### 已知 working case
-
-- **Substack draft 197913816**「主角會死配角會富（圖文 markers v2）」第一個完整落地
-- 5 個 markers · native subscribe widget · tagline blockquote 完整
-- 通過 `post.subscribe_with_caption(message=...)` 內建原生 widget
+若單篇真的需要資訊圖，人工選用 `substack_radar/cards.py` 的 deterministic renderer；先確認圖能承載可核對的資訊，而不是為了裝飾硬加圖片。
 
 ---
 

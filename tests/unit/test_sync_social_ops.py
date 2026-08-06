@@ -20,6 +20,7 @@ from scripts.sync_social_ops import (
     build_proposals,
     build_quality,
     build_recovery_experiments,
+    build_substack_drafts,
     build_submission_updates,
     report_submission_updates,
 )
@@ -199,6 +200,46 @@ def test_sync_builders_export_metadata_without_article_body() -> None:
     assert experiments[0]["id"] == "rx"
     assert experiments[0]["content_format"] == "carousel"
     assert experiments[0]["actual_format"] is None
+
+
+def test_substack_sync_exports_remote_receipt_metadata_without_article_body() -> None:
+    conn = _db()
+    conn.executemany(
+        "INSERT INTO news_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "podcast-1", "video", "https://youtube.example/episode", "Fresh interview",
+                "ai_model", "fetched", "2099-01-04T00:00:00Z", 9000, 0.8,
+                "YouTube Podcast", '["podcast"]', "2099-01-05T00:00:00Z",
+                "remote-podcast-1", "2099-01-05T00:01:00Z",
+            ),
+            (
+                "owner-1", "article", "https://example.com/owner", "Owner source",
+                "other", "fetched", "2099-01-04T00:00:00Z", 1200, 0.7,
+                "user_substack", '["control_submission:submission-1"]',
+                "2099-01-05T00:00:00Z", "remote-owner-1", "2099-01-05T00:02:00Z",
+            ),
+        ],
+    )
+
+    rows = build_substack_drafts(conn, full=True)
+    assert [row["editorial_kind"] for row in rows] == ["submission", "podcast"]
+    assert rows[0]["status"] == "draft_created"
+    assert rows[0]["submission_id"] == "submission-1"
+    assert rows[1]["remote_draft_id"] == "remote-podcast-1"
+    assert all("body" not in row and "clean_markdown" not in row for row in rows)
+
+
+def test_automation_detail_is_versioned_editorial_contract(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOMATION_MODE", "recovery")
+    monkeypatch.setenv("SUBMISSION_PROCESSOR_MODE", "live")
+    state = build_automation_state()[0]
+    detail = json.loads(state["detail"])
+    assert detail["schema_version"] == 1
+    assert detail["substack"]["publication_mode"] == "draft_only"
+    assert detail["substack"]["podcast"]["candidate_window_days"] == 7
+    assert detail["substack"]["podcast"]["drafts"] == 2
+    assert detail["substack"]["company"]["pick_and_compose"] is True
 
 
 def test_quality_snapshot_excludes_legacy_guard_versions() -> None:

@@ -1,16 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- 每週日 09:00：一週一篇公司深度分析（對齊 compose.py:131 的既有註解）。
-     排在 company-pick（週六 10:00）之後，中間留一天給信哥編 .company_next 拍板。
-
-     取代的舊設定（com.newsradar.* 家族，2026-07-26 改）：
-       com.newsradar.company_pick      週六 10:00  → 排程相同，改用 canon 命名
-       com.newsradar.substack_company  每天 11:30  → 這是 bug：pick 每週、compose 每天，
-                                                     等於同一個候選被重寫六次。改為每週日。
-
-     SUBSTACK_WORD_CAP=4500：公司分析比一般文長（沿用舊 plist 的設定）。
-     只建草稿，不發布——Substack 端沒有 auto-publish 路徑。 -->
+<!-- 每週日 09:00：同一個 governed worker 先選公司，再建立一篇 Weekly 公司分析草稿。
+     只建草稿，不發布。 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -29,8 +21,8 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>-c</string>
-        <string>cd HOME_DIR/news_radar &amp;&amp; SUBSTACK_WORD_CAP=4500 .venv/bin/python -u substack_radar/compose.py company</string>
+        <string>HOME_DIR/bin/news_radar_substack_editorial.sh</string>
+        <string>weekly</string>
     </array>
     <key>StandardOutPath</key>
     <string>/tmp/news-radar-company-compose.out.log</string>
