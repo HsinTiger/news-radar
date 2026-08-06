@@ -179,6 +179,7 @@ async function loadPublicData() {
   if (healthResult.status === "fulfilled") state.publicHealth = healthResult.value;
   if (workflowResult.status === "fulfilled") state.workflows = normalizeWorkflows(workflowResult.value);
   renderRuntime();
+  renderSubmissionMode();
   renderWorkflows();
   renderAttention();
   if (healthResult.status === "rejected") {

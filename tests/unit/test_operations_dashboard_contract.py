@@ -36,6 +36,15 @@ def test_dashboard_versions_runtime_modules_to_avoid_stale_publish_capabilities(
     assert script_version.group(1) == core_version.group(1)
 
 
+def test_public_runtime_refreshes_submission_capabilities() -> None:
+    app = (REPO / "dashboard" / "app.js").read_text(encoding="utf-8")
+    load_public = app.split("async function loadPublicData()", 1)[1].split(
+        "async function loadPrivateData", 1
+    )[0]
+
+    assert "renderSubmissionMode();" in load_public
+
+
 def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:
     html = (REPO / "dashboard" / "index.html").read_text(encoding="utf-8")
     app = (REPO / "dashboard" / "app.js").read_text(encoding="utf-8")
