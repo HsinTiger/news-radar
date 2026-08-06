@@ -23,6 +23,22 @@ def test_unified_dashboard_exposes_owner_workflow_views() -> None:
     assert "response.status === 401" in app
 
 
+def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:
+    html = (REPO / "dashboard" / "index.html").read_text(encoding="utf-8")
+    app = (REPO / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="editorial-plan"' in html
+    assert "最近 7 天的 Podcast" in html
+    assert "怎麼賺錢、優勢能否維持、財務是否支持" in html
+    assert "一次性投稿不分早上、下午" in html
+    assert "morning / evening" in html
+    assert "不是投稿時段" in html
+    assert "立即進優先處理，不等 12:00 排程" in html
+    assert "只有選擇「立即發布」才會直接送三平台" in html
+    assert "立即送出 Substack 草稿任務" in app
+    assert "完成仍以遠端 draft ID 為準" in app
+
+
 def test_worker_contract_carries_substack_metadata_and_editorial_contract() -> None:
     worker = (REPO / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
     migration = (

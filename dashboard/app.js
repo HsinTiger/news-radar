@@ -685,7 +685,7 @@ function selected(name) {
 }
 
 function submissionButtonCopy() {
-  if (selected("target") === "substack") return "建立 Substack 優先草稿";
+  if (selected("target") === "substack") return "立即送出 Substack 草稿任務";
   return selected("meta-mode") === "publish_now" ? "立即發布到 Meta" : "排入 Meta 佇列";
 }
 
@@ -706,7 +706,7 @@ function updateSubmissionUi() {
     ? "Production runtime 顯示立即發布可用；送出後仍須等待三平台 post ID 回讀。"
     : "Production runtime 未顯示 ready，因此只開放排入佇列。";
   $("submission-route").textContent = target === "substack"
-    ? "系統會建立 Substack 優先草稿，交由你最後審稿與發布。"
+    ? "送出後立即進優先處理，不等 12:00 排程；完成仍以遠端 draft ID 為準，交由你最後審稿與發布。"
     : (selected("meta-mode") === "publish_now"
       ? "這會要求 production runtime 立即發布；平台送達仍以 post ID 為準。"
       : "素材會先進入 Meta 佇列，不代表已經發布。 ");

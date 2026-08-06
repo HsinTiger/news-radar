@@ -121,6 +121,35 @@
 
         <div class="schedule-strip schedule-large" id="substack-schedule"></div>
 
+        <section class="panel editorial-plan" id="editorial-plan">
+          <div class="panel-heading">
+            <div><p class="eyebrow">WHAT EACH SLOT WRITES</p><h2>排程不同，文章任務也不同</h2></div>
+            <span class="evidence-tag">目前設計</span>
+          </div>
+          <div class="editorial-profile-grid">
+            <article class="editorial-profile-card">
+              <span>每日 12:00 · 兩篇</span>
+              <h3>Podcast 對談延伸</h3>
+              <p>只從最近 7 天的 Podcast 挑兩集未使用訪談；不摘要整集，而是抓一個最值得追問的交鋒，延伸成離開節目也成立的深度問題。</p>
+              <ul>
+                <li>每篇 2,800–4,200 字，約 12–16 分鐘</li>
+                <li>分開來賓主張、旁證、作者推論與未知</li>
+                <li>處理最強反方，留下可驗證的後續訊號</li>
+              </ul>
+            </article>
+            <article class="editorial-profile-card">
+              <span>週日 09:00 · 一篇</span>
+              <h3>公司 Weekly 深度文</h3>
+              <p>同一輪先選公司再完成文章，依序回答怎麼賺錢、優勢能否維持、財務是否支持、風險如何傳導。</p>
+              <ul>
+                <li>每篇 2,800–4,200 字，約 12–16 分鐘</li>
+                <li>財務缺值明寫「資料未揭露」，不靠模型記憶補洞</li>
+                <li>結尾列出 2–3 個能推翻或強化判斷的訊號</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
         <div class="two-column editorial-columns">
           <section class="panel">
             <div class="panel-heading"><div><p class="eyebrow">WRITER CONTRACT</p><h2>目前的文章性格</h2></div><span class="evidence-tag">設計契約</span></div>
@@ -204,15 +233,27 @@
       <section class="view" data-view="submit" aria-labelledby="submit-heading" hidden>
         <div class="page-intro">
           <div><p class="eyebrow">OWNER INBOX</p><h2 id="submit-heading">把素材送進正確的生產線</h2></div>
-          <p>Substack 永遠先建立草稿；Meta 可排入佇列，只有 runtime 明確 ready 時才開放立即發布。</p>
+          <p>這是一次性投稿入口，不是另一組早報／晚報排程。Substack 立即進優先草稿通道；Meta 才有佇列與立即發布兩種選擇。</p>
         </div>
+
+        <section class="route-explainer" id="submission-boundary" aria-labelledby="submission-boundary-heading">
+          <div class="route-explainer-heading">
+            <div><p class="eyebrow">ROUTE BOUNDARY</p><h2 id="submission-boundary-heading">一次性投稿不分早上、下午</h2></div>
+            <p><code>morning / evening</code> 只是舊 CLI 寫稿模式，不是投稿時段；這個頁面不會要求你選早上或下午。</p>
+          </div>
+          <div class="route-grid">
+            <article><span>SUBSTACK</span><strong>立即進優先處理，不等 12:00 排程</strong><p>目標是建立遠端草稿，不會自動發布；完成仍以 Substack draft ID 為準。</p></article>
+            <article><span>META · QUEUE</span><strong>預設排入佇列</strong><p>送出只代表素材入列，不代表 Facebook、Instagram 或 Threads 已發布。</p></article>
+            <article><span>META · NOW</span><strong>明確選擇才直接發布</strong><p>只有選擇「立即發布」才會直接送三平台，最終仍以各平台 post ID 回讀為準。</p></article>
+          </div>
+        </section>
 
         <div class="submit-layout">
           <form class="panel submit-form" id="submission-form">
             <fieldset>
               <legend>要送去哪裡？</legend>
               <div class="choice-cards">
-                <label><input type="radio" name="target" value="substack" checked><span><strong>Substack</strong><small>建立優先草稿，不自動發布</small></span></label>
+                <label><input type="radio" name="target" value="substack" checked><span><strong>Substack</strong><small>立即進優先處理；建立優先草稿，不自動發布</small></span></label>
                 <label><input type="radio" name="target" value="meta"><span><strong>Meta 三平台</strong><small>進佇列，或在可用時立即發布</small></span></label>
               </div>
             </fieldset>
@@ -245,7 +286,7 @@
             </fieldset>
 
             <div class="submit-footer">
-              <p id="submission-route">系統會建立 Substack 優先草稿，交由你最後審稿與發布。</p>
+              <p id="submission-route">送出後立即進優先處理，不等 12:00 排程；完成仍以遠端 draft ID 為準，交由你最後審稿與發布。</p>
               <button class="button button-primary" id="submit-button" type="submit" disabled>先解鎖再投稿</button>
             </div>
             <div class="form-message" id="form-message" role="status" hidden></div>
