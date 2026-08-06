@@ -58,7 +58,6 @@ def notify_substack_success(
     metadata: Dict[str, Any],
     audit_warnings: List[str],
     onedrive_path: Optional[str] = None,
-    cover_prompts_block: Optional[str] = None,
 ) -> None:
     """Substack draft 成功產出 → 推播給 Hsin。
 
@@ -67,12 +66,11 @@ def notify_substack_success(
         draft_title / draft_subtitle: SubstackDraft fields
         draft_url: e.g. https://hsin73.substack.com/publish/post/<id>
                    None if --no-draft mode
-        body_markdown: 全文 markdown（含 footer + cover prompts）
+        body_markdown: 讀者可直接閱讀的全文 markdown（含公開 footer）
         metadata: dict with keys like chinese_chars / word_floor / word_cap /
                   editorial_profile / source_file（可選）
         audit_warnings: list of warning strings from audit_substack_draft
         onedrive_path: OneDrive autogen folder absolute path（如有 mirror 成功）
-        cover_prompts_block: 額外的 cover prompt 區塊（給 email 容易看的）
 
     Never raises. Notify failure is logged + swallowed.
     """
@@ -272,8 +270,8 @@ def _success_body(
 
 ——————
 ⚙️ Next step
-  ▸ 公司打開 OneDrive 的 cover_prompts.md 挑一個丟 GPT/NanoBanana 生封面圖
-  ▸ Substack 後台 review → 換掉預設 cover → 按 Publish
+  ▸ Substack 後台 review 正文與已上傳的 cover.png
+  ▸ 確認無製程註記後再按 Publish
 
 (這封 email 由 News Radar substack notify 自動發送)
 """

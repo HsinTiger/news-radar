@@ -23,6 +23,20 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$LOCAL_REPO" 2>/dev/null || { echo "[fast-drain] no repo at $LOCAL_REPO"; exit 0; }
+
+# A queued immediate request must never be composed by a stale writer.  Update
+# the runtime checkout before importing any production Python.  Diverged or
+# unreachable main is a hard stop: creating no draft is safer than sending an
+# obsolete authoring contract to Substack.
+if ! git fetch --quiet origin main; then
+  echo "[fast-drain] cannot fetch origin/main; refusing to use stale writer"
+  exit 2
+fi
+if ! git merge --ff-only origin/main >/dev/null 2>&1; then
+  echo "[fast-drain] local checkout diverged from origin/main; refusing to compose"
+  exit 2
+fi
+
 if [ ! -x "$PY" ]; then echo "[fast-drain] missing venv; run compose_hourly.sh once"; exit 2; fi
 
 # Say so when the installed copy has drifted from the tracked one. INSTALL doc

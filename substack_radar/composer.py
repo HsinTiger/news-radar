@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from src.llm_brain import call_for_json
@@ -66,27 +66,9 @@ class SubstackDraft(BaseModel):
             "使用內容型小標與短段落，清楚區分證據、推論、未知，最後提出具體回信問題。"
         ),
     )
-    cover_character: Optional[Literal["robot", "owl"]] = Field(
-        default=None,
-        description=(
-            "封面 IP 角色（2026-06-21 啟用）。每篇動態選一隻固定角色出場：\n"
-            '  "robot"：瑞瑞·單眼雷達機器人（好奇探索）→ 硬科技/數據/財報/company 題。\n'
-            '  "owl"：達達·雷達貓頭鷹（智慧洞察）→ 人文/反共識/訪談/輕主題（podcast/evening）。\n'
-            "依本篇氣質選一隻；留空 (null) 時 Python 會依 topic/mode 自動補。"
-        ),
-    )
-    cover_image_prompt: Optional[str] = Field(
-        default=None,
-        description=(
-            "封面 scene（2026-06-21 重啟）：一句中文，描述上面選的角色『在本篇場景做什麼』"
-            "（動作／道具／場景），**不要**重寫造型或美學（那些 Python 會自動補）。"
-            "例：「瑞瑞(robot) 站在用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，塔頂積木正搖晃」。"
-            "留空也可，Python 會用角色招牌動作 + 標題補一張。"
-        ),
-    )
     generated_by: SkipJsonSchema[Optional[str]] = Field(
         default=None,
-        description="（非 LLM 欄位）pipeline 在生成後填入的『產文路線/模型』標記。LLM 不要填，留 null。",
+        description="（非 LLM 欄位）pipeline 在生成後記錄的模型 provenance；不得進入讀者正文。",
     )
 
     # 2026-05-30: truncate overlong title/subtitle BEFORE the max_length check, so a
@@ -108,17 +90,111 @@ class SubstackDraft(BaseModel):
                 return window.rstrip("，、。；：:;,！？!?「」『』（）()【】 　")
         return v
 
-    @model_validator(mode="before")
-    @classmethod
-    def _heal_metadata(cls, v):
-        """Normalize the optional cover character without rejecting the article."""
-        if not isinstance(v, dict):
-            return v
-        cc = v.get("cover_character")
-        if isinstance(cc, str):
-            cc = cc.strip().lower()
-        v["cover_character"] = cc if cc in {"robot", "owl"} else None  # 非法/缺 → Python 依 topic 補
-        return v
+
+# --------------------------------------------------------------------------
+# Reader-ready boundary
+# --------------------------------------------------------------------------
+
+_PRODUCTION_MARKERS = (
+    "產文路線",
+    "🖼 視覺位置",
+    "🔍 Path B",
+    "🎨 Path C",
+    "生圖 prompt",
+    "生圖 Prompt",
+    "封面圖 Prompt",
+    "cover_image_prompt",
+    "chart_prompt",
+    "發布前刪",
+    "發文前請刪",
+    "substack-editor",
+)
+
+
+def strip_production_instructions(markdown: str) -> str:
+    """Remove authoring instructions that must never reach a reader.
+
+    The prompt forbids these blocks, but old models, queued drafts, and pasted
+    text can still contain them. Apply this cleanup when files are written and
+    again at the remote API boundary.
+    """
+    text = re.sub(
+        r"<!--\s*substack-editor:.*?-->",
+        "",
+        markdown or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    paragraphs = re.split(r"\n\s*\n", text)
+    kept: List[str] = []
+    skipping_inline_visual = False
+
+    for paragraph in paragraphs:
+        compact = paragraph.strip()
+        if not compact:
+            continue
+
+        # The cover prompt is an appended authoring tail, never article copy.
+        if "封面圖 Prompt" in compact:
+            break
+
+        if "🖼 視覺位置" in compact:
+            skipping_inline_visual = True
+            continue
+
+        if skipping_inline_visual:
+            if compact.startswith(("場景描述：", "場景描述:", "🔍 Path B", "🎨 Path C")):
+                continue
+            skipping_inline_visual = False
+
+        if any(
+            marker in compact
+            for marker in (
+                "產文路線",
+                "🔍 Path B",
+                "🎨 Path C",
+                "chart_prompt",
+                "發布前刪",
+                "發文前請刪",
+            )
+        ):
+            continue
+
+        kept.append(compact)
+
+    return "\n\n".join(kept).strip()
+
+
+def strip_generated_footer(markdown: str) -> str:
+    """Remove known pipeline-owned footers before one canonical footer is added."""
+    footer_markers = (
+        "我專門拆解：那些你已經被市場說服",
+        "📅 每天 3 分鐘",
+        "🔄 365 天複利",
+        "把複雜世界寫成人話，保留真正值得你判斷的部分",
+        "📅 每天兩篇對談延伸",
+        "✉️ 你可以直接回信，告訴我哪個判斷值得再追",
+        "點此訂閱 → 不錯過下一篇拆解",
+    )
+    paragraphs = re.split(r"\n\s*\n", markdown or "")
+    kept = [
+        paragraph.strip()
+        for paragraph in paragraphs
+        if paragraph.strip()
+        and not any(marker in paragraph for marker in footer_markers)
+    ]
+    return "\n\n".join(kept).strip()
+
+
+def assert_reader_ready_markdown(markdown: str) -> None:
+    """Fail closed if authoring metadata survives deterministic cleanup."""
+    if not (markdown or "").strip():
+        raise ValueError("reader-ready gate rejected empty content")
+    found = [marker for marker in _PRODUCTION_MARKERS if marker in (markdown or "")]
+    if found:
+        raise ValueError(
+            "reader-ready gate rejected production instructions: "
+            + ", ".join(sorted(set(found)))
+        )
 
 
 # --------------------------------------------------------------------------
@@ -594,9 +670,7 @@ def _build_user_prompt(
         "{\n"
         '  "title": "...",\n'
         '  "subtitle": "...",\n'
-        '  "body_markdown": "...",\n'
-        '  "cover_character": "robot",\n'
-        '  "cover_image_prompt": "一句中文，只描述角色在本篇場景的動作與物件"\n'
+        '  "body_markdown": "..."\n'
         "}\n"
         "不要回 markdown fence、不要加註解、不要加任何 JSON 以外的文字。"
     )
@@ -782,7 +856,6 @@ if __name__ == "__main__":
         print(f"TITLE: {d.title}")
         print(f"SUBTITLE: {d.subtitle}")
         print(f"BODY LEN: {_count_chinese_chars(d.body_markdown)} 字")
-        print(f"COVER PROMPT: {(d.cover_image_prompt or '(disabled)')[:120]}")
         warnings = audit_substack_draft(d)
         if warnings:
             print("\n⚠️ AUDIT WARNINGS:")

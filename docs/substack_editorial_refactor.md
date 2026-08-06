@@ -25,6 +25,10 @@
 - Weekly：2800–4200 個中文字，12–16 分鐘；至少兩種來源視角、最強反方、證據缺口與可觀測的後續訊號；company 文可使用公司拆解 lens，但不整包載入外部 skills。
 - Deep source bundle、podcast、company 預設走 Weekly；morning/evening 預設走 Daily；CLI 可顯式覆寫。
 - Writer 不產生 inline image marker、搜尋指令、chart prompt、footer 或訂閱 CTA。封面仍由既有 deterministic cover path 負責。
+- Writer schema 僅有 `title / subtitle / body_markdown`；模型 provenance 只留在 metadata。
+- `Article_Substack.md` 與遠端 `from_markdown()` 前都套用 reader-ready sanitizer；發現殘留製程標記即 fail closed。
+- Reader-ready 草稿不含產文路線、內文圖片位置、Path B/C、生圖 prompt、封面 prompt 或 editor 註解。已產生並上傳的 `cover.png` 保留。
+- Fast submission worker 必須先 fast-forward `origin/main`；無法同步時不使用舊 writer 產稿。
 - 排程目標是每天 12:00 啟動一個 batch，依序完成兩篇不同 Podcast 延伸文；候選僅限最近 7 天。週日 09:00 在同一工作內先選公司再完成一篇 Weekly；owner submission immediate/hourly lanes 保持不變。
 - 所有 scheduled editorial worker 必須共用 Release lease、pull/push 與 remote-draft evidence contract。
 
@@ -36,6 +40,7 @@
 | Prompt separation | unit assertions for required/forbidden content | does not judge prose beauty |
 | Profile word ranges | audit unit tests | character count is not editorial quality |
 | No obsolete image instructions | prompt/schema/file-reference tests | cover visual quality remains separate |
+| Reader-ready final payload | file-writer, pasted-draft, and API-boundary regression tests | remote private-draft readback still requires the Mac runtime |
 | One noon two-draft batch + one weekly pick-and-compose schedule | static worker/plist/installer contract tests | macOS launchd not executed on Windows; completion before 13:00 needs a timed canary |
 | Existing behavior preserved | full unit suite + compile/diff checks | no remote Substack draft without Mac credentials |
 
@@ -46,6 +51,29 @@
 3. Remove obsolete chart/inline-image metadata and Manny runtime injection.
 4. Add the lease-backed editorial worker and converge installed editorial schedules.
 5. Update operator docs; run focused and full regression checks.
+
+## 8. 2026-08-06 reader-ready correction
+
+The earlier refactor shortened the writer prompt but did not control the final
+payload. That was insufficient: queued/legacy output could still carry two
+inline image instruction blocks, a cover-generation prompt, provenance, and an
+editor-only deletion note into a real Substack draft.
+
+The corrected invariant is simpler: a draft body is a reader product, not a
+manufacturing worksheet. Cover art is a separate deterministic artifact. The
+writer spends tokens only on title, subtitle, and article body; provenance is
+operational metadata; deterministic sanitization runs before writing and again
+immediately before the remote draft mutation.
+
+Local closure evidence:
+
+- Focused reader-ready/schema/API/scheduler regressions: `18 passed`.
+- Full repository suite: `798 passed`.
+- `python -X utf8 -m compileall -q substack_radar src scripts`: pass.
+- `git diff --check`: pass.
+- Both owner-supplied contaminated draft samples pass deterministic cleanup
+  without any forbidden production marker; this is local payload evidence, not
+  a remote private-draft readback.
 
 ## 6. Risks / owner gates
 

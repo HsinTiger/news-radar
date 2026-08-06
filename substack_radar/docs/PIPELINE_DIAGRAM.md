@@ -19,13 +19,13 @@ flowchart TD
     S1["STAGE 1 · PODCAST SOURCE PICK  ⟨0 token⟩<br/>in: dedicated YouTube Podcast pool (≤7d) + shared used IDs<br/>fn: 排除已用 → 訪談長度（封頂）+ 新鮮度 → top-1 → 標記used；同一 batch 執行兩次<br/>out: two different (id, title, full transcript, topic_category) picks<br/>12:00 refreshes pool, then sequentially writes both drafts"]
     S1 --> S2
 
-    S2["STAGE 2 · COMPOSE (compose_substack_article)  ★ 唯一 LLM 呼叫<br/>in: 素材 + editorial_voice + Daily/Weekly brief + compact JSON contract<br/>fn: configured writer chain · WebSearch/WebFetch 關閉 · 只用離線素材<br/>out: SubstackDraft(title, subtitle, body_markdown, cover_character, cover_image_prompt)<br/>→ 成本/tokens 寫入 token_usage_daily"]
+    S2["STAGE 2 · COMPOSE (compose_substack_article)  ★ 唯一 LLM 呼叫<br/>in: 素材 + editorial_voice + Daily/Weekly brief + compact JSON contract<br/>fn: configured writer chain · WebSearch/WebFetch 關閉 · 只用離線素材<br/>out: SubstackDraft(title, subtitle, body_markdown)<br/>→ 成本/tokens 寫入 token_usage_daily"]
     S2 --> S3
 
-    S3["STAGE 3 · AUTOFIX + AUDIT  ⟨0 token⟩<br/>in: SubstackDraft + EditorialProfile<br/>fn: 台灣用語修正 + profile字數 + 段落/回信問題/舊視覺marker檢查<br/>out: 清理後 draft + warnings[]"]
+    S3["STAGE 3 · READER-READY + AUTOFIX + AUDIT  ⟨0 token⟩<br/>in: SubstackDraft + EditorialProfile<br/>fn: 移除製程註記 + 台灣用語修正 + profile字數 + 段落/回信問題檢查<br/>out: 純淨 draft + warnings[]"]
     S3 --> S4
 
-    S4["STAGE 4 · WRITE FILES  ⟨0 token⟩<br/>in: draft + warnings + source<br/>fn: Article_Substack.md(貼上版 + footer + 單一封面prompt) · Article_Full.md(metadata) · metadata.json · cover.png(PIL, 副標換行已修)<br/>out: data/substack_drafts/{date}/{mode}_{slug}/"]
+    S4["STAGE 4 · WRITE FILES  ⟨0 token⟩<br/>in: draft + warnings + source<br/>fn: Article_Substack.md(讀者版 + footer) · Article_Full.md(metadata) · metadata.json · cover.png(確定性渲染)<br/>out: data/substack_drafts/{date}/{mode}_{slug}/"]
     S4 --> S5
     S4 --> S6
 
@@ -73,18 +73,18 @@ stages:
     token: ALL          # the entire token budget of the pipeline
     input:  ["picked source text", "system = editorial_voice + selected Daily/Weekly brief", "user = compact task + fact discipline + JSON contract"]
     function: "configured writer chain (Antigravity first by default), WebSearch/WebFetch disabled, writes from supplied material only"
-    output: ["SubstackDraft{title, subtitle, body_markdown, cover_character, cover_image_prompt}", "usage → token_usage_daily"]
+    output: ["SubstackDraft{title, subtitle, body_markdown}", "usage → token_usage_daily"]
   - id: 3_autofix_audit
     impl: "substack_radar/composer.py::autofix_mainland_terms + audit_substack_draft"
     token: 0
     input:  ["SubstackDraft", "EditorialProfile"]
-    function: "auto-replace unambiguous mainland terms; warn on word range, paragraph length, generic/missing reply question, obsolete inline markers, and language issues"
+    function: "strip authoring instructions; auto-replace unambiguous mainland terms; warn on word range, paragraph length, generic/missing reply question, and language issues"
     output: ["cleaned draft", "warnings[]"]
   - id: 4_write_files
     impl: "substack_radar/compose.py::write_* + render_substack_cover"
     token: 0
     input:  ["draft", "warnings", "source"]
-    function: "Article_Substack.md(paste-ready + footer + ONE cover prompt); Article_Full.md(metadata); metadata.json; cover.png(PIL, wrapped subtitle)"
+    function: "Article_Substack.md(reader-ready + public footer); Article_Full.md(metadata); metadata.json; deterministic cover.png"
     output: ["data/substack_drafts/{date}/{mode}_{slug}/"]
   - id: 5_mirror
     impl: "substack_radar/compose.py::mirror_to_onedrive"

@@ -17,11 +17,11 @@
 - 直幅、角色置中、四周留一點空白；建議短邊 ≥ 900px（封面會把角色放到約 500–670px 高，太小會糊）。
 - 維持 v1 定裝：stone-grey 身體、單一 sienna 圍巾/蝴蝶結、黏土質感。造型基準見 `../modelsheet_*_v1.png`。
 
-## 怎麼生新素材（用你的 ChatGPT / nanobanana）
-1. 跑 pipeline 任一篇 → 它的 `cover_prompts.md` 裡有 route-1 的 D5 角色 prompt（含固定造型 + 場景）。
-   或直接拿 `image_brain.CHARACTERS[species]["look"]` + 想要的表情 hint。
-2. 加一句「single character, **transparent background**（或 plain #F2EEE5 background）, full body, centered, no title text」。
-3. 丟 ChatGPT image / nanobanana 生圖 → 存成上面的命名 → 放進這個資料夾。完成。
+## 怎麼補新素材
+
+這是低頻的資產維護，不是每日寫稿流程。依 `../modelsheet_*_v1.png` 的既有角色造型
+製作透明背景、全身、置中的新表情，依上述規則命名後放進本資料夾；每日 pipeline
+只選用現有 PNG，不建立或輸出任何生圖 prompt。
 
 ## 目前狀態（2026-06-22）✅ 全 14 表情上線
 全 14 張**全尺寸透明去背**裁切圖（短邊 800、RGBA）都在這個資料夾，由 claude design 從信哥用

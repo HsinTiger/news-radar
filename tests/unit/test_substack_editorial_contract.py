@@ -45,13 +45,12 @@ def test_daily_prompt_is_compact_human_and_writing_only() -> None:
     assert "Aporia" not in combined
     output_example = prompt.split("=== 輸出格式", 1)[1]
     assert "//" not in output_example
-    assert '"cover_character": "robot"' in output_example
+    assert "cover_character" not in output_example
+    assert "cover_image_prompt" not in output_example
     assert set(composer.SubstackDraft.model_json_schema()["properties"]) == {
         "title",
         "subtitle",
         "body_markdown",
-        "cover_character",
-        "cover_image_prompt",
     }
 
 
@@ -64,8 +63,8 @@ def test_antigravity_schema_prompt_has_only_current_writer_fields() -> None:
         "subtitle",
         "body_markdown",
     )
-    assert "cover_character" in compact
-    assert "cover_image_prompt" in compact
+    assert "cover_character" not in compact
+    assert "cover_image_prompt" not in compact
     assert "generated_by" not in combined
     assert "hook_type" not in combined
     assert "metaphor_domain_used" not in combined
@@ -124,11 +123,48 @@ def test_profile_specific_audit_and_obsolete_marker_warning() -> None:
     assert any("舊內文視覺標記" in warning for warning in warnings)
 
 
+def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> None:
+    draft = composer.SubstackDraft(
+        title="把製程留在後台",
+        subtitle="讀者只需要文章，不需要知道文章怎麼生產",
+        body_markdown=(
+            "第一段是讀者需要的內容。\n\n"
+            "🖼 視覺位置 · 舊內文插圖\n\n"
+            "場景描述：這是製程資料。\n\n"
+            "🔍 Path B · Google 搜：不該出現在文章裡\n\n"
+            "🎨 Path C · 生圖 prompt：internal image instruction\n\n"
+            "第二段仍然是讀者需要的內容。"
+        ),
+    )
+    draft.generated_by = "antigravity_cli · internal provenance"
+
+    article = compose.write_article_substack_md(tmp_path, draft)
+    compose.append_footer_block(article_md_path=article)
+    text = article.read_text(encoding="utf-8")
+
+    assert "第一段是讀者需要的內容" in text
+    assert "第二段仍然是讀者需要的內容" in text
+    for forbidden in (
+        "產文路線",
+        "視覺位置",
+        "Path B",
+        "Path C",
+        "生圖 prompt",
+        "封面圖 Prompt",
+        "substack-editor",
+        "發布前刪",
+    ):
+        assert forbidden not in text
+
+
 def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> None:
     installer = (REPO / "scripts" / "install_substack_daily_agents.sh").read_text(
         encoding="utf-8"
     )
     worker = (REPO / "scripts" / "substack_editorial_worker.sh").read_text(
+        encoding="utf-8"
+    )
+    fast_worker = (REPO / "scripts" / "drain_substack_fast.sh").read_text(
         encoding="utf-8"
     )
     legacy_setup = (REPO / "substack_radar" / "setup_launchd.sh").read_text(
@@ -191,6 +227,11 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     assert "install_substack_daily_agents.sh" in legacy_setup
     assert "compose.py podcast" not in legacy_setup
     assert "compose.py evening" not in legacy_setup
+    assert "git fetch --quiet origin main" in fast_worker
+    assert "git merge --ff-only origin/main" in fast_worker
+    assert fast_worker.index("git fetch --quiet origin main") < fast_worker.index(
+        "scripts/drain_substack.py"
+    )
 
 
 def test_public_cadence_copy_matches_two_daily_podcast_extensions() -> None:

@@ -1,271 +1,50 @@
-"""
-News Radar · Image Brain (Phase 9.x, 2026-05-12)
-==================================================
+"""Deterministic character selection for News Radar cover renderers.
 
-職責劃分（與 llm_brain.py 對比）：
-
-    llm_brain.py    → 文字／結構化 JSON（content composition + research）
-                       2026-05-12 起改用 Claude CLI 為主，Gemini 退場
-    image_brain.py  → 視覺輸出
-                       **2026-05-12 模式調整**：預設改成「產 prompt、不打 API」。
-                       Claude CLI 對封面構圖的描述能力勝過任何 text-to-image
-                       SDK，且讓 Hsin 自己把 prompt 丟 GPT web / NanoBanana 手動
-                       生成。這條 path 取消了 API 費用、避開 preview 模型不穩。
-
-兩種模式（互斥）：
-
-    (A) **prompt-only mode** （**預設**）
-        ``build_cover_prompt_block(cover_image_prompt)`` 產一段 markdown 區塊，
-        Caller 把它附在 Article_Substack.md 結尾。Hsin 複製→丟生圖工具。
-
-    (B) **legacy Gemini gen mode**（**deprecated；keep for archeology**）
-        舊的 ``generate_cover_image()`` 仍在，但只在 ``SUBSTACK_AI_COVER=1``
-        時觸發。實測 ``gemini-2.5-flash-image-preview`` 在莫蘭迪/手繪 prompt
-        上不穩定，且要 API key，所以 Hsin 決議下架。
-        新專案不要走這條 path。
-
-設計決策：
-- 改 prompt-only 後，「AI 生圖 vs 純合成 vs 真實照片」這三條 path 的選擇權
-  完全交給 Hsin。pipeline 不再替他做。
-- generate_cover_image() 程式碼保留是因為「拿掉容易、回復難」——萬一 prompt-only
-  之後想再回到全自動，5 行 env-var flip 就能切回去。
+The writing model owns only title, subtitle, and article body.  This module has
+no text-to-image API, cover-prompt builder, or manual generation instructions;
+it maps editorial context to an existing character asset and expression.  The
+Substack and Meta renderers then compose those assets into final images.
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import json
-import os
-import shutil
-from pathlib import Path
-from typing import Optional, Tuple
 
-
-def _is_quota_error(err: str) -> bool:
-    e = err.lower()
-    return ("429" in e) or ("resource_exhausted" in e) or ("quota" in e) or ("rate limit" in e)
-
-
-def _gemini_cli_dirs() -> list[str]:
-    """多帳號輪替用的 HOME 目錄清單（GEMINI_CLI_CONFIG_DIRS，逗號分隔，按優先序）。"""
-    raw = os.getenv("GEMINI_CLI_CONFIG_DIRS", "").split(",")
-    dirs = [d.strip() for d in raw if d.strip()]
-    return dirs if dirs else [""]
-
-
-# NOTE (2026-06-21): module-level `from google import genai` removed — it crashed
-# `import src.image_brain` whenever google-genai wasn't installed, which silently
-# disabled the cover-prompt block (compose.py caught the ImportError). The legacy
-# gen path imports google lazily inside generate_cover_image(), so prompt-only mode
-# (build_cover_prompt_block) now imports cleanly with zero heavy deps.
-
-def _get_api_keys() -> list[str]:
-    """取得所有可用的 API Keys，供失敗時輪替。"""
-    keys = []
-    # 嘗試抓取可能設定的 Pro Key (雖然目前沒有)
-    for k in ["GEMINI_PRO_KEY_TINGSYUAN", "GEMINI_PRO_KEY_HSIN"]:
-        val = os.getenv(k)
-        if val and val.strip():
-            keys.append(val.strip())
-            
-    # 抓取 .env 中既有的 免費/一般 Key
-    for k in ["GEMINI_API_KEY", "GEMINI_API_KEY_2"]:
-        val = os.getenv(k)
-        if val and val.strip():
-            # 支援逗號分隔
-            keys.extend([x.strip() for x in val.split(",") if x.strip()])
-            
-    # 去重並保留順序
-    seen = set()
-    out = []
-    for k in keys:
-        if k not in seen:
-            seen.add(k)
-            out.append(k)
-    return out
-
-async def generate_image(
-    *,
-    prompt: str,
-    out_path: Path,
-    size: Tuple[int, int] = (1024, 576),  # 16:9 default
-) -> Optional[Path]:
-    """誠實回退模式：因目前 Google AI Studio API 不支援直接呼叫 Imagen 3，在此直接回傳 None。
-    
-    2026-06-01: 經過完整驗證，Gemini API Key (含 Pro) 在目前的 v1beta/v1alpha 
-    API 端點中，皆會對 imagen-3.0-generate-001 報 404 錯誤。
-    為了遵守「誠實且不可欺瞞」的原則，絕不使用外部免費 API (如 Pollinations) 偷底。
-    
-    因此，本函數直接放棄自動生圖，保留 Markdown 中的 prompt 標記，交由使用者後續手動於 Web UI 生成。
-    """
-    print(f"[image_brain] ⚠️ Skipping image generation (API limitation). Falling back to text prompt only.")
-    return None
-
-
-def _get_aesthetic_tail() -> str:
-    """2026-05-22 aesthetic_tail 換成 v0.2.2 cold-print editorial（從原本 Moleskine
-    handdrawn 改）。詳見 BRAND_AESTHETIC_VERSION。對應 config/visual_brand_system.md。
-
-    2026-05-16 enforce 大字 rule: aesthetic_tail 加入 HERO_TEXT_KEYPHRASES
-    必須出現的硬規範。每個 prompt（含 scene/concept、不只 abstract）都要有
-    hero text 占 40-60% 面積、≤6 字 preferred。
-    """
-    return (
-        " — Style: COLD-PRINT EDITORIAL (1950s financial broadsheet). "
-        "Background: warm off-white #F2EEE5 (NEVER pure white). "
-        "Text + lines: near-black #141414 (NEVER pure #000). "
-        "Single accent: sienna red #C84A32, used ONCE total per cover. "
-        "Typography (when text appears): Noto Serif TC weight 900 for hero, "
-        "JetBrains Mono for kicker/labels. "
-        "MANDATORY: hero text must dominate 40-60% of canvas area, "
-        "≤6 字 preferred (≤8 max), thumbnail-readable at 60×40 px. "
-        "Scene variant: documentary photo as base + large overlaid hero text. "
-        "Concept variant: infographic + enlarged core number/concept as hero. "
-        "Abstract variant: T01 typography-only, 300-360px hero. "
-        "Forbidden: gradients, drop shadows, 3D, glows, neon, anime, cartoon, "
-        "cartoon people, faces with visible features, emoji, decorative borders. "
-        "If humans appear: backs of heads / side profiles only, no facial emotion. "
-        "Aesthetic reference: 1960s Wall Street Journal / 1980s Business Week / "
-        "The Economist / Financial Times. Flat 2D editorial print. "
-        "Render aspect 16:9 (1456×816 px). "
-        "[BRAND_AESTHETIC_VERSION = v0.2.2]"
-    )
-
-
-# ==========================================================================
-# Cover IP — 2-character claymation system (2026-06-21, Hsin directive)
-# ==========================================================================
-# 每篇 Substack 封面固定出現同一個可愛又專業的 IP（robot=瑞瑞 機器人 / owl=達達 貓頭鷹），
-# 搭配當篇場景 → 品牌一致 + 標題更有帶入感。撰稿 AI 動態挑角色 + 寫一句 scene；
-# 固定造型 + 黏土美學由這裡統一補上（模型不必每次重畫，省 token、避免走樣）。
-# 完整人設文件：substack_radar/config/cover_characters.md。
-# 代號：robot / owl 是 species 代號（name-proof，永不隨改名動）；顯示名在 display 欄（瑞瑞/達達，暫定）。
-
-# Style bible split so the D5 composition line (cover_ip/cover_prompt_template.txt)
-# can sit BETWEEN the look and the technical tail. _CLAY_STYLE_BODY = the look;
-# _COVER_TECH_TAIL = the fixed aspect/negatives/ground rules.
-_CLAY_STYLE_BODY = (
-    "Warm soft-clay claymation miniature, tilt-shift macro, soft diffused studio "
-    "light, tactile hand-molded fingerprint texture, rounded chunky forms, medium "
-    "detail. Palette: paper-cream background #F2EEE5, ink-black #141414, ONE "
-    "sienna-red #C84A32 accent used once, muted stone-grey #8A8378. Cute but "
-    "credible — GitHub-Octocat-level charm, NOT babyish, NOT chibi-overload."
-)
-_COVER_TECH_TAIL = (
-    "Aspect ratio 16:9, 1456x816. No text, no watermark, no logo, no border, "
-    "no neon, no gradient, no 3D glow, no anime face. Paper-cream #F2EEE5 ground only."
-)
-# Backward-compatible single-line tail (kept for any older caller / external import).
-_CLAY_STYLE_TAIL = (
-    " — Style: " + _CLAY_STYLE_BODY + " Single subject, centered, generous negative "
-    "space for a title overlay. Render aspect 16:9 (1456×816 px). [COVER_IP_VERSION = v1.0]"
-)
-
-# Per-character expression hints (D5). Appended to the scene; default per species.
-_EXPRESSION_HINTS: dict = {
+_EXPRESSION_HINTS: dict[str, dict[str, str]] = {
     "robot": {
-        "gotcha":     "holding a magnifier up to its single eye, leaning forward, triumphant little smirk",
-        "skeptical":  "one brow raised, radar antenna tilted, arms crossed, doubtful look",
-        "smug":       "arms crossed, corner-of-mouth smug grin, one eye winking",
-        "curious":    "leaning in wide-eyed, single lens-eye sparkling huge, antenna perked up, both stubby hands reaching forward eagerly",
-        "presenting":  "standing upright, one arm gesturing outward to present, confident open posture",
-        "alert":       "radar dish spinning fast with motion streaks, single lens-eye wide open, a small alarm spark, urgent leaning stance",
-        "celebrating": "both arms thrown up in triumph, radar dish lit, sparkles around, joyful open-mouthed cheer",
+        "gotcha": "default hard-topic expression",
+        "skeptical": "structural doubt",
+        "smug": "contradiction exposed",
+        "curious": "new technology",
+        "presenting": "company or earnings analysis",
+        "alert": "urgent market move",
+        "celebrating": "record or breakout",
     },
     "owl": {
-        "ahha":       "feathers bursting outward, both wings flung up, one eye huge through a magnifier",
-        "wink":       "playful single-eye wink, a wing gesturing knowingly",
-        "pondering":  "head tilted, one wing under the beak, spectacles glinting, facing a big question mark",
-        "reading":    "perched, looking down at an open book held in its wings, spectacles glinting, absorbed",
-        "warm":       "gentle closed-eye smile, wings softly folded, content and reflective",
-        "cautionary": "one wing raised palm-out in a 'careful' gesture, brow furrowed over the spectacles, a wary cautioning look",
-        "teaching":   "perched upright, one wing pointing out at a small floating diagram, spectacles on, didactic explaining pose",
+        "ahha": "default reflective expression",
+        "wink": "contrarian insight",
+        "pondering": "open question",
+        "reading": "long-form evening analysis",
+        "warm": "humanities reflection",
+        "cautionary": "risk warning",
+        "teaching": "explainer",
     },
 }
 _DEFAULT_EXPRESSION = {"robot": "gotcha", "owl": "ahha"}
 
-
-def pick_expression(topic_category=None, mode=None, title=None, character=None) -> str:
-    """Map a post's category/mode/title-mood → a character expression (Cover System
-    D1, aligned to the live 發文類別). Character-first so we never cross species:
-    robot expressions for hard topics, owl for soft. Pass ``character`` to force the
-    species (e.g. Meta's title-angle picker) so the expression matches the chosen IP.
-    Returns an expression key in _EXPRESSION_HINTS; missing asset → compositor
-    self-heals to the species default (see character_cover._find_asset)."""
-    char = character if character in ("robot", "owl") else pick_character(topic_category, mode)
-    t = (title or "").strip()
-    tc = (topic_category or "").strip()
-    if char == "robot":
-        if any(k in t for k in ("暴跌", "急殺", "閃崩", "崩", "重挫", "突發", "警報")):
-            return "alert"                                  # 突發 / 急殺 / 暴跌
-        if any(k in t for k in ("新高", "突破", "創紀錄", "里程碑", "飆", "大漲", "狂飆")):
-            return "celebrating"                            # 突破 / 新高 / 大漲
-        if any(k in t for k in ("早就", "錯了", "打臉")):
-            return "smug"                                   # 打臉/「早就說了」語氣
-        if mode == "company" or tc in ("earnings", "company"):
-            return "presenting"                             # 財報 / 公司分析（數據導讀）
-        if tc in ("ai_model", "ai_agent", "ai_application", "tech_product_launch"):
-            return "curious"                                # AI / 新品
-        if tc == "supply_chain":
-            return "skeptical"                              # 供應鏈 / 結構質疑
-        return "gotcha"                                     # 預設·硬題（morning / 美台股）
-    # owl
-    if any(k in t for k in ("風險", "泡沫", "小心", "陷阱", "警訊", "別被", "別再")):
-        return "cautionary"                                 # 風險 / 示警
-    if any(k in t for k in ("什麼是", "入門", "科普", "懶人包", "一次搞懂", "解析")):
-        return "teaching"                                   # 科普 / 解析 / 講解
-    if "為什麼" in t or t.endswith("？") or t.endswith("?"):
-        return "pondering"                                  # 「為什麼…？」開放提問
-    if tc == "culture":
-        return "warm"                                       # 人文 / 反思
-    if tc == "contrarian":
-        return "wink"                                       # 反共識
-    if mode == "evening":
-        return "reading"                                    # 晚報（獨立選題 / 書 / 深度）
-    return "ahha"                                           # 預設·軟題（podcast）
-
-# Canonical look — Python owns this so the model never has to redraw the character.
-CHARACTERS: dict = {
-    "robot": {
-        "display": "瑞瑞 · 單眼雷達機器人（好奇探索）",  # 顯示名；改名只動這欄
-        "look": (
-            "A chunky rounded desk-robot analyst made of soft matte clay, stone-grey "
-            "#8A8378 body, a small spinning radar-dish antenna on its head emitting a "
-            "tiny 'ping!' spark, one big glossy single lens-eye that sparkles, stubby "
-            "articulated arms, a sienna-red #C84A32 knitted scarf, squash-and-stretch "
-            "rubbery lively posing"
-        ),
-        "default_pose": (
-            "thrusting forward in a 'gotcha!' pose, holding a magnifying glass that "
-            "blows its single lens-eye up huge and sparkling, smug little grin"
-        ),
-    },
-    "owl": {
-        "display": "達達 · 雷達貓頭鷹（智慧洞察）",  # 顯示名；改名只動這欄
-        "look": (
-            "A plump rounded owl made of soft matte clay, warm stone-grey #8A8378 "
-            "feathers with hand-molded texture, two huge radar-dish eyes behind round "
-            "wire spectacles, a small sienna-red #C84A32 bow-tie scarf, stubby wings, "
-            "feathers puffed up, theatrical squash-and-stretch posing"
-        ),
-        "default_pose": (
-            "in an 'ah-ha!' burst with feathers flung open and both wings thrown up, "
-            "one eye magnified huge through a magnifying glass, delighted realization"
-        ),
-    },
-}
-
-# Topics that lean robot/瑞瑞 (hard tech / data / financials). Everything else → owl/達達.
 _ROBOT_TOPICS = {
-    "us_stocks", "tw_stocks", "ai_model", "ai_agent", "ai_application",
-    "tech_product_launch", "supply_chain", "earnings",
+    "us_stocks",
+    "tw_stocks",
+    "ai_model",
+    "ai_agent",
+    "ai_application",
+    "tech_product_launch",
+    "supply_chain",
+    "earnings",
 }
 
 
 def pick_character(topic_category=None, mode=None) -> str:
-    """Deterministic fallback when the model didn't choose a character. mode wins
-    over topic: company→robot, podcast→owl; else hard-tech topics→robot, rest→owl."""
+    """Select an existing character asset without involving the writer model."""
     if mode == "company":
         return "robot"
     if mode == "podcast":
@@ -275,294 +54,46 @@ def pick_character(topic_category=None, mode=None) -> str:
     return "owl"
 
 
+def pick_expression(topic_category=None, mode=None, title=None, character=None) -> str:
+    """Map category, mode, and title mood to an existing expression asset."""
+    char = character if character in ("robot", "owl") else pick_character(
+        topic_category, mode
+    )
+    title_text = (title or "").strip()
+    topic = (topic_category or "").strip()
+
+    if char == "robot":
+        if any(word in title_text for word in ("暴跌", "急殺", "閃崩", "崩", "重挫", "突發", "警報")):
+            return "alert"
+        if any(word in title_text for word in ("新高", "突破", "創紀錄", "里程碑", "飆", "大漲", "狂飆")):
+            return "celebrating"
+        if any(word in title_text for word in ("早就", "錯了", "打臉")):
+            return "smug"
+        if mode == "company" or topic in ("earnings", "company"):
+            return "presenting"
+        if topic in ("ai_model", "ai_agent", "ai_application", "tech_product_launch"):
+            return "curious"
+        if topic == "supply_chain":
+            return "skeptical"
+        return "gotcha"
+
+    if any(word in title_text for word in ("風險", "泡沫", "小心", "陷阱", "警訊", "別被", "別再")):
+        return "cautionary"
+    if any(word in title_text for word in ("什麼是", "入門", "科普", "懶人包", "一次搞懂", "解析")):
+        return "teaching"
+    if "為什麼" in title_text or title_text.endswith(("？", "?")):
+        return "pondering"
+    if topic == "culture":
+        return "warm"
+    if topic == "contrarian":
+        return "wink"
+    if mode == "evening":
+        return "reading"
+    return "ahha"
+
+
 def _anchor_gaze(title=None):
-    """D2/D5: which side the character hugs (title goes opposite) + gaze direction.
-    Alternates deterministically by title so the feed isn't every cover identical."""
+    """Alternate the character side deterministically from the title."""
     if (sum(map(ord, title or "")) % 2) == 0:
         return "left", "looking right"
     return "right", "looking left"
-
-
-def build_cover_prompt_block(
-    scene=None,
-    *,
-    character=None,
-    title=None,
-    subtitle=None,
-    topic_category=None,
-    mode=None,
-    expression=None,
-    single=True,
-    # --- legacy manual 3-version path (substack_radar/push_pasted_draft.py) ---
-    cover_image_prompt=None,
-    scene_prompt=None,
-    concept_prompt=None,
-    abstract_prompt=None,
-) -> str:
-    """Assemble the cover-image prompt markdown block.
-
-    Two modes, auto-dispatched:
-
-    (1) **Character IP path (default, auto pipeline)** — the model supplies only
-        ``character`` (robot/owl) + a short ``scene`` (what the IP is doing in THIS
-        article's setting). Python supplies the canonical look + clay style bible,
-        so the IP stays on-model every time and the model spends ~zero tokens
-        redrawing it. Missing/invalid ``character`` → ``pick_character(topic, mode)``
-        so the cover never opens a hole.
-
-    (2) **Legacy 3-version cold-print path** — triggered when any of
-        ``scene_prompt``/``concept_prompt``/``abstract_prompt`` is passed (only
-        push_pasted_draft.py does this). Preserves the old cold-print editorial
-        output + the " — Style: COLD-PRINT EDITORIAL" sentinel that tool greps for.
-    """
-    if scene_prompt is not None or concept_prompt is not None or abstract_prompt is not None:
-        return _build_legacy_cover_block(
-            cover_image_prompt=cover_image_prompt or "",
-            title=title, subtitle=subtitle,
-            scene_prompt=scene_prompt, concept_prompt=concept_prompt,
-            abstract_prompt=abstract_prompt, single=single,
-        )
-
-    char_key = character if character in CHARACTERS else pick_character(topic_category, mode)
-    char = CHARACTERS[char_key]
-    scene = (scene or "").strip()
-    if not scene:
-        # No model scene → evoke the article theme; the expression hint carries the pose.
-        scene = f"in a setting that evokes the theme 「{title or subtitle or '本文主題'}」"
-    expr = expression if expression in _EXPRESSION_HINTS[char_key] else _DEFAULT_EXPRESSION[char_key]
-    hint = _EXPRESSION_HINTS[char_key][expr]
-    anchor, gaze = _anchor_gaze(title)
-    # D5 scaffold (cover_ip/cover_prompt_template.txt): look → scene+expr → composition
-    # (character one side, title zone opposite, gaze into title) → style → tech tail.
-    full = (
-        f"{char['look']}.\n"
-        f"Scene: {scene} ({hint}).\n"
-        f"Composition: single subject, placed on the {anchor} third of the frame, "
-        f"{gaze} toward the empty title zone; leave the opposite 55-60% as clean "
-        f"negative space for a Chinese headline overlay (do not render any text). "
-        f"Character occupies 32-42% of frame height, base near the lower third. "
-        f"Eye-line and any magnifier/gesture point INTO the title zone, guiding the reader.\n"
-        f"Style: {_CLAY_STYLE_BODY}\n"
-        f"{_COVER_TECH_TAIL} [COVER_IP v1.0]"
-    )
-    side = "左" if anchor == "left" else "右"
-    return (
-        "\n\n---\n\n"
-        "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
-        f"**本篇出場角色：{char['display']}**　·　表情 `{expr}`　·　構圖：角色靠{side}、標題在另一側\n"
-        f"丟 ChatGPT image / NanoBanana / Midjourney，**連同對應角色的 v1 參考圖**"
-        f"（`cover_ip/assets/{char_key}_{expr}.png`，沒有就用 `cover_ip/modelsheet_poses_v1.png`）"
-        "一起送 → 拿圖換掉 cover.png 再 publish。發文前把這段刪掉。\n\n"
-        f"```\n{full}\n```\n"
-    )
-
-
-def _build_legacy_cover_block(
-    *, cover_image_prompt, title, subtitle,
-    scene_prompt, concept_prompt, abstract_prompt, single,
-) -> str:
-    """Old cold-print editorial cover block (3-version fan-out). Kept verbatim so
-    the manual paste tool (push_pasted_draft.py) and its COLD-PRINT sentinel still
-    work. New auto pipeline uses the character path above instead."""
-    aesthetic_tail = _get_aesthetic_tail()
-    v_scene = (scene_prompt or cover_image_prompt or "").strip()
-    v_concept = (concept_prompt or
-        f"用一張視覺隱喻代替文章直接場景，主題：「{title or '(本文主題)'}」"
-    ).strip()
-    v_abstract = (abstract_prompt or
-        f"T01 純文字封面、hero text 從「{title or subtitle or '(本文核心)'}」"
-        f"抽 ≤6 字最強短語，Noto Serif TC 900 / 300-360px、"
-        f"關鍵 1-2 字 sienna #C84A32 single accent。"
-    ).strip()
-    if single:
-        return (
-            "\n\n---\n\n"
-            "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
-            "挑這個 prompt 丟 ChatGPT image / NanoBanana / Midjourney → 拿圖回來換掉 "
-            "cover.png 再 publish。發文前把整段刪掉。\n\n"
-            f"> {v_scene}{aesthetic_tail}\n"
-        )
-    return (
-        "\n\n---\n\n"
-        "## 📸 封面圖 Prompt · 發文前請刪除\n\n"
-        "PM 替你寫好的 3 版本封面 prompt（全套 v0.2.2 cold-print editorial 美學）。"
-        "挑 1 個（或全試）→ 丟 ChatGPT image / NanoBanana / Midjourney → "
-        "拿圖回來換掉 cover.png 再 publish。發文前把整段刪掉。\n\n"
-        "### 版本 A · 場景式（documentary photo / scene）\n\n"
-        f"> {v_scene}{aesthetic_tail}\n\n"
-        "### 版本 B · 概念式（visual metaphor / infographic）\n\n"
-        f"> {v_concept}{aesthetic_tail}\n\n"
-        "### 版本 C · 抽象式（T01 typography-only）\n\n"
-        f"> {v_abstract}{aesthetic_tail}\n"
-    )
-
-
-# Gemini image-capable models. As of 2026-05, "gemini-2.5-flash-image-preview"
-# is the current text-to-image model that works with API-key auth (free tier
-# subject to availability). Imagen 3 needs Vertex AI auth, not API key.
-DEFAULT_IMAGE_MODEL = os.getenv(
-    "SUBSTACK_IMAGE_MODEL",
-    "gemini-2.0-flash",
-)
-
-
-async def generate_cover_image(
-
-    *,
-    prompt: str,
-    out_path: Path,
-    size: Tuple[int, int] = (1456, 816),
-    style_hint: str = "moleskine_handdrawn",
-) -> Optional[Path]:
-    """Generate a cover image via Gemini text-to-image.
-
-    Args:
-        prompt: The visual prompt (usually `SubstackDraft.cover_image_prompt`).
-        out_path: Where to save the PNG.
-        size: Target (width, height). Gemini returns its native size; we resize.
-        style_hint: Layered onto the prompt to enforce visual_soul.md aesthetic.
-                    Defaults to "moleskine_handdrawn" (matches visual_soul.md
-                    §視覺美學 — pencil/charcoal/Moleskine, muted earth tones).
-
-    Returns:
-        Path to saved PNG, or None on any failure (disabled / no key / API error).
-    """
-    if not is_ai_cover_enabled():
-        return None
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("[image_brain] ⚠️ GEMINI_API_KEY missing — cannot generate cover.")
-        return None
-
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError as exc:
-        print(f"[image_brain] ⚠️ google-genai not installed ({exc}); skip.")
-        return None
-
-    # Layer the aesthetic into the prompt so the model isn't just guessing.
-    full_prompt = _build_styled_prompt(prompt, style_hint)
-
-    try:
-        client = genai.Client(api_key=api_key)
-        # Run blocking SDK call in a thread to keep async caller non-blocking.
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=DEFAULT_IMAGE_MODEL,
-            contents=full_prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"],
-            ),
-        )
-    except Exception as exc:
-        print(f"[image_brain] ⚠️ Gemini image gen failed: {type(exc).__name__}: {exc}")
-        return None
-
-    # Walk response parts to find inline image bytes.
-    img_bytes = _extract_inline_image(resp)
-    if not img_bytes:
-        print(f"[image_brain] ⚠️ Response had no inline image part. raw model={DEFAULT_IMAGE_MODEL}")
-        return None
-
-    # Save + resize to spec.
-    try:
-        from PIL import Image
-        from io import BytesIO
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        img = Image.open(BytesIO(img_bytes)).convert("RGB")
-        # Center-crop to target aspect, then resize.
-        img = _center_crop_to_aspect(img, size)
-        img = img.resize(size, Image.LANCZOS)
-        img.save(out_path, "PNG", optimize=True)
-        return out_path
-    except Exception as exc:
-        print(f"[image_brain] ⚠️ Image post-processing failed: {exc}")
-        return None
-
-
-def _build_styled_prompt(user_prompt: str, style_hint: str) -> str:
-    """Inject visual_soul.md aesthetic constraints into the model's prompt."""
-    if style_hint == "moleskine_handdrawn":
-        suffix = (
-            " | Style: pencil sketch on grid paper, handdrawn Moleskine notebook aesthetic, "
-            "muted earth tones (sienna / faded ochre / charcoal grey), low-saturation monochrome "
-            "with a single accent color. No 3D rendering, no neon, no anime, no exaggerated facial "
-            "emotion. If humans appear, only backs of heads / side profiles, observing a system "
-            "(diagram / chart / object). Composition reads like a scientific illustration or "
-            "vintage botanical plate."
-        )
-    else:
-        suffix = ""
-    return user_prompt.strip() + suffix
-
-
-def _extract_inline_image(resp) -> Optional[bytes]:
-    """Pull image bytes out of the GenerateContentResponse structure.
-
-    google-genai puts inline binary at:
-        resp.candidates[0].content.parts[i].inline_data.data  (base64 str OR bytes)
-    """
-    try:
-        cands = getattr(resp, "candidates", None) or []
-        if not cands:
-            return None
-        content = getattr(cands[0], "content", None)
-        if not content:
-            return None
-        for part in getattr(content, "parts", None) or []:
-            inline = getattr(part, "inline_data", None)
-            if inline is None:
-                continue
-            data = getattr(inline, "data", None)
-            if data is None:
-                continue
-            if isinstance(data, bytes):
-                return data
-            if isinstance(data, str):
-                # SDK sometimes returns base64-encoded str
-                try:
-                    return base64.b64decode(data)
-                except Exception:
-                    return None
-    except Exception:
-        return None
-    return None
-
-
-def _center_crop_to_aspect(img, target_size: Tuple[int, int]):
-    """Center-crop ``img`` to the aspect ratio of ``target_size``."""
-    tw, th = target_size
-    target_ratio = tw / th
-    w, h = img.size
-    src_ratio = w / h
-    if abs(src_ratio - target_ratio) < 1e-3:
-        return img
-    if src_ratio > target_ratio:
-        # Source too wide → crop sides
-        new_w = int(h * target_ratio)
-        left = (w - new_w) // 2
-        return img.crop((left, 0, left + new_w, h))
-    # Source too tall → crop top/bottom
-    new_h = int(w / target_ratio)
-    top = (h - new_h) // 2
-    return img.crop((0, top, w, top + new_h))
-
-
-if __name__ == "__main__":
-    # Smoke test (requires SUBSTACK_AI_COVER=1 + GEMINI_API_KEY)
-    async def _smoke():
-        from dotenv import load_dotenv
-
-        load_dotenv()
-        path = await generate_cover_image(
-            prompt=(
-                "A half-filled music sheet — half the bars dense with notes, half blank rests; "
-                "rest symbols highlighted in faded sienna; on grid paper."
-            ),
-            out_path=Path("/tmp/test_cover.png"),
-        )
-        print(f"Result: {path}")
-
-    asyncio.run(_smoke())

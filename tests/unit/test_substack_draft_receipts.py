@@ -104,7 +104,14 @@ def test_malformed_receipt_fails_closed_without_overwrite(tmp_path) -> None:
 
 def test_post_draft_stores_receipt_before_returning_success(monkeypatch, tmp_path) -> None:
     article = tmp_path / "article.md"
-    article.write_text("# Title\n\n*Subtitle*\n\nUseful body", encoding="utf-8")
+    article.write_text(
+        "# Title\n\n*Subtitle*\n\nUseful body\n\n"
+        "🖼 視覺位置 · internal\n\n"
+        "🔍 Path B · Google 搜：internal\n\n"
+        "🎨 Path C · 生圖 prompt：internal\n\n"
+        "📸 封面圖 Prompt · 發文前請刪除\n\ninternal cover prompt",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("SUBSTACK_AUTO_DRAFT", "1")
     monkeypatch.setenv("SUBSTACK_COOKIES_STRING", "cookie")
     monkeypatch.setenv("SUBSTACK_PUBLICATION_URL", "https://example.substack.com")
@@ -123,8 +130,17 @@ def test_post_draft_stores_receipt_before_returning_success(monkeypatch, tmp_pat
         def __init__(self, **_kwargs):
             pass
 
-        def from_markdown(self, _body, api=None):
+        def from_markdown(self, body, api=None):
             assert api is not None
+            for forbidden in (
+                "視覺位置",
+                "Path B",
+                "Path C",
+                "生圖 prompt",
+                "封面圖 Prompt",
+                "發布前刪",
+            ):
+                assert forbidden not in body
 
         def get_draft(self):
             return {"draft": True}

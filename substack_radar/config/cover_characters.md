@@ -1,13 +1,11 @@
 # Cover IP · 封面角色設定（News Radar / @smartmmmoney）
 
-> **目的**：每篇 Substack 封面固定出現「同一個可愛又專業的 IP」，搭配當篇文章的場景 →
-> 讀者一眼認得品牌、標題更有帶入感。撰稿 AI 動態決定**這一篇由誰出場**，並寫一句
-> 「角色在做什麼／站在什麼場景」的**短 scene**；固定長相與美學由 Python
-> （`src/image_brain.py`）統一補上，模型不必每次重寫造型，省 token、避免走樣。
+> **目的**：每篇 Substack 封面使用既有的專業角色 PNG，讓讀者一眼認得品牌。
+> Python 依 mode/topic 選角色與表情，再由 renderer 合成 `cover.png`；撰稿 AI 不選角、
+> 不寫 scene，也不產生任何圖片 prompt。
 >
 > **命名**：**瑞瑞**（機器人，好奇與探索）/ **達達**（貓頭鷹，智慧與聰明）（2026-06-21 暫定）。
-> pipeline 代號改用 species：`robot` / `owl`（name-proof，永不隨改名動）；顯示名（瑞瑞/達達）
-> 放 `image_brain.CHARACTERS` 的 `display` 欄，日後改名只動那一欄、代號不動。
+> pipeline 代號使用 species：`robot` / `owl`（name-proof，永不隨改名動）。
 >
 > **v1 定裝參考圖（已鎖定）**：`cover_ip/modelsheet_hero_v1.png`（hero + 各 3 表情）、
 > `cover_ip/modelsheet_poses_v1.png`（乾淨 3-pose 排）。造型以這兩張為基準；完整視覺系統
@@ -79,15 +77,10 @@ theatrical squash-and-stretch posing.
 
 ---
 
-## 動態選角規則（撰稿 AI 用）
+## 動態選角規則（確定性 renderer 用）
 
 1. **先看 mode**：`company` → `robot`（瑞瑞）；`podcast` → `owl`（達達）。
 2. **再看 topic_category**：落在 robot 的硬科技/財報清單 → `robot`；其餘人文/反共識/輕主題 → `owl`。
-3. **最後看文章氣質**：拚數字、抓破綻、講機制 → `robot`；翻框架、講人性、慢思考 → `owl`。
-4. 模型在 JSON 填 `cover_character`（`robot`/`owl`）+ 一句中文 `cover_image_prompt`（角色在當篇場景做什麼）。
-   留空時 Python 依規則 1-2 自動補（`image_brain.pick_character`）→ 永不開天窗。
-
-> 鐵律：scene 只描述「角色 + 當篇場景／動作／道具」，**不要**重寫造型或美學
-> （那些 Python 會補）；保持一句話、具體、有畫面。例：
-> 「瑞瑞(robot) 站在一座用樂高積木堆成、貼滿各家 AI 框架標籤的高塔前，舉放大鏡得意奸笑，
-> 塔頂那塊積木正在搖晃」。
+3. Python 以 `image_brain.pick_character(topic_category, mode)` 選角，以
+   `pick_expression(...)` 選既有表情素材；writer 不輸出角色或生圖 prompt。
+4. 若角色素材不存在，renderer 退回純文字海報，仍會產出 `cover.png`。

@@ -1,4 +1,7 @@
-# 設計委託 · News Radar 封面視覺系統（雙 IP × 標題排版 × 分類色票）
+# 歷史設計委託 · News Radar 封面視覺系統（雙 IP × 標題排版 × 分類色票）
+
+> 此 brief 已由現行確定性 renderer 取代；保留作視覺決策紀錄。下列 Prompt 交付項
+> 不再屬於每日 writer 或草稿 payload。
 
 > **給 claude design 的任務書。** 目標：把已鎖定的雙 IP 角色（瑞瑞 / 達達）發展成一套
 > **可重複套用的封面視覺系統**，讓每天 5+ 篇 Substack 封面「又一致、又抓眼球、縮圖也讀得到」。
@@ -14,7 +17,7 @@
 - **品牌**：News Radar（IG @smartmmmoney、Substack）。排程為每天中午兩篇 Podcast 對談延伸 + 週日 Weekly 公司深度分析；morning / evening 保留手動選用。
 - **受眾**：關注美國/台灣科技、商業、投資、AI 的中文讀者。
 - **調性**：硬商業邏輯 × 暖哲學靈魂。**可愛但可信（GitHub Octocat 等級的專業萌），絕非幼稚 chibi。**
-- **撰稿端已上線**：AI 寫稿時會自動選角（程式已 merge），規則見 `cover_characters.md`：
+- **封面端已上線**：確定性 renderer 會依 mode/topic 自動選角，撰稿 AI 不負責任何圖片 prompt：
   - **瑞瑞 · 單眼雷達機器人（好奇與探索）** → 硬科技/數據/財報/公司分析題。（pipeline 代號 `robot`）
   - **達達 · 雷達貓頭鷹（智慧與聰明）** → 人文/反共識/訪談（podcast）/輕主題。（pipeline 代號 `owl`）
 - **名字**：瑞瑞（機器人）/ 達達（貓頭鷹），2026-06-21 暫定。pipeline 代號用 species `robot`/`owl`（name-proof）。
@@ -22,9 +25,9 @@
 ## 2. 已鎖定的素材（請先讀這些）
 - `substack_radar/config/cover_ip/modelsheet_hero_v1.png`（1536×1024）— 兩角色 hero pose + 各 3 表情。**這是 v1 定裝基準，造型以此為準。**
 - `substack_radar/config/cover_ip/modelsheet_poses_v1.png`（1672×941）— 兩角色乾淨 3-pose 排（上 瑞瑞/robot / 下 達達/owl）。
-- `substack_radar/config/cover_characters.md` — 角色人設聖經 + 動態選角規則 + scene 撰寫鐵律。
-- `src/image_brain.py` — `CHARACTERS`（造型字典）、`_CLAY_STYLE_TAIL`（美學聖經字串）、`build_cover_prompt_block()`（**現行**：組「角色造型 + 一句 scene + 黏土美學」成文字 prompt，交人手動生圖）。
-- `substack_radar/promise_cover.py` — **現行**自動 cover.png 渲染（純文字海報 + 分類色票，Python 決定論生成）。
+- `substack_radar/config/cover_characters.md` — 角色人設與確定性選角規則。
+- `src/image_brain.py` — `pick_character()` / `pick_expression()` 提供 renderer 選角與表情。
+- `substack_radar/character_cover.py` / `promise_cover.py` — 自動產生 cover.png；素材缺失時退回純文字海報。
   → **系統關鍵抉擇**：角色封面要**取代**這條純文字線、還是**並存/混搭**？請在 D6 給明確建議。
 
 ### 既有美學常數（不可違反）
@@ -39,7 +42,7 @@
 - **D2 封面構圖模板（2-3 種 layout）**：對應不同標題長度與題型——例：①角色靠邊 + 標題佔位、②角色小品 + 大標主導、③角色 × 情境道具。每種定義角色位置、標題安全區、留白、視覺動線。基準畫布 **Substack hero 1456×816**。
 - **D3 標題排版系統**：字體階層、字級範圍、行數上限、**hero 文字佔畫面 40–60%**、sienna 單一強調字規則、與角色不打架的疊放規則。給「短標（≤12 字）」與「長標 + 副標」兩套。
 - **D4 分類色票 tokens**：在 cream/ink/sienna/stone-grey 基底上，決定是否給每個 topic_category 一個**次要 accent**（或全系列維持單一 sienna）。輸出 tokens 表（hex + 用途 + 與底色對比度 ≥ AA）。建議用可機器讀格式（JSON/YAML 片段）。
-- **D5 Prompt 鷹架**：一個可重複的封面生成 prompt 範本，吃「角色參考圖 + 一句 scene + 標題」→ 穩定輸出封面。**格式對齊現行 `build_cover_prompt_block` 輸出**，讓 pipeline 直接替換套用。
+- **D5（已退役）Prompt 鷹架**：歷史交付；現行 pipeline 不再呼叫或輸出。
 - **D6 整合建議**：角色封面 vs `promise_cover.py` 純文字海報——取代/並存/混搭？給明確建議 + 落地路徑。若建議「Python 自動合成角色底圖 + 標題排版」，列出技術做法（用哪張參考、文字疊放、字體、輸出 1456×816）。
 
 ## 4. 限制（不可違反）
@@ -63,7 +66,7 @@
 - 一份 `COVER_SYSTEM.md` 規格書（模板說明 + tokens + 字級 + 用法），可直接放進本 repo 取代/擴充本 brief。
 
 ## 6. 落地對接點（交付後我方如何接）
-- 文字 prompt 範本 → 回填 `src/image_brain.py`（`_CLAY_STYLE_TAIL` / `build_cover_prompt_block`）。
+- 歷史 prompt 範本不再回填 runtime；`src/image_brain.py` 僅保留確定性選角／表情。
 - 色票 tokens → 餵 `substack_radar/promise_cover.py`（或新的合成器）。
 - 定裝參考圖 → 存 `substack_radar/config/cover_ip/`，作為每次生圖的 reference image。
 - 規格書 → `substack_radar/config/cover_ip/COVER_SYSTEM.md`。

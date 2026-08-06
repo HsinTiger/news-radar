@@ -28,7 +28,7 @@ kicker/label = JetBrains Mono。媒材 = 暖黏土定格動畫。禁：霓虹、
 - **表情**：`gotcha`（預設·硬題）/ `skeptical` / `smug`。
 - **出場**：硬科技/數據/財報 —— `us_stocks` `tw_stocks` `ai_model` `ai_agent` `ai_application`
   `tech_product_launch` `supply_chain` `earnings` + `company` mode。
-- **重生 prompt**（= `image_brain.CHARACTERS["robot"]["look"]`）：
+- **離線資產重製描述**（僅供低頻素材維護，不進 writer 或草稿）：
   > A chunky rounded desk-robot analyst made of soft matte clay, stone-grey #8A8378 body,
   > a small spinning radar dish antenna on its head emitting a tiny "ping!" spark, one big
   > glossy single lens-eye that sparkles, stubby articulated arms, a sienna-red #C84A32
@@ -41,7 +41,7 @@ kicker/label = JetBrains Mono。媒材 = 暖黏土定格動畫。禁：霓虹、
 - **道具**：放大鏡 / 樹枝棲木 / 書，依場景換。
 - **表情**：`ahha`（預設·軟題）/ `wink` / `pondering`。
 - **出場**：人文/反共識/訪談/輕主題 —— `evening` `podcast` `culture` `contrarian` + `podcast` mode。
-- **重生 prompt**（= `image_brain.CHARACTERS["owl"]["look"]`）：
+- **離線資產重製描述**（僅供低頻素材維護，不進 writer 或草稿）：
   > A plump rounded owl made of soft matte clay, warm stone-grey #8A8378 feathers with
   > hand-molded texture, two huge radar-dish eyes behind round wire spectacles, a small
   > sienna-red #C84A32 bow-tie scarf, stubby wings. Feathers puffed up, very expressive,
@@ -107,13 +107,11 @@ kicker / 分類 label：JetBrains Mono，stone-grey 或 ink，**不上 accent**�
 
 ---
 
-## D5. Prompt 鷹架
+## D5. Writer boundary（現行）
 
-純文字檔：`cover_prompt_template.txt`（對齊 `build_cover_prompt_block()`）。
-三格：`{character_block}`（Python 補 = CHARACTERS look）+ `{scene}`（模型寫的一句中文場景）
-+ `{style_tail}`（Python 補 = `_CLAY_STYLE_TAIL`）。連同對應角色的 v1 參考圖一起送圖像模型。
-Composition 區固定要求：單一主體、靠 `{anchor}` 側、視線 `{gaze}` 朝標題區、留 55–60% 負空間、
-不渲染文字。範例見該檔尾。
+舊 Prompt 鷹架已退役。writer schema 只有標題、副標、正文；`image_brain.py` 只依
+mode/topic 選現有角色與表情。`character_cover.py` 直接合成 PNG，素材缺失時由
+`promise_cover.py` 產生純文字保底封面。
 
 ---
 
@@ -126,8 +124,8 @@ Composition 區固定要求：單一主體、靠 `{anchor}` 側、視線 `{gaze}
 | **3 半自動合成（推薦中程）** | 規模化 | 預生去背角色 PNG 存 `cover_ip/`；Python 依 layout A/B/C 貼角色 + Pillow 排標題；5 秒出圖、零走樣 |
 
 落地步驟：
-1. **選角 + 選 layout** — 撰稿 AI 填 `cover_character`，模型估標題長度 → A/B/C（`image_brain.pick_character`）。
-2. **組 prompt（路線1）/ 選底圖（路線3）** — 填 D5 三格 / 挑對應表情 PNG。
+1. **選角 + 選 layout** — Python 依 mode/topic 選角色，依標題長度決定 A/B/C。
+2. **選底圖** — 從既有角色表情 PNG 挑選；找不到則退回純文字海報。
 3. **疊標題** — Pillow：Noto Serif TC 900 主標 + Sans 副標，純 ink。
 4. **套色票 + 出圖** — D4 tokens 決定 kicker；輸出 1456×816 PNG ≤ 4MB。
 5. **縮圖自檢** — 降到 60×40 驗角色可辨 + 鉤子可讀；不過則回 Step 1 換 layout。

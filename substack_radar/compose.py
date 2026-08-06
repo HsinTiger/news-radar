@@ -17,7 +17,6 @@ Daily / Weekly 寫稿 driver。排程預設每天中午兩篇 Podcast Weekly 延
     Article_Substack.md   # 貼到 Substack 的純淨版（標題＋副標＋本文）
     Article_Full.md       # 完整 review 版（profile、audit warnings、原料來源）
     cover.png             # 1456×816 Substack hero
-    cover_prompt.txt      # 視覺架構師的提示詞（給 nano-banana 之類的 AI 繪圖工具用）
     metadata.json         # 機讀格式
 
 可選步驟（環境變數開關，**opt-in 模式**）：
@@ -37,10 +36,8 @@ LLM backend 架構：
         - 實際成功的 provider/model 會寫入 generated_by，不預先假定是哪一個模型
         - WebSearch / WebFetch 關閉，寫手只使用已預抓素材
 
-    SUBSTACK_AI_COVER=1  # 預設 0（關）
-        - 封面仍由 deterministic cover renderer 產生，不要求 writer 生成內文圖片
-        - 失敗自動退回 photo-overlay / 合成噪點 base，不會 block 整個流程
-        - 模型：gemini-2.5-flash-image-preview（可用 SUBSTACK_IMAGE_MODEL override）
+    封面由 deterministic cover renderer 產生；writer 不輸出圖片 prompt。
+    角色素材不可用時會退回純文字海報，不影響正文草稿。
 
 注意：python-substack 是社群非官方 wrapper，Substack 沒有公開 Write API。
 若哪天失效或你想退出，OneDrive autogen/ 的 Article_Substack.md 永遠是手動 paste 後備。
@@ -87,6 +84,7 @@ except Exception:
 
 from substack_radar.composer import (  # noqa: E402
     SubstackDraft,
+    assert_reader_ready_markdown,
     audit_substack_draft,
     autofix_cjk_spacing,
     autofix_dashes,
@@ -94,6 +92,8 @@ from substack_radar.composer import (  # noqa: E402
     autofix_traditional,
     compose_substack_article,
     resolve_editorial_profile,
+    strip_generated_footer,
+    strip_production_instructions,
     word_range_for,
 )
 from substack_radar.draft_receipts import (  # noqa: E402
@@ -673,30 +673,6 @@ def _company_context(name: str, ticker: str):
 # Cover rendering — reuse cover_renderer with new "substack" spec
 # ---------------------------------------------------------------------------
 
-async def maybe_generate_ai_cover(
-    *, cover_image_prompt: str, output_dir: Path
-) -> Optional[Path]:
-    """Legacy: AI cover generation via Gemini. **Deprecated 2026-05-12**.
-
-    Default-OFF (gated by SUBSTACK_AI_COVER=1). Kept for archeology; primary
-    flow is now ``append_cover_prompt_block`` which embeds the prompt into
-    Article_Substack.md for human-driven generation via GPT web / NanoBanana.
-    """
-    try:
-        from src.image_brain import generate_cover_image, is_ai_cover_enabled
-    except Exception as exc:
-        print(f"[Cover] ⚠️ image_brain unavailable: {exc}")
-        return None
-    if not is_ai_cover_enabled():
-        return None
-    target = output_dir / "ai_cover_raw.png"
-    return await generate_cover_image(
-        prompt=cover_image_prompt,
-        out_path=target,
-        size=(1456, 816),
-    )
-
-
 # Footer is deterministic and intentionally outside the writer prompt.
 BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的部分。」"
 
@@ -709,56 +685,18 @@ def build_footer_block() -> str:
         "> \n"
         "> 📅 每天兩篇對談延伸 · 每週一篇公司深拆\n"
         "> ✉️ 你可以直接回信，告訴我哪個判斷值得再追\n\n"
-        "<!-- substack-editor: 將此段替換為 Subscribe button widget "
-        "(toolbar 的 + → Subscribe button) -->\n\n"
         "*點此訂閱 → 不錯過下一篇拆解。*\n"
     )
 
 
 def append_footer_block(*, article_md_path: Path) -> None:
-    """Append brand tagline + subscribe placeholder. **Order matters**:
-    call this BEFORE append_cover_prompt_block so the footer sits between
-    the article body and the cover-prompt instructions."""
+    """Append the reader-facing brand promise and subscription CTA."""
     block = build_footer_block()
     existing = article_md_path.read_text(encoding="utf-8")
-    article_md_path.write_text(existing.rstrip() + block, encoding="utf-8")
-    print(f"[Footer] ✅ tagline + subscribe placeholder appended")
-
-
-def append_cover_prompt_block(
-    *, article_md_path: Path, draft, output_dir: Path,
-    topic_category: str = "", mode: str = "",
-) -> None:
-    """Append the 2-character cover-IP prompt block to Article_Substack.md (and a
-    standalone cover_prompts.md for copy-paste).
-
-    2026-06-21 (Hsin directive): every draft now carries a固定 IP 角色 (robot=瑞瑞 雷達機器人 /
-    owl=達達 雷達貓頭鷹). The model picked ``draft.cover_character`` + a one-line
-    ``draft.cover_image_prompt`` scene; ``image_brain.build_cover_prompt_block``
-    layers the canonical look + clay style bible so the IP stays on-model every time.
-    If the model left the character null we fall back to ``pick_character(topic, mode)``
-    — the cover never opens a hole. Hsin generates the actual image in NanoBanana / GPT.
-    """
-    try:
-        from src.image_brain import build_cover_prompt_block
-    except Exception as exc:
-        print(f"[CoverPrompt] ⚠️ image_brain unavailable: {exc}")
-        return
-    block = build_cover_prompt_block(
-        getattr(draft, "cover_image_prompt", None),
-        character=getattr(draft, "cover_character", None),
-        title=draft.title,
-        subtitle=draft.subtitle,
-        topic_category=topic_category,
-        mode=mode,
-    )
-    # Append to the main markdown so Hsin sees it when he opens the file
-    existing = article_md_path.read_text(encoding="utf-8")
-    article_md_path.write_text(existing.rstrip() + block, encoding="utf-8")
-    # Also write standalone for quick copy-paste
-    (output_dir / "cover_prompts.md").write_text(block.lstrip(), encoding="utf-8")
-    _picked = getattr(draft, "cover_character", None) or "auto"
-    print(f"[CoverPrompt] ✅ IP={_picked} → appended to {article_md_path.name} + cover_prompts.md")
+    cleaned = strip_production_instructions(existing.rstrip() + block)
+    assert_reader_ready_markdown(cleaned)
+    article_md_path.write_text(cleaned + "\n", encoding="utf-8")
+    print("[Footer] ✅ reader-facing tagline + subscribe CTA appended")
 
 
 def render_substack_cover(
@@ -946,6 +884,8 @@ def push_to_substack_draft(
     # so we strip them out of the markdown before from_markdown() ingests it.
     # Without this, the draft would have the title duplicated as an H1 at the top.
     body_md = _strip_title_subtitle_lines(body_md, title=title, subtitle=subtitle)
+    body_md = strip_production_instructions(body_md)
+    assert_reader_ready_markdown(body_md)
 
     try:
         api = Api(cookies_string=cookies, publication_url=pub_url)
@@ -1030,22 +970,21 @@ def _strip_title_subtitle_lines(md: str, *, title: str, subtitle: str) -> str:
 # ---------------------------------------------------------------------------
 
 def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block: str = "") -> Path:
-    """The PASTE-READY version. Goes straight into Substack editor.
+    """Write the reader-ready version that goes straight into Substack.
 
-    Top line = 產文路線標記 (2026-05-31 Hsin directive): one deletable line marking
-    which model/route wrote this draft. Single line (not the old cover block) —
-    刪掉即可再貼上 Substack。
-    sources_block（2026-06-22 Hsin directive）：緊接在 🧠 行後、標題前的『本文取材』區塊，
-    列主來源 + 延伸參考的可點擊連結。**面向讀者保留**（增加可信度與厚度），不再是發布前刪除的私註。"""
+    Public source links remain reader-facing. Model provenance and every image
+    authoring instruction stay in operational metadata, never this file.
+    """
     path = out_dir / "Article_Substack.md"
-    route = getattr(draft, "generated_by", None) or "unknown"
+    body = strip_generated_footer(strip_production_instructions(draft.body_markdown))
     md = (
-        f"> 🧠 產文路線：{route}　（發布前刪此行）\n\n"
         f"{sources_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
-        f"{draft.body_markdown.strip()}\n"
+        f"{body}\n"
     )
+    md = strip_production_instructions(md)
+    assert_reader_ready_markdown(md)
     path.write_text(md, encoding="utf-8")
     return path
 
@@ -1092,21 +1031,13 @@ id: {source.get("id", "n/a")}
 
 ## 本文
 
-{draft.body_markdown.strip()}
-
----
-
-## 視覺指引
-
-**封面 IP 角色**：{getattr(draft, "cover_character", None) or "（自動依主題選 robot/owl）"}
-**封面 scene**：{getattr(draft, "cover_image_prompt", None) or "（留空 → 用角色招牌動作 + 標題自動補）"}
-完整封面 prompt（含固定造型 + 黏土美學）見 Article_Substack.md 末段「📸 封面圖 Prompt」與 cover_prompts.md。
+{strip_production_instructions(draft.body_markdown)}
 """
     path.write_text(md, encoding="utf-8")
     return path
 
 
-def write_prompts_and_metadata(
+def write_metadata(
     out_dir: Path,
     draft: SubstackDraft,
     mode: str,
@@ -1120,8 +1051,6 @@ def write_prompts_and_metadata(
         "mode": mode,
         "editorial_profile": editorial_profile,
         "generated_by": getattr(draft, "generated_by", None),
-        "cover_character": getattr(draft, "cover_character", None),  # 2026-06-21 封面 IP
-        "cover_image_prompt": getattr(draft, "cover_image_prompt", None),
         "source": source,
         "audit_warnings": audit_warnings,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1517,6 +1446,16 @@ async def _run_inner(args: argparse.Namespace) -> int:
     print(f"[Compose] ✅ title={draft.title!r}")
 
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
+    # Reader-ready is a data boundary, not a request to the model.  Strip any
+    # stale authoring blocks before language polish, audit, file writes, or API.
+    original_body = draft.body_markdown
+    draft.body_markdown = strip_generated_footer(
+        strip_production_instructions(original_body)
+    )
+    assert_reader_ready_markdown(draft.body_markdown)
+    if draft.body_markdown != original_body.strip():
+        print("[ReaderReady] removed legacy authoring instructions from body")
+
     # The 大陸→台灣 lookup table does not ship in the writer prompt; the
     # unambiguous half is enforced here at zero token cost, before audit + writes.
     fixes = autofix_traditional(draft)  # 簡→繁台灣 (OpenCC s2tw) — 最後防線，先跑
@@ -1555,50 +1494,23 @@ async def _run_inner(args: argparse.Namespace) -> int:
         source=source,
         audit_warnings=warnings,
     )
-    write_prompts_and_metadata(local_dir, draft, mode, profile.name, source, warnings)
+    write_metadata(local_dir, draft, mode, profile.name, source, warnings)
 
     # 5a) Deterministic brand footer + Subscribe placeholder.
     append_footer_block(article_md_path=article_md)
 
-    # 5b) Cover IP prompt (2026-06-21, Hsin directive): every draft gets a SHORT
-    # cover prompt featuring a dynamically-picked 固定 IP 角色 (robot=瑞瑞 / owl=達達
-    # 雷達貓頭鷹). Model chose draft.cover_character + a one-line scene; image_brain
-    # layers the canonical look + clay style bible. Null character → pick by topic/mode.
-    append_cover_prompt_block(
-        article_md_path=article_md,
-        draft=draft,
-        output_dir=local_dir,
-        topic_category=topic_category or "",
-        mode=mode,
-    )
-
-    # 5c) Substack Cover (Synthetic Base)
+    # 5b) Deterministic Substack cover.  The renderer selects its own character
+    # and layout from topic/mode; the writer spends no tokens on image prompts.
     cover_path = render_substack_cover(
         title=draft.title,
         subtitle=draft.subtitle,
         topic_category=topic_category or "other",
         output_dir=local_dir,
         source_image_path=None, # Fallback to synth noise
-        character=getattr(draft, "cover_character", None),  # route 3: IP character cover
+        character=None,
         mode=mode,  # → pick_expression maps 發文類別 → 角色表情
     )
     
-    # 5d) 內文生圖已於 2026-08-05 移除（信哥決策：專注寫稿）。
-    #
-    # 它從 2026-06-01 起就沒產出過任何一張圖——image_brain.generate_image 當時
-    # 被刻意寫成永遠回傳 None（Imagen 3 對該 key 回 404，作者不願改用免費 API 造假）。
-    # 之後每次組稿都印兩行「Pro quota exhausted」，看起來像故障，其實是設計如此。
-    #
-    # 移除而非修復的理由：這些欄位產生的是**場景插畫**（「第一線現場的瓦解」這類），
-    # 屬裝飾不承載資訊；而這類文章的數字密度（實測一篇 2,321 漢字內僅 6 個帶單位
-    # 數字，且多為散落的比較值）也不足以支撐圖表——把四個百分比畫成圖只會製造
-    # 假精確，讓讀者以為背後有序列數據。
-    #
-    # 需要圖時能力仍在，不必重建：substack_radar/cards.py 有六個確定性繪製器
-    # （_draw_stat/_draw_evidence/_draw_figures/_draw_insight/_draw_takeaway/
-    # _draw_action，Meta 輪播在用），不吃 API 額度、品牌一致，可單篇取用。
-    # 封面不受影響，仍走 render_substack_cover 的角色素材合成路徑。
-
     print(f"[Files] wrote {local_dir}")
 
     # 6) Mirror to OneDrive
@@ -1639,7 +1551,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         return 6
 
     # 8) Notify Hsin via configured channel (Gmail / macOS / both).
-    # Read final article markdown back (footer + cover prompts already appended).
+    # Read the final reader-ready article (public footer already appended).
     try:
         final_body_md = article_md.read_text(encoding="utf-8")
     except Exception:
