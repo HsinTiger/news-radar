@@ -134,6 +134,32 @@ def test_generic_x_search_title_uses_readable_post_text_for_upstream_query() -> 
     assert "x.com" not in report.upstream_queries
 
 
+def test_social_search_title_is_bounded_before_model_validation() -> None:
+    long_title = "a16z on X: " + ("open source AI infrastructure " * 20)
+
+    def searcher(query: str, max_results: int = 4):
+        if query.startswith("site:x.com"):
+            return [
+                {
+                    "title": long_title,
+                    "href": "https://x.com/a16z/status/789",
+                    "body": "A public search snippet about open source AI infrastructure.",
+                }
+            ]
+        return []
+
+    report = editorial_research.collect_social_reach(
+        ["open source AI infrastructure"],
+        searcher=searcher,
+        reader=lambda _url: None,
+    )
+
+    assert len(report.signals) == 1
+    assert report.signals[0].title == long_title[:240]
+    assert len(report.signals[0].title) == 240
+    assert report.signals[0].evidence_status == "discovery_only"
+
+
 def test_deep_writer_prompt_keeps_social_claims_below_evidence() -> None:
     report = editorial_research.SocialReachReport(
         signals=[

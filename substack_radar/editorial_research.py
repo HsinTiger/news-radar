@@ -319,7 +319,7 @@ def collect_social_reach(
                 platform_signals.append(
                     SocialSignal(
                         platform=platform,
-                        title=title or url,
+                        title=(title or url)[:240],
                         url=url,
                         excerpt=(direct if readable else snippet)[:MAX_SOCIAL_EXCERPT_CHARS],
                         access_method=(
