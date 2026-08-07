@@ -7,6 +7,7 @@ feedparser==6.0.11        # RSS 解析
 httpx==0.28.1             # 異步 HTTP client（取代 requests，原生支援 async）
 requests>=2.32            # legacy token refresh and account-discovery helpers
 trafilatura==1.12.2       # 網頁正文抽取（純化成 markdown）
+ddgs==9.14.4              # Podcast/財報深度文的延伸證據搜尋（5–10 源）
 beautifulsoup4==4.12.3    # 抓 og:image 等 meta 標籤
 pydantic==2.9.2           # 結構化資料驗證
 pyyaml==6.0.2             # config.yaml 解析

@@ -59,8 +59,15 @@ The Pages UI is authenticated with an owner token stored only in browser
   dedicated interview pool and then writes two different, unused interviews
   published within the last seven days. Morning/evening modes remain available
   for deliberate use.
-- Both scheduled Podcast drafts use Weekly depth (2800–4200 Chinese characters).
-  Daily and Weekly briefs remain available to manual and submission-driven work.
+- Each scheduled Podcast draft first extracts the compelling exchange and source
+  claims, then reads 5–10 extension sources before the final first-person writer
+  call. Podcast targets 4200–6500 Chinese characters; company analysis targets
+  3800–6000. Research below five readable sources fails closed. Daily manual
+  work targets 1800–2800 characters.
+- Deep drafts use distinct evidence angles, an internal claim-to-evidence map,
+  and an information-value gate. These compact methods are adapted from pinned
+  open-source reviews in Skills Radar; third-party prompt bundles are not loaded
+  into the production writer.
 - The Windows writer records local/OneDrive completion in
   `news_items.substack_written_at`; Mac no longer owns Substack selection or AI composition.
 - Every reader-ready article preserves the actual route/model, clickable public

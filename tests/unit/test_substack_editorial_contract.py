@@ -35,7 +35,7 @@ def test_daily_prompt_is_compact_human_and_writing_only() -> None:
     assert "像人，不演人" in combined
     assert "虛構第一手經驗" in combined
     assert "證據" in combined and "推論" in combined and "未知" in combined
-    assert "1400–2200" in combined
+    assert "1800–2800" in combined
     assert "具體回信問題" in combined
     assert "🖼 視覺位置" not in combined
     assert "Path B" not in combined
@@ -85,7 +85,7 @@ def test_weekly_prompt_requires_synthesis_countercase_and_watch_signal() -> None
     )
     combined = system + prompt
 
-    assert "2800–4200" in combined
+    assert "3800–6000" in combined
     assert "最強反方" in combined
     assert "後續訊號" in combined
     assert "財報事實" in combined
@@ -156,6 +156,7 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
     assert text.count("產文路線") == 1
     assert "發布前刪此行" not in text
     assert "本文取材" in text and "https://example.com/interview" in text
+    assert text.index("第二段仍然是讀者需要的內容") < text.index("本文取材")
     assert "點此訂閱 → 不錯過下一篇拆解" in text
     for forbidden in (
         "視覺位置",

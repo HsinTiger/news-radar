@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+from scripts.sync_social_ops import build_editorial_contract
+
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -72,3 +74,19 @@ def test_worker_contract_carries_substack_metadata_and_editorial_contract() -> N
     assert "editorial_contract" in worker
     assert "body_markdown" not in migration
     assert "content" not in migration
+
+
+def test_dashboard_editorial_contract_reports_the_two_stage_writer() -> None:
+    contract = build_editorial_contract(REPO)
+
+    assert contract["schema_version"] == 3
+    assert contract["podcast"]["target_chars"] == [4200, 6500]
+    assert contract["company"]["target_chars"] == [3800, 6000]
+    assert contract["podcast"]["research_sources"] == [5, 10]
+    assert "主來源消化" in contract["writer"]["source_strategy"]
+    assert "資訊價值閘門" in contract["writer"]["source_strategy"]
+    assert "主張—證據圖" in contract["writer"]["source_strategy"]
+    assert "Firecrawl" in contract["writer"]["method_sources"]
+    assert "OpenSquilla" in contract["writer"]["method_sources"]
+    assert "MoAI" in contract["writer"]["method_sources"]
+    assert "專有名詞註解" in contract["writer"]["cognitive_load"]

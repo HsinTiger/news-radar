@@ -40,19 +40,27 @@ test("owner token keeps the existing cross-page storage contract", () => {
 
 test("editorial fallback matches the tracked owner decisions", () => {
   assert.equal(DEFAULT_EDITORIAL_CONTRACT.publication_mode, "draft_only");
+  assert.equal(DEFAULT_EDITORIAL_CONTRACT.schema_version, 3);
+  assert.match(DEFAULT_EDITORIAL_CONTRACT.writer.source_strategy, /資訊價值閘門/);
+  assert.match(DEFAULT_EDITORIAL_CONTRACT.writer.source_strategy, /主張—證據圖/);
+  assert.match(DEFAULT_EDITORIAL_CONTRACT.writer.method_sources, /Firecrawl.*OpenSquilla.*MoAI/);
   assert.deepEqual(DEFAULT_EDITORIAL_CONTRACT.podcast, {
     local_time: "12:00",
     drafts: 2,
     candidate_window_days: 7,
     depth: "weekly",
-    target_chars: [2800, 4200],
+    article_kind: "podcast",
+    target_chars: [4200, 6500],
+    research_sources: [5, 10],
   });
   assert.deepEqual(DEFAULT_EDITORIAL_CONTRACT.company, {
     local_time: "Sun 09:00",
     drafts: 1,
     pick_and_compose: true,
     depth: "weekly",
-    target_chars: [2800, 4200],
+    article_kind: "company",
+    target_chars: [3800, 6000],
+    research_sources: [5, 10],
   });
 });
 

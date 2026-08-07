@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20260806-substack-publish-now-v1";
+} from "./ops-core.mjs?v=20260807-research-writer-v4";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
@@ -355,16 +355,20 @@ function renderSubstack() {
   const schedule = $("substack-schedule");
   clear(schedule);
   schedule.append(
-    contractScheduleCard("每日", contract.podcast.local_time || "12:00", `Podcast 延伸文 × ${contract.podcast.drafts || 2}`, `候選限最近 ${contract.podcast.candidate_window_days || 7} 天；兩篇集中同批完成，每篇 ${rangeCopy(contract.podcast.target_chars)} 字。`),
-    contractScheduleCard("週日", (contract.company.local_time || "Sun 09:00").replace("Sun ", ""), `公司深度文 × ${contract.company.drafts || 1}`, `${contract.company.pick_and_compose ? "選題與寫作合併在同一輪" : "先選題後寫作"}；以週刊深度完成，每篇 ${rangeCopy(contract.company.target_chars)} 字。`),
+    contractScheduleCard("每日", contract.podcast.local_time || "12:00", `Podcast 延伸文 × ${contract.podcast.drafts || 2}`, `候選限最近 ${contract.podcast.candidate_window_days || 7} 天；先消化對談，再查 ${rangeCopy(contract.podcast.research_sources || [5, 10])} 個延伸來源，每篇 ${rangeCopy(contract.podcast.target_chars)} 字。`),
+    contractScheduleCard("週日", (contract.company.local_time || "Sun 09:00").replace("Sun ", ""), `公司深度文 × ${contract.company.drafts || 1}`, `${contract.company.pick_and_compose ? "選題與寫作合併在同一輪" : "先選題後寫作"}；財報事實再加 ${rangeCopy(contract.company.research_sources || [5, 10])} 個延伸來源，每篇 ${rangeCopy(contract.company.target_chars)} 字。`),
   );
   const writer = $("writer-contract");
   clear(writer);
   [
     ["定位", contract.writer.positioning],
+    ["作者聲音", contract.writer.first_person],
     ["Podcast 方法", contract.writer.podcast_method],
     ["證據邊界", contract.writer.evidence_boundary],
-    ["第二視角", contract.writer.source_strategy],
+    ["研究與篩選", contract.writer.source_strategy],
+    ["開源方法", contract.writer.method_sources],
+    ["文章形式", contract.writer.article_forms],
+    ["認知負擔", contract.writer.cognitive_load],
     ["收尾方式", contract.writer.ending],
   ].forEach(([label, copy]) => {
     const row = node("div", "principle-row");
@@ -409,7 +413,7 @@ function renderSubstack() {
 }
 
 function rangeCopy(value) {
-  return Array.isArray(value) && value.length === 2 ? `${fmt(value[0])}–${fmt(value[1])}` : "2,800–4,200";
+  return Array.isArray(value) && value.length === 2 ? `${fmt(value[0])}–${fmt(value[1])}` : "依題型設定";
 }
 
 function deltaCopy(value) {

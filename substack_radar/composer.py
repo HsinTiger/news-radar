@@ -4,8 +4,8 @@ News Radar · Substack Editorial Composer
 
 為什麼獨立於 src/composer.py（三平台社群文）：
 
-    1. 規格根本不同——三平台是短貼文，Substack 分為 Daily 1400–2200 字
-       與 Weekly 2800–4200 字。共用 system_instruction 會互相妥協。
+    1. 規格根本不同——三平台是短貼文，Substack 是依題型分流的長文。
+       Daily、Podcast 與公司分析有不同的論證骨架與篇幅。
     2. 語氣根本不同——Substack 是有人味的分析信，社群是 90 秒短打。
     3. 校驗根本不同——Substack 要檢查 profile 字數、段落、證據邊界與回信問題。
 
@@ -32,7 +32,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, Sequence
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
@@ -92,6 +92,55 @@ class SubstackDraft(BaseModel):
                     window = window[:cut + 1]
                 return window.rstrip("，、。；：:;,！？!?「」『』（）()【】 　")
         return v
+
+
+class EditorialResearchBrief(BaseModel):
+    """First LLM pass: source comprehension and research direction, not prose."""
+
+    article_form: Literal["investigation", "argument", "self_growth"] = Field(
+        ...,
+        description="最適合這批材料的文型：調查、論證或自我成長。",
+    )
+    source_digest: str = Field(
+        ...,
+        min_length=80,
+        max_length=1200,
+        description="已消化的主來源摘要，保留反差、衝突與必要背景。",
+    )
+    compelling_exchange: str = Field(
+        ...,
+        min_length=30,
+        max_length=1200,
+        description="Podcast 保留主持人追問與來賓主張；公司文保留數字與敘事的張力。",
+    )
+    source_claims: list[str] = Field(
+        ...,
+        min_length=2,
+        max_length=10,
+        description="只列主來源直接支持的主張、數字或原話，不得補寫。",
+    )
+    tensions: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=6,
+        description="材料中尚未解決的矛盾、缺口或不同解釋。",
+    )
+    core_question: str = Field(..., min_length=15, max_length=180)
+    author_hypothesis: str = Field(
+        ...,
+        min_length=20,
+        max_length=300,
+        description="明確標示為作者待驗證的初步判斷，不是事實。",
+    )
+    strongest_countercase: str = Field(..., min_length=20, max_length=360)
+    research_queries: list[str] = Field(
+        ...,
+        min_length=3,
+        max_length=5,
+        description="從證據缺口導出的 3–5 個不同研究角度查詢，不得只是同義改寫。",
+    )
+    terms_to_explain: list[str] = Field(default_factory=list, max_length=8)
+    generated_by: SkipJsonSchema[Optional[str]] = Field(default=None)
 
 
 # --------------------------------------------------------------------------
@@ -209,6 +258,8 @@ CONFIG_DIR = Path(__file__).resolve().parent / "config"
 COMMON_EDITORIAL_PATH = CONFIG_DIR / "editorial_voice.md"
 DAILY_EDITORIAL_PATH = CONFIG_DIR / "editorial_daily.md"
 WEEKLY_EDITORIAL_PATH = CONFIG_DIR / "editorial_weekly.md"
+PODCAST_EDITORIAL_PATH = CONFIG_DIR / "editorial_podcast.md"
+COMPANY_EDITORIAL_PATH = CONFIG_DIR / "editorial_company.md"
 
 
 @dataclass(frozen=True)
@@ -218,10 +269,21 @@ class EditorialProfile:
     word_cap: int
     reading_minutes: str
     brief_path: Path
+    article_kind: Literal["daily", "weekly", "podcast", "company"]
 
 
-DAILY_PROFILE = EditorialProfile("daily", 1400, 2200, "6–8", DAILY_EDITORIAL_PATH)
-WEEKLY_PROFILE = EditorialProfile("weekly", 2800, 4200, "12–16", WEEKLY_EDITORIAL_PATH)
+DAILY_PROFILE = EditorialProfile(
+    "daily", 1800, 2800, "7–10", DAILY_EDITORIAL_PATH, "daily"
+)
+WEEKLY_PROFILE = EditorialProfile(
+    "weekly", 3400, 5500, "14–20", WEEKLY_EDITORIAL_PATH, "weekly"
+)
+PODCAST_PROFILE = EditorialProfile(
+    "weekly", 4200, 6500, "17–25", PODCAST_EDITORIAL_PATH, "podcast"
+)
+COMPANY_PROFILE = EditorialProfile(
+    "weekly", 3800, 6000, "15–23", COMPANY_EDITORIAL_PATH, "company"
+)
 
 
 def resolve_editorial_profile(
@@ -234,8 +296,13 @@ def resolve_editorial_profile(
     if override and override != "auto":
         if override not in {"daily", "weekly"}:
             raise ValueError(f"unknown editorial profile: {override}")
-        return DAILY_PROFILE if override == "daily" else WEEKLY_PROFILE
-    if has_deep_bundle or mode in {"podcast", "company"}:
+        if override == "daily":
+            return DAILY_PROFILE
+    if mode == "podcast":
+        return PODCAST_PROFILE
+    if mode == "company":
+        return COMPANY_PROFILE
+    if has_deep_bundle or override == "weekly":
         return WEEKLY_PROFILE
     return DAILY_PROFILE
 
@@ -512,9 +579,12 @@ def audit_substack_draft(
     # 1d. 手機閱讀：一段只傳達一件事。Markdown blockquote / list 不在此限。
     for paragraph in re.split(r"\n\s*\n", body):
         compact = paragraph.strip()
-        if compact and not compact.startswith((">", "- ", "* ", "#")) and len(compact) > 320:
-            warnings.append("[段落過長] 有單段超過 320 字，請拆成一段一件事。")
+        if compact and not compact.startswith((">", "- ", "* ", "#")) and len(compact) > 260:
+            warnings.append("[段落過長] 有單段超過 260 字，請拆成一段一件事。")
             break
+
+    if "我" not in body:
+        warnings.append("[缺少作者聲音] 全文沒有第一人稱判斷；請讓讀者知道作者如何理解證據。")
 
     opening = re.sub(r"[#>*_`\s]", "", body[:160])
     if any(
@@ -585,7 +655,7 @@ def _build_system_instruction(profile: EditorialProfile) -> str:
     return (
         "你是 HsinTiger Substack 的資深中文編輯與分析寫手。你的工作不是展示 AI 能力，"
         "而是替一位忙碌、聰明的讀者把複雜問題想清楚。\n\n"
-        f"本次採 {profile.name.upper()} profile：{word_floor}–{word_cap} 個中文字，"
+        f"本次採 {profile.name.upper()}/{profile.article_kind} profile：{word_floor}–{word_cap} 個中文字，"
         f"約 {profile.reading_minutes} 分鐘。\n\n"
         "=== 寫作契約 ===\n"
         f"{brief}\n\n"
@@ -622,6 +692,128 @@ def _material_for_prompt(
     return f"{text[:440000]}\n\n（……逐字稿過長，僅中段省略一小部分……）\n\n{text[-60000:]}"
 
 
+def _build_research_brief_prompt(
+    *,
+    raw_title: str,
+    raw_content: str,
+    mode: str,
+    topic_category: str,
+    profile: EditorialProfile,
+) -> str:
+    """First pass: understand the primary source before asking the web anything."""
+    if mode not in {"podcast", "company"}:
+        raise ValueError("research brief is only required for podcast/company")
+    if mode == "podcast":
+        source_contract = (
+            "先完成 Podcast 理解，再提出網路調研方向。用 300–800 字寫出"
+            "引人入勝的摘要：讀者要能看見主持人的追問、來賓的主張、"
+            "兩者真正的分歧與為何值得繼續追。不要按時間軸摘要整集。"
+        )
+    else:
+        source_contract = (
+            "先完成財報理解：分開公司敘事、財報事實、數字間的張力與尚未揭露之處。"
+            "若選 self_growth，必須從財報證據導出可檢驗的決策方法，不可寫成心靈鳥湯。"
+        )
+    return (
+        "=== 階段一：主來源消化 ===\n"
+        f"題型：{mode}\n分類：{topic_category}\n預定深度：{profile.word_floor}–{profile.word_cap} 字\n"
+        f"{source_contract}\n\n"
+        "此階段不得使用網路資料，也不寫文章。將主來源直接支持的資訊、"
+        "作者初步假說與目前未知分開。從未知與反方導出 3–5 個不同研究角度的"
+        "延伸調研查詢；至少涵蓋官方或第一手資料、量化或實證證據、獨立分析與"
+        "最強反方，查詢不可只是同義改寫。"
+        "查詢只是待調查清單，不得把延伸資料當成已經完成。\n\n"
+        f"=== 主來源 ===\n標題：{raw_title}\n"
+        f"{_material_for_prompt(raw_content, mode, profile)}\n\n"
+        "直接回傳符合 EditorialResearchBrief schema 的 JSON。"
+    )
+
+
+_ARTICLE_FORM_CONTRACTS = {
+    "investigation": (
+        "調查型：從對談或數字中的異常開場 → 定義要查的問題 → "
+        "逐步建立證據鏈 → 展示衝突證據與資料缺口 → 給出有邊界的判斷。"
+    ),
+    "argument": (
+        "論證型：先還原主來源最強的主張 → 提出我的論點與理由 → "
+        "以多源證據檢驗 → 用最有力的版本處理反方 → 修正後的結論與後續訊號。"
+    ),
+    "self_growth": (
+        "自我成長型：從對談帶來的認知衝突開場 → 拆出背後機制 → "
+        "用研究區分適用與不適用情境 → 提出可實驗的行動 → 說明什麼結果會讓我改變想法。"
+    ),
+}
+
+
+def _build_deep_writer_prompt(
+    *,
+    raw_title: str,
+    mode: str,
+    topic_category: str,
+    editorial_note: str,
+    profile: EditorialProfile,
+    research_brief: EditorialResearchBrief,
+    research_sources: Sequence[Any],
+) -> str:
+    from substack_radar.editorial_research import prompt_block, validate_research_sources
+
+    sources = validate_research_sources(research_sources)
+    form_contract = _ARTICLE_FORM_CONTRACTS[research_brief.article_form]
+    word_floor, word_cap = word_range_for(profile)
+    terms = "、".join(research_brief.terms_to_explain) or "（無預設；寫作時自行判斷）"
+    claims = "\n".join(f"- {claim}" for claim in research_brief.source_claims)
+    tensions = "\n".join(f"- {item}" for item in research_brief.tensions)
+    return (
+        "=== 階段二：整合成讀者文章 ===\n"
+        f"Profile：{profile.name}/{profile.article_kind}（{word_floor}–{word_cap} 字）\n"
+        f"素材類型：{mode}\n主題分類：{topic_category}\n原始標題：{raw_title}\n"
+        f"文型：{research_brief.article_form}\n{form_contract}\n\n"
+        f"=== 編輯指令 ===\n{editorial_note or '沒有額外指令；依證據做最佳編輯判斷。'}\n\n"
+        "=== 主來源萃取（已在階段一消化）===\n"
+        f"摘要：{research_brief.source_digest}\n"
+        f"關鍵交鋒：{research_brief.compelling_exchange}\n"
+        f"主來源可支持的說法：\n{claims}\n"
+        f"尚未解決：\n{tensions}\n\n"
+        "=== 延伸證據（5–10 個去重、可點擊來源）===\n"
+        f"{prompt_block(sources)}\n\n"
+        "=== 作者判斷邊界 ===\n"
+        f"核心問題：{research_brief.core_question}\n"
+        f"作者假說：{research_brief.author_hypothesis}\n"
+        f"最強反方：{research_brief.strongest_countercase}\n"
+        "把主來源的主張、延伸證據、作者推論與未知分開；"
+        "外部事實必須能對回上方來源，衝突時不擅自裁決。\n\n"
+        "=== 寫前主張—證據圖（只在內部完成，不輸出）===\n"
+        "先把每個複合說法拆成單一可查證斷言，再將每個斷言對到它在文章中的角色"
+        "（背景、機制、數據、反方或限制）與證據。只能使用上方編號來源；找不到"
+        "證據的斷言要刪除，或清楚降為作者假說與未知。單一來源的說法必須具名歸屬"
+        "並說明限制；遇到衝突證據就呈現分歧，不用來源數量假裝確定。正文按子問題"
+        "組織，不按來源逐篇介紹，也不為了顯得研究充分而重複塞引用。\n\n"
+        "=== 作者聲音 ===\n"
+        "以第一人稱「我」書寫自己已消化後的理解、推理與判斷，"
+        "像一個真正經營個人部落格的作者。不得虛構親身經驗、採訪、見聞或情緒；"
+        "不確定就說不確定。\n\n"
+        "=== 降低認知負擔 ===\n"
+        "5–10 個來源是作者的研究投入，不是要全數塞進正文。"
+        "只保留會改變讀者理解或作者判斷的證據；其餘由 pipeline 放在來源區。"
+        "先過資訊價值閘門：一段至少要帶來新證據、必要的因果步驟、最強反方、"
+        "必要定義或讀者後果之一，否則不寫。支持同一件事的來源合併呈現；"
+        "若刪掉一段仍不影響論證或讀者判斷，就刪掉。"
+        "一節只推進一個子問題，先給結論句再解釋，每段只放一個重點。"
+        "先說人話，專有名詞第一次出現時緊接短註；當至少三個名詞無法避免，"
+        "才加一個簡短的「專有名詞註解」段落。"
+        f"優先注意的詞：{terms}。\n\n"
+        "=== 呈現 ===\n"
+        "Podcast 文先讓讀者看見那段值得追的對談與觀點，再進入延伸調研；"
+        "不寫成逐字稿摘要。公司文先交代商業問題，再讓數字檢驗敘事。"
+        "使用 5–7 個內容型小標。標題 ≤15 字，副標補具體反差。"
+        "最後留一個本文特有的具體回信問題。"
+        "不輸出製程、生圖 prompt、來源清單、footer 或訂閱 CTA。\n\n"
+        "=== 輸出格式：直接回一個 JSON object ===\n"
+        '{"title":"...","subtitle":"...","body_markdown":"..."}\n'
+        "不要回 markdown fence、註解或 JSON 以外文字。"
+    )
+
+
 def _build_user_prompt(
     *,
     raw_title: str,
@@ -630,7 +822,19 @@ def _build_user_prompt(
     topic_category: str,
     editorial_note: str,
     profile: EditorialProfile,
+    research_brief: Optional[EditorialResearchBrief] = None,
+    research_sources: Sequence[Any] = (),
 ) -> str:
+    if research_brief is not None:
+        return _build_deep_writer_prompt(
+            raw_title=raw_title,
+            mode=mode,
+            topic_category=topic_category,
+            editorial_note=editorial_note,
+            profile=profile,
+            research_brief=research_brief,
+            research_sources=research_sources,
+        )
     word_floor, word_cap = word_range_for(profile)
     mode_hint = {
         "morning": (
@@ -764,58 +968,8 @@ def describe_route(provider: str, model: str) -> str:
     return f"{provider} · 模型 {m}"
 
 
-async def compose_substack_article(
-    *,
-    title: str,
-    content: str,
-    mode: Literal["morning", "evening", "podcast", "company"] = "morning",
-    topic_category: str = "other",
-    editorial_note: str = "",
-    editorial_profile: Literal["auto", "daily", "weekly"] = "auto",
-    has_deep_bundle: bool = False,
-    temperature: float = 0.4,
-) -> Optional[SubstackDraft]:
-    """產出單篇 Substack 長文草稿。
-
-    Architecture:
-      - 預設依 SUBSTACK_COMPOSER_BACKEND 的 writer chain 依序嘗試。
-      - WebSearch / WebFetch 明確停用；外部事實只來自預抓素材。
-      - Daily / Weekly profile 決定深度與字數，不改變 source-selection mode。
-
-    Returns:
-        SubstackDraft on success.
-        None on LLM failure (caller 必須 skip 並 notify user).
-    """
-    profile = resolve_editorial_profile(
-        mode,
-        override=editorial_profile,
-        has_deep_bundle=has_deep_bundle,
-    )
-    system = _build_system_instruction(profile)
-    prompt = _build_user_prompt(
-        raw_title=title,
-        raw_content=content,
-        mode=mode,
-        topic_category=topic_category,
-        editorial_note=editorial_note,
-        profile=profile,
-    )
-
-    backends = _resolve_backends()
-    result = await call_for_json(
-        system=system,
-        prompt=prompt,
-        response_model=SubstackDraft,
-        temperature=temperature,
-        timeout_s=1300,  # Weekly 最長 4200 字；保留本機 CLI 排隊與一次 retry 的餘裕。
-        backends=backends,
-        # 2026-05-30: 關掉 agentic 上網，逼 composer 只用預抓素材（token-free 改版）。
-        disallowed_tools=("WebSearch", "WebFetch"),
-    )
-
-    # Cost metering (Optimization D, 2026-05-30): record every call — success or
-    # fail — so token_usage_daily reflects real spend and before/after deltas are
-    # measurable. Non-fatal: never let metering break composition.
+def _record_usage(result: Any, *, stage: str) -> None:
+    """Meter both comprehension and writing calls without making drafts depend on it."""
     try:
         from src.db import record_token_usage
 
@@ -827,12 +981,122 @@ async def compose_substack_article(
             cost_usd=result.cost_usd,
         )
         print(
-            f"[SubstackComposer] 💰 usage logged: provider={result.provider} "
+            f"[SubstackComposer] 💰 {stage} usage logged: provider={result.provider} "
             f"in={result.input_tokens} out={result.output_tokens} "
             f"cost=${result.cost_usd:.4f}"
         )
     except Exception as exc:
-        print(f"[SubstackComposer] ⚠️ token metering skipped: {exc}")
+        print(f"[SubstackComposer] ⚠️ {stage} token metering skipped: {exc}")
+
+
+async def plan_editorial_research(
+    *,
+    title: str,
+    content: str,
+    mode: Literal["podcast", "company"],
+    topic_category: str = "other",
+    editorial_profile: Literal["auto", "daily", "weekly"] = "auto",
+    has_deep_bundle: bool = False,
+    temperature: float = 0.2,
+) -> Optional[EditorialResearchBrief]:
+    """Digest the primary source and identify evidence gaps before web research."""
+    profile = resolve_editorial_profile(
+        mode,
+        override=editorial_profile,
+        has_deep_bundle=has_deep_bundle,
+    )
+    prompt = _build_research_brief_prompt(
+        raw_title=title,
+        raw_content=content,
+        mode=mode,
+        topic_category=topic_category,
+        profile=profile,
+    )
+    result = await call_for_json(
+        system=(
+            "你是 HsinTiger 的研究編輯。此階段只負責消化主來源、"
+            "找出值得追問的衝突與證據缺口；不寫文章、不使用外部知識補洞。"
+        ),
+        prompt=prompt,
+        response_model=EditorialResearchBrief,
+        temperature=temperature,
+        timeout_s=1100,
+        backends=_resolve_backends(),
+        disallowed_tools=("WebSearch", "WebFetch"),
+    )
+    _record_usage(result, stage="research-brief")
+    if result.data is None:
+        print(
+            "[SubstackComposer] ❌ 主來源消化失敗，不進入延伸調研："
+            f"{result.raw_error}"
+        )
+        return None
+    result.data.generated_by = describe_route(result.provider, result.model)
+    return result.data
+
+
+async def compose_substack_article(
+    *,
+    title: str,
+    content: str,
+    mode: Literal["morning", "evening", "podcast", "company"] = "morning",
+    topic_category: str = "other",
+    editorial_note: str = "",
+    editorial_profile: Literal["auto", "daily", "weekly"] = "auto",
+    has_deep_bundle: bool = False,
+    research_brief: Optional[EditorialResearchBrief] = None,
+    research_sources: Sequence[Any] = (),
+    temperature: float = 0.4,
+) -> Optional[SubstackDraft]:
+    """產出單篇 Substack 長文草稿。
+
+    Architecture:
+      - 預設依 SUBSTACK_COMPOSER_BACKEND 的 writer chain 依序嘗試。
+      - Podcast/company 必須先有 EditorialResearchBrief 與 5–10 源 evidence pack。
+      - Writer 的 WebSearch / WebFetch 仍停用；它只能用已驗證研究包。
+      - 題型 profile 決定論證骨架、字數與認知負擔規則。
+
+    Returns:
+        SubstackDraft on success.
+        None on LLM failure (caller 必須 skip 並 notify user).
+    """
+    profile = resolve_editorial_profile(
+        mode,
+        override=editorial_profile,
+        has_deep_bundle=has_deep_bundle,
+    )
+    if mode in {"podcast", "company"} and research_brief is None:
+        print("[SubstackComposer] ❌ 深度題型缺 EditorialResearchBrief，拒絕假裝完成調研。")
+        return None
+    system = _build_system_instruction(profile)
+    try:
+        prompt = _build_user_prompt(
+            raw_title=title,
+            raw_content=content,
+            mode=mode,
+            topic_category=topic_category,
+            editorial_note=editorial_note,
+            profile=profile,
+            research_brief=research_brief,
+            research_sources=research_sources,
+        )
+    except Exception as exc:
+        print(f"[SubstackComposer] ❌ 研究包未通過，拒絕產稿：{exc}")
+        return None
+
+    backends = _resolve_backends()
+    result = await call_for_json(
+        system=system,
+        prompt=prompt,
+        response_model=SubstackDraft,
+        temperature=temperature,
+        timeout_s=1800,  # Podcast 最長 6500 字；保留本機 CLI 排隊與 retry 餘裕。
+        backends=backends,
+        # 2026-05-30: 關掉 agentic 上網，逼 composer 只用預抓素材（token-free 改版）。
+        disallowed_tools=("WebSearch", "WebFetch"),
+    )
+
+    _record_usage(result, stage="final-writer")
 
     if result.data is None:
         print(

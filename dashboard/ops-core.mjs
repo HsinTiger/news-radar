@@ -8,27 +8,35 @@ export const SCHEDULER_HEALTH = Object.freeze({
 });
 
 export const DEFAULT_EDITORIAL_CONTRACT = Object.freeze({
-  schema_version: 1,
+  schema_version: 3,
   publication_mode: "draft_only",
   podcast: Object.freeze({
     local_time: "12:00",
     drafts: 2,
     candidate_window_days: 7,
     depth: "weekly",
-    target_chars: Object.freeze([2800, 4200]),
+    article_kind: "podcast",
+    target_chars: Object.freeze([4200, 6500]),
+    research_sources: Object.freeze([5, 10]),
   }),
   company: Object.freeze({
     local_time: "Sun 09:00",
     drafts: 1,
     pick_and_compose: true,
     depth: "weekly",
-    target_chars: Object.freeze([2800, 4200]),
+    article_kind: "company",
+    target_chars: Object.freeze([3800, 6000]),
+    research_sources: Object.freeze([5, 10]),
   }),
   writer: Object.freeze({
-    positioning: "可信任的真人編輯式深度分析",
-    podcast_method: "從一個訪談交鋒延伸成離開節目也成立的問題，不摘要整集",
-    evidence_boundary: "區分素材事實、來賓主張、作者推論與未知",
-    source_strategy: "Podcast 逐字稿加一份書面深度報告作第二視角",
+    positioning: "第一人稱的真人編輯式深度分析",
+    first_person: "以「我」呈現消化後的理解與判斷；不虛構親身經驗或採訪",
+    podcast_method: "先提取引人入勝的對談摘要與觀點，再導出可獨立成立的問題",
+    evidence_boundary: "區分主來源事實、延伸證據、作者推論與未知",
+    source_strategy: "主來源消化 → 不同研究角度 → 5–10 個已讀取來源 → 主張—證據圖 → 資訊價值閘門",
+    method_sources: "Firecrawl Deep Research + OpenSquilla Citation Planner + MoAI Claim Check（只採方法，不載入第三方 prompt）",
+    article_forms: "調查型、論證型或自我成長型；自我成長仍要可檢驗",
+    cognitive_load: "一節一個子問題、一段一件事；必要時加專有名詞註解",
     ending: "以本文特有、讀者能真正回覆的問題收尾",
   }),
 });

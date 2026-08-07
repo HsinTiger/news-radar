@@ -156,8 +156,8 @@ Two agents are installed (`sed HOME_DIR` → `plutil -lint` →
 
 | Agent | When | What |
 |---|---|---|
-| `com.hsin.news-radar.substack-podcast-noon` | Daily 12:00 | refresh the Podcast pool, then sequentially write two different 2800–4200 character extensions from interviews published within the last 7 days |
-| `com.hsin.news-radar.company-compose` | Sun 09:00 | pick one company, then immediately write one 2800–4200 character Weekly draft |
+| `com.hsin.news-radar.substack-podcast-noon` | Daily 12:00 | refresh the Podcast pool, then sequentially write two different 4200–6500 character extensions from interviews published within the last 7 days; each reads 5–10 extension sources |
+| `com.hsin.news-radar.company-compose` | Sun 09:00 | pick one company, then write one 3800–6000 character analysis using financial facts plus 5–10 extension sources |
 
 Company selection and composition intentionally share one job. The picker
 writes `.company_next`, and the composer consumes it immediately. A deliberate

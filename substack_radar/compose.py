@@ -34,7 +34,8 @@ LLM backend 架構：
     SUBSTACK_COMPOSER_BACKEND=codex_cli,claude_cli
         - 預設依序嘗試；可用逗號清單顯式覆寫
         - 實際成功的 provider/model 會寫入 generated_by，不預先假定是哪一個模型
-        - WebSearch / WebFetch 關閉，寫手只使用已預抓素材
+        - Podcast/公司文先消化主來源，再建立 5–10 源外部證據包
+        - 最終寫手的 WebSearch / WebFetch 關閉，只使用上述已驗證材料
 
     封面由 deterministic cover renderer 產生；writer 不輸出圖片 prompt。
     角色素材不可用時會退回純文字海報，不影響正文草稿。
@@ -93,10 +94,15 @@ from substack_radar.composer import (  # noqa: E402
     autofix_mainland_terms,
     autofix_traditional,
     compose_substack_article,
+    plan_editorial_research,
     resolve_editorial_profile,
     strip_generated_footer,
     strip_production_instructions,
     word_range_for,
+)
+from substack_radar.editorial_research import (  # noqa: E402
+    InsufficientResearchError,
+    build_research_pack,
 )
 from substack_radar.draft_receipts import (  # noqa: E402
     clear_remote_receipt,
@@ -807,26 +813,6 @@ def _resolve_company_ticker(args) -> str:
     return ""
 
 
-def _company_context(name: str, ticker: str):
-    """補商業模式/競爭脈絡：自動搜對應書面分析（數字仍以財報事實為準）。回 (md, reports)。"""
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_enrich", str(_REPO_ROOT / "scripts" / "enrich_youtube_sources.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        reports = mod._find_reports(f"{name} business model moat competitive analysis", n=5)
-    except Exception:
-        reports = []
-    if not reports:
-        return "", []
-    lines = ["## 參考書面分析（自動搜尋 · 補商業模式/競爭脈絡；數字仍一律以上方『財報事實』為準）"]
-    for r in reports:
-        tag = "⭐ " if r.get("quality") else ""
-        lines.append(f"- {tag}{r.get('title','')}\n  {r.get('url','')}")
-    return "\n".join(lines), reports
-
-
 # ---------------------------------------------------------------------------
 # Cover rendering — reuse cover_renderer with new "substack" spec
 # ---------------------------------------------------------------------------
@@ -1313,10 +1299,10 @@ def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block
     )
     md = (
         f"{provenance_block}"
-        f"{sources_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
-        f"{body}\n"
+        f"{body}\n\n"
+        f"{sources_block}"
     )
     md = strip_production_instructions(md)
     assert_reader_ready_markdown(md)
@@ -1385,6 +1371,7 @@ def write_metadata(
         "subtitle": draft.subtitle,
         "mode": mode,
         "editorial_profile": editorial_profile,
+        "editorial_kind": source.get("editorial_kind", editorial_profile),
         "generated_by": getattr(draft, "generated_by", None),
         "source": source,
         "audit_warnings": audit_warnings,
@@ -1436,48 +1423,8 @@ def _load_bundle_curated(path: str) -> str:
         return ""
 
 
-def _podcast_reports_block(title: str):
-    """podcast 一手逐字稿之外，自動搜對應書面深度報告當第二瞭望台，
-    並抓前 1–2 篇高品質源可讀的正文片段，供 Weekly profile 交叉驗證。
-    回傳 (context_text, reports)：context_text 疊進素材給 LLM；reports 給文章最上面的來源區塊引用。
-    任何失敗回 ("", [])，不阻斷出稿。"""
-    if not title:
-        return "", []
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_enrich", str(_REPO_ROOT / "scripts" / "enrich_youtube_sources.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        reports = mod._find_reports(title, n=5)
-    except Exception as e:
-        print(f"[Podcast] ⚠️ 書面報告搜尋略過：{e}")
-        return "", []
-    if not reports:
-        return "", []
-    lines = [
-        "\n\n===== 深度素材包（書面報告層）=====",
-        "## 對應書面深度報告（自動搜尋 · podcast 主題的第二瞭望台，用來交叉驗證/加厚，不要照抄）",
-    ]
-    for r in reports:
-        tag = "⭐ " if r.get("quality") else ""
-        lines.append(f"- {tag}{r.get('title','')}\n  {r.get('url','')}")
-    # 前 1–2 篇高品質源抓可讀正文片段（付費牆通常只拿得到導言，仍是交叉驗證材料）。
-    try:
-        from scripts.submit_source import _fetch_page_text
-        for r in [x for x in reports if x.get("quality")][:2]:
-            txt = (_fetch_page_text(r["url"]) or "").strip()
-            if len(txt) > 200:
-                lines.append(f"\n### 摘錄自 {r.get('title','')[:50]}\n{txt[:1500]}")
-    except Exception:
-        pass
-    return "\n".join(lines), reports
-
-
 def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
-    """Article_Substack.md 開頭、**面向讀者保留**的『本文取材』來源區塊（2026-06-22 Hsin：
-    從『發布前刪除的私註』改成『保留、給讀者看』，增加可信度與厚度）。主來源 + 延伸參考
-    用 markdown 連結呈現（點擊查證）。完全沒網址就回空字串。"""
+    """Reader-facing source ledger, placed after the article to reduce front-load."""
     reports = reports or []
     rep_links, seen = [], set()
     for r in reports:
@@ -1485,14 +1432,15 @@ def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
         if not u or u in seen:
             continue
         seen.add(u)
-        rep_links.append(f"[{(r.get('title') or u)[:60]}]({u})")
+        rep_links.append(f"[{(r.get('title') or u)[:80]}]({u})")
     if not source_url and not rep_links:
         return ""
-    block = ["> 📚 **本文取材**（公開來源、可點擊查證）"]
+    block = ["---", "", "### 📚 本文取材", "", "公開來源，可點擊查證。"]
     if source_url:
-        block.append(f"> 主來源 — [{(source_title or '原始來源')[:60]}]({source_url})")
+        block.append(f"- **主來源**：[{(source_title or '原始來源')[:80]}]({source_url})")
     if rep_links:
-        block.append("> 延伸參考 — " + " ｜ ".join(rep_links))
+        block.extend(("", f"**延伸研究**（{len(rep_links)} 源）"))
+        block.extend(f"{index}. {link}" for index, link in enumerate(rep_links, 1))
     return "\n".join(block) + "\n\n"
 
 
@@ -1657,24 +1605,24 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "via": "podcast_pool",
         }
     elif mode == "company":
-        # 每週公司營運分析（週日 09:00）。數字 = yfinance；商業模式/競爭脈絡 = 自動搜書面分析。
+        # 每週公司營運分析（週日 09:00）。第一階段只讀 yfinance
+        # 財報事實；消化後再依證據缺口搜 5–10 個延伸來源。
         ticker = _resolve_company_ticker(args)
         if not ticker:
             print("[ERROR] company mode 需要 ticker（--ticker / .company_next / watchlist）。")
             return 2
         from substack_radar.company_financials import fetch_financials
-        print(f"[Company] {ticker} → 抓 yfinance 財報 + 補書面脈絡…")
+        print(f"[Company] {ticker} → 先抓 yfinance 財報事實…")
         fin_data, fin_md = fetch_financials(ticker)
         raw_title = fin_data.get("name") or ticker          # 占位；composer 依 editorial brief 生標題
         topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
-        ctx_md, company_reports = _company_context(raw_title, ticker)
-        raw_content = fin_md + ("\n\n" + ctx_md if ctx_md else "")
+        raw_content = fin_md
         source = {
             "id": None,
             "title": raw_title,
             "topic_category": topic_category,
             "via": f"company:{ticker}",
-            "_company_reports": company_reports,
+            "ticker": ticker,
         }
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
@@ -1699,12 +1647,15 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 "topic_category": topic_category,
             }
     print(f"[Source] mode={mode} title={raw_title!r} topic={topic_category}")
+    primary_content = raw_content or ""
 
     # 來源區塊用：主來源網址 + 引用到的書面報告（給 Article_Substack.md 最上面那塊）。
     used_reports: list = []
     source_url = None
-    if mode == "company":                       # 公司分析：來源 = 財報 + 參考書面分析
-        used_reports = source.get("_company_reports", []) or []
+    if mode == "company":
+        # 公開、可點擊的主來源。實際取值仍由 yfinance client 完成。
+        ticker_for_url = source.get("ticker") or ""
+        source_url = f"https://finance.yahoo.com/quote/{ticker_for_url}/financials/"
     _sid = source.get("id")
     if _sid:
         try:
@@ -1720,11 +1671,17 @@ async def _run_inner(args: argparse.Namespace) -> int:
     if getattr(args, "bundle", None):
         bundle_extra = _load_bundle_curated(args.bundle)
         if bundle_extra:
-            raw_content = (raw_content or "") + (
-                "\n\n===== 深度素材包（多源綜合用）=====\n"
-                + bundle_extra
-            )
-            print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
+            if mode not in {"podcast", "company"}:
+                raw_content = (raw_content or "") + (
+                    "\n\n===== 深度素材包（多源綜合用）=====\n"
+                    + bundle_extra
+                )
+                print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
+            else:
+                print(
+                    f"[Bundle] {Path(args.bundle).name} 僅當延伸來源種子；"
+                    "階段一仍只消化當次主來源"
+                )
             # 來源引用：素材包的影音一手源 + 書面深度報告都納入來源區塊
             try:
                 import json as _json
@@ -1741,23 +1698,77 @@ async def _run_inner(args: argparse.Namespace) -> int:
         else:
             print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
 
-    # 1c) podcast 自動加書面深度報告層：一手逐字稿已在 raw_content，再上網搜對應書面報告當
-    #     第二瞭望台 → Weekly 多源綜合，podcast 取材文章自動加厚（你說的「搭配
-    #     SemiAnalysis 查證」）。給了 --bundle 就以 bundle 為準、不重複搜。
-    elif mode == "podcast" and not getattr(args, "no_reports", False):
-        rblock, used_reports = _podcast_reports_block(raw_title)
-        if rblock:
-            raw_content = (raw_content or "") + rblock
-            print("[Podcast] +書面深度報告層（Weekly 第二瞭望台）")
-
-    # 2) Compose
+    # 1c) Deep modes are deliberately two-pass.  First digest only the primary
+    # source; then use its evidence gaps to collect 5–10 readable external sources.
     profile = resolve_editorial_profile(
         mode,
         override=getattr(args, "editorial_profile", "auto"),
         has_deep_bundle=bool(getattr(args, "bundle", None)),
     )
     word_floor, word_cap = word_range_for(profile)
-    print(f"[Compose] editorial_profile={profile.name} words={word_floor}-{word_cap}")
+    source["editorial_kind"] = profile.article_kind
+    print(
+        f"[Compose] editorial_profile={profile.name}/{profile.article_kind} "
+        f"words={word_floor}-{word_cap}"
+    )
+    research_brief = None
+    research_sources = []
+    if mode in {"podcast", "company"}:
+        if getattr(args, "no_reports", False):
+            error_msg = "深度題型要求 5–10 個延伸來源；--no-reports 不再允許產生假深度稿"
+            print(f"[EditorialResearch] ❌ {error_msg}")
+            notify_substack_failure(mode=mode, error_msg=error_msg)
+            return 6
+        print("[EditorialResearch] stage 1/2 消化主來源與定義查證問題…")
+        research_brief = await plan_editorial_research(
+            title=raw_title,
+            content=primary_content,
+            mode=mode,  # type: ignore[arg-type]
+            topic_category=topic_category,
+            editorial_profile=profile.name,
+            has_deep_bundle=bool(getattr(args, "bundle", None)),
+        )
+        if research_brief is None:
+            notify_substack_failure(
+                mode=mode,
+                error_msg="主來源消化失敗；未進入延伸調研",
+                extra_context={"source_title": raw_title},
+            )
+            return 6
+        print("[EditorialResearch] stage 2/2 搜尋並讀取 5–10 個延伸證據源…")
+        try:
+            research_sources = await asyncio.to_thread(
+                build_research_pack,
+                research_brief.research_queries,
+                primary_url=source_url,
+                seed_sources=used_reports,
+            )
+        except InsufficientResearchError as exc:
+            print(f"[EditorialResearch] ❌ {exc}")
+            notify_substack_failure(
+                mode=mode,
+                error_msg=f"延伸調研未達 5 個可用來源：{exc}",
+                extra_context={
+                    "source_title": raw_title,
+                    "research_queries": research_brief.research_queries,
+                },
+            )
+            return 6
+        used_reports = [source_item.model_dump() for source_item in research_sources]
+        source["research_brief"] = research_brief.model_dump(
+            exclude={"generated_by"}
+        )
+        source["research_sources"] = [
+            item.model_dump(exclude={"excerpt"}) for item in research_sources
+        ]
+        source["research_source_count"] = len(research_sources)
+        print(
+            f"[EditorialResearch] ✅ form={research_brief.article_form} "
+            f"sources={len(research_sources)}"
+        )
+
+    # 2) Final writer. Deep modes receive the digest/evidence pack, not the full
+    # transcript again; Daily modes retain the direct single-pass path.
     draft = await compose_substack_article(
         title=raw_title,
         content=raw_content or "",
@@ -1766,6 +1777,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
         editorial_note=args.editorial_note or "",
         editorial_profile=profile.name,
         has_deep_bundle=bool(getattr(args, "bundle", None)),
+        research_brief=research_brief,
+        research_sources=research_sources,
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")
@@ -1972,7 +1985,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--no-reports",
         action="store_true",
-        help="(podcast) 關掉自動搜書面深度報告（SemiAnalysis/Stratechery 第二瞭望台）。預設開。",
+        help=(
+            "(diagnostic only) disable external research. Podcast/company now fail closed "
+            "instead of producing a deep draft without 5–10 readable sources."
+        ),
     )
     p.add_argument("--topic", default=None, help="(evening) override: free-text topic / 文章主題")
     p.add_argument(

@@ -462,31 +462,39 @@ def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     company_plist = repo_root / "scripts" / "com.hsin.news-radar.company-compose.plist"
     worker_path = repo_root / "scripts" / "substack_editorial_worker.sh"
     compose_path = repo_root / "substack_radar" / "compose.py"
-    weekly_path = repo_root / "substack_radar" / "config" / "editorial_weekly.md"
+    podcast_path = repo_root / "substack_radar" / "config" / "editorial_podcast.md"
+    company_path = repo_root / "substack_radar" / "config" / "editorial_company.md"
     worker = worker_path.read_text(encoding="utf-8") if worker_path.exists() else ""
     compose = compose_path.read_text(encoding="utf-8") if compose_path.exists() else ""
-    weekly = weekly_path.read_text(encoding="utf-8") if weekly_path.exists() else ""
+    podcast_brief = podcast_path.read_text(encoding="utf-8") if podcast_path.exists() else ""
+    company_brief = company_path.read_text(encoding="utf-8") if company_path.exists() else ""
     window_match = re.search(r"pick_podcast_interview\(window_days: int = (\d+)\)", compose)
-    range_match = re.search(r"長度：([\d,]+)–([\d,]+)", weekly)
-    target_chars = (
-        [int(range_match.group(1).replace(",", "")), int(range_match.group(2).replace(",", ""))]
-        if range_match
-        else [2800, 4200]
-    )
+    def _target_chars(text: str, fallback: list[int]) -> list[int]:
+        match = re.search(r"長度：([\d,]+)–([\d,]+)", text)
+        return (
+            [int(match.group(1).replace(",", "")), int(match.group(2).replace(",", ""))]
+            if match
+            else fallback
+        )
+
+    podcast_target = _target_chars(podcast_brief, [4200, 6500])
+    company_target = _target_chars(company_brief, [3800, 6000])
     podcast_schedule = _plist_schedule(podcast_plist)
     company_schedule = _plist_schedule(company_plist)
     podcast_time = f"{podcast_schedule.get('Hour', 12):02d}:{podcast_schedule.get('Minute', 0):02d}"
     company_day = "Sun" if company_schedule.get("Weekday", 0) == 0 else f"weekday-{company_schedule.get('Weekday')}"
     company_time = f"{company_day} {company_schedule.get('Hour', 9):02d}:{company_schedule.get('Minute', 0):02d}"
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "publication_mode": "draft_only",
         "podcast": {
             "local_time": podcast_time,
             "drafts": worker.count("substack_radar/compose.py podcast"),
             "candidate_window_days": int(window_match.group(1)) if window_match else 7,
             "depth": "weekly",
-            "target_chars": target_chars,
+            "article_kind": "podcast",
+            "target_chars": podcast_target,
+            "research_sources": [5, 10],
         },
         "company": {
             "local_time": company_time,
@@ -497,13 +505,19 @@ def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 < worker.find("substack_radar/compose.py company")
             ),
             "depth": "weekly",
-            "target_chars": target_chars,
+            "article_kind": "company",
+            "target_chars": company_target,
+            "research_sources": [5, 10],
         },
         "writer": {
-            "positioning": "可信任的真人編輯式深度分析",
-            "podcast_method": "從一個訪談交鋒延伸成獨立問題，不摘要整集",
-            "evidence_boundary": "區分素材事實、來賓主張、作者推論與未知",
-            "source_strategy": "逐字稿加書面深度報告作第二視角",
+            "positioning": "第一人稱的真人編輯式深度分析",
+            "first_person": "以「我」呈現消化後的理解與判斷；不虛構親身經驗或採訪",
+            "podcast_method": "先提取引人入勝的對談摘要與觀點，再導出可獨立成立的問題",
+            "evidence_boundary": "區分主來源事實、延伸證據、作者推論與未知",
+            "source_strategy": "主來源消化 → 不同研究角度 → 5–10 個已讀取來源 → 主張—證據圖 → 資訊價值閘門",
+            "method_sources": "Firecrawl Deep Research + OpenSquilla Citation Planner + MoAI Claim Check（只採方法，不載入第三方 prompt）",
+            "article_forms": "依材料選調查型、論證型或自我成長型；自我成長仍要可檢驗",
+            "cognitive_load": "一節一個子問題、一段一件事；必要時加專有名詞註解",
             "ending": "以本文特有的具體回信問題收尾",
         },
     }
