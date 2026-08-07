@@ -17,6 +17,7 @@ def test_pasted_draft_push_needs_no_cover_prompts_and_sends_reader_only(
 ) -> None:
     monkeypatch.setenv("SUBSTACK_COOKIES_STRING", "cookie")
     monkeypatch.setenv("SUBSTACK_PUBLICATION_URL", "https://example.substack.com")
+    monkeypatch.setenv("SUBSTACK_AUDIENCE", "only_paid")
     captured = {}
 
     class FakeApi:
@@ -31,7 +32,8 @@ def test_pasted_draft_push_needs_no_cover_prompts_and_sends_reader_only(
             return {"id": 12345}
 
     class FakePost:
-        def __init__(self, **_kwargs):
+        def __init__(self, **kwargs):
+            captured["post_kwargs"] = kwargs
             self._draft = {
                 "draft_body": json.dumps(
                     {
@@ -76,6 +78,7 @@ def test_pasted_draft_push_needs_no_cover_prompts_and_sends_reader_only(
     )
 
     assert draft_id == 12345
+    assert captured["post_kwargs"]["audience"] == "everyone"
     raw = captured["draft_body"]
     assert "讀者正文" in raw
     assert "每天兩篇對談延伸" in raw

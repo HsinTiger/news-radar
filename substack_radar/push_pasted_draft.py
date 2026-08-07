@@ -23,6 +23,10 @@ load_dotenv(_REPO_ROOT / ".env")
 
 from substack import Api  # noqa: E402
 from substack.post import Post  # noqa: E402
+from substack_radar.audience import (  # noqa: E402
+    DEFAULT_SUBSTACK_AUDIENCE,
+    validate_substack_audience,
+)
 from substack_radar.compose import BRAND_TAGLINE  # noqa: E402
 from substack_radar.composer import (  # noqa: E402
     assert_reader_ready_markdown,
@@ -83,7 +87,7 @@ def push_pasted_draft(
     title: str,
     subtitle: str,
     body_md: str,
-    audience: str = "everyone",
+    audience: str = DEFAULT_SUBSTACK_AUDIENCE,
 ) -> tuple[int, str]:
     """Create, but never publish, a reader-ready Substack draft."""
     for argname, value in (
@@ -94,6 +98,7 @@ def push_pasted_draft(
         if not (value or "").strip():
             raise ValueError(f"push_pasted_draft: {argname!r} is empty")
 
+    audience = validate_substack_audience(audience)
     clean_body = strip_generated_footer(strip_production_instructions(body_md))
     assert_reader_ready_markdown(clean_body)
     if not clean_body:

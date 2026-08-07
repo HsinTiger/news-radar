@@ -256,6 +256,7 @@ def assert_reader_ready_markdown(markdown: str) -> None:
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 COMMON_EDITORIAL_PATH = CONFIG_DIR / "editorial_voice.md"
+AUDIENCE_EDITORIAL_PATH = CONFIG_DIR / "editorial_audience.md"
 DAILY_EDITORIAL_PATH = CONFIG_DIR / "editorial_daily.md"
 WEEKLY_EDITORIAL_PATH = CONFIG_DIR / "editorial_weekly.md"
 PODCAST_EDITORIAL_PATH = CONFIG_DIR / "editorial_podcast.md"
@@ -308,13 +309,12 @@ def resolve_editorial_profile(
 
 
 def load_editorial_brief(profile: EditorialProfile) -> str:
-    """Load only the common voice plus the selected cadence brief."""
-    missing = [path for path in (COMMON_EDITORIAL_PATH, profile.brief_path) if not path.exists()]
+    """Load the shared reader, voice, and selected cadence contracts."""
+    paths = (AUDIENCE_EDITORIAL_PATH, COMMON_EDITORIAL_PATH, profile.brief_path)
+    missing = [path for path in paths if not path.exists()]
     if missing:
         raise FileNotFoundError("missing editorial brief: " + ", ".join(str(path) for path in missing))
-    common = COMMON_EDITORIAL_PATH.read_text(encoding="utf-8").strip()
-    cadence = profile.brief_path.read_text(encoding="utf-8").strip()
-    return f"{common}\n\n{cadence}"
+    return "\n\n".join(path.read_text(encoding="utf-8").strip() for path in paths)
 
 
 # --------------------------------------------------------------------------

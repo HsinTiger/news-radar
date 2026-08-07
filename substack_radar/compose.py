@@ -27,9 +27,6 @@ Daily / Weekly 寫稿 driver。排程預設每天中午兩篇 Podcast Weekly 延
                                 → Headers → Request Headers → Cookie 整段複製）。
                               通常 2-4 週過期，失效時 CLI 會明確報錯，重抓即可。
     SUBSTACK_PUBLICATION_URL — 你的 Substack URL，例如 https://hsin73.substack.com
-    SUBSTACK_AUDIENCE — 草稿目標讀者（everyone / only_paid / founding / only_free）
-                        預設 everyone。
-
 LLM backend 架構：
     SUBSTACK_COMPOSER_BACKEND=codex_cli,claude_cli
         - 預設依序嘗試；可用逗號清單顯式覆寫
@@ -85,6 +82,10 @@ try:
 except Exception:
     pass
 
+from substack_radar.audience import (  # noqa: E402
+    DEFAULT_SUBSTACK_AUDIENCE,
+    validate_substack_audience,
+)
 from substack_radar.composer import (  # noqa: E402
     SubstackDraft,
     assert_reader_ready_markdown,
@@ -976,6 +977,7 @@ def push_to_substack_draft(
     subtitle: str,
     cover_path: Optional[Path] = None,
     source_id: Optional[str] = None,
+    audience: str = DEFAULT_SUBSTACK_AUDIENCE,
 ) -> Optional[int]:
     """Create a Substack draft and return its id; never publishes it.
 
@@ -991,8 +993,9 @@ def push_to_substack_draft(
                                   See README setup for the click-by-click guide.
       - SUBSTACK_PUBLICATION_URL : e.g. https://hsin73.substack.com
 
-    Optional env vars:
-      - SUBSTACK_AUDIENCE : "everyone" (default) | "only_paid" | "founding" | "only_free"
+    Delivery defaults to ``everyone``. Paid or other restricted delivery must
+    be supplied as an explicit function argument; ambient environment values
+    are deliberately ignored.
     """
     if os.getenv("SUBSTACK_AUTO_DRAFT") != "1":
         print(
@@ -1020,7 +1023,7 @@ def push_to_substack_draft(
         )
         return None
 
-    audience = os.getenv("SUBSTACK_AUDIENCE", "everyone")
+    audience = validate_substack_audience(audience)
     body_md = article_md_path.read_text(encoding="utf-8")
 
     # Article_Substack.md starts with "# <title>\n\n*<subtitle>*\n\n<body>".
