@@ -392,11 +392,19 @@ def news_exists(conn: sqlite3.Connection, news_id: str) -> bool:
     return row is not None
 
 
+def news_url_exists(conn: sqlite3.Connection, url: str) -> bool:
+    """Return whether the canonical source URL already owns a lineage row."""
+    row = conn.execute(
+        "SELECT 1 FROM news_items WHERE url = ? LIMIT 1", (url,)
+    ).fetchone()
+    return row is not None
+
+
 def upsert_news(conn: sqlite3.Connection, item: NewsItem) -> bool:
     """
     寫入新聞素材。回傳 True 表示「新插入」，False 表示「已存在，跳過」。
     """
-    if news_exists(conn, item.id):
+    if news_exists(conn, item.id) or news_url_exists(conn, item.url):
         return False
 
     conn.execute(
