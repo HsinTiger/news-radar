@@ -14,7 +14,8 @@
 | Meta scheduled publishing | **RECOVERY** | One post/day/platform under source, quality, quota, readback, and shared-lock gates |
 | Submission processor | **LIVE** | Poller claims one-off work; target-specific evidence remains required |
 | Meta publish-now | **ARMED** | Owner submissions still pass editorial gates before any platform write |
-| Substack schedules | **DRAFT ONLY** | Podcast/company schedules never publish; `draft_created` requires a remote draft id |
+| Substack editorial schedules | **WINDOWS WRITER** | 12:00 Podcast batch and Sunday company article run on the owner Windows host |
+| Substack remote draft transport | **BLOCKED ON WINDOWS** | This host has no Substack cookie/publication credential; local files are not remote drafts |
 | Substack one-off publish-now | **CANARY PENDING** | Explicit owner choice only; `published` requires post id, public URL, timestamp, and unauthenticated readback |
 | Social Ops API | **DEPLOYED** | Cloudflare Worker + authenticated D1 |
 | Runtime SQLite | **CANONICAL RELEASE STATE** | Versioned GitHub Release bundle, SHA-256 + `PRAGMA quick_check` + readback |
@@ -60,8 +61,11 @@ The Pages UI is authenticated with an owner token stored only in browser
   for deliberate use.
 - Both scheduled Podcast drafts use Weekly depth (2800–4200 Chinese characters).
   Daily and Weekly briefs remain available to manual and submission-driven work.
-- The Mac worker records local/OneDrive completion in
-  `news_items.substack_written_at`.
+- The Windows writer records local/OneDrive completion in
+  `news_items.substack_written_at`; Mac no longer owns Substack selection or AI composition.
+- Every reader-ready article preserves the actual route/model, clickable public
+  sources, the canonical subscription CTA, and a deterministic 瑞瑞/達達
+  `cover.png`. Image-search instructions and image-generation prompts are banned.
 - Only a successful Substack `post_draft` response writes
   `substack_draft_id` + `substack_drafted_at`; operational sync converts that
   remote evidence to `draft_created` in D1.
@@ -99,8 +103,9 @@ flowchart LR
   Runtime --> Compose[Platform-specific compose]
   Compose --> Queue[Governed Meta queue]
   Queue --> Meta[FB / IG / Threads]
-  Runtime --> Mac[Mac Substack writer]
-  Mac --> Drafts[Substack drafts]
+  Runtime --> Win[Windows Substack writer]
+  Win --> Files[Reader-ready article + character cover]
+  Files -. credential required .-> Drafts[Substack drafts]
   Meta --> Metrics[Engagement + audience collectors]
   Metrics --> D1[(Social Ops D1)]
   Runtime --> Sync[Metadata sync]
@@ -159,29 +164,25 @@ Transitions are validated server-side. Terminal states are idempotent and
 cannot be downgraded. `source_queued` does not mean a Substack draft exists;
 `content_queued` does not mean a Meta post exists.
 
-## Mac worker
+## Windows Substack writer
 
-The Mac compose and fast Substack scripts now use the same Release state and
-write lease as GitHub Actions:
+The owner Windows host is the only machine authorized to select scheduled
+Substack topics or call the editorial LLM:
 
-```bash
-cp scripts/compose_hourly.sh ~/bin/news_radar_compose.sh
-cp scripts/drain_substack_fast.sh ~/bin/news_radar_substack_fast.sh
-cp scripts/substack_editorial_worker.sh ~/bin/news_radar_substack_editorial.sh
+```powershell
+python scripts/windows_substack_editorial_worker.py podcast-batch
+python scripts/windows_substack_editorial_worker.py weekly
 ```
 
-The installed launchd copies must be updated on the Mac before Substack draft
-status can be considered end-to-end verified. The repository scripts no longer
-read or force-push the legacy `state` branch. Follow the staged rollout in
-[`scripts/INSTALL_COMPOSE_LAUNCHAGENT.md`](scripts/INSTALL_COMPOSE_LAUNCHAGENT.md):
-bootstrap with `--setup-only`, load the immediate lane, prove one remote draft,
-then enable the hourly backlog lane.
+The runner fast-forwards `origin/main`, acquires the shared Release lease, uses
+`gpt-latest` through Codex CLI, falls back only to `claude-latest`, and fails
+closed if both routes fail. It currently forces `SUBSTACK_AUTO_DRAFT=0`; the
+result is a local/OneDrive article plus `cover.png`, not a remote Substack draft.
 
-After that canary, `bash scripts/install_substack_daily_agents.sh` installs the
-separate governed editorial cadence (one two-draft Podcast batch daily at 12:00;
-company pick-and-compose Sunday at 09:00). Repository configuration is not proof
-that those launchd agents are loaded on the Mac; verify with the installer
-`--status` and require visible remote drafts plus canonical IDs.
+The Mac must keep every Substack topic-selection/AI-writing agent unloaded. Do
+not remove its GitHub token, Substack cookies, Keychain data, or Meta workers.
+For the stop-and-quarantine handoff, follow
+[`docs/MAC_SUBSTACK_V2_CUTOVER_HANDOFF.md`](docs/MAC_SUBSTACK_V2_CUTOVER_HANDOFF.md).
 
 ## Verification
 

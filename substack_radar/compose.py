@@ -31,7 +31,7 @@ Daily / Weekly 寫稿 driver。排程預設每天中午兩篇 Podcast Weekly 延
                         預設 everyone。
 
 LLM backend 架構：
-    SUBSTACK_COMPOSER_BACKEND=antigravity_cli,gemini,opencode,cerebras,groq
+    SUBSTACK_COMPOSER_BACKEND=codex_cli,claude_cli
         - 預設依序嘗試；可用逗號清單顯式覆寫
         - 實際成功的 provider/model 會寫入 generated_by，不預先假定是哪一個模型
         - WebSearch / WebFetch 關閉，寫手只使用已預抓素材
@@ -1199,12 +1199,17 @@ def _strip_title_subtitle_lines(md: str, *, title: str, subtitle: str) -> str:
 def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block: str = "") -> Path:
     """Write the reader-ready version that goes straight into Substack.
 
-    Public source links remain reader-facing. Model provenance and every image
-    authoring instruction stay in operational metadata, never this file.
+    Public source links and the actual provider/model remain reader-facing.
+    Image-search prompts and authoring instructions stay out of this file.
     """
     path = out_dir / "Article_Substack.md"
     body = strip_generated_footer(strip_production_instructions(draft.body_markdown))
+    provenance = (getattr(draft, "generated_by", None) or "").strip()
+    provenance_block = (
+        f"> 🧠 **產文路線**：{provenance}\n\n" if provenance else ""
+    )
     md = (
+        f"{provenance_block}"
         f"{sources_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
@@ -1667,7 +1672,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             extra_context={
                 "backends": os.getenv(
                     "SUBSTACK_COMPOSER_BACKEND",
-                    "antigravity_cli,gemini,opencode,cerebras,groq",
+                    "codex_cli,claude_cli",
                 ),
                 "fix_hint": "check the first configured backend's auth and CLI availability",
                 "source_title": raw_title,

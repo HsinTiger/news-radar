@@ -44,6 +44,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Optional, Type, TypeVar
@@ -481,6 +482,207 @@ async def _try_agy(
 # --------------------------------------------------------------------------
 
 CLAUDE_CLI_BIN = os.getenv("CLAUDE_CLI_BIN", "claude")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-latest")
+
+
+# --------------------------------------------------------------------------
+# Codex CLI path — primary long-form writer on the owner Windows machine.
+# --------------------------------------------------------------------------
+
+CODEX_CLI_BIN = os.getenv("CODEX_CLI_BIN", "codex")
+CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-latest")
+
+
+def _spawnable_cli_command(
+    configured: str,
+    *,
+    platform_name: Optional[str] = None,
+) -> Optional[tuple[str, ...]]:
+    """Resolve a CLI path that ``create_subprocess_exec`` can spawn directly.
+
+    On Windows, npm shims are commonly found as ``.CMD`` before a native
+    ``.exe``. PowerShell can launch the shim, but asyncio's exec transport
+    raises ``WinError 5``. Prefer the same-name executable when one exists.
+    """
+    path = shutil.which(configured)
+    if not path:
+        return None
+    if (platform_name or os.name) == "nt" and Path(path).suffix.lower() in {
+        ".cmd",
+        ".bat",
+    }:
+        stem = Path(path).stem.lower()
+        shim_root = Path(path).parent
+        # Codex's npm shim invokes node + codex.js. The WindowsApps codex.exe
+        # can be discoverable yet ACL-blocked, so follow the known shim target.
+        if stem == "codex":
+            node = shim_root / "node.exe"
+            script = (
+                shim_root
+                / "node_modules"
+                / "@openai"
+                / "codex"
+                / "bin"
+                / "codex.js"
+            )
+            if node.is_file() and script.is_file():
+                return (str(node), str(script))
+        # Claude's npm shim targets its package-local binary. A separate
+        # ``claude.exe`` on PATH may be an unrelated multi-call launcher.
+        if stem == "claude":
+            bundled = (
+                shim_root
+                / "node_modules"
+                / "@anthropic-ai"
+                / "claude-code"
+                / "bin"
+                / "claude.exe"
+            )
+            if bundled.is_file():
+                return (str(bundled),)
+        return None
+    return (path,)
+
+
+def _strict_response_schema(value: Any) -> Any:
+    """Return an OpenAI structured-output-compatible JSON Schema copy."""
+    if isinstance(value, list):
+        return [_strict_response_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    strict = {key: _strict_response_schema(item) for key, item in value.items()}
+    if strict.get("type") == "object" or "properties" in strict:
+        strict["additionalProperties"] = False
+        properties = strict.get("properties")
+        if isinstance(properties, dict):
+            # Structured outputs require every declared property to be listed.
+            # Optional values remain representable through a nullable schema.
+            strict["required"] = list(properties)
+    return strict
+
+
+def _codex_cli_available() -> bool:
+    return _spawnable_cli_command(CODEX_CLI_BIN) is not None
+
+
+async def _try_codex_cli(
+    *,
+    system: str,
+    prompt: str,
+    response_model: Type[T],
+    timeout_s: int,
+    disallowed_tools: Optional[tuple] = None,
+) -> LLMResult[T]:
+    """Run Codex non-interactively with a read-only sandbox and JSON schema."""
+    del disallowed_tools  # Codex receives no writable tools in read-only mode.
+    if not _codex_cli_available():
+        return LLMResult(
+            data=None,
+            provider="codex_cli",
+            model=CODEX_MODEL,
+            raw_error=f"`{CODEX_CLI_BIN}` not found on PATH",
+        )
+    command = _spawnable_cli_command(CODEX_CLI_BIN)
+    assert command is not None
+
+    full_prompt = (
+        f"{system.strip()}\n\n"
+        f"--- 任務素材 / USER PROMPT ---\n{prompt.strip()}\n\n"
+        "=== 最終輸出契約 ===\n"
+        "只輸出符合指定 JSON Schema 的文章物件；不要輸出 markdown fence、"
+        "思考過程、工具指令或任何 JSON 以外文字。"
+    )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="news-radar-codex-") as temp_dir:
+            temp_root = Path(temp_dir)
+            schema_path = temp_root / "response.schema.json"
+            output_path = temp_root / "last-message.json"
+            schema_path.write_text(
+                json.dumps(
+                    _strict_response_schema(response_model.model_json_schema()),
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            args = [
+                *command,
+                "exec",
+                "--model",
+                CODEX_MODEL,
+                "--sandbox",
+                "read-only",
+                "--ephemeral",
+                "--ignore-rules",
+                "--skip-git-repo-check",
+                "--color",
+                "never",
+                "--output-schema",
+                str(schema_path),
+                "--output-last-message",
+                str(output_path),
+                "-",
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=temp_dir,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(full_prompt.encode("utf-8")),
+                    timeout=timeout_s,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                return LLMResult(
+                    data=None,
+                    provider="codex_cli",
+                    model=CODEX_MODEL,
+                    raw_error=f"codex CLI timeout ({timeout_s}s)",
+                )
+
+            stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+            if proc.returncode != 0:
+                return LLMResult(
+                    data=None,
+                    provider="codex_cli",
+                    model=CODEX_MODEL,
+                    raw_error=(
+                        f"codex CLI exit={proc.returncode}; "
+                        f"stderr={stderr_text[:500]!r}; stdout={stdout_text[:500]!r}"
+                    ),
+                )
+
+            raw = (
+                output_path.read_text(encoding="utf-8")
+                if output_path.is_file()
+                else stdout_text
+            )
+            blob = _extract_json_blob(raw)
+            if blob is None:
+                return LLMResult(
+                    data=None,
+                    provider="codex_cli",
+                    model=CODEX_MODEL,
+                    raw_error=f"no JSON blob in codex output; first 300 chars: {raw[:300]!r}",
+                )
+            parsed = response_model.model_validate_json(blob)
+            return LLMResult(
+                data=parsed,
+                provider="codex_cli",
+                model=CODEX_MODEL,
+            )
+    except Exception as exc:
+        return LLMResult(
+            data=None,
+            provider="codex_cli",
+            model=CODEX_MODEL,
+            raw_error=f"codex CLI spawn/parse failed: {type(exc).__name__}: {exc}",
+        )
 
 # --- Minimal-context mode (2026-05-30, Optimization A) ----------------------
 # A trivial `-p` ping costs ~$0.03 / ~12K context tokens because the CLI loads
@@ -515,7 +717,7 @@ def _ensure_min_ctx_dir() -> Path:
 
 
 def _claude_cli_available() -> bool:
-    return shutil.which(CLAUDE_CLI_BIN) is not None
+    return _spawnable_cli_command(CLAUDE_CLI_BIN) is not None
 
 
 def _extract_json_blob(text: str) -> Optional[str]:
@@ -717,6 +919,8 @@ async def _try_claude_cli_once(
             data=None, provider="claude_cli", model=CLAUDE_CLI_BIN,
             raw_error=f"`{CLAUDE_CLI_BIN}` not found on PATH",
         )
+    command = _spawnable_cli_command(CLAUDE_CLI_BIN)
+    assert command is not None
 
     # ⚠️ Arg ordering matters: `--disallowedTools` is variadic (`<tools...>`),
     # so it must NOT sit immediately before the positional prompt or the parser
@@ -724,9 +928,10 @@ async def _try_claude_cli_once(
     # therefore emit all variadic / value flags first and keep the boolean
     # `--no-session-persistence` as the last option before the positional prompt.
     args = [
-        CLAUDE_CLI_BIN,
+        *command,
         "-p",
         "--output-format", "json",
+        "--model", CLAUDE_MODEL,
     ]
     if disallowed_tools:
         args += ["--disallowedTools", ",".join(disallowed_tools)]
@@ -811,7 +1016,7 @@ async def _try_claude_cli_once(
     # 從 envelope 抓 token / cost / 實際模型供 caller log + provenance。
     in_tok = out_tok = 0
     cost = 0.0
-    real_model = CLAUDE_CLI_BIN
+    real_model = CLAUDE_MODEL
     if isinstance(envelope, dict):
         usage = envelope.get("usage") or {}
         if isinstance(usage, dict):
@@ -829,7 +1034,7 @@ async def _try_claude_cli_once(
                     key=lambda kv: int((kv[1] or {}).get("output_tokens", 0) or 0),
                 )[0]
             except Exception:
-                real_model = next(iter(mu.keys()), CLAUDE_CLI_BIN)
+                real_model = next(iter(mu.keys()), CLAUDE_MODEL)
         elif envelope.get("model"):
             real_model = str(envelope["model"])
 
@@ -1281,6 +1486,18 @@ async def call_for_json(
                 print(f"[llm_brain] ℹ️ `{CLAUDE_CLI_BIN}` 不在 PATH，略過 claude_cli。")
                 continue
             result = await _try_claude_cli(
+                system=system,
+                prompt=prompt,
+                response_model=response_model,
+                timeout_s=timeout_s,
+                disallowed_tools=disallowed_tools,
+            )
+
+        elif name == "codex_cli":
+            if not _codex_cli_available():
+                print(f"[llm_brain] ℹ️ `{CODEX_CLI_BIN}` 不在 PATH，略過 codex_cli。")
+                continue
+            result = await _try_codex_cli(
                 system=system,
                 prompt=prompt,
                 response_model=response_model,

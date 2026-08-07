@@ -68,7 +68,10 @@ class SubstackDraft(BaseModel):
     )
     generated_by: SkipJsonSchema[Optional[str]] = Field(
         default=None,
-        description="（非 LLM 欄位）pipeline 在生成後記錄的模型 provenance；不得進入讀者正文。",
+        description=(
+            "（非 LLM 欄位）pipeline 在生成後記錄的實際 provider/model；"
+            "由 file writer 以 reader-facing provenance 寫入，LLM 不得自行填寫。"
+        ),
     )
 
     # 2026-05-30: truncate overlong title/subtitle BEFORE the max_length check, so a
@@ -96,7 +99,6 @@ class SubstackDraft(BaseModel):
 # --------------------------------------------------------------------------
 
 _PRODUCTION_MARKERS = (
-    "產文路線",
     "🖼 視覺位置",
     "🔍 Path B",
     "🎨 Path C",
@@ -146,10 +148,12 @@ def strip_production_instructions(markdown: str) -> str:
                 continue
             skipping_inline_visual = False
 
+        if "產文路線" in compact and "發布前刪" in compact:
+            continue
+
         if any(
             marker in compact
             for marker in (
-                "產文路線",
                 "🔍 Path B",
                 "🎨 Path C",
                 "chart_prompt",
@@ -685,18 +689,27 @@ def _build_user_prompt(
 # controls order; the successful provider/model is recorded on the draft.
 # WebSearch/WebFetch remain disabled regardless of route.
 SUBSTACK_BACKEND = os.getenv(
-    "SUBSTACK_COMPOSER_BACKEND", "antigravity_cli,gemini,opencode,cerebras,groq"
+    "SUBSTACK_COMPOSER_BACKEND", "codex_cli,claude_cli"
 ).lower()
 
 
-_KNOWN_BACKENDS = {"antigravity_cli", "claude_cli", "gemini_cli", "gemini", "opencode", "groq", "cerebras"}
+_KNOWN_BACKENDS = {
+    "codex_cli",
+    "antigravity_cli",
+    "claude_cli",
+    "gemini_cli",
+    "gemini",
+    "opencode",
+    "groq",
+    "cerebras",
+}
 
 
 def _resolve_backends() -> Optional[tuple]:
     """Map env-var string → call_for_json `backends` tuple (按序嘗試).
 
     Supports a comma-separated chain, for example
-    ``SUBSTACK_COMPOSER_BACKEND=antigravity_cli,gemini``.
+    ``SUBSTACK_COMPOSER_BACKEND=codex_cli,claude_cli``.
     """
     # 逗號清單 → tuple（最彈性、最直白）
     if "," in SUBSTACK_BACKEND:
@@ -705,17 +718,18 @@ def _resolve_backends() -> Optional[tuple]:
             return chain
     if SUBSTACK_BACKEND in ("default", "auto", "fallback"):
         # Compatibility alias retained for older operator environments.
-        return ("gemini_cli", "gemini")
+        return ("codex_cli", "claude_cli")
     if SUBSTACK_BACKEND == "claude_cli":
-        # 顯式要 claude 才用（手動 override）；仍掛 gemini 備援。
-        return ("claude_cli", "gemini_cli", "gemini")
+        # A single-backend override stays single-backend. Gemini is deliberately
+        # absent from the Windows editorial writer contract.
+        return ("claude_cli",)
     if SUBSTACK_BACKEND in _KNOWN_BACKENDS:  # 強制單一後端
         return (SUBSTACK_BACKEND,)
     print(
         f"[SubstackComposer] ⚠️ Unknown SUBSTACK_COMPOSER_BACKEND={SUBSTACK_BACKEND!r}; "
-        f"defaulting to gemini_cli→gemini (no claude)."
+        f"defaulting to codex_cli→claude_cli."
     )
-    return ("gemini_cli", "gemini")
+    return ("codex_cli", "claude_cli")
 
 
 def describe_route(provider: str, model: str) -> str:
@@ -739,6 +753,8 @@ def describe_route(provider: str, model: str) -> str:
         if m.startswith("claude-"):
             return f"原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 {m}"
         return f"Claude CLI · 模型 {m}"
+    if provider == "codex_cli":
+        return f"Codex CLI · 模型 {m}"
     if provider == "gemini_cli":
         return f"Gemini CLI (Google AI Pro) · 模型 {m}"
     if provider in ("gemini", "groq", "cerebras"):

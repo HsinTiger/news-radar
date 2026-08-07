@@ -42,6 +42,165 @@ class _Demo(BaseModel):
     score: float
 
 
+def test_windows_cli_resolver_invokes_codex_npm_target_without_cmd(monkeypatch):
+    def fake_which(name):
+        return {
+            "codex": r"C:\\tools\\codex.CMD",
+        }.get(name)
+
+    monkeypatch.setattr(llm_brain.shutil, "which", fake_which)
+    monkeypatch.setattr(llm_brain.Path, "is_file", lambda _path: True)
+
+    assert llm_brain._spawnable_cli_command("codex", platform_name="nt") == (
+        r"C:\tools\node.exe",
+        r"C:\tools\node_modules\@openai\codex\bin\codex.js",
+    )
+
+
+def test_codex_response_schema_is_strict_for_nested_objects():
+    raw = {
+        "type": "object",
+        "properties": {
+            "outer": {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            }
+        },
+    }
+
+    strict = llm_brain._strict_response_schema(raw)
+
+    assert strict["additionalProperties"] is False
+    assert strict["required"] == ["outer"]
+    assert strict["properties"]["outer"]["additionalProperties"] is False
+    assert strict["properties"]["outer"]["required"] == ["value"]
+
+
+@pytest.mark.asyncio
+async def test_codex_cli_primary_falls_back_to_claude(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(llm_brain, "_codex_cli_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: True)
+
+    async def fake_codex(**_kwargs):
+        calls.append("codex_cli")
+        return LLMResult(
+            data=None,
+            provider="codex_cli",
+            model="gpt-latest",
+            raw_error="primary unavailable",
+        )
+
+    async def fake_claude(**_kwargs):
+        calls.append("claude_cli")
+        return LLMResult(
+            data=_Demo(name="fallback", score=0.9),
+            provider="claude_cli",
+            model="claude-latest",
+        )
+
+    monkeypatch.setattr(llm_brain, "_try_codex_cli", fake_codex)
+    monkeypatch.setattr(llm_brain, "_try_claude_cli", fake_claude)
+
+    result = await call_for_json(
+        system="sys",
+        prompt="p",
+        response_model=_Demo,
+        backends=("codex_cli", "claude_cli"),
+    )
+
+    assert calls == ["codex_cli", "claude_cli"]
+    assert result.data is not None
+    assert result.data.name == "fallback"
+    assert result.provider == "claude_cli"
+    assert result.model == "claude-latest"
+
+
+@pytest.mark.asyncio
+async def test_try_codex_cli_uses_gpt_latest_and_schema(monkeypatch):
+    captured = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self, stdin):
+            captured["stdin"] = stdin.decode("utf-8")
+            schema_path = captured["args"][
+                captured["args"].index("--output-schema") + 1
+            ]
+            from pathlib import Path
+
+            captured["schema"] = json.loads(
+                Path(schema_path).read_text(encoding="utf-8")
+            )
+            output_path = captured["args"][
+                captured["args"].index("--output-last-message") + 1
+            ]
+
+            Path(output_path).write_text(
+                '{"name":"codex","score":0.8}', encoding="utf-8"
+            )
+            return b"", b""
+
+    async def fake_spawn(*args, **kwargs):
+        captured["args"] = list(args)
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(llm_brain, "_codex_cli_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "CODEX_MODEL", "gpt-latest")
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_spawn)
+
+    result = await llm_brain._try_codex_cli(
+        system="sys",
+        prompt="write",
+        response_model=_Demo,
+        timeout_s=10,
+    )
+
+    assert result.data is not None
+    assert result.data.name == "codex"
+    assert result.provider == "codex_cli"
+    assert result.model == "gpt-latest"
+    assert captured["args"][captured["args"].index("--model") + 1] == "gpt-latest"
+    assert "--output-schema" in captured["args"]
+    assert captured["schema"]["additionalProperties"] is False
+    assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
+
+
+@pytest.mark.asyncio
+async def test_try_claude_cli_requests_claude_latest(monkeypatch):
+    captured = {}
+    envelope = {
+        "type": "result",
+        "result": '{"name":"claude","score":0.7}',
+    }
+    fake_proc = MagicMock()
+    fake_proc.returncode = 0
+    fake_proc.communicate = AsyncMock(
+        return_value=(json.dumps(envelope).encode("utf-8"), b"")
+    )
+
+    async def fake_spawn(*args, **kwargs):
+        captured["args"] = list(args)
+        return fake_proc
+
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "CLAUDE_MODEL", "claude-latest")
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_spawn)
+
+    result = await llm_brain._try_claude_cli_once(
+        system="sys",
+        prompt="write",
+        response_model=_Demo,
+        timeout_s=10,
+    )
+
+    assert result.data is not None
+    assert captured["args"][captured["args"].index("--model") + 1] == "claude-latest"
+
+
 # ----------------------------------------------------------------------
 # _extract_json_blob: 各種 claude 輸出樣式
 # ----------------------------------------------------------------------

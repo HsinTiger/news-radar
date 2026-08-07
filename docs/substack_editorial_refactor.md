@@ -25,9 +25,10 @@
 - Weekly：2800–4200 個中文字，12–16 分鐘；至少兩種來源視角、最強反方、證據缺口與可觀測的後續訊號；company 文可使用公司拆解 lens，但不整包載入外部 skills。
 - Deep source bundle、podcast、company 預設走 Weekly；morning/evening 預設走 Daily；CLI 可顯式覆寫。
 - Writer 不產生 inline image marker、搜尋指令、chart prompt、footer 或訂閱 CTA。封面仍由既有 deterministic cover path 負責。
-- Writer schema 僅有 `title / subtitle / body_markdown`；模型 provenance 只留在 metadata。
+- Writer schema 僅有 `title / subtitle / body_markdown`；實際模型 provenance 由 pipeline 根據成功回應寫入，模型不能自行宣稱。
 - `Article_Substack.md` 與遠端 `from_markdown()` 前都套用 reader-ready sanitizer；發現殘留製程標記即 fail closed。
-- Reader-ready 草稿不含產文路線、內文圖片位置、Path B/C、生圖 prompt、封面 prompt 或 editor 註解。已產生並上傳的 `cover.png` 保留。
+- Reader-ready 草稿保留四項讀者價值：實際產文路線／模型、可點擊取材來源、底部訂閱 CTA，以及獨立的瑞瑞／達達 `cover.png`。
+- Reader-ready 草稿不含「發布前刪此行」、內文圖片位置、Path B/C、搜尋詞、生圖 prompt、封面 prompt 或 editor 註解。
 - Fast submission worker 必須先 fast-forward `origin/main`；無法同步時不使用舊 writer 產稿。
 - 排程目標是每天 12:00 啟動一個 batch，依序完成兩篇不同 Podcast 延伸文；候選僅限最近 7 天。週日 09:00 在同一工作內先選公司再完成一篇 Weekly；owner submission immediate/hourly lanes 保持不變。
 - 所有 scheduled editorial worker 必須共用 Release lease、pull/push 與 remote-draft evidence contract。
@@ -61,9 +62,10 @@ editor-only deletion note into a real Substack draft.
 
 The corrected invariant is simpler: a draft body is a reader product, not a
 manufacturing worksheet. Cover art is a separate deterministic artifact. The
-writer spends tokens only on title, subtitle, and article body; provenance is
-operational metadata; deterministic sanitization runs before writing and again
-immediately before the remote draft mutation.
+writer spends tokens only on title, subtitle, and article body; the pipeline
+adds truthful route/model provenance, public sources, and the subscription CTA.
+Deterministic sanitization runs before writing and again immediately before the
+remote draft mutation.
 
 Local closure evidence:
 

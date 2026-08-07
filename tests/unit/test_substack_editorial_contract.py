@@ -128,6 +128,7 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
         title="把製程留在後台",
         subtitle="讀者只需要文章，不需要知道文章怎麼生產",
         body_markdown=(
+            "🧠 產文路線：legacy · 模型 old（發布前刪此行）\n\n"
             "第一段是讀者需要的內容。\n\n"
             "🖼 視覺位置 · 舊內文插圖\n\n"
             "場景描述：這是製程資料。\n\n"
@@ -136,16 +137,27 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
             "第二段仍然是讀者需要的內容。"
         ),
     )
-    draft.generated_by = "antigravity_cli · internal provenance"
+    draft.generated_by = "Codex CLI · 模型 gpt-latest"
 
-    article = compose.write_article_substack_md(tmp_path, draft)
+    article = compose.write_article_substack_md(
+        tmp_path,
+        draft,
+        sources_block=(
+            "> 📚 **本文取材**（公開來源、可點擊查證）\n"
+            "> 主來源 — [測試訪談](https://example.com/interview)\n\n"
+        ),
+    )
     compose.append_footer_block(article_md_path=article)
     text = article.read_text(encoding="utf-8")
 
     assert "第一段是讀者需要的內容" in text
     assert "第二段仍然是讀者需要的內容" in text
+    assert "> 🧠 **產文路線**：Codex CLI · 模型 gpt-latest" in text
+    assert text.count("產文路線") == 1
+    assert "發布前刪此行" not in text
+    assert "本文取材" in text and "https://example.com/interview" in text
+    assert "點此訂閱 → 不錯過下一篇拆解" in text
     for forbidden in (
-        "產文路線",
         "視覺位置",
         "Path B",
         "Path C",
@@ -155,6 +167,48 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
         "發布前刪",
     ):
         assert forbidden not in text
+
+
+def test_windows_writer_backend_is_codex_then_claude(monkeypatch) -> None:
+    monkeypatch.setattr(composer, "SUBSTACK_BACKEND", "codex_cli,claude_cli")
+
+    assert composer._resolve_backends() == ("codex_cli", "claude_cli")
+
+
+def test_single_claude_override_never_reintroduces_gemini(monkeypatch) -> None:
+    monkeypatch.setattr(composer, "SUBSTACK_BACKEND", "claude_cli")
+
+    assert composer._resolve_backends() == ("claude_cli",)
+
+
+def test_reader_artifacts_keep_character_cover_without_cover_prompt(
+    monkeypatch, tmp_path
+) -> None:
+    captured = {}
+
+    def fake_character_cover(**kwargs):
+        captured.update(kwargs)
+        cover = kwargs["output_dir"] / "cover.png"
+        cover.write_bytes(b"\x89PNG\r\n")
+        return cover
+
+    monkeypatch.setattr(
+        "substack_radar.character_cover.render_character_cover",
+        fake_character_cover,
+    )
+
+    cover = compose.render_substack_cover(
+        title="對談留下的真正問題",
+        subtitle="從一場訪談延伸出可獨立成立的判斷",
+        topic_category="ai_model",
+        output_dir=tmp_path,
+        mode="podcast",
+    )
+
+    assert cover == tmp_path / "cover.png"
+    assert cover.is_file()
+    assert captured["mode"] == "podcast"
+    assert captured["character"] is None  # mode selects 達達; writer does not prompt it
 
 
 def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> None:
