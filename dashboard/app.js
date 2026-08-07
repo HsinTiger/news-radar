@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20260807-research-writer-v4";
+} from "./ops-core.mjs?v=20260807-research-writer-v5";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
@@ -179,7 +179,7 @@ async function loadPublicData() {
   if (healthResult.status === "fulfilled") state.publicHealth = healthResult.value;
   if (workflowResult.status === "fulfilled") state.workflows = normalizeWorkflows(workflowResult.value);
   renderRuntime();
-  renderSubmissionMode();
+  updateSubmissionUi();
   renderWorkflows();
   renderAttention();
   if (healthResult.status === "rejected") {

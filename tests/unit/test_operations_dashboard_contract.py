@@ -44,7 +44,8 @@ def test_public_runtime_refreshes_submission_capabilities() -> None:
         "async function loadPrivateData", 1
     )[0]
 
-    assert "renderSubmissionMode();" in load_public
+    assert "updateSubmissionUi();" in load_public
+    assert "renderSubmissionMode" not in app
 
 
 def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:
