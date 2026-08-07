@@ -8,11 +8,14 @@ clear publisher.  Fewer than five usable extension sources fails closed.
 
 from __future__ import annotations
 
+import html
+import json
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, Literal, Sequence
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from typing import Callable, Iterable, Literal, Sequence
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +24,8 @@ MIN_RESEARCH_SOURCES = 5
 MAX_RESEARCH_SOURCES = 10
 MIN_EXCERPT_CHARS = 120
 MAX_EXCERPT_CHARS = 2600
+MAX_SOCIAL_EXCERPT_CHARS = 1600
+MIN_SOCIAL_DIRECT_CHARS = 120
 
 
 class InsufficientResearchError(RuntimeError):
@@ -48,6 +53,48 @@ class ResearchSource(BaseModel):
         if not url.startswith(("https://", "http://")):
             raise ValueError("research source must use http(s)")
         return url
+
+
+class SocialSignal(BaseModel):
+    """Public social material that remains below the evidence tier."""
+
+    platform: Literal["reddit", "x"]
+    title: str = Field(min_length=3, max_length=240)
+    url: str = Field(min_length=10, max_length=2000)
+    excerpt: str = Field(default="", max_length=MAX_SOCIAL_EXCERPT_CHARS)
+    access_method: Literal["public_search", "public_page", "public_oembed"]
+    evidence_status: Literal["attributed_claim", "discovery_only"]
+
+    @field_validator("title", "excerpt", mode="before")
+    @classmethod
+    def _clean_social_text(cls, value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _clean_social_url(cls, value: object) -> str:
+        url = _canonical_url(str(value or ""))
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("social signal must use http(s)")
+        return url
+
+
+ReachHealth = Literal["available_public", "lead_only", "unavailable", "degraded"]
+
+
+class SocialReachReport(BaseModel):
+    """Signals plus health and durable-source follow-up queries."""
+
+    signals: list[SocialSignal] = Field(default_factory=list)
+    health: dict[Literal["reddit", "x"], ReachHealth]
+    upstream_queries: list[str] = Field(default_factory=list, max_length=6)
+
+
+class EditorialResearchBundle(BaseModel):
+    """Validated evidence and non-evidence social context kept separate."""
+
+    evidence_sources: list[ResearchSource]
+    social_reach: SocialReachReport
 
 
 _TRACKING_KEYS = {
@@ -126,6 +173,204 @@ _LOW_SIGNAL_DOMAINS = (
     "facebook.com",
     "x.com",
 )
+
+
+def _social_platform(url: str) -> Literal["reddit", "x"] | None:
+    host = urlsplit(url).netloc.lower().removeprefix("www.")
+    if host.endswith("reddit.com"):
+        return "reddit"
+    if host in {"x.com", "twitter.com", "mobile.twitter.com"}:
+        return "x"
+    return None
+
+
+def _canonical_social_url(url: str, platform: Literal["reddit", "x"]) -> str:
+    canonical = _canonical_url(url)
+    parts = urlsplit(canonical)
+    host = "reddit.com" if platform == "reddit" else "x.com"
+    return urlunsplit(("https", host, parts.path, parts.query, "")).rstrip("/")
+
+
+def _public_read_url(url: str, platform: Literal["reddit", "x"]) -> str:
+    if platform == "reddit":
+        parts = urlsplit(url)
+        return urlunsplit(("https", "old.reddit.com", parts.path, parts.query, ""))
+    return url
+
+
+def _read_x_oembed(url: str) -> str:
+    """Read public X post text through X's official no-cookie oEmbed endpoint."""
+    endpoint = (
+        "https://publish.twitter.com/oembed?omit_script=1&dnt=1&url="
+        + quote(url, safe="")
+    )
+    request = Request(endpoint, headers={"User-Agent": "news-radar-social-reach/1.0"})
+    with urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    raw_html = str(payload.get("html") or "")
+    text = re.sub(r"<[^>]+>", " ", raw_html)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def _read_reddit_json(url: str) -> str:
+    """Read a public Reddit post through its credential-free JSON surface."""
+    match = re.search(r"/comments/([a-z0-9]+)/", url, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    endpoint = f"https://www.reddit.com/comments/{match.group(1)}.json?raw_json=1"
+    request = Request(endpoint, headers={"User-Agent": "news-radar-social-reach/1.0"})
+    with urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    post = payload[0]["data"]["children"][0]["data"]
+    author = str(post.get("author") or "unknown")
+    title = str(post.get("title") or "")
+    body = str(post.get("selftext") or "")
+    return f"Reddit u/{author}: {title}\n\n{body}".strip()
+
+
+def _default_social_reader(url: str) -> str:
+    platform = _social_platform(url)
+    if platform == "x":
+        try:
+            return _read_x_oembed(url)
+        except Exception:
+            return ""
+    if platform == "reddit":
+        try:
+            direct = _read_reddit_json(url)
+            if len(direct) >= MIN_SOCIAL_DIRECT_CHARS:
+                return direct
+        except Exception:
+            pass
+    try:
+        from scripts.submit_source import _fetch_page_text
+
+        return (_fetch_page_text(url) or "").strip()
+    except Exception:
+        return ""
+
+
+def _default_social_search(query: str, max_results: int = 4) -> Iterable[dict]:
+    try:
+        from ddgs import DDGS
+    except Exception:
+        return []
+    return DDGS().text(query, max_results=max_results) or []
+
+
+def collect_social_reach(
+    queries: Sequence[str],
+    *,
+    searcher: Callable[[str, int], Iterable[dict]] | None = None,
+    reader: Callable[[str], str | None] | None = None,
+    max_per_platform: int = 2,
+) -> SocialReachReport:
+    """Collect public X/Reddit signals without credentials or anti-bot bypass.
+
+    Directly readable public text becomes an attributed claim, never independent
+    corroboration. Search snippets remain discovery-only and may only generate a
+    follow-up query for durable sources.
+    """
+    search = searcher or _default_social_search
+    read = reader or _default_social_reader
+    signals: list[SocialSignal] = []
+    health: dict[Literal["reddit", "x"], ReachHealth] = {
+        "reddit": "unavailable",
+        "x": "unavailable",
+    }
+    seen: set[str] = set()
+
+    for platform, site_query in (("reddit", "site:reddit.com"), ("x", "site:x.com")):
+        platform_signals: list[SocialSignal] = []
+        search_failed = False
+        for base_query in [str(item).strip() for item in queries if str(item).strip()][:3]:
+            if len(platform_signals) >= max_per_platform:
+                break
+            try:
+                results = search(f"{site_query} {base_query}", 4)
+            except Exception:
+                search_failed = True
+                continue
+            for result in results or []:
+                raw_url = str(result.get("href") or result.get("url") or "")
+                detected = _social_platform(raw_url)
+                if detected != platform:
+                    continue
+                path = urlsplit(raw_url).path.lower()
+                if platform == "reddit" and "/comments/" not in path:
+                    continue
+                if platform == "x" and "/status/" not in path:
+                    continue
+                url = _canonical_social_url(raw_url, platform)
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                title = re.sub(r"\s+", " ", str(result.get("title") or "")).strip()
+                snippet = re.sub(r"\s+", " ", str(result.get("body") or "")).strip()
+                try:
+                    direct = re.sub(
+                        r"\s+",
+                        " ",
+                        str(read(_public_read_url(url, platform)) or ""),
+                    ).strip()
+                except Exception:
+                    direct = ""
+                readable = len(direct) >= MIN_SOCIAL_DIRECT_CHARS
+                platform_signals.append(
+                    SocialSignal(
+                        platform=platform,
+                        title=title or url,
+                        url=url,
+                        excerpt=(direct if readable else snippet)[:MAX_SOCIAL_EXCERPT_CHARS],
+                        access_method=(
+                            "public_oembed"
+                            if readable and platform == "x"
+                            else "public_page"
+                            if readable
+                            else "public_search"
+                        ),
+                        evidence_status=(
+                            "attributed_claim" if readable else "discovery_only"
+                        ),
+                    )
+                )
+                if len(platform_signals) >= max_per_platform:
+                    break
+
+        signals.extend(platform_signals)
+        if any(item.evidence_status == "attributed_claim" for item in platform_signals):
+            health[platform] = "available_public"
+        elif platform_signals:
+            health[platform] = "lead_only"
+        elif search_failed:
+            health[platform] = "degraded"
+
+    upstream_queries: list[str] = []
+    for signal in signals:
+        query = re.sub(r"\s+", " ", signal.title).strip(" -|—")
+        query = re.sub(
+            r"^r/[^:]+\s+on\s+Reddit:\s*",
+            "",
+            query,
+            flags=re.IGNORECASE,
+        )
+        if query.lower() in {"x.com", "twitter.com"} and signal.excerpt:
+            query = re.split(
+                r"(?<=[.!?。！？])\s+",
+                signal.excerpt,
+                maxsplit=1,
+            )[0][:220].strip()
+        if query.lower().startswith(("x.com/", "twitter.com/")):
+            continue
+        if query and query not in upstream_queries:
+            upstream_queries.append(query)
+        if len(upstream_queries) >= 4:
+            break
+    return SocialReachReport(
+        signals=signals,
+        health=health,
+        upstream_queries=upstream_queries,
+    )
 
 
 def _role_for(url: str, title: str) -> Literal["official", "data", "analysis", "countercase"]:
@@ -283,6 +528,30 @@ def build_research_pack(
     return validate_research_sources(accepted)
 
 
+def build_research_bundle(
+    queries: Sequence[str],
+    *,
+    primary_url: str | None = None,
+    seed_sources: Sequence[dict] | None = None,
+) -> EditorialResearchBundle:
+    """Follow social leads, then build the independent durable evidence pack."""
+    social_reach = collect_social_reach(queries)
+    expanded_queries: list[str] = []
+    for query in [*queries, *social_reach.upstream_queries]:
+        clean = re.sub(r"\s+", " ", str(query or "")).strip()
+        if clean and clean not in expanded_queries:
+            expanded_queries.append(clean)
+    evidence_sources = build_research_pack(
+        expanded_queries,
+        primary_url=primary_url,
+        seed_sources=seed_sources,
+    )
+    return EditorialResearchBundle(
+        evidence_sources=evidence_sources,
+        social_reach=social_reach,
+    )
+
+
 def prompt_block(sources: Sequence[ResearchSource]) -> str:
     """Render a compact, attributable evidence pack for the final writer."""
     validated = validate_research_sources(sources)
@@ -296,3 +565,41 @@ def prompt_block(sources: Sequence[ResearchSource]) -> str:
             f"Readable evidence: {source.excerpt}"
         )
     return "\n\n".join(blocks)
+
+
+def social_prompt_block(report: SocialReachReport | dict | None) -> str:
+    """Render social context with an explicit non-evidence boundary."""
+    reach = (
+        report
+        if isinstance(report, SocialReachReport)
+        else SocialReachReport.model_validate(
+            report
+            or {
+                "signals": [],
+                "health": {"reddit": "unavailable", "x": "unavailable"},
+                "upstream_queries": [],
+            }
+        )
+    )
+    lines = [
+        "=== 社群觸達（低於證據層）===",
+        f"平台健康：Reddit={reach.health['reddit']}；X={reach.health['x']}",
+        "attributed_claim：已讀到公開原文，只能具名呈現為某人或社群的主張，"
+        "並附原始連結；它不能證明自己，也不能取代上方 5–10 個延伸證據。",
+        "discovery_only：只有搜尋線索，不得引用、改寫成事實或暗示已讀原文；"
+        "只能用來理解為何要追查某個問題。",
+        "按讚、轉貼、留言數不等於真實性或重要性，不得當成論證權重。",
+    ]
+    if not reach.signals:
+        lines.append("本次沒有可用社群訊號；不要補寫或假裝看過任何貼文。")
+    for index, signal in enumerate(reach.signals, 1):
+        lines.extend(
+            (
+                f"[S{index}] {signal.platform.upper()} / {signal.evidence_status}",
+                f"Title: {signal.title}",
+                f"URL: {signal.url}",
+                f"Access: {signal.access_method}",
+                f"Content: {signal.excerpt or '（只有網址與標題）'}",
+            )
+        )
+    return "\n".join(lines)

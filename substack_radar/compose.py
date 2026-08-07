@@ -103,7 +103,7 @@ from substack_radar.composer import (  # noqa: E402
 )
 from substack_radar.editorial_research import (  # noqa: E402
     InsufficientResearchError,
-    build_research_pack,
+    build_research_bundle,
 )
 from substack_radar.draft_receipts import (  # noqa: E402
     clear_remote_receipt,
@@ -1716,6 +1716,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     )
     research_brief = None
     research_sources = []
+    social_reach = None
     if mode in {"podcast", "company"}:
         if getattr(args, "no_reports", False):
             error_msg = "深度題型要求 5–10 個延伸來源；--no-reports 不再允許產生假深度稿"
@@ -1740,12 +1741,14 @@ async def _run_inner(args: argparse.Namespace) -> int:
             return 6
         print("[EditorialResearch] stage 2/2 搜尋並讀取 5–10 個延伸證據源…")
         try:
-            research_sources = await asyncio.to_thread(
-                build_research_pack,
+            research_bundle = await asyncio.to_thread(
+                build_research_bundle,
                 research_brief.research_queries,
                 primary_url=source_url,
                 seed_sources=used_reports,
             )
+            research_sources = research_bundle.evidence_sources
+            social_reach = research_bundle.social_reach
         except InsufficientResearchError as exc:
             print(f"[EditorialResearch] ❌ {exc}")
             notify_substack_failure(
@@ -1765,9 +1768,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
             item.model_dump(exclude={"excerpt"}) for item in research_sources
         ]
         source["research_source_count"] = len(research_sources)
+        source["social_reach"] = social_reach.model_dump() if social_reach else None
         print(
             f"[EditorialResearch] ✅ form={research_brief.article_form} "
-            f"sources={len(research_sources)}"
+            f"sources={len(research_sources)} "
+            f"social={social_reach.health if social_reach else {}}"
         )
 
     # 2) Final writer. Deep modes receive the digest/evidence pack, not the full
@@ -1782,6 +1787,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         has_deep_bundle=bool(getattr(args, "bundle", None)),
         research_brief=research_brief,
         research_sources=research_sources,
+        social_reach=social_reach,
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")

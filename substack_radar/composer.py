@@ -754,8 +754,13 @@ def _build_deep_writer_prompt(
     profile: EditorialProfile,
     research_brief: EditorialResearchBrief,
     research_sources: Sequence[Any],
+    social_reach: Any = None,
 ) -> str:
-    from substack_radar.editorial_research import prompt_block, validate_research_sources
+    from substack_radar.editorial_research import (
+        prompt_block,
+        social_prompt_block,
+        validate_research_sources,
+    )
 
     sources = validate_research_sources(research_sources)
     form_contract = _ARTICLE_FORM_CONTRACTS[research_brief.article_form]
@@ -776,6 +781,7 @@ def _build_deep_writer_prompt(
         f"尚未解決：\n{tensions}\n\n"
         "=== 延伸證據（5–10 個去重、可點擊來源）===\n"
         f"{prompt_block(sources)}\n\n"
+        f"{social_prompt_block(social_reach)}\n\n"
         "=== 作者判斷邊界 ===\n"
         f"核心問題：{research_brief.core_question}\n"
         f"作者假說：{research_brief.author_hypothesis}\n"
@@ -824,6 +830,7 @@ def _build_user_prompt(
     profile: EditorialProfile,
     research_brief: Optional[EditorialResearchBrief] = None,
     research_sources: Sequence[Any] = (),
+    social_reach: Any = None,
 ) -> str:
     if research_brief is not None:
         return _build_deep_writer_prompt(
@@ -834,6 +841,7 @@ def _build_user_prompt(
             profile=profile,
             research_brief=research_brief,
             research_sources=research_sources,
+            social_reach=social_reach,
         )
     word_floor, word_cap = word_range_for(profile)
     mode_hint = {
@@ -1046,6 +1054,7 @@ async def compose_substack_article(
     has_deep_bundle: bool = False,
     research_brief: Optional[EditorialResearchBrief] = None,
     research_sources: Sequence[Any] = (),
+    social_reach: Any = None,
     temperature: float = 0.4,
 ) -> Optional[SubstackDraft]:
     """產出單篇 Substack 長文草稿。
@@ -1079,6 +1088,7 @@ async def compose_substack_article(
             profile=profile,
             research_brief=research_brief,
             research_sources=research_sources,
+            social_reach=social_reach,
         )
     except Exception as exc:
         print(f"[SubstackComposer] ❌ 研究包未通過，拒絕產稿：{exc}")
