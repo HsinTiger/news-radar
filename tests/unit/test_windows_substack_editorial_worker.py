@@ -38,6 +38,8 @@ def test_windows_writer_model_contract_is_gpt_then_claude(monkeypatch) -> None:
     assert env["CODEX_MODEL"] == "gpt-latest"
     assert env["CLAUDE_MODEL"] == "claude-latest"
     assert env["SUBSTACK_AUTO_DRAFT"] == "0"
+    assert env["PYTHONUTF8"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
 
 
 def test_windows_weekly_selects_company_then_writes() -> None:

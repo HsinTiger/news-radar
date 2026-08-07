@@ -28,6 +28,11 @@ def writer_environment() -> dict[str, str]:
     env.setdefault("SUBSTACK_COMPOSER_BACKEND", "codex_cli,claude_cli")
     env.setdefault("CODEX_MODEL", "gpt-latest")
     env.setdefault("CLAUDE_MODEL", "claude-latest")
+    # Windows Store Python inherits a CP950 console by default. The editorial
+    # pipeline logs Unicode markers and Chinese paths, so force UTF-8 for every
+    # child process before harvest or composition starts.
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     # This host currently owns writing only.  Never infer remote-write authority.
     env["SUBSTACK_AUTO_DRAFT"] = "0"
     return env

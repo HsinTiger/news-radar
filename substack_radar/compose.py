@@ -61,7 +61,7 @@ import shutil
 import sqlite3
 import sys
 import unicodedata
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -492,6 +492,104 @@ def pick_evening_inspiration() -> Optional[Tuple[str, str, str, str]]:
     return _pick_top_from_pool(window_days=7, label="EveningPick")
 
 
+def flush_stale_podcast_candidates(window_days: int = 7) -> int:
+    """Quarantine and remove stale Podcast-only candidates from active state.
+
+    Historical Substack evidence and sources referenced by social drafts remain
+    in ``news_items``. Only unused, unreferenced rows outside the active window
+    move into a recoverable JSON payload table in the same canonical database.
+    """
+    if not NEWS_DB_PATH.exists():
+        return 0
+    conn = sqlite3.connect(str(NEWS_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    try:
+        news_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(news_items)")
+        }
+        evidence_columns = (
+            "substack_written_at",
+            "substack_draft_id",
+            "substack_drafted_at",
+            "substack_post_id",
+            "substack_post_url",
+            "substack_published_at",
+        )
+        conditions = [
+            "feed_name = 'YouTube Podcast'",
+            "published_at < datetime('now', ?)",
+        ]
+        conditions.extend(
+            f"{column} IS NULL"
+            for column in evidence_columns
+            if column in news_columns
+        )
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "drafts" in tables:
+            draft_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(drafts)")
+            }
+            if "news_id" in draft_columns:
+                conditions.append(
+                    "NOT EXISTS (SELECT 1 FROM drafts d WHERE d.news_id = news_items.id)"
+                )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS substack_podcast_quarantine(
+              source_id TEXT PRIMARY KEY,
+              quarantined_at TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              source_payload TEXT NOT NULL
+            )
+            """
+        )
+        rows = conn.execute(
+            "SELECT * FROM news_items WHERE " + " AND ".join(conditions),
+            (f"-{int(window_days)} days",),
+        ).fetchall()
+        if not rows:
+            conn.commit()
+            return 0
+
+        quarantined_at = datetime.now(timezone.utc).isoformat()
+        for row in rows:
+            payload = json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO substack_podcast_quarantine(
+                  source_id,quarantined_at,reason,source_payload
+                ) VALUES(?,?,?,?)
+                """,
+                (
+                    row["id"],
+                    quarantined_at,
+                    f"outside_{int(window_days)}_day_window",
+                    payload,
+                ),
+            )
+        conn.executemany(
+            "DELETE FROM news_items WHERE id = ?",
+            [(row["id"],) for row in rows],
+        )
+        conn.commit()
+        print(
+            f"[PodcastFlush] quarantined {len(rows)} unused source(s) "
+            f"outside {int(window_days)} days"
+        )
+        return len(rows)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str, str]]:
     """Podcast source for the daily noon batch. Draws ONLY from the dedicated podcast
     pool (feed_name='YouTube Podcast'), preferring the longest fresh, unused
@@ -500,6 +598,11 @@ def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str
     throughput. Shares the used-set so the batch cannot select one episode twice."""
     if not NEWS_DB_PATH.exists():
         print(f"[PodcastPick] ⚠️ News DB not found at {NEWS_DB_PATH}")
+        return None
+    try:
+        flush_stale_podcast_candidates(window_days=window_days)
+    except Exception as exc:
+        print(f"[PodcastFlush] failed closed: {exc}")
         return None
     used = _load_used()
     conn = sqlite3.connect(str(NEWS_DB_PATH))

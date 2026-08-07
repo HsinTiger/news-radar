@@ -31,6 +31,7 @@
 - Reader-ready 草稿不含「發布前刪此行」、內文圖片位置、Path B/C、搜尋詞、生圖 prompt、封面 prompt 或 editor 註解。
 - Fast submission worker 必須先 fast-forward `origin/main`；無法同步時不使用舊 writer 產稿。
 - 排程目標是每天 12:00 啟動一個 batch，依序完成兩篇不同 Podcast 延伸文；候選僅限最近 7 天。週日 09:00 在同一工作內先選公司再完成一篇 Weekly；owner submission immediate/hourly lanes 保持不變。
+- 每次 Podcast 選稿前，超過 7 天、沒有 Substack 歷史證據、也未被社群 draft 引用的舊候選會移入 canonical DB quarantine 後退出 active `news_items`；歷史稿與跨平台引用不得刪除。
 - 所有 scheduled editorial worker 必須共用 Release lease、pull/push 與 remote-draft evidence contract。
 
 ## 4. Verification matrix
