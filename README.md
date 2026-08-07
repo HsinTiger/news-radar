@@ -15,7 +15,7 @@
 | Submission processor | **LIVE** | Poller claims one-off work; target-specific evidence remains required |
 | Meta publish-now | **ARMED** | Owner submissions still pass editorial gates before any platform write |
 | Substack editorial schedules | **WINDOWS WRITER** | 12:00 Podcast batch and Sunday company article run on the owner Windows host |
-| Substack remote draft transport | **BLOCKED ON WINDOWS** | This host has no Substack cookie/publication credential; local files are not remote drafts |
+| Substack remote draft transport | **BROWSER SESSION ARMED** | The scheduled Codex task uses the signed-in Substack UI, requires an editor draft ID readback, and never exports browser credentials; first unattended run remains pending |
 | Substack one-off publish-now | **CANARY PENDING** | Explicit owner choice only; `published` requires post id, public URL, timestamp, and unauthenticated readback |
 | Social Ops API | **DEPLOYED** | Cloudflare Worker + authenticated D1 |
 | Runtime SQLite | **CANONICAL RELEASE STATE** | Versioned GitHub Release bundle, SHA-256 + `PRAGMA quick_check` + readback |
@@ -69,13 +69,17 @@ The Pages UI is authenticated with an owner token stored only in browser
   open-source reviews in Skills Radar; third-party prompt bundles are not loaded
   into the production writer.
 - The Windows writer records local/OneDrive completion in
-  `news_items.substack_written_at`; Mac no longer owns Substack selection or AI composition.
+  `news_items.substack_written_at`; the scheduled Codex task then creates remote
+  drafts through the already signed-in Substack Browser session. Mac no longer
+  owns Substack selection or AI composition.
 - Every reader-ready article preserves the actual route/model, clickable public
   sources, the canonical subscription CTA, and a deterministic 瑞瑞/達達
   `cover.png`. Image-search instructions and image-generation prompts are banned.
-- Only a successful Substack `post_draft` response writes
-  `substack_draft_id` + `substack_drafted_at`; operational sync converts that
-  remote evidence to `draft_created` in D1.
+- API transport still requires a successful Substack `post_draft` response.
+  Windows Browser transport instead requires the exact editor URL/draft ID to
+  be read back and recorded in the run manifest plus artifact metadata. A local
+  article, a clicked Create button, or a Saved label without an ID is not remote
+  evidence.
 - One-time submissions default to `draft_priority`. The owner may explicitly
   choose `publish_now`; after reader-ready, cover, and audit gates the Mac calls
   `prepublish_draft` and `publish_draft` on that same saved draft ID.
@@ -112,7 +116,9 @@ flowchart LR
   Queue --> Meta[FB / IG / Threads]
   Runtime --> Win[Windows Substack writer]
   Win --> Files[Reader-ready article + character cover]
-  Files -. credential required .-> Drafts[Substack drafts]
+  Files --> Handoff[Browser handoff manifest]
+  Handoff --> Browser[Signed-in Substack UI]
+  Browser -->|editor draft ID readback| Drafts[Substack drafts]
   Meta --> Metrics[Engagement + audience collectors]
   Metrics --> D1[(Social Ops D1)]
   Runtime --> Sync[Metadata sync]
@@ -183,8 +189,21 @@ python scripts/windows_substack_editorial_worker.py weekly
 
 The runner fast-forwards `origin/main`, acquires the shared Release lease, uses
 `gpt-latest` through Codex CLI, falls back only to `claude-latest`, and fails
-closed if both routes fail. It currently forces `SUBSTACK_AUTO_DRAFT=0`; the
-result is a local/OneDrive article plus `cover.png`, not a remote Substack draft.
+closed if both routes fail. The Python writer keeps `SUBSTACK_AUTO_DRAFT=0` so
+no cookie is copied into the repo or scheduled shell. The enclosing Codex task
+then prepares an exact 2/1-artifact browser handoff, creates Everyone drafts in
+the existing signed-in Substack UI, records each editor draft ID, and verifies
+the completed manifest:
+
+```powershell
+python scripts/windows_substack_browser_handoff.py prepare podcast-batch --started-at <ISO-8601>
+python scripts/windows_substack_browser_handoff.py record --title <title> --draft-id <id> --editor-url <url>
+python scripts/windows_substack_browser_handoff.py verify
+```
+
+Missing artifacts, missing login, a mismatched draft URL, Paid audience, or an
+incomplete ID set must fail the scheduled run. See
+[`docs/windows_substack_browser_draft_automation.md`](docs/windows_substack_browser_draft_automation.md).
 
 The Mac must keep every Substack topic-selection/AI-writing agent unloaded. Do
 not remove its GitHub token, Substack cookies, Keychain data, or Meta workers.
@@ -204,8 +223,10 @@ npx wrangler deploy --dry-run
 git diff --check
 ```
 
-Exact gate scope matters: unit tests and Worker smoke tests do not prove a live
-Meta publish or a Mac-created Substack draft. Those remain canary gates.
+Exact gate scope matters: unit tests and a signed-in browser snapshot do not
+prove the next unattended task will finish. The first scheduled Windows run
+must still produce two editor draft IDs before the 13:00 target can be called
+proven.
 
 ## Repository boundaries
 

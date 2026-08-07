@@ -10,6 +10,7 @@
 # --- 秘鑰 / 本機設定 ---
 .env
 .runtime-state-lease.json
+.runtime-state-substack-browser-handoff*.json
 .env.*
 .env.local
 .env.*.local
