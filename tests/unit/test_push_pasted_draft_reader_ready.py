@@ -81,7 +81,7 @@ def test_pasted_draft_push_needs_no_cover_prompts_and_sends_reader_only(
     assert captured["post_kwargs"]["audience"] == "everyone"
     raw = captured["draft_body"]
     assert "讀者正文" in raw
-    assert "每天兩篇對談延伸" in raw
+    assert "每天兩篇思想延伸" in raw
     assert captured["markdown"] == "讀者正文\n\n讀者結尾"
     for forbidden in (
         "封面圖 Prompt",

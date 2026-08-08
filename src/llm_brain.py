@@ -499,7 +499,10 @@ async def _try_agy(
 # --------------------------------------------------------------------------
 
 CLAUDE_CLI_BIN = os.getenv("CLAUDE_CLI_BIN", "claude")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-latest")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "opus")
+# claude CLI 的推理強度（low/medium/high/xhigh/max）。長文寫作預設拉到 high。
+# 空字串＝不傳 --effort，交給 CLI 自己的預設。
+CLAUDE_EFFORT = os.getenv("CLAUDE_EFFORT", "high")
 
 
 # --------------------------------------------------------------------------
@@ -950,6 +953,10 @@ async def _try_claude_cli_once(
         "--output-format", "json",
         "--model", CLAUDE_MODEL,
     ]
+    # 推理強度：Substack 是長文論證，預設 high。之前完全沒傳這個旗標，
+    # 等於一直用 CLI 預設強度在寫稿。
+    if CLAUDE_EFFORT:
+        args += ["--effort", CLAUDE_EFFORT]
     if disallowed_tools:
         args += ["--disallowedTools", ",".join(disallowed_tools)]
 

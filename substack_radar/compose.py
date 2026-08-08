@@ -821,36 +821,25 @@ def _resolve_company_ticker(args) -> str:
 # Footer is deterministic and intentionally outside the writer prompt.
 BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的部分。」"
 # 交付節奏文案。與封面圖共用同一份（promise_cover.SLOGAN），改動須兩處同步。
-PUBLIC_CADENCE = "每天兩篇對談延伸 · 每週一篇公司深拆"
+PUBLIC_CADENCE = "每天兩篇思想延伸 · 每週一篇公司拆解"
 
 
 def build_footer_block() -> str:
-    """Brand promise + delivery schedule + native Subscribe placeholder.
+    """Reader-facing footer. Owner-approved wording — keep it to these three lines.
 
-    設計理由（2026-08-08 改版）：舊版只有一行「每天兩篇對談延伸 · 每週一篇公司深拆」，
-    讀者看不出**什麼時候會收到、會收到什麼**，訂閱決策缺少最關鍵的資訊。
-    新版把交付承諾攤開成可預期的時間表，並說明「不寫什麼」——
-    對訂閱轉換而言，界線比熱情更有說服力，它讓讀者知道信箱不會被灌爆。
+    刻意極簡：品牌承諾一行、交付節奏一行、邀請回信一行。
+    先前版本試過加交付表格與差異化論述，owner 判斷過長；讀者在文末要的是
+    「這是什麼、多久一篇、怎麼找你」，不是再讀一段行銷文案。
 
-    仍然刻意留在 writer prompt 之外、由程式決定：footer 是品牌承諾，
-    不該每篇被模型重寫成不同版本。
+    PUBLIC_CADENCE 與封面圖 SLOGAN（promise_cover.SLOGAN）共用同一份字串，
+    由 test_public_cadence_copy_matches_two_daily_podcast_extensions 守著
+    兩邊一致。要改交付節奏請兩處一起改。
     """
     return (
         "\n\n---\n\n"
         f"> **{BRAND_TAGLINE}**\n\n"
-        "大部分財經內容寫完不必負責。看多看空都留一手，說對了是洞見，"
-        "說錯了是「市場變化太快」。\n\n"
-        "這裡不這樣。每一篇都給你一個明確判斷，"
-        "並且寫清楚**在什麼情況下算我錯了、你該盯哪個數字**。\n\n"
-        "錯了你看得出來。這是我能給你的誠意。\n\n"
-        # 這行 cadence 同時是封面圖的 SLOGAN（promise_cover.SLOGAN），
-        # 由 test_public_cadence_copy_matches_two_daily_podcast_extensions
-        # 守著兩邊一致。要改交付節奏請兩處一起改，不要只動這裡。
-        f"**{PUBLIC_CADENCE}**\n\n"
-        "中午那兩篇，是把當天最值得聽的一場對談讀到底，連它最強的反面一起給你。"
-        "週日那篇，是一家公司拆到你能自己決定該不該碰。\n\n"
-        "如果你也受夠了讀完什麼都決定不了的文章，訂閱是免費的。\n\n"
-        "✉️ 覺得我哪個判斷站不住，直接回信。我會追，也會認錯。\n"
+        f"{PUBLIC_CADENCE}\n\n"
+        "✉️ 覺得我哪個判斷站不住，直接回信。\n"
     )
 
 

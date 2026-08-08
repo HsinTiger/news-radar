@@ -157,7 +157,7 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
     assert "發布前刪此行" not in text
     assert "本文取材" in text and "https://example.com/interview" in text
     assert text.index("第二段仍然是讀者需要的內容") < text.index("本文取材")
-    assert "訂閱是免費的" in text
+    assert "覺得我哪個判斷站不住，直接回信" in text
     for forbidden in (
         "視覺位置",
         "Path B",
@@ -290,7 +290,7 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
 
 
 def test_public_cadence_copy_matches_two_daily_podcast_extensions() -> None:
-    expected = "每天兩篇對談延伸 · 每週一篇公司深拆"
+    expected = "每天兩篇思想延伸 · 每週一篇公司拆解"
 
     assert expected in compose.build_footer_block()
     assert promise_cover.SLOGAN == expected
