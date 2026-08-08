@@ -346,6 +346,23 @@ async def _try_gemini_cli(
 # --------------------------------------------------------------------------
 AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
 AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (High)")
+# agy 內部的模型後備鏈（逗號分隔，依序嘗試）。強模型先、續航模型後。
+# 設 AGY_MODEL 時它一律排第一，鏈只當它的後備——這樣單次覆寫
+# （AGY_MODEL="..." python compose.py）語意不變，仍然「優先用我指定的」。
+AGY_MODEL_CHAIN = os.getenv(
+    "AGY_MODEL_CHAIN",
+    "Claude Opus 4.6 (Thinking),Gemini 3.6 Flash (High),Gemini 3.1 Pro (High)",
+)
+
+
+def _agy_model_chain() -> list:
+    """回傳去重後的嘗試順序。AGY_MODEL 若有設就置頂。"""
+    chain = []
+    for name in [os.getenv("AGY_MODEL") or ""] + AGY_MODEL_CHAIN.split(","):
+        name = name.strip()
+        if name and name not in chain:
+            chain.append(name)
+    return chain or [AGY_MODEL]
 
 
 def _agy_available() -> bool:
@@ -1533,12 +1550,29 @@ async def call_for_json(
             if not _agy_available():
                 print(f"[llm_brain] ℹ️ agy 不在 {AGY_BIN}，略過 antigravity_cli。")
                 continue
-            result = await _try_agy(
-                system=system,
-                prompt=prompt,
-                response_model=response_model,
-                timeout_s=timeout_s,
-            )
+            # agy 內部的模型鏈：強模型先試，撞上限或解析失敗就換下一個，
+            # **鏈用完才掉出 agy**。原本只試單一 AGY_MODEL，一失敗就直接掉到
+            # 外部 backend（gemini API / opencode…），而那些明顯弱一階——
+            # 2026-08-08 MARA 首刷就是這樣掉到 gemini-2.5-flash，產出標題 21 字、
+            # 數字取自已不可重現的 TTM 欄位。
+            #
+            # 預設把 Opus 排前面、Flash 3.6 墊後：Opus 品質較好但額度緊，
+            # Flash 3.6 上限高，適合當同一天要連寫多篇時的續航模型。
+            result = None
+            for _idx, _agy_model in enumerate(_agy_model_chain()):
+                result = await _try_agy(
+                    system=system,
+                    prompt=prompt,
+                    response_model=response_model,
+                    timeout_s=timeout_s,
+                    model_name=_agy_model,
+                )
+                if result.data is not None:
+                    break
+                _remaining = _agy_model_chain()[_idx + 1:]
+                if _remaining:
+                    print(f"[llm_brain] ⟳ agy「{_agy_model}」未產出"
+                          f"（{str(result.raw_error)[:70]}），改試「{_remaining[0]}」。")
 
         elif name == "gemini_cli":
             if not _gemini_cli_available():
