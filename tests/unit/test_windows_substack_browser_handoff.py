@@ -7,6 +7,18 @@ import pytest
 from scripts import windows_substack_browser_handoff as handoff
 
 
+@pytest.fixture(autouse=True)
+def _writer_mode_live(monkeypatch):
+    """讓測試不受線上停機閘門影響。
+
+    config/windows_writer_mode 是營運開關；ops 把它設成 paused 時，
+    這些測試不該跟著失敗——測試驗的是 handoff 契約，不是當下的營運狀態。
+    """
+    monkeypatch.setenv("WINDOWS_WRITER_MODE", "live")
+
+
+
+
 TAIPEI = timezone(timedelta(hours=8))
 
 

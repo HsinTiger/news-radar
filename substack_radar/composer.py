@@ -227,6 +227,8 @@ def strip_generated_footer(markdown: str) -> str:
         "📅 每天兩篇對談延伸",
         "✉️ 你可以直接回信，告訴我哪個判斷值得再追",
         "點此訂閱 → 不錯過下一篇拆解",
+        "免費訂閱 → 明天中午就收得到下一篇",
+        "你會固定收到什麼",
     )
     paragraphs = re.split(r"\n\s*\n", markdown or "")
     kept = [

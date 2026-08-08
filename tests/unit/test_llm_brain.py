@@ -22,6 +22,17 @@ from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pin_litellm_model(monkeypatch):
+    """把 LITELLM_MODEL 釘在測試假設的值，不繼承 .env 的營運設定。
+
+    _quota_family() 依 LITELLM_MODEL 是否為 gemini/* 決定配額家族，
+    所以當 ops 把 litellm 指向開源模型（groq/…）時這些測試會連帶失敗。
+    測試該自己宣告前提，而不是跟著線上設定漂移。
+    """
+    monkeypatch.setenv("LITELLM_MODEL", "gemini/gemini-2.5-flash")
 from pydantic import BaseModel
 
 import src.llm_brain as llm_brain

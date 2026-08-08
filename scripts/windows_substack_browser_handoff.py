@@ -106,9 +106,13 @@ def prepare_handoff(
     # 這條仍會被觸發，並可能把先前殘留的 artifact 推成遠端草稿——
     # 那正是 owner 要求「明天都不要執行」時最不希望發生的事。
     # 走 HandoffError 而非靜默 return，讓排程留下明確紀錄。
+    # 環境變數優先於 repo 檔案：測試與現場緊急處置都需要能在不改動
+    # 版控狀態的前提下覆寫。檔案是遠端停機用的，env 是本機用的。
+    mode = os.getenv("WINDOWS_WRITER_MODE", "").strip().lower()
     mode_path = REPO_ROOT / "config" / "windows_writer_mode"
-    if mode_path.exists():
+    if not mode and mode_path.exists():
         mode = (mode_path.read_text(encoding="utf-8").strip().split("\n")[0] or "live").lower()
+    if mode:
         if mode != "live":
             raise HandoffError(
                 f"windows_writer_mode={mode}: 遠端閘門已暫停，不準備任何草稿交接。"
