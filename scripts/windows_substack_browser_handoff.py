@@ -100,6 +100,20 @@ def prepare_handoff(
 ) -> dict[str, Any]:
     if profile not in PROFILE_CONTRACTS:
         raise HandoffError(f"unsupported profile: {profile}")
+
+    # 與 windows_substack_editorial_worker.py 共用同一個遠端停機閘門。
+    # 這裡也要擋，因為推草稿是**獨立的排程任務**：只暫停寫稿的話，
+    # 這條仍會被觸發，並可能把先前殘留的 artifact 推成遠端草稿——
+    # 那正是 owner 要求「明天都不要執行」時最不希望發生的事。
+    # 走 HandoffError 而非靜默 return，讓排程留下明確紀錄。
+    mode_path = REPO_ROOT / "config" / "windows_writer_mode"
+    if mode_path.exists():
+        mode = (mode_path.read_text(encoding="utf-8").strip().split("\n")[0] or "live").lower()
+        if mode != "live":
+            raise HandoffError(
+                f"windows_writer_mode={mode}: 遠端閘門已暫停，不準備任何草稿交接。"
+                " 要恢復請把 config/windows_writer_mode 改回 live 並 push。"
+            )
     local_tz = started_at.tzinfo or datetime.now().astimezone().tzinfo
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=local_tz)
