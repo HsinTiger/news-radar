@@ -157,7 +157,7 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
     assert "發布前刪此行" not in text
     assert "本文取材" in text and "https://example.com/interview" in text
     assert text.index("第二段仍然是讀者需要的內容") < text.index("本文取材")
-    assert "免費訂閱 → 明天中午就收得到下一篇" in text
+    assert "訂閱是免費的" in text
     for forbidden in (
         "視覺位置",
         "Path B",
