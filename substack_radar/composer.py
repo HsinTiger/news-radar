@@ -315,13 +315,55 @@ def resolve_editorial_profile(
     return DAILY_PROFILE
 
 
+# 曼報 KB 蒸餾的框架（manny-li-pro-kb skills/ 的唯讀副本，由上游
+# sync-skills.sh 產生）。de-ai-prose 對所有文型都適用，一律載入；
+# 其餘按 profile 挑，避免無關框架灌爆 context。
+MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"
+MANNY_ALWAYS = ("de-ai-prose.md",)
+# 用 brief_path 檔名而非 profile.name 當 key：COMPANY_PROFILE.name 是 "weekly"
+# （與 WEEKLY_PROFILE 同名），只有 brief_path 分得出公司文與一般週報。
+MANNY_BY_BRIEF = {
+    "editorial_company.md": ("company-teardown.md", "capital-allocation-engine.md",
+                             "cycle-and-capital-flow.md", "counter-case-construction.md"),
+    "editorial_weekly.md": ("counter-case-construction.md",),
+    "editorial_podcast.md": ("counter-case-construction.md",),
+    "editorial_daily.md": ("counter-case-construction.md",),
+}
+
+
+def load_manny_frameworks(brief_name: str) -> str:
+    """讀取適用於此 profile 的框架。缺檔一律略過——框架是加分項，
+    不該讓寫稿因為副本沒同步就整個停擺。請勿編輯副本，改上游後重跑 sync。"""
+    names = MANNY_ALWAYS + MANNY_BY_BRIEF.get(brief_name, ())
+    blocks = []
+    for name in names:
+        try:
+            text = (MANNY_SKILLS_DIR / name).read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if text:
+            blocks.append(text)
+    if not blocks:
+        return ""
+    return (
+        "===== 分析與文風框架（曼報 Pro 知識庫蒸餾）=====\n"
+        "框架是透鏡，不是內容。裡面的舉例只示範拆法，"
+        "絕不可當成本期標的的事實寫進文章。\n\n"
+        + "\n\n---\n\n".join(blocks)
+    )
+
+
 def load_editorial_brief(profile: EditorialProfile) -> str:
-    """Load the shared reader, voice, and selected cadence contracts."""
+    """Load the shared reader, voice, cadence contracts, and KB frameworks."""
     paths = (AUDIENCE_EDITORIAL_PATH, COMMON_EDITORIAL_PATH, profile.brief_path)
     missing = [path for path in paths if not path.exists()]
     if missing:
         raise FileNotFoundError("missing editorial brief: " + ", ".join(str(path) for path in missing))
-    return "\n\n".join(path.read_text(encoding="utf-8").strip() for path in paths)
+    parts = [path.read_text(encoding="utf-8").strip() for path in paths]
+    frameworks = load_manny_frameworks(profile.brief_path.name)
+    if frameworks:
+        parts.append(frameworks)
+    return "\n\n".join(parts)
 
 
 # --------------------------------------------------------------------------
