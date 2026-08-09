@@ -322,7 +322,7 @@ MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"
 # 文風三件套對所有文型都適用，一律載入。順序即執行順序：
 # 先重建思考路徑（加法）→ 再清手癖（減法）→ 最後下標題。
 MANNY_ALWAYS = ("human-editorial-layer.md", "sentence-clarity.md",
-                "de-ai-prose.md", "title-engine.md")
+                "de-ai-prose.md", "title-engine.md", "chief-editor.md")
 # 用 brief_path 檔名而非 profile.name 當 key：COMPANY_PROFILE.name 是 "weekly"
 # （與 WEEKLY_PROFILE 同名），只有 brief_path 分得出公司文與一般週報。
 MANNY_BY_BRIEF = {

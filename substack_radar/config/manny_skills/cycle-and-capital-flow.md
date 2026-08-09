@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit f7afa98
+     來源：HsinTiger/manny-li-pro-kb  commit 9ea2d7e
      要修改框架請改上游 skills/cycle-and-capital-flow.md 後重跑 sync-skills.sh -->
 
 # 框架：週期判讀與資金終點
