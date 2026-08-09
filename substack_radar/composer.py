@@ -321,23 +321,26 @@ def resolve_editorial_profile(
 MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"
 # 文風三件套對所有文型都適用，一律載入。順序即執行順序：
 # 先重建思考路徑（加法）→ 再清手癖（減法）→ 最後下標題。
-MANNY_ALWAYS = ("human-editorial-layer.md", "sentence-clarity.md",
+MANNY_ALWAYS = ("counter-case-construction.md",
+                "human-editorial-layer.md", "sentence-clarity.md",
                 "de-ai-prose.md", "title-engine.md", "chief-editor.md")
 # 用 brief_path 檔名而非 profile.name 當 key：COMPANY_PROFILE.name 是 "weekly"
 # （與 WEEKLY_PROFILE 同名），只有 brief_path 分得出公司文與一般週報。
+# counter-case-construction 原本列在全部四個 key，等於無條件載入，
+# per-brief 分派對它毫無作用 → 移進 MANNY_ALWAYS。
 MANNY_BY_BRIEF = {
     "editorial_company.md": ("company-teardown.md", "capital-allocation-engine.md",
-                             "cycle-and-capital-flow.md", "counter-case-construction.md"),
-    "editorial_weekly.md": ("counter-case-construction.md",),
-    "editorial_podcast.md": ("counter-case-construction.md",),
-    "editorial_daily.md": ("counter-case-construction.md",),
+                             "cycle-and-capital-flow.md"),
 }
 
 
 def load_manny_frameworks(brief_name: str) -> str:
     """讀取適用於此 profile 的框架。缺檔一律略過——框架是加分項，
     不該讓寫稿因為副本沒同步就整個停擺。請勿編輯副本，改上游後重跑 sync。"""
-    names = MANNY_ALWAYS + MANNY_BY_BRIEF.get(brief_name, ())
+    # 分析框架先（決定寫什麼），文風層後（決定怎麼寫）。
+    # 原本順序相反，導致 chief-editor 宣稱「最後一次通看」之後
+    # 又接上 company-teardown 這種第一步的分析框架。
+    names = MANNY_BY_BRIEF.get(brief_name, ()) + MANNY_ALWAYS
     blocks = []
     for name in names:
         try:
