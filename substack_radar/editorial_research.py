@@ -165,6 +165,18 @@ _HIGH_SIGNAL_DOMAINS = (
     "imf.org",
 )
 
+# 2026-08-09：原本只有「低訊號」網域（維基、論壇），沒有安全性把關。
+# 實測一篇亞當·斯密文章抓回兩個 NSFW subreddit 聚合站、一個俄文影片下載站
+# 與兩個工具首頁。這些不只印在來源清單，內容還會被讀進模型 context——
+# 那是 prompt injection 的入口，不只是難看而已。
+#
+# 為什麼會抓到：SEO 寄生站專門針對熱門關鍵字（"reddit"、"download"）做排名，
+# 搜尋引擎照樣回傳。這不需要有人刻意攻擊 AI，一般 SEO 垃圾就足以污染結果；
+# 但同一條路徑確實也是刻意投毒可以走的路，所以按「不可信」處理。
+_UNSAFE_DOMAINS = (
+    "nsfw", "porn", "xxx", "adult", "onlyfans", "escort",
+    "reddtastic", "snapwc", "bang.com", "bolt.new", "elicit.com",
+)
 _LOW_SIGNAL_DOMAINS = (
     "wikipedia.org",
     "reddit.com",
@@ -425,6 +437,14 @@ def _search_candidates(queries: Sequence[str], *, per_query: int = 8) -> list[di
         for rank, result in enumerate(results or []):
             url = _canonical_url(result.get("href") or result.get("url") or "")
             if not url or url in seen or any(domain in url.lower() for domain in _LOW_SIGNAL_DOMAINS):
+                continue
+            # 安全閘：擋在抓取之前，這些網址的內容不該進入模型 context。
+            _haystack = f"{url} {result.get('title') or ''}".lower()
+            if any(bad in _haystack for bad in _UNSAFE_DOMAINS):
+                print(f"[EditorialResearch] blocked unsafe source: {url[:70]}")
+                continue
+            # 裸首頁不是可查證的來源，讀者點過去看不到本文引用的資料。
+            if _canonical_url(url).rstrip("/").count("/") <= 2:
                 continue
             seen.add(url)
             title = re.sub(r"\s+", " ", result.get("title") or "").strip()

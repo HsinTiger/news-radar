@@ -1435,6 +1435,44 @@ def _load_bundle_curated(path: str) -> str:
         return ""
 
 
+# 2026-08-09：延伸研究區塊原本原封不動印出搜尋結果，實測一篇亞當·斯密的文章
+# 十個「來源」裡混進兩個 NSFW subreddit 聚合站、一個俄文影片下載站、
+# 兩個工具首頁（bolt.new、elicit.com）與一篇無關的 n8n 教學——只有一個真的相關。
+# 這些會跟著文章發給訂閱者，所以把關必須在寫入前做，不能靠人工事後刪。
+_SOURCE_DENY_SUBSTRINGS = (
+    "nsfw", "porn", "xxx", "adult", "onlyfans", "escort",
+    "reddtastic", "snapwc", "bang.com",
+)
+# 工具首頁與內容農場：搜尋引擎常把它們當結果回傳，但它們不是可引用的來源。
+_SOURCE_DENY_HOSTS = (
+    "bolt.new", "elicit.com", "redditinc.com", "reddit.com",
+    "pixnet.net", "blogspot.com", "medium.com/@",
+)
+
+
+def _citable_source(url: str, title: str) -> bool:
+    """延伸研究只收得住的來源。寧可少列，不可列錯。
+
+    三道關：① 明確的成人／垃圾站黑名單；② 工具首頁與內容農場；
+    ③ 裸網域首頁（沒有路徑）——那是入口，不是可查證的具體資料。
+    """
+    lowered = f"{url} {title}".lower()
+    if any(bad in lowered for bad in _SOURCE_DENY_SUBSTRINGS):
+        return False
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    if any(bad in host or bad in url.lower() for bad in _SOURCE_DENY_HOSTS):
+        return False
+    # 裸首頁（/ 或空路徑）不算來源：讀者點過去看不到本文引用的那份資料。
+    if parsed.path.strip("/") == "":
+        return False
+    return True
+
+
 def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
     """Reader-facing source ledger, placed after the article to reduce front-load."""
     reports = reports or []
@@ -1442,6 +1480,8 @@ def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
     for r in reports:
         u = (r.get("url") or "").strip()
         if not u or u in seen:
+            continue
+        if not _citable_source(u, r.get("title") or ""):
             continue
         seen.add(u)
         rep_links.append(f"[{(r.get('title') or u)[:80]}]({u})")
