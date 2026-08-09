@@ -602,6 +602,26 @@ def audit_substack_draft(
     if draft.title.strip("？?。！! ") in draft.subtitle:
         warnings.append("[副標重複] 副標應補具體反差或 payoff，不要重述主標。")
 
+    # 子標題的冒號。原本只檢查主標題，於是「主題：註解」式的子標題完全沒被擋。
+    # 2026-08-09 實測有明顯模型差異：同一天同一條管線，
+    # Gemini 3.6 Flash 寫的 Salesforce 文 4/5 個子標題帶冒號
+    # （「錢從哪裡來：深植企業骨血的軟體帝國」），
+    # Opus 4.6 寫的亞當·斯密文 0/5。
+    # 冒號式子標題對模型是安全牌——不必決定要突出哪一半，兩邊都塞就好；
+    # 但讀者會一路讀到「報告小節」的節奏，而不是有人帶著他想。
+    # 指令攔不住（de-ai-prose 已寫明仍照犯），所以在這裡用機器擋。
+    _headings = [
+        line.lstrip("#").strip()
+        for line in body.splitlines()
+        if line.lstrip().startswith("#")
+    ]
+    _colon_headings = [h for h in _headings if any(m in h for m in ("：", ":"))]
+    if _colon_headings:
+        warnings.append(
+            f"[子標題雙焦點] {len(_colon_headings)}/{len(_headings)} 個子標題含冒號"
+            f"（例：{_colon_headings[0][:24]}）；子標題只講一件事，冒號前後擇一。"
+        )
+
     # 1. 字數 — Daily / Weekly 各自有獨立 envelope。
     n = _count_chinese_chars(body)
     if n < word_floor:
