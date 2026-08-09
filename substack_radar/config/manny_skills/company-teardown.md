@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit 5ef9744
+     來源：HsinTiger/manny-li-pro-kb  commit dd47ad4
      要修改框架請改上游 skills/company-teardown.md 後重跑 sync-skills.sh -->
 
 # 框架：公司四段式拆解
