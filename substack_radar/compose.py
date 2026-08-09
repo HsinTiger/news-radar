@@ -1052,18 +1052,21 @@ def push_to_substack_draft(
             user_id=user_id,
             audience=audience,
         )
-        post.from_markdown(body_md, api=api)
-
-        # Optional: upload cover and prepend as captionedImage.  This function
-        # only creates the durable draft.  The caller may separately continue
-        # through explicit one-off publish-now after the draft receipt exists.
+        # 封面必須在 from_markdown 之前加入。post.add() 是**附加到尾端**，
+        # 不是插入索引 0——先前的註解寫「Insert cover at index 0」但程式碼
+        # 在正文之後才 add，於是封面一路沉到文章最底下（2026-08-09 owner 回報）。
+        # 這種註解與行為不符的情況比沒有註解更危險，所以改成順序即語意：
+        # 先放封面，再放正文，封面自然就是第一個區塊。
+        #
+        # 上傳失敗不阻斷草稿建立——封面是加分項，不該讓整篇稿子推不上去。
         if cover_path and cover_path.exists():
             try:
                 image = api.get_image(str(cover_path))
-                # Insert cover at index 0 (top of body)
                 post.add({"type": "captionedImage", "src": image.get("url")})
             except Exception as exc:
                 print(f"[Substack] ⚠️ Cover upload failed (continuing without): {exc}")
+
+        post.from_markdown(body_md, api=api)
 
         draft = api.post_draft(post.get_draft())
         draft_id = draft.get("id") if isinstance(draft, dict) else None
