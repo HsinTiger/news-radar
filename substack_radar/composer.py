@@ -321,7 +321,8 @@ def resolve_editorial_profile(
 MANNY_SKILLS_DIR = CONFIG_DIR / "manny_skills"
 # 文風三件套對所有文型都適用，一律載入。順序即執行順序：
 # 先重建思考路徑（加法）→ 再清手癖（減法）→ 最後下標題。
-MANNY_ALWAYS = ("human-editorial-layer.md", "de-ai-prose.md", "title-engine.md")
+MANNY_ALWAYS = ("human-editorial-layer.md", "sentence-clarity.md",
+                "de-ai-prose.md", "title-engine.md")
 # 用 brief_path 檔名而非 profile.name 當 key：COMPANY_PROFILE.name 是 "weekly"
 # （與 WEEKLY_PROFILE 同名），只有 brief_path 分得出公司文與一般週報。
 MANNY_BY_BRIEF = {
@@ -617,6 +618,28 @@ def audit_substack_draft(
         for line in body.splitlines()
         if line.lstrip().startswith("#")
     ]
+    # sentence-clarity ② 名詞化：動作被藏進抽象名詞，再補一個空動詞去帶它。
+    # 「進行評估」→「評估」。這類有明確字面特徵，不必靠模型自覺。
+    _nominal = re.findall(r"(進行|做出|產生|造成|加以|給予|實現)[一了]?[\u4e00-\u9fff]{2,4}", body)
+    if len(_nominal) >= 2:
+        warnings.append(
+            f"[名詞化] 「{'」「'.join(dict.fromkeys(_nominal))}」等 {len(_nominal)} 處；"
+            "動作藏在抽象名詞裡，還原成動詞（進行評估→評估）。"
+        )
+
+    # sentence-clarity ⑧ 比較級沒有基準。分析型文章裡，沒有「跟什麼比」的
+    # 比較級等於沒有資訊。用「同句是否出現數字」當近似判準。
+    _bare_compare = []
+    for _sent in re.split(r"[。！？\n]", body):
+        if re.search(r"(更高|更快|更有效|更便宜|更成功|大幅|明顯|領先)", _sent) \
+           and not re.search(r"\d", _sent):
+            _bare_compare.append(_sent.strip()[:22])
+    if _bare_compare:
+        warnings.append(
+            f"[比較無基準] {len(_bare_compare)} 句用了比較級卻沒給數字"
+            f"（例：{_bare_compare[0]}）；補上跟什麼比、差多少。"
+        )
+
     _colon_headings = [h for h in _headings if any(m in h for m in ("：", ":"))]
     if _colon_headings:
         warnings.append(

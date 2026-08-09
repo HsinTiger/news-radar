@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit dd47ad4
+     來源：HsinTiger/manny-li-pro-kb  commit 162252c
      要修改框架請改上游 skills/README.md 後重跑 sync-skills.sh -->
 
 # skills/ — 給下游寫手的分析框架層
@@ -31,6 +31,7 @@
 | `counter-case-construction.md` | 反面怎麼寫才可被觸發、才能轉成證偽條件？ | 兩邊 |
 | `de-ai-prose.md` | 破折號、冒號、對仗句這些 AI 手癖怎麼清？（減法） | 兩邊 |
 | `human-editorial-layer.md` | 意思都對卻不像人說話，怎麼重建思考路徑？（加法） | 兩邊 |
+| `sentence-clarity.md` | 單句怎麼寫才不增加認知負擔？（名詞化、比較基準…） | 兩邊 |
 | `title-engine.md` | 標題副標怎麼下才像人話、才有張力？ | 兩邊 |
 
 ## 使用規則（重要）
