@@ -476,6 +476,57 @@ def autofix_mainland_terms(draft: "SubstackDraft") -> List[str]:
     return fixes
 
 
+# 空動詞 + 雙字動作名詞 → 還原成動詞。只收「拿掉空動詞後語意不變」的組合，
+# 不做泛用規則：中文有大量「進行X」是合法的（進行曲、進行式），也有「造成」
+# 後面接的是結果而非動作（造成傷亡）。所以用白名單，寧可漏抓不可改錯。
+_NOMINALISATION_FIXES = {
+    # 只留「拿掉空動詞後單獨成句仍然自然」的組合。
+    # 實測剔除的反例：「產生影響」→「影響」在句尾會變成「這影響」（語意不完整），
+    # 「給予支持」→「支持」同理。那些需要受詞才通順，天真替換會讓中文更差。
+    "做出判斷": "判斷", "做出決定": "決定", "做出回應": "回應", "做出選擇": "選擇",
+    "加以說明": "說明", "加以檢討": "檢討",
+    "實現獲利": "獲利", "實現成長": "成長",
+}
+# 「對X進行評估」→「評估X」。這個要換語序，不是刪字，所以單獨處理——
+# 只做刪字會得到「對市場評估」這種彆扭句。
+_NOMINALISATION_REORDER = re.compile(
+    r"對([\u4e00-\u9fff]{2,8})(進行|做出|加以)([\u4e00-\u9fff]{2})"
+)
+
+
+def autofix_nominalisation(draft: "SubstackDraft") -> List[str]:
+    """把「進行評估」這類空動詞＋名詞化還原成動詞。
+
+    與 autofix_dashes 同層級的確定性清理。之所以要自動改而不是繼續加指令：
+    sentence-clarity 已明文禁止、audit 也在報，2026-08-10 的 MSTR 稿仍出現
+    12 處。指令對這個習慣無效，跟子標題冒號是同一個劇本。
+
+    保守設計：白名單比對，不用正則泛化。中文裡「進行」後面接的不一定是
+    動作名詞（進行曲），「造成」後面常是結果而非動作（造成傷亡），
+    泛用規則會改錯句子。漏抓只是留下一則警告，改錯是實質損害。
+    引用區塊（>）不動，那是既定的 footer 與封面指示。
+    """
+    lines, hits = [], []
+    for line in draft.body_markdown.split("\n"):
+        if line.lstrip().startswith(">"):
+            lines.append(line)
+            continue
+        def _reorder(m):
+            hits.append(f"對{m.group(1)}{m.group(2)}{m.group(3)}")
+            return f"{m.group(3)}{m.group(1)}"
+        line = _NOMINALISATION_REORDER.sub(_reorder, line)
+        for bad, good in _NOMINALISATION_FIXES.items():
+            if bad in line:
+                hits.append(bad)
+                line = line.replace(bad, good)
+        lines.append(line)
+    if not hits:
+        return []
+    draft.body_markdown = "\n".join(lines)
+    uniq = "」「".join(dict.fromkeys(hits))
+    return [f"[自動修正:名詞化] 「{uniq}」共 {len(hits)} 處還原成動詞"]
+
+
 def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
     """Convert excess 破折號 (em-dashes —/―) in body PROSE to 逗號 — a deterministic
     cleanup for a common model habit.
