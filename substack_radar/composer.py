@@ -693,7 +693,13 @@ def audit_substack_draft(
     ]
     # sentence-clarity ② 名詞化：動作被藏進抽象名詞，再補一個空動詞去帶它。
     # 「進行評估」→「評估」。這類有明確字面特徵，不必靠模型自覺。
-    _nominal = re.findall(r"(進行|做出|產生|造成|加以|給予|實現)[一了]?[\u4e00-\u9fff]{2,4}", body)
+    # 只報真正的名詞化，不報正常搭配。原本用「動詞 + 任意 2-4 漢字」的粗略正則，
+    # 把「產生現金流」「造成的帳面虧損」「給予估值溢價」這類完全正確的中文全算進去——
+    # 2026-08-10 的 MSTR 稿被報 13 處，逐一檢視後幾乎全是誤報。
+    # 誤報比漏報有害：它會逼寫手去改本來就對的句子，也讓真正的問題被雜訊蓋掉。
+    # 改成與 autofix 共用同一份白名單，兩者判準一致。
+    _nominal = [k for k in _NOMINALISATION_FIXES if k in body]
+    _nominal += [m.group(0) for m in _NOMINALISATION_REORDER.finditer(body)]
     if len(_nominal) >= 2:
         warnings.append(
             f"[名詞化] 「{'」「'.join(dict.fromkeys(_nominal))}」等 {len(_nominal)} 處；"
