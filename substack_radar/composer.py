@@ -51,7 +51,9 @@ class SubstackDraft(BaseModel):
         ...,
         description="文章標題，≤15 字，只承諾一件事；禁用冒號拼兩個焦點（人物訪談除外）。",
         min_length=4,
-        max_length=24,
+        # 2026-08-10：原為 24，但「≤15 字」在 prompt 裡宣告四次，
+        # 等於規則講了沒人執行——22 字的標題會安靜通過。以宣告值為準。
+        max_length=15,
     )
     subtitle: str = Field(
         ...,
@@ -81,7 +83,7 @@ class SubstackDraft(BaseModel):
     @classmethod
     def _truncate_headline(cls, v, info):
         if isinstance(v, str):
-            cap = {"title": 24, "subtitle": 80}.get(info.field_name)
+            cap = {"title": 15, "subtitle": 80}.get(info.field_name)
             if cap and len(v) > cap:
                 # 在字數上限內收在「最後一個標點邊界」＝留一個語意完整的標題，而非從字
                 # 中間硬切（信哥 2026-06-28：要合理的標題、不要語意一半就斷）。找不到夠
@@ -993,7 +995,7 @@ def _build_user_prompt(
         "不要寫『據業內傳出』『市場普遍認為』這類無來源背書。\n\n"
         "=== 呈現 ===\n"
         "標題 ≤15 字，只承諾一件事；副標補上最重要的具體反差。開頭兩段交代背景與本文問題。"
-        "正文使用 3–5 個能單獨讀懂的內容型小標，短段落、一段一件事。"
+        "正文使用 5–7 個能單獨讀懂的內容型小標，短段落、一段一件事。"
         "不要輸出內部製程、圖片位置、搜尋指令、圖表 prompt、資料來源清單、footer 或訂閱 CTA。"
         "最後用一個本文特有、讀者能以經驗或判斷回答的**具體回信問題**收尾；禁用『你怎麼看？』。\n\n"
         "=== 輸出格式：直接回一個 JSON object ===\n"
