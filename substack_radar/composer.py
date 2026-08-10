@@ -331,7 +331,7 @@ MANNY_ALWAYS = ("counter-case-construction.md",
 # counter-case-construction 原本列在全部四個 key，等於無條件載入，
 # per-brief 分派對它毫無作用 → 移進 MANNY_ALWAYS。
 MANNY_BY_BRIEF = {
-    "editorial_company.md": ("company-teardown.md", "capital-allocation-engine.md",
+    "editorial_company.md": ("company-first-principles.md", "company-teardown.md", "capital-allocation-engine.md",
                              "cycle-and-capital-flow.md", "priced-in-or-not.md"),
 }
 

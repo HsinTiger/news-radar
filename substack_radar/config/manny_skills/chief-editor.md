@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit 1b78ee6
+     來源：HsinTiger/manny-li-pro-kb  commit 0d42282
      要修改框架請改上游 skills/chief-editor.md 後重跑 sync-skills.sh -->
 
 # 框架：總編輯的最後一關

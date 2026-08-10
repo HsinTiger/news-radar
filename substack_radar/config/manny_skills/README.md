@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit 1b78ee6
+     來源：HsinTiger/manny-li-pro-kb  commit 0d42282
      要修改框架請改上游 skills/README.md 後重跑 sync-skills.sh -->
 
 # skills/ — 給下游寫手的分析框架層
@@ -25,6 +25,7 @@
 
 | 檔案 | 回答什麼問題 | 主要消費端 |
 |---|---|---|
+| `company-first-principles.md` | 碰數字之前，先看懂這門生意在做什麼？（第一階段） | news-radar |
 | `company-teardown.md` | 一家公司要從哪四段拆到底？ | news-radar |
 | `capital-allocation-engine.md` | 這是真的複利引擎，還是槓桿幻覺？ | 兩邊（MSTR 核心） |
 | `cycle-and-capital-flow.md` | 這波是結構性轉折還是週期波動？錢最後流去哪？ | mstr-btc |
