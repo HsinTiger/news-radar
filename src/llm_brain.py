@@ -349,6 +349,8 @@ AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (High)")
 # agy 內部的模型後備鏈（逗號分隔，依序嘗試）。強模型先、續航模型後。
 # 設 AGY_MODEL 時它一律排第一，鏈只當它的後備——這樣單次覆寫
 # （AGY_MODEL="..." python compose.py）語意不變，仍然「優先用我指定的」。
+# 同一模型的重試次數。agy 偶發輸出不合 schema，重試比換模型便宜也更可能成功。
+AGY_RETRIES_PER_MODEL = int(os.getenv("AGY_RETRIES_PER_MODEL", "2"))
 AGY_MODEL_CHAIN = os.getenv(
     "AGY_MODEL_CHAIN",
     "Claude Opus 4.6 (Thinking),Gemini 3.6 Flash (High),Gemini 3.1 Pro (High)",
@@ -1566,14 +1568,25 @@ async def call_for_json(
             # 預設把 Opus 排前面、Flash 3.6 墊後：Opus 品質較好但額度緊，
             # Flash 3.6 上限高，適合當同一天要連寫多篇時的續航模型。
             result = None
+            # 同一模型先重試再換模型。agy 的失敗多半是「輸出不合 schema」，
+            # 而那是機率性的，不是能力問題：2026-08-10 排程在研究簡報階段收到
+            # 「4 validation errors for EditorialResearchBrief」整條鏈就崩了，
+            # 但同一天同一條管線手動跑兩次都一次過。
+            # 沒有重試 = 把一個間歇性失敗當成永久失敗，然後掉到結構上更弱的後備。
             for _idx, _agy_model in enumerate(_agy_model_chain()):
-                result = await _try_agy(
-                    system=system,
-                    prompt=prompt,
-                    response_model=response_model,
-                    timeout_s=timeout_s,
-                    model_name=_agy_model,
-                )
+                for _attempt in range(AGY_RETRIES_PER_MODEL):
+                    result = await _try_agy(
+                        system=system,
+                        prompt=prompt,
+                        response_model=response_model,
+                        timeout_s=timeout_s,
+                        model_name=_agy_model,
+                    )
+                    if result.data is not None:
+                        break
+                    if _attempt + 1 < AGY_RETRIES_PER_MODEL:
+                        print(f"[llm_brain] ↻ agy「{_agy_model}」第 {_attempt + 1} 次未產出"
+                              f"（{str(result.raw_error)[:60]}），重試。")
                 if result.data is not None:
                     break
                 _remaining = _agy_model_chain()[_idx + 1:]
