@@ -844,6 +844,37 @@ def build_footer_block() -> str:
     )
 
 
+def move_glossary_to_end(body: str) -> str:
+    """把「專有名詞註解」搬到正文最後。
+
+    模型常把註解區塊插在它「第一次用到術語」的地方，於是它出現在文章中段，
+    把論證切成兩半——2026-08-10 的 MSTR 稿就是這樣：註解卡在「市場在定價
+    什麼」與「承重假設失效」之間。註解是查詢用的附錄，讀者需要時才回頭看，
+    不該打斷閱讀流。
+
+    只搬動，不改寫內容。找不到就原樣返回。
+    """
+    lines = body.split("\n")
+    start = next((i for i, l in enumerate(lines)
+                  if l.lstrip().startswith("#") and "專有名詞" in l), None)
+    if start is None:
+        return body
+    level = len(lines[start]) - len(lines[start].lstrip("#").lstrip()) or 3
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].lstrip()
+        if stripped.startswith("#"):
+            hashes = len(stripped) - len(stripped.lstrip("#"))
+            if hashes <= level:
+                end = i
+                break
+    block = [l for l in lines[start:end] if l.strip()]
+    rest = lines[:start] + lines[end:]
+    while rest and not rest[-1].strip():
+        rest.pop()
+    return "\n".join(rest + [""] + block)
+
+
 def append_footer_block(*, article_md_path: Path) -> None:
     """Append the reader-facing brand promise and subscription CTA."""
     block = build_footer_block()
@@ -1899,6 +1930,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
     mirror_dir = ONEDRIVE_BASE / today / folder_name
 
     # 5) Write files
+    # 註解區塊搬到正文最後，再接來源與 footer。模型會把它插在第一次用到
+    # 術語的位置，那會把論證切斷（見 move_glossary_to_end）。
+    draft.body_markdown = move_glossary_to_end(draft.body_markdown)
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
     write_article_full_md(
