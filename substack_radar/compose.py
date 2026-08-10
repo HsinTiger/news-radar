@@ -93,6 +93,7 @@ from substack_radar.composer import (  # noqa: E402
     autofix_cjk_spacing,
     autofix_dashes,
     autofix_nominalisation,
+    autofix_heading_colons,
     autofix_mainland_terms,
     autofix_traditional,
     compose_substack_article,
@@ -1911,6 +1912,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # unambiguous half is enforced here at zero token cost, before audit + writes.
     fixes = autofix_traditional(draft)  # 簡→繁台灣 (OpenCC s2tw) — 最後防線，先跑
     fixes += autofix_mainland_terms(draft)
+    fixes += autofix_heading_colons(draft)   # 主題：註解 → 擇一
     fixes += autofix_nominalisation(draft)   # 進行評估 → 評估
     fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號（跳過 deterministic blockquotes）
     fixes += autofix_cjk_spacing(draft)  # 盤古之白：中英數間補空格 (skip code/quote/URL)

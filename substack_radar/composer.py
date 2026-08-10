@@ -527,6 +527,44 @@ def autofix_nominalisation(draft: "SubstackDraft") -> List[str]:
     return [f"[自動修正:名詞化] 「{uniq}」共 {len(hits)} 處還原成動詞"]
 
 
+def autofix_heading_colons(draft: "SubstackDraft") -> List[str]:
+    """子標題的冒號：擇一保留，不是兩邊都要。
+
+    「主題：註解」對模型是安全牌——不必決定要突出哪一半。但讀者會一路讀到
+    「報告小節」的節奏。de-ai-prose 明文禁止、audit 也在報，Flash 仍照犯
+    （2026-08-10 從 4/5 降到 1/6，沒有歸零），所以改成自動處理。
+
+    規則：保留資訊量較高的那一半。中文子標題的資訊通常在冒號右邊
+    （「最強反方：證券化槓桿帶來的期權溢價」→ 右半才是內容），
+    但右半太短時保留左半。人物訪談的冒號是掛人名，不動。
+    """
+    _PERSON_HINT = ("專訪", "訪談", "對談", "問答")
+    lines, fixed = [], []
+    for line in draft.body_markdown.split("\n"):
+        stripped = line.lstrip()
+        if not stripped.startswith("#") or not any(m in line for m in ("：", ":")):
+            lines.append(line)
+            continue
+        if any(h in line for h in _PERSON_HINT):
+            lines.append(line)
+            continue
+        hashes = stripped[: len(stripped) - len(stripped.lstrip("#"))]
+        text = stripped.lstrip("#").strip()
+        sep = "：" if "：" in text else ":"
+        left, _, right = text.partition(sep)
+        left, right = left.strip(), right.strip()
+        if not left or not right:
+            lines.append(line)
+            continue
+        keep = right if len(right) >= 6 else left
+        fixed.append(text)
+        lines.append(f"{hashes} {keep}")
+    if not fixed:
+        return []
+    draft.body_markdown = "\n".join(lines)
+    return [f"[自動修正:子標題冒號] {len(fixed)} 個擇一保留（例：{fixed[0][:28]}）"]
+
+
 def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
     """Convert excess 破折號 (em-dashes —/―) in body PROSE to 逗號 — a deterministic
     cleanup for a common model habit.
