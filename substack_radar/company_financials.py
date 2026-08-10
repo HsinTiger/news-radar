@@ -109,6 +109,56 @@ def fetch_financials(ticker: str) -> Tuple[dict, str]:
     except Exception:
         pass
 
+
+    # --- 管理層信用：財報預估 vs 實際 --------------------------------
+    # 為什麼加這個：財務比率講的是「公司現在體質如何」，這一組講的是
+    # 「管理層的說法可不可信」。四季全 miss 且失準幅度逐季擴大，比任何
+    # 定性描述都更能支撐或推翻一篇公司分析的判斷。
+    # 資料來自既有相依 yfinance，無新增第三方程式碼。
+    try:
+        eh = t.earnings_history
+        if eh is not None and not eh.empty:
+            rows, beats = [], 0
+            for idx, r in eh.iterrows():
+                # 不能用 _b()——它是「換算成十億」的 helper，EPS 8.42 會變成 0.0，
+                # 導致 beat 判定全部失真（實測四季全被誤判為達標）。
+                def _f(v):
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return None
+                act, est = _f(r.get("epsActual")), _f(r.get("epsEstimate"))
+                if act is None or est is None:
+                    continue
+                hit = act >= est
+                beats += 1 if hit else 0
+                rows.append({
+                    "quarter": str(idx)[:10],
+                    "actual": act, "estimate": est,
+                    "surprise_pct": _f(r.get("surprisePercent")),
+                    "beat": hit,
+                })
+            if rows:
+                out["earnings_track_record"] = rows
+                out["earnings_beat_count"] = f"{beats}/{len(rows)}"
+    except Exception:
+        pass
+
+    # --- 宏觀情境背景 ------------------------------------------------
+    # 公司分析不能只看公司。利率決定融資成本與估值折現率，波動率決定
+    # 風險偏好，美元指數影響跨國收入。這三個是最小可用組合，都用 yfinance
+    # 既有管道抓，不引入新來源。
+    try:
+        macro = {}
+        for label, sym in (("us_10y_yield", "^TNX"), ("vix", "^VIX"), ("dxy", "DX-Y.NYB")):
+            h = yf.Ticker(sym).history(period="5d")
+            if h is not None and not h.empty:
+                macro[label] = round(float(h["Close"].iloc[-1]), 2)
+        if macro:
+            out["macro_context"] = macro
+    except Exception:
+        pass
+
     return out, _format_md(out)
 
 
@@ -144,6 +194,31 @@ def _format_md(d: dict) -> str:
         )
     if d.get("summary"):
         L.append(f"- 業務簡述（yfinance）：{d['summary']}")
+    track = d.get("earnings_track_record") or []
+    if track:
+        beats = d.get("earnings_beat_count", "N/A")
+        L.append("")
+        L.append(f"### 管理層信用：財報預估 vs 實際（達標 {beats}）")
+        L.append("（這一組回答的不是「公司體質如何」，而是「管理層的說法可不可信」。"
+                 "連續未達標、且失準幅度擴大，是判斷指引可信度的直接證據。）")
+        for r in track:
+            mark = "達標" if r["beat"] else "未達標"
+            sp = r.get("surprise_pct")
+            sp_txt = f"｜偏離 {sp:+.1%}" if isinstance(sp, float) else ""
+            L.append(f"- {r['quarter']}：實際 {r['actual']} vs 預估 {r['estimate']}　**{mark}**{sp_txt}")
+
+    macro = d.get("macro_context") or {}
+    if macro:
+        L.append("")
+        L.append("### 宏觀情境背景")
+        L.append("（利率決定融資成本與折現率，波動率反映風險偏好，美元指數影響跨國收入。"
+                 "情境分析請以這三個當期值為錨，不要用記憶中的舊數字。）")
+        for k, label in (("us_10y_yield", "美國 10 年期公債殖利率"),
+                         ("vix", "VIX 波動率指數"),
+                         ("dxy", "美元指數 DXY")):
+            if k in macro:
+                L.append(f"- {label}：{macro[k]}")
+
     return "\n".join(L)
 
 
