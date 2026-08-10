@@ -332,7 +332,7 @@ MANNY_ALWAYS = ("counter-case-construction.md",
 # per-brief 分派對它毫無作用 → 移進 MANNY_ALWAYS。
 MANNY_BY_BRIEF = {
     "editorial_company.md": ("company-teardown.md", "capital-allocation-engine.md",
-                             "cycle-and-capital-flow.md"),
+                             "cycle-and-capital-flow.md", "priced-in-or-not.md"),
 }
 
 

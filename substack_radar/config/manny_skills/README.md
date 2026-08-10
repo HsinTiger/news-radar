@@ -1,5 +1,5 @@
 <!-- 由 manny-li-pro-kb 自動同步，請勿在此編輯。
-     來源：HsinTiger/manny-li-pro-kb  commit 09e99cc
+     來源：HsinTiger/manny-li-pro-kb  commit 1b78ee6
      要修改框架請改上游 skills/README.md 後重跑 sync-skills.sh -->
 
 # skills/ — 給下游寫手的分析框架層
@@ -33,6 +33,7 @@
 | `human-editorial-layer.md` | 意思都對卻不像人說話，怎麼重建思考路徑？（加法） | 兩邊 |
 | `sentence-clarity.md` | 單句怎麼寫才不增加認知負擔？（名詞化、比較基準…） | 兩邊 |
 | `title-engine.md` | 標題副標怎麼下才像人話、才有張力？ | 兩邊 |
+| `priced-in-or-not.md` | 指標全爛時，是該避開還是已經出清？（抄底逃頂的判準） | 兩邊 |
 | `chief-editor.md` | 標題／副標／子標題／開頭合起來讀，成不成立？（最後一關） | 兩邊 |
 
 ## 規則的份量（先讀這段）
