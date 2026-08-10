@@ -845,41 +845,52 @@ def build_footer_block() -> str:
     )
 
 
-def move_glossary_to_end(body: str) -> str:
-    """把「專有名詞註解」搬到正文最後。
+def move_glossary_after_opening(body: str) -> str:
+    """把「專有名詞註解」移到開場之後、分析開始之前。
 
-    模型常把註解區塊插在它「第一次用到術語」的地方，於是它出現在文章中段，
-    把論證切成兩半——2026-08-10 的 MSTR 稿就是這樣：註解卡在「市場在定價
-    什麼」與「承重假設失效」之間。註解是查詢用的附錄，讀者需要時才回頭看，
-    不該打斷閱讀流。
+    位置經過兩次修正才定下來：
 
-    只搬動，不改寫內容。找不到就原樣返回。
+    模型原本把它插在第一次用到術語的地方，於是它卡在論證中段，把
+    「市場在定價什麼」和「承重假設失效」切成兩半。
+    第一次改成搬到文末——但那等於沒人會看到，讀者在中段遇到不懂的詞
+    不會滾到底部再滾回來，他會直接跳過那句。
+
+    正確位置是開場之後、分析之前：讀者先知道為什麼該在乎，拿到詞彙，
+    再一路讀完分析不必停下來查。這也是 sentence-clarity ⑤ 的要求——
+    先給理解所需的資訊，再給依賴它的判斷。把註解放在依賴它的段落之後，
+    正是那條規則禁止的順序。
+
+    區塊內的空行必須原樣保留，否則 markdown 區塊結構會毀掉、整段變成
+    標題字級（實際發生過）。
     """
     lines = body.split("\n")
-    start = next((i for i, l in enumerate(lines)
-                  if l.lstrip().startswith("#") and "專有名詞" in l), None)
+    heads = [i for i, l in enumerate(lines) if l.lstrip().startswith("#")]
+    start = next((i for i in heads if "專有名詞" in lines[i]), None)
     if start is None:
         return body
-    level = len(lines[start]) - len(lines[start].lstrip("#").lstrip()) or 3
+
+    level = len(lines[start].lstrip()) - len(lines[start].lstrip().lstrip("#"))
     end = len(lines)
     for i in range(start + 1, len(lines)):
         stripped = lines[i].lstrip()
         if stripped.startswith("#"):
-            hashes = len(stripped) - len(stripped.lstrip("#"))
-            if hashes <= level:
+            if len(stripped) - len(stripped.lstrip("#")) <= level:
                 end = i
                 break
-    # 保留區塊內的空行。第一版用 `if l.strip()` 把空行濾掉，結果 markdown 的
-    # 區塊分隔全毀：標題後沒有空行，渲染器把後續文字當成標題的延續，整段變成
-    # 標題字級，**粗體** 也不再被解析（2026-08-10 owner 回報「字體完全跑版」）。
-    # 只去掉區塊頭尾的空白，中間原封不動。
     block = lines[start:end]
     while block and not block[-1].strip():
         block.pop()
     rest = lines[:start] + lines[end:]
-    while rest and not rest[-1].strip():
-        rest.pop()
-    return "\n".join(rest + ["", ""] + block)
+
+    # 插入點：正文第二個小節之前（第一節是開場／反差，讀者需要先讀到它
+    # 才有動機看詞彙表）。只有一個小節時就放在它之後。
+    body_heads = [
+        i for i, l in enumerate(rest)
+        if l.lstrip().startswith("#") and not l.lstrip().startswith("# ")
+        and "本文取材" not in l
+    ]
+    insert = body_heads[1] if len(body_heads) >= 2 else len(rest)
+    return "\n".join(rest[:insert] + block + ["", ""] + rest[insert:])
 
 
 def append_footer_block(*, article_md_path: Path) -> None:
@@ -1938,9 +1949,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
     mirror_dir = ONEDRIVE_BASE / today / folder_name
 
     # 5) Write files
-    # 註解區塊搬到正文最後，再接來源與 footer。模型會把它插在第一次用到
+    # 註解區塊搬到開場之後、分析之前（見 move_glossary_after_opening）。模型會把它插在第一次用到
     # 術語的位置，那會把論證切斷（見 move_glossary_to_end）。
-    draft.body_markdown = move_glossary_to_end(draft.body_markdown)
+    draft.body_markdown = move_glossary_after_opening(draft.body_markdown)
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
     write_article_full_md(
