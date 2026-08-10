@@ -868,11 +868,17 @@ def move_glossary_to_end(body: str) -> str:
             if hashes <= level:
                 end = i
                 break
-    block = [l for l in lines[start:end] if l.strip()]
+    # 保留區塊內的空行。第一版用 `if l.strip()` 把空行濾掉，結果 markdown 的
+    # 區塊分隔全毀：標題後沒有空行，渲染器把後續文字當成標題的延續，整段變成
+    # 標題字級，**粗體** 也不再被解析（2026-08-10 owner 回報「字體完全跑版」）。
+    # 只去掉區塊頭尾的空白，中間原封不動。
+    block = lines[start:end]
+    while block and not block[-1].strip():
+        block.pop()
     rest = lines[:start] + lines[end:]
     while rest and not rest[-1].strip():
         rest.pop()
-    return "\n".join(rest + [""] + block)
+    return "\n".join(rest + ["", ""] + block)
 
 
 def append_footer_block(*, article_md_path: Path) -> None:
