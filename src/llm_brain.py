@@ -400,12 +400,41 @@ def _compact_schema_for_prompt(response_model: Type[T]) -> tuple[str, tuple[str,
         if args and type(None) in args:
             core = next((arg for arg in args if arg is not type(None)), str)
             args = _typing.get_args(core)
+        origin = _typing.get_origin(core)
         if args and all(isinstance(arg, str) for arg in args):
             spec = "|".join(args)
+        elif origin in (list, tuple, set):
+            # 陣列欄位必須明確標成陣列。原本落進最後的 else 被寫成「字串」，
+            # 於是 prompt 告訴模型 source_claims 是字串、模型照做回傳字串，
+            # 再被 pydantic 以 "Input should be a valid array" 打回。
+            # 2026-08-10 實測：MSTR 那次 4 個驗證錯誤裡有 3 個是這個成因。
+            inner = _typing.get_args(core)
+            inner_spec = "整數" if inner and inner[0] is int else "字串"
+            bounds = []
+            if field.metadata:
+                for meta in field.metadata:
+                    lo = getattr(meta, "min_length", None)
+                    hi = getattr(meta, "max_length", None)
+                    if lo is not None:
+                        bounds.append(f"至少 {lo} 項")
+                    if hi is not None:
+                        bounds.append(f"至多 {hi} 項")
+            suffix = f"，{'、'.join(bounds)}" if bounds else ""
+            spec = f"陣列[{inner_spec}]{suffix}"
         elif core is int:
             spec = "整數"
         else:
-            spec = "字串"
+            # 字串長度下限也要寫進去——模型看不到就會回太短的內容，
+            # 同一次 MSTR 失敗裡 source_digest 就是這樣被打回的。
+            limits = []
+            for meta in (field.metadata or ()):
+                lo = getattr(meta, "min_length", None)
+                hi = getattr(meta, "max_length", None)
+                if lo is not None:
+                    limits.append(f"至少 {lo} 字")
+                if hi is not None:
+                    limits.append(f"至多 {hi} 字")
+            spec = "字串" + (f"，{'、'.join(limits)}" if limits else "")
         optional = "" if name in required_set else "（可省略）"
         field_descriptions.append(f'  "{name}": <{spec}>{optional}')
     compact = "{\n" + ",\n".join(field_descriptions) + "\n}"
