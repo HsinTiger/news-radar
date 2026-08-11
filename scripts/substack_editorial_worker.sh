@@ -41,9 +41,34 @@ if ! mkdir "$LOCAL_LOCK" 2>/dev/null; then
 fi
 LOCAL_LOCKED=1
 
-if ! git fetch --quiet origin main || ! git merge --ff-only origin/main >/dev/null 2>&1; then
+# fetch 與 merge 分開判斷。原本兩者共用一句「cannot be fast-forwarded」，
+# 於是 2026-08-11 中午 GitHub 連不上時，日誌宣稱是合併問題——實際 merge
+# 是 Already up to date，掛的是 fetch。那句話讓診斷往錯的方向走了一輪。
+# fetch 失敗不再 fail closed。2026-08-11 中午整批沒產文，根因是本機臨時埠
+# 被耗盡（TIME_WAIT 24,769 > 埠池 16,384），connect() 對 github.com 立即回
+# EADDRNOTAVAIL；流量一停約 30 秒就自己退乾淨。為了一次半小時的網路抖動
+# 賠掉一整天的稿子並不划算——而且寫稿這件事根本不需要 GitHub。
+# 所以：重試三次，仍失敗就帶著警告照常產文，只是不更新程式碼。
+FETCH_OK=0
+for attempt in 1 2 3; do
+  if git fetch --quiet origin main; then
+    FETCH_OK=1
+    break
+  fi
+  echo "[editorial] git fetch 第 ${attempt}/3 次失敗"
+  [ "$attempt" -lt 3 ] && sleep 30
+done
+if [ "$FETCH_OK" -ne 1 ]; then
+  echo "[editorial] ⚠️ git fetch 三次都失敗；跳過程式碼更新，改用目前本地版本繼續產文"
+  echo "[editorial] 診斷：curl -I https://github.com；若 connect 立即失敗，查 netstat -an -p tcp | grep -c TIME_WAIT"
+  osascript -e 'display notification "連不上 GitHub，改用本地版本產文" with title "News Radar"' 2>/dev/null || true
+fi
+# 分歧是真的該停：本地有人動過、或歷史對不上，硬跑會產出說不清來源的稿子。
+# 這跟上面的網路抖動不同層級，所以維持 fail closed。
+if [ "$FETCH_OK" -eq 1 ] && ! git merge --ff-only origin/main >/dev/null 2>&1; then
   echo "[editorial] current main cannot be fast-forwarded; fail closed"
   git status --short
+  osascript -e 'display notification "排程未產文：本地 main 無法快進" with title "News Radar"' 2>/dev/null || true
   exit 4
 fi
 

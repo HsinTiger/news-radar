@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Sequence
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from src.llm_brain import call_for_json
@@ -61,6 +61,29 @@ class SubstackDraft(BaseModel):
         min_length=10,
         max_length=80,
     )
+    # 2026-08-12：Substack 草稿本來就有 search_engine_title／search_engine_description
+    # 兩個欄位，我們一直留空（實測既有草稿全是 None），於是搜尋引擎拿到的是那個
+    # 15 字的鉤子標題——鉤子對人有效，對搜尋沒有任何線索。這兩欄是「給機器讀的
+    # 那一版」，跟 title/subtitle 分工，不是同一句話換句話說。
+    seo_title: str = Field(
+        ...,
+        description=(
+            "搜尋引擎標題，≤60 字元。直述這篇在講什麼，要含公司／產品／主題的全名，"
+            "不是鉤子。可以跟 title 完全不同。"
+        ),
+        max_length=60,   # 同上：不設下限，補值路徑必須永遠能成立
+    )
+    seo_description: str = Field(
+        ...,
+        description=(
+            "搜尋結果摘要，60–160 字元，一到兩句。平鋪直敘講出本文的實際結論或發現，"
+            "不堆關鍵字、不留懸念。查不到的事不要編。"
+        ),
+        # 字數下限只寫在 description 裡要求模型，不設 min_length：下限一旦成為
+        # 驗證硬牆，短副標退化出來的補值就會反過來把整篇稿子擋掉。SEO 文案是
+        # 加分項，沒有任何理由讓它有權否決一篇已經寫完的文章。
+        max_length=160,
+    )
     body_markdown: str = Field(
         ...,
         description=(
@@ -79,11 +102,46 @@ class SubstackDraft(BaseModel):
     # 2026-05-30: truncate overlong title/subtitle BEFORE the max_length check, so a
     # full ~8-min generation isn't thrown away just because the model overshot the
     # title/subtitle by a few chars (it's not retryable, so rejection = wasted draft).
-    @field_validator("title", "subtitle", mode="before")
+    # SEO 兩欄在 schema 上是必填（prompt 才會確實要求模型產出），但漏填絕不能
+    # 讓整篇作廢——一次生成約 8 分鐘且不可重試，丟掉的代價遠高於一句次等的
+    # SEO 文案。所以驗證前先補值：模型有寫就用模型的，沒寫就從 subtitle 退化。
+    # subtitle 本來就是「說明性」的那一句，比 15 字的鉤子適合餵搜尋引擎。
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_seo_fields(cls, data):
+        if not isinstance(data, dict):
+            return data
+        subtitle = (data.get("subtitle") or "").strip()
+        title = (data.get("title") or "").strip()
+        if not str(data.get("seo_title") or "").strip() and subtitle:
+            data["seo_title"] = subtitle[:60]
+        if not str(data.get("seo_description") or "").strip():
+            fallback = subtitle
+            if len(fallback) < 30:
+                # subtitle 太短就往正文借：取開頭的散文句，跳過標題行與空行。
+                body = str(data.get("body_markdown") or "")
+                prose = [
+                    ln.strip()
+                    for ln in body.splitlines()
+                    if ln.strip() and not ln.lstrip().startswith(("#", ">", "-", "*", "|"))
+                ]
+                tail = " ".join(prose[:2])
+                if fallback and not fallback.endswith(("。", "！", "？", ".", "!", "?")):
+                    fallback += "。"
+                fallback = f"{fallback}{tail}".strip()
+            data["seo_description"] = (fallback or title)[:160]
+        return data
+
+    @field_validator("title", "subtitle", "seo_title", "seo_description", mode="before")
     @classmethod
     def _truncate_headline(cls, v, info):
         if isinstance(v, str):
-            cap = {"title": 15, "subtitle": 80}.get(info.field_name)
+            cap = {
+                "title": 15,
+                "subtitle": 80,
+                "seo_title": 60,
+                "seo_description": 160,
+            }.get(info.field_name)
             if cap and len(v) > cap:
                 # 在字數上限內收在「最後一個標點邊界」＝留一個語意完整的標題，而非從字
                 # 中間硬切（信哥 2026-06-28：要合理的標題、不要語意一半就斷）。找不到夠

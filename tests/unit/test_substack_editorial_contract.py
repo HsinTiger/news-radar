@@ -50,6 +50,10 @@ def test_daily_prompt_is_compact_human_and_writing_only() -> None:
     assert set(composer.SubstackDraft.model_json_schema()["properties"]) == {
         "title",
         "subtitle",
+        # 2026-08-12：Substack 草稿本來就有 search_engine_title/description 兩欄，
+        # 我們一直留空，等於把 15 字的鉤子標題交給搜尋引擎當線索。
+        "seo_title",
+        "seo_description",
         "body_markdown",
     }
 
@@ -61,6 +65,8 @@ def test_antigravity_schema_prompt_has_only_current_writer_fields() -> None:
     assert required == (
         "title",
         "subtitle",
+        "seo_title",
+        "seo_description",
         "body_markdown",
     )
     assert "cover_character" not in compact

@@ -825,6 +825,32 @@ BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的
 # 交付節奏文案。與封面圖共用同一份（promise_cover.SLOGAN），改動須兩處同步。
 PUBLIC_CADENCE = "每天兩篇思想延伸 · 每週一篇公司拆解"
 
+# 專欄識別前綴（2026-08-12 owner）：讀者在列表頁／email 標題列一眼分辨這是哪一路。
+# 刻意在 SubstackDraft 驗證「≤15 字」之後才貼上——prefix 是欄目標籤，不該吃掉
+# 標題本身的鉤子預算。模型完全不知道 prefix 存在，也就不會為了湊字數犧牲 hook。
+COLUMN_PREFIX = {
+    "company": "商業分析",   # 每週公司拆解／財報
+    "podcast": "科技前沿",   # 每日 podcast 思想延伸
+}
+COLUMN_PREFIX_SEP = "｜"
+
+
+def apply_column_prefix(title: str, mode: str) -> str:
+    """Prepend the column label. Idempotent, so re-runs don't stack prefixes."""
+    prefix = COLUMN_PREFIX.get(mode)
+    if not prefix:
+        return title
+    head = f"{prefix}{COLUMN_PREFIX_SEP}"
+    if title.startswith(head):
+        return title
+    # 任一已知欄目前綴都先剝掉，避免題型改判時留下舊標籤。
+    for known in COLUMN_PREFIX.values():
+        old = f"{known}{COLUMN_PREFIX_SEP}"
+        if title.startswith(old):
+            title = title[len(old):]
+            break
+    return f"{head}{title}"
+
 
 def build_footer_block() -> str:
     """Reader-facing footer. Owner-approved wording — keep it to these three lines.
@@ -1034,6 +1060,8 @@ def push_to_substack_draft(
     article_md_path: Path,
     title: str,
     subtitle: str,
+    seo_title: Optional[str] = None,
+    seo_description: Optional[str] = None,
     cover_path: Optional[Path] = None,
     source_id: Optional[str] = None,
     audience: str = DEFAULT_SUBSTACK_AUDIENCE,
@@ -1118,7 +1146,15 @@ def push_to_substack_draft(
 
         post.from_markdown(body_md, api=api)
 
-        draft = api.post_draft(post.get_draft())
+        # python-substack 的 Post.get_draft() 不含 SEO 欄位，但 Substack 草稿本身有。
+        # 直接補進 payload：留空的話搜尋引擎只會看到那個 15 字的鉤子標題。
+        payload = post.get_draft()
+        if seo_title:
+            payload["search_engine_title"] = seo_title
+        if seo_description:
+            payload["search_engine_description"] = seo_description
+
+        draft = api.post_draft(payload)
         draft_id = draft.get("id") if isinstance(draft, dict) else None
         if draft_id is None:
             print("[Substack] ❌ post_draft returned no draft id; remote creation is unproven")
@@ -1906,6 +1942,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             },
         )
         return 3
+    draft.title = apply_column_prefix(draft.title, mode)
     print(f"[Compose] ✅ title={draft.title!r}")
 
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
@@ -1996,6 +2033,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 article_md_path=article_md,
                 title=draft.title,
                 subtitle=draft.subtitle,
+                seo_title=getattr(draft, "seo_title", None),
+                seo_description=getattr(draft, "seo_description", None),
                 cover_path=cover_path,
                 source_id=source_id,
             )
