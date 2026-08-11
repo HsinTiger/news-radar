@@ -34,13 +34,17 @@ sources:
     topic_category: ai_agent
     max_videos: 1                        # VERIFIED: ~40k chars, auto-captions
 
-  - url: https://www.youtube.com/@latentspacepodcast/videos
+  # 2026-08-12：舊 handle @latentspacepodcast 已 404，改用現行 handle。
+  - url: https://www.youtube.com/@LatentSpacePod/videos
     topic_category: ai_model
-    max_videos: 1                        # VERIFIED via channel ID UCxBcwypKK-W3GHd_RZ9FZrQ
+    max_videos: 1                        # VERIFIED 2026-08-12 via yt-dlp
 
-  - url: https://www.youtube.com/@EyeOnAIPodcast/videos
+  # 2026-08-12：@EyeOnAIPodcast 404，且該頻道連 videos tab 都不存在（節目似已
+  # 收攤或搬離 YouTube）。用同類型的研究訪談節目 TWIML 替補，維持 ai_application
+  # 這一路的來源數量——來源少一個，pool 就少一天的備料。
+  - url: https://www.youtube.com/@twimlai/videos
     topic_category: ai_application
-    max_videos: 1                        # VERIFIED via channel ID UC-o9u9QL4zXzBwjvT1gmzNg
+    max_videos: 1                        # VERIFIED 2026-08-12 via yt-dlp
 
   - url: https://www.youtube.com/@CognitiveRevolutionPodcast/videos
     topic_category: ai_model
