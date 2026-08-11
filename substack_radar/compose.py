@@ -830,21 +830,32 @@ PUBLIC_CADENCE = "每天兩篇思想延伸 · 每週一篇公司拆解"
 # 標題本身的鉤子預算。模型完全不知道 prefix 存在，也就不會為了湊字數犧牲 hook。
 COLUMN_PREFIX = {
     "company": "商業分析",   # 每週公司拆解／財報
-    "podcast": "科技前沿",   # 每日 podcast 思想延伸
+    "podcast": "主題分享",   # 每日 podcast 思想延伸（預設）
 }
+# podcast 這一路的題材比想像中雜：來源設定裡 us_stocks 14 個、other 9 個，
+# ai_* 合計才 11 個。固定掛「科技前沿」會出現「科技前沿｜八角籠裡的生死算計」
+# 這種 MMA 減重議題掛科技標籤的錯配（2026-08-12 實測到）。所以只有真的是
+# AI 題材才用「科技前沿」，其餘回到題材中性的「主題分享」。
+COLUMN_PREFIX_AI = "科技前沿"
+_AI_TOPICS = {"ai_model", "ai_application", "ai_agent"}
 COLUMN_PREFIX_SEP = "｜"
 
+# 所有可能出現在標題前的欄目標籤，供剝除舊標籤時比對。
+_ALL_PREFIXES = tuple(COLUMN_PREFIX.values()) + (COLUMN_PREFIX_AI,)
 
-def apply_column_prefix(title: str, mode: str) -> str:
+
+def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
     """Prepend the column label. Idempotent, so re-runs don't stack prefixes."""
     prefix = COLUMN_PREFIX.get(mode)
+    if mode == "podcast" and (topic_category or "") in _AI_TOPICS:
+        prefix = COLUMN_PREFIX_AI
     if not prefix:
         return title
     head = f"{prefix}{COLUMN_PREFIX_SEP}"
     if title.startswith(head):
         return title
     # 任一已知欄目前綴都先剝掉，避免題型改判時留下舊標籤。
-    for known in COLUMN_PREFIX.values():
+    for known in _ALL_PREFIXES:
         old = f"{known}{COLUMN_PREFIX_SEP}"
         if title.startswith(old):
             title = title[len(old):]
@@ -1942,7 +1953,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             },
         )
         return 3
-    draft.title = apply_column_prefix(draft.title, mode)
+    draft.title = apply_column_prefix(draft.title, mode, topic_category)
     print(f"[Compose] ✅ title={draft.title!r}")
 
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).
