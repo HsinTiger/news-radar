@@ -61,7 +61,7 @@ import sys
 import unicodedata
 from datetime import datetime, date, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -828,27 +828,69 @@ PUBLIC_CADENCE = "每天兩篇思想延伸 · 每週一篇公司拆解"
 # 專欄識別前綴（2026-08-12 owner）：讀者在列表頁／email 標題列一眼分辨這是哪一路。
 # 刻意在 SubstackDraft 驗證「≤15 字」之後才貼上——prefix 是欄目標籤，不該吃掉
 # 標題本身的鉤子預算。模型完全不知道 prefix 存在，也就不會為了湊字數犧牲 hook。
+# 兩個專欄的分界是「來源」不是「題材」：一邊是我們自己去拆一家公司的帳，
+# 一邊是我們聽人講完之後想到的事。所以 podcast 那篇就算在談財報也不衝突。
+# 先前試過依題材切換（ai_* → 科技前沿，其餘 → 主題分享），但那是照題材命名，
+# 於是出現「科技前沿｜八角籠裡的生死算計」這種 MMA 減重掛科技標籤的錯配。
+# 沿著來源這條軸命名之後，一個名字對 AI、格鬥、美股一律成立，切換邏輯就多餘了。
 COLUMN_PREFIX = {
-    "company": "商業分析",   # 每週公司拆解／財報
-    "podcast": "主題分享",   # 每日 podcast 思想延伸（預設）
+    "company": "賺錢有道",   # 每週公司拆解／財報
+    "podcast": "吹牛免稅",   # 每日 podcast 思想延伸
+    # 儀表板手動投稿走 morning／evening 兩個 slot，先前不在這張表裡，於是這條路
+    # 產出的草稿一律沒有欄目標籤（2026-08-16 從草稿匣比對發現）。它們不屬於前兩
+    # 個定期專欄，但仍是 owner 親自挑的題目，自成一欄。
+    "morning": "主編精選",
+    "evening": "主編精選",
 }
-# podcast 這一路的題材比想像中雜：來源設定裡 us_stocks 14 個、other 9 個，
-# ai_* 合計才 11 個。固定掛「科技前沿」會出現「科技前沿｜八角籠裡的生死算計」
-# 這種 MMA 減重議題掛科技標籤的錯配（2026-08-12 實測到）。所以只有真的是
-# AI 題材才用「科技前沿」，其餘回到題材中性的「主題分享」。
-COLUMN_PREFIX_AI = "科技前沿"
-_AI_TOPICS = {"ai_model", "ai_application", "ai_agent"}
 COLUMN_PREFIX_SEP = "｜"
 
-# 所有可能出現在標題前的欄目標籤，供剝除舊標籤時比對。
-_ALL_PREFIXES = tuple(COLUMN_PREFIX.values()) + (COLUMN_PREFIX_AI,)
+# 歷史標籤也要能剝除，否則改名後重跑會疊成「吹牛免稅｜主題分享｜…」。
+_RETIRED_PREFIXES = ("商業分析", "主題分享", "科技前沿")
+_ALL_PREFIXES = tuple(COLUMN_PREFIX.values()) + _RETIRED_PREFIXES
+
+
+def _tag_key(name: str) -> str:
+    """Fold a tag to its comparison key: case, spaces and separators don't count."""
+    return re.sub(r"[\s_\-–—·]+", "", str(name)).casefold()
+
+
+def normalise_tags(
+    proposed: Iterable[str],
+    existing: Iterable[str] = (),
+    limit: int = 5,
+) -> list[str]:
+    """Clean model-proposed tags and fold them onto the publication's vocabulary.
+
+    The publication already carries 263 tags containing splits like
+    ``AI Agent`` / ``aiagent`` — the cost of letting free text through. Any
+    proposal that matches an existing tag once case and separators are ignored
+    reuses that tag's exact spelling, so the taxonomy converges instead of
+    branching. Genuinely new topics still pass through as-is.
+    """
+    canonical: dict[str, str] = {}
+    for name in existing:
+        key = _tag_key(name)
+        if key:
+            canonical.setdefault(key, str(name))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in proposed or ():
+        tag = str(raw).strip().lstrip("#").strip(" 、,;")
+        key = _tag_key(tag)
+        # 一個字的 tag 對導覽沒有意義，過長的通常是模型把整句標題塞進來。
+        if not key or len(tag) > 20 or key in seen:
+            continue
+        seen.add(key)
+        out.append(canonical.get(key, tag))
+        if len(out) >= limit:
+            break
+    return out
 
 
 def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
     """Prepend the column label. Idempotent, so re-runs don't stack prefixes."""
     prefix = COLUMN_PREFIX.get(mode)
-    if mode == "podcast" and (topic_category or "") in _AI_TOPICS:
-        prefix = COLUMN_PREFIX_AI
     if not prefix:
         return title
     head = f"{prefix}{COLUMN_PREFIX_SEP}"
@@ -878,7 +920,7 @@ def build_footer_block() -> str:
         "\n\n---\n\n"
         f"> **{BRAND_TAGLINE}**\n\n"
         f"{PUBLIC_CADENCE}\n\n"
-        "✉️ 覺得我哪個判斷站不住，直接回信。\n"
+        "💬 有想法？留言區聊聊。\n"
     )
 
 
@@ -1073,6 +1115,7 @@ def push_to_substack_draft(
     subtitle: str,
     seo_title: Optional[str] = None,
     seo_description: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
     cover_path: Optional[Path] = None,
     source_id: Optional[str] = None,
     audience: str = DEFAULT_SUBSTACK_AUDIENCE,
@@ -1178,9 +1221,27 @@ def push_to_substack_draft(
                     "[Substack] 🛑 remote draft exists but durable receipt write failed: "
                     f"source={source_id} draft_id={draft_id} error={exc}"
                 )
+        # Tag 只能在草稿存在之後掛上，而且掛失敗不該讓一篇寫好的稿子算失敗——
+        # 它是站內導覽與 SEO/AEO 的加分項，不是草稿成立的條件。
+        applied: list[str] = []
+        if tags:
+            try:
+                existing = api.get_publication_post_tags()
+                if isinstance(existing, dict):
+                    existing = existing.get("post_tags") or existing.get("tags") or []
+                names = [
+                    t.get("name") if isinstance(t, dict) else str(t) for t in existing
+                ]
+                applied = normalise_tags(tags, [n for n in names if n])
+                if applied:
+                    api.add_tags_to_post(draft_id, applied)
+            except Exception as exc:
+                print(f"[Substack] ⚠️ Tag apply failed (draft kept): {type(exc).__name__}: {exc}")
+                applied = []
         print(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
-            f"audience={audience} cover={'yes' if cover_path else 'no'}"
+            f"audience={audience} cover={'yes' if cover_path else 'no'} "
+            f"tags={'/'.join(applied) if applied else 'none'}"
         )
         # Return draft_id (int) on success, None on failure, so caller can
         # build the public URL for notify email.
@@ -2046,6 +2107,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 subtitle=draft.subtitle,
                 seo_title=getattr(draft, "seo_title", None),
                 seo_description=getattr(draft, "seo_description", None),
+                tags=getattr(draft, "tags", None),
                 cover_path=cover_path,
                 source_id=source_id,
             )

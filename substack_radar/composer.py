@@ -84,6 +84,21 @@ class SubstackDraft(BaseModel):
         # 加分項，沒有任何理由讓它有權否決一篇已經寫完的文章。
         max_length=160,
     )
+    # 2026-08-16：Substack 的 tag 是站內導覽與 SEO/AEO 的入口，我們一直沒填。
+    # 這一欄由模型產生、由程式收斂——publication 裡已經有 263 個 tag，其中
+    # 「AI Agent」與「aiagent」這類同義分裂就是放任自由輸入的結果。所以模型只
+    # 負責想主題，正規化與併入既有 tag 交給 normalise_tags()。
+    # 跟 SEO 兩欄同一個處理方式：schema 上必填，prompt 才會確實要求模型產出；
+    # 但漏填由 validator 補成空陣列，絕不讓一個加分項否決已經寫完的稿子。
+    # 下限不設（模型少給幾個仍可用），上限留著（偶爾會吐一長串）。
+    tags: list[str] = Field(
+        ...,
+        description=(
+            "3–5 個主題標籤，給讀者在站內找相關文章用。用最通行的說法（公司名、"
+            "技術名、主題名），每個 2–12 字，不要加井號或標點，不要重複標題整句。"
+        ),
+        max_length=5,
+    )
     body_markdown: str = Field(
         ...,
         description=(
@@ -113,6 +128,15 @@ class SubstackDraft(BaseModel):
             return data
         subtitle = (data.get("subtitle") or "").strip()
         title = (data.get("title") or "").strip()
+        # tags 同理：schema 必填是為了讓 prompt 要求模型產出，不是為了有權退稿。
+        raw_tags = data.get("tags")
+        if not isinstance(raw_tags, list):
+            # 模型偶爾把陣列寫成「AI、比特幣」這種一整串，切開比丟掉划算。
+            data["tags"] = (
+                [p for p in re.split(r"[、,;／/]+", str(raw_tags)) if p.strip()]
+                if raw_tags
+                else []
+            )
         if not str(data.get("seo_title") or "").strip() and subtitle:
             data["seo_title"] = subtitle[:60]
         if not str(data.get("seo_description") or "").strip():
@@ -288,6 +312,7 @@ def strip_generated_footer(markdown: str) -> str:
         "每天兩篇對談延伸",
         "每天兩篇思想延伸",
         "覺得我哪個判斷站不住，直接回信",
+        "有想法？留言區聊聊",
         "✉️ 你可以直接回信，告訴我哪個判斷值得再追",
         "點此訂閱 → 不錯過下一篇拆解",
         "免費訂閱 → 明天中午就收得到下一篇",

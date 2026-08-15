@@ -54,6 +54,9 @@ def test_daily_prompt_is_compact_human_and_writing_only() -> None:
         # 我們一直留空，等於把 15 字的鉤子標題交給搜尋引擎當線索。
         "seo_title",
         "seo_description",
+        # 2026-08-16：tag 是站內導覽與 SEO/AEO 的入口，由模型產生、由
+        # normalise_tags() 併回既有詞彙，避免 263 個 tag 繼續分裂。
+        "tags",
         "body_markdown",
     }
 
@@ -67,6 +70,7 @@ def test_antigravity_schema_prompt_has_only_current_writer_fields() -> None:
         "subtitle",
         "seo_title",
         "seo_description",
+        "tags",
         "body_markdown",
     )
     assert "cover_character" not in compact
@@ -163,7 +167,9 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
     assert "發布前刪此行" not in text
     assert "本文取材" in text and "https://example.com/interview" in text
     assert text.index("第二段仍然是讀者需要的內容") < text.index("本文取材")
-    assert "覺得我哪個判斷站不住，直接回信" in text
+    # 2026-08-16：footer 收尾從「覺得我哪個判斷站不住，直接回信」改成留言邀請——
+    # owner 覺得原句太銳利，像在下戰帖。
+    assert "有想法？留言區聊聊" in text
     for forbidden in (
         "視覺位置",
         "Path B",
