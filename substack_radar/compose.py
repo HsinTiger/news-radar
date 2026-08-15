@@ -1956,6 +1956,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 research_brief.research_queries,
                 primary_url=source_url,
                 seed_sources=used_reports,
+                subject=raw_title,
             )
             research_sources = research_bundle.evidence_sources
             social_reach = research_bundle.social_reach

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import html
 import json
+import ipaddress
 import re
+import unicodedata
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Iterable, Literal, Sequence
@@ -105,6 +107,35 @@ _TRACKING_KEYS = {
     "ref",
     "source",
 }
+
+
+def is_fetch_safe(url: str) -> bool:
+    """Whether this URL may be fetched and have its text put in model context.
+
+    The pipeline reads each candidate page and feeds the text to the writer, so
+    a URL is an inbound channel, not just a citation. Two classes are refused
+    outright: schemes other than http(s) (``file:``, ``data:``, ``gopher:``),
+    and hosts that resolve to the machine or its network — a search result
+    pointing at ``localhost`` or ``169.254.169.254`` is never a real source and
+    is exactly the shape an SSRF attempt takes.
+    """
+    parts = urlsplit((url or "").strip())
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return False
+    host = parts.hostname.lower()
+    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith((".local", ".internal")):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # a name, not a literal — DNS rebinding is out of scope here
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+    )
 
 
 def _canonical_url(url: str) -> str:
@@ -415,7 +446,74 @@ def _publisher_for(url: str) -> str:
     return host or "unknown publisher"
 
 
-def _search_candidates(queries: Sequence[str], *, per_query: int = 8) -> list[dict]:
+_TERM_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "with", "from", "that", "this", "what", "how",
+        "why", "www", "com", "http", "https", "html", "index", "news",
+        "報導", "分析", "影響", "如何", "為何", "什麼", "可能", "目前",
+        "我們", "他們", "這個", "那個", "以及", "但是", "因為", "所以",
+    }
+)
+
+
+def _subject_terms(*texts: object) -> set[str]:
+    """Key terms describing what this article is actually about.
+
+    Chinese has no whitespace to tokenise on, so CJK runs become overlapping
+    bigrams — 「台積電」 yields 台積/積電, which still matches a candidate that
+    spells the company out. Latin tokens keep their word boundaries.
+    """
+    terms: set[str] = set()
+    for text in texts:
+        value = str(text or "")
+        terms |= {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9.\-]{2,}", value)}
+        for run in re.findall(r"[一-鿿]{2,}", value):
+            terms |= {run[i : i + 2] for i in range(len(run) - 1)}
+    return {t for t in terms if t not in _TERM_STOPWORDS}
+
+
+def _relevance_hits(text: str, subject_terms: set[str]) -> int:
+    """How many of the article's own key terms this candidate actually mentions.
+
+    Latin terms also match as substrings, because the subject is usually
+    described in Chinese while the best sources are English: a piece about
+    「Strategy 的比特幣持倉」 must not lose ``MicroStrategy bitcoin holdings``
+    just because that token is not character-identical to ``strategy``. The
+    4-character floor keeps short fragments from matching everything.
+    """
+    if not subject_terms:
+        return 1
+    found = _subject_terms(text)
+    hits = found & subject_terms
+    latin_subject = {t for t in subject_terms - hits if len(t) >= 4 and t.isascii()}
+    latin_found = {t for t in found if len(t) >= 4 and t.isascii()}
+    for term in latin_subject:
+        if any(term in other or other in term for other in latin_found):
+            hits = hits | {term}
+    return len(hits)
+
+
+def _is_legible(text: str) -> bool:
+    """Reject titles that arrive as mojibake or replacement characters.
+
+    Search results occasionally carry mis-decoded bytes; those reach the reader
+    verbatim in the sources list, so they are cheaper to drop than to repair.
+    """
+    value = str(text or "")
+    if not value:
+        return True
+    if "�" in value:
+        return False
+    junk = sum(1 for ch in value if unicodedata.category(ch) in {"Cc", "Co", "Cs", "Cn"})
+    return junk / len(value) < 0.1
+
+
+def _search_candidates(
+    queries: Sequence[str],
+    *,
+    per_query: int = 8,
+    subject_terms: set[str] | None = None,
+) -> list[dict]:
     try:
         from ddgs import DDGS
     except Exception as exc:  # pragma: no cover - environment-specific dependency gate
@@ -440,22 +538,32 @@ def _search_candidates(queries: Sequence[str], *, per_query: int = 8) -> list[di
                 continue
             # 安全閘：擋在抓取之前，這些網址的內容不該進入模型 context。
             _haystack = f"{url} {result.get('title') or ''}".lower()
-            if any(bad in _haystack for bad in _UNSAFE_DOMAINS):
+            if any(bad in _haystack for bad in _UNSAFE_DOMAINS) or not is_fetch_safe(url):
                 print(f"[EditorialResearch] blocked unsafe source: {url[:70]}")
                 continue
             # 裸首頁不是可查證的來源，讀者點過去看不到本文引用的資料。
             if _canonical_url(url).rstrip("/").count("/") <= 2:
                 continue
-            seen.add(url)
             title = re.sub(r"\s+", " ", result.get("title") or "").strip()
             snippet = re.sub(r"\s+", " ", result.get("body") or "").strip()
+            if not _is_legible(title) or not _is_legible(snippet):
+                print(f"[EditorialResearch] dropped unreadable result: {url[:60]}")
+                continue
+            # 相關性閘：先前的分數只有域名權威度與搜尋排名，沒有任何一項在問
+            # 「這篇跟本文有關嗎」，於是一個高權威網站的離題結果會贏過小網站的
+            # 切題結果——就是 owner 看到「真的網址但一點都不相干」的來源。
+            hits = _relevance_hits(f"{title} {snippet}", subject_terms or set())
+            if not hits:
+                continue
+            seen.add(url)
             signal = 2 if any(domain in url.lower() for domain in _HIGH_SIGNAL_DOMAINS) else 0
             candidates.append(
                 {
                     "title": title or _publisher_for(url),
                     "url": url,
                     "snippet": snippet,
-                    "score": signal - query_index * 0.2 - rank * 0.02,
+                    # 相關性排在權威度前面：離題的路透不如切題的產業媒體。
+                    "score": min(hits, 6) * 1.5 + signal - query_index * 0.2 - rank * 0.02,
                 }
             )
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
@@ -466,6 +574,7 @@ def build_research_pack(
     *,
     primary_url: str | None = None,
     seed_sources: Sequence[dict] | None = None,
+    subject: str = "",
 ) -> list[ResearchSource]:
     """Search, read, and validate five to ten sources for one deep article.
 
@@ -485,7 +594,9 @@ def build_research_pack(
                     "score": 3,
                 }
             )
-    candidates.extend(_search_candidates(queries))
+    # 主題詞彙來自主來源標題加上研究問句本身——查證問句就是這篇在問的事。
+    subject_terms = _subject_terms(subject, *queries)
+    candidates.extend(_search_candidates(queries, subject_terms=subject_terms))
 
     primary = _canonical_url(primary_url or "")
     seen: set[str] = set()
@@ -553,6 +664,7 @@ def build_research_bundle(
     *,
     primary_url: str | None = None,
     seed_sources: Sequence[dict] | None = None,
+    subject: str = "",
 ) -> EditorialResearchBundle:
     """Follow social leads, then build the independent durable evidence pack."""
     social_reach = collect_social_reach(queries)
@@ -565,6 +677,7 @@ def build_research_bundle(
         expanded_queries,
         primary_url=primary_url,
         seed_sources=seed_sources,
+        subject=subject,
     )
     return EditorialResearchBundle(
         evidence_sources=evidence_sources,
