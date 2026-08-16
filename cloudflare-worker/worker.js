@@ -706,6 +706,11 @@ async function updateSubmissionStatus(request, env, id, cors) {
     source_queued: new Set(["processing", "draft_created", "published", "partial", "failed"]),
     partial: new Set(["processing", "published", "quality_held", "failed"]),
     quality_held: new Set(["processing", "published", "partial", "failed"]),
+    // failed 先前不在這張表裡, 等於是死路: 一筆失敗後重試成功的投稿永遠無法
+    // 把成功記錄回來, 而且那一列會永遠擋住整條同步(2026-08-16 實際發生:
+    // submission 7e3537b6 在遠端是 failed、本機已經寫出草稿, 每次同步都 409)。
+    // 失敗不是終點, 重試成功才是。
+    failed: new Set(["processing", "draft_created", "published", "partial", "quality_held"]),
   };
   if (!transitions[existing.status]?.has(status)) {
     throw new HTTPError(

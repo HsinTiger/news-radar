@@ -1304,6 +1304,16 @@ def report_submission_updates(
                 f"status={response.status_code} body={response.text[:400]}"
             )
             print(f"[sync]    payload={payload}")
+        # 單一筆狀態回報被拒, 不該讓整輪同步失敗。這一步送的是事後的中繼資料,
+        # 不是寫稿本身; 一筆遠端狀態機不接受的舊資料曾經把整條同步卡死。
+        # 既有的 404 判斷已經是這個精神, 這裡把 409 一併納入。
+        if response.status_code == 409:
+            print(
+                "[sync_social_ops] WARN remote refused status transition for "
+                f"submission {update['submission_id']}; continuing",
+                file=sys.stderr,
+            )
+            continue
         response.raise_for_status()
         reported += 1
     return reported
