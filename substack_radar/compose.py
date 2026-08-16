@@ -2079,6 +2079,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
         )
         return 3
     draft.title = apply_column_prefix(draft.title, mode, topic_category)
+    # 專欄 tag 在這裡就併進 draft.tags，不要等到推送時才加：metadata.json 是從
+    # draft.tags 寫的，晚加會讓本機紀錄跟 Substack 上實際掛的 tag 對不起來
+    # （2026-08-16 三欄驗收就是這樣抓到的）。push 端仍會再併一次當保險，
+    # normalise_tags 會去重，重複無害。
+    _column, _ = split_column_prefix(draft.title)
+    if _column:
+        draft.tags = [_column] + [t for t in (getattr(draft, "tags", None) or []) if t != _column]
     print(f"[Compose] ✅ title={draft.title!r}")
 
     # 2b) Deterministic mainland-term auto-fix (Optimization B, 2026-05-30).

@@ -9,6 +9,7 @@ Substack and Meta renderers then compose those assets into final images.
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 from pathlib import Path
 
@@ -67,10 +68,38 @@ _HARD_TITLE_MARKERS = (
 )
 
 
+_SOFT_TITLE_MARKERS = (
+    "政治", "選舉", "民主", "保守", "自由主義", "社會", "文化", "歷史", "戰爭",
+    "心理", "情緒", "焦慮", "人生", "教育", "教室", "學校", "宗教", "哲學",
+    "醫療", "衛生", "健康", "疾病", "疫", "勞動", "就業", "移民", "世代",
+    "性別", "女性", "家庭", "體育", "訪談", "小說", "藝術", "音樂",
+)
+
+
+def _match_markers(text, markers) -> list:
+    """CJK 用子字串比對；拉丁字母一律要求詞界。
+
+    原本全部用子字串，於是 `API` 比對到 `Shapiro`（SH-API-RO），一篇談美國
+    政治的 podcast 被判成硬科技、配了瑞瑞。同一個坑還有 `AI` 中 TAIWAN／
+    RETAIL、`IC` 中 PUBLIC。"""
+    value = str(text or "")
+    upper = value.upper()
+    hits = []
+    for m in markers:
+        if m.isascii():
+            if re.search(rf"(?<![A-Za-z0-9]){re.escape(m.upper())}(?![A-Za-z0-9])", upper):
+                hits.append(m)
+        elif m in value:
+            hits.append(m)
+    return hits
+
+
 def _title_is_hard(title=None) -> bool:
-    text = (title or "")
-    upper = text.upper()
-    return any(m.upper() in upper for m in _HARD_TITLE_MARKERS)
+    return bool(_match_markers(title, _HARD_TITLE_MARKERS))
+
+
+def _title_is_soft(title=None) -> bool:
+    return bool(_match_markers(title, _SOFT_TITLE_MARKERS))
 
 
 def pick_character(topic_category=None, mode=None, title=None) -> str:
@@ -82,12 +111,18 @@ def pick_character(topic_category=None, mode=None, title=None) -> str:
     """
     if mode == "company":
         return "robot"
+    # 標題＋tag 的訊號排在 topic_category 之前。topic_category 大多數時候是
+    # "other"，而它有值的時候也未必對——2026-08-16 一篇談 222 奈米紫外線
+    # 殺菌燈的稿子被標成 ai_model，照 topic 判就會配到瑞瑞。tag 是寫手讀完
+    # 全文之後給的，比上游分類器可信。
+    if _title_is_hard(title):
+        return "robot"
+    if _title_is_soft(title):
+        return "owl"
     topic = (topic_category or "").strip()
     if topic in _ROBOT_TOPICS:
         return "robot"
-    if topic in _OWL_TOPICS:
-        return "owl"
-    return "robot" if _title_is_hard(title) else "owl"
+    return "owl"
 
 
 # 輪替池只放語氣中性的表情。alert／celebrating／smug／wink／cautionary 帶明確
