@@ -14,7 +14,7 @@ News Radar · Character Cover compositor (Cover System D6 · route 3, 2026-06-21
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from substack_radar.promise_cover import (
     W, H, KICKER, _font, _wrap, _hx, palette_for,
@@ -80,6 +80,7 @@ def render_character_cover(
     mode: Optional[str] = None,
     kicker: Optional[str] = None,
     gaze_seed: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
 ) -> Optional[Path]:
     """Composite a character cover to ``output_dir/cover.png``. Returns the path,
     or None when no character asset is available (→ promise_cover fallback).
@@ -89,7 +90,9 @@ def render_character_cover(
     when that expression's asset isn't in the library yet."""
     from PIL import Image, ImageDraw
 
-    char = character if character in ("robot", "owl") else pick_character(topic_category, mode, title)
+    # 題材訊號：topic_category 常年是 "other"，把 tag 一起丟給選角當備援。
+    signal = " ".join([title or ""] + [str(t) for t in (tags or ())])
+    char = character if character in ("robot", "owl") else pick_character(topic_category, mode, signal)
     expr = expression or pick_expression(topic_category, mode, title, char)
     asset = _find_asset(char, expr)
     if asset is None:

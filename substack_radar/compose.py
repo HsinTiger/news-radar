@@ -1008,6 +1008,7 @@ def render_substack_cover(
     character: Optional[str] = None,
     expression: Optional[str] = None,
     mode: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
 ) -> Optional[Path]:
     """Render the 1456×816 Substack hero cover. Returns saved PNG path or None.
 
@@ -1035,6 +1036,7 @@ def render_substack_cover(
                 mode=mode,
                 kicker=column or None,
                 gaze_seed=title,
+                tags=tags,
             )
             if p is not None:
                 print(f"[Cover] ✅ character cover ({character or 'auto'}) → {p.name}")
@@ -2145,6 +2147,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
         source_image_path=None, # Fallback to synth noise
         character=None,
         mode=mode,  # → pick_expression maps 發文類別 → 角色表情
+        # topic_category 實測長期是 "other"，選角等於只剩標題可看；模型產的
+        # tag（例如 SaaS／aiagent／Canva）才是真的有題材訊號的那一份。
+        tags=getattr(draft, "tags", None),
     )
     
     print(f"[Files] wrote {local_dir}")
