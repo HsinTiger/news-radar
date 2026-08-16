@@ -14,9 +14,12 @@ REPO="${REPO:-HsinTiger/news-radar}"
 LOCAL_REPO="${LOCAL_REPO:-$HOME/news_radar}"
 PY="$LOCAL_REPO/.venv/bin/python"
 LOCAL_LOCK="$LOCAL_REPO/.runtime-state-local.lock.d"
+WANT_FILE="$LOCAL_REPO/.runtime-state-editorial-want"
 LEASE_FILE="$LOCAL_REPO/.runtime-state-editorial-lease.json"
+LOCK_WAIT_SECONDS="${LOCK_WAIT_SECONDS:-2700}"   # 45 分鐘
 LEASED=0
 LOCAL_LOCKED=0
+WANTED=0
 
 cleanup() {
   if [ "$LEASED" = "1" ] && [ -x "$PY" ]; then
@@ -24,10 +27,39 @@ cleanup() {
       --repo "$REPO" --lease-file "$LEASE_FILE" || true
   fi
   if [ "$LOCAL_LOCKED" = "1" ]; then
-    rmdir "$LOCAL_LOCK" 2>/dev/null || true
+    rm -rf "$LOCAL_LOCK" 2>/dev/null || true
+  fi
+  if [ "$WANTED" = "1" ]; then
+    rm -f "$WANT_FILE" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
+
+# 鎖裡留一份 PID，等待方才分得出「真的有人在跑」跟「上一輪被 kill 留下的殘骸」。
+# 舊版腳本留下的鎖沒有 pid，那種只能靠時間判定（2 小時 = 遠端 lease 上限）。
+lock_acquire() {
+  [ -n "$LOCAL_LOCK" ] || return 1
+  if mkdir "$LOCAL_LOCK" 2>/dev/null; then
+    echo $$ > "$LOCAL_LOCK/pid" 2>/dev/null || true
+    return 0
+  fi
+  local owner
+  owner="$(cat "$LOCAL_LOCK/pid" 2>/dev/null || true)"
+  if [ -n "$owner" ]; then
+    kill -0 "$owner" 2>/dev/null && return 1
+    echo "[editorial] 鎖的持有者 pid=$owner 已不存在，回收殘留鎖"
+  elif [ -n "$(find "$LOCAL_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+    echo "[editorial] 無主鎖且已超過 120 分鐘，回收殘留鎖"
+  else
+    return 1
+  fi
+  rm -rf "$LOCAL_LOCK" 2>/dev/null || true
+  if mkdir "$LOCAL_LOCK" 2>/dev/null; then
+    echo $$ > "$LOCAL_LOCK/pid" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
 
 cd "$LOCAL_REPO" 2>/dev/null || { echo "[editorial] repo missing: $LOCAL_REPO"; exit 3; }
 if [ ! -x "$PY" ]; then
@@ -35,11 +67,27 @@ if [ ! -x "$PY" ]; then
   exit 3
 fi
 
-if ! mkdir "$LOCAL_LOCK" 2>/dev/null; then
-  echo "[editorial] another local state writer is active; skip"
-  exit 0
-fi
+# 這裡以前是「拿不到鎖就 exit 0」。每小時的 compose tick 跟 09:00／12:00 的
+# 編輯排程用同一把鎖，正點撞在一起的機率很高——2026-08-15、08-16 中午的
+# podcast 專欄與 08-16 早上的週報就是這樣整批不見的，而且 exit 0 讓 launchd
+# 看起來一切正常。每天兩篇 podcast、每週一篇財報是產出的主線，值得等；
+# 每小時跑一次的 compose 少跑一輪沒有損失，所以由它讓位（見 WANT_FILE）。
+touch "$WANT_FILE" 2>/dev/null && WANTED=1
+waited=0
+until lock_acquire; do
+  if [ "$waited" -ge "$LOCK_WAIT_SECONDS" ]; then
+    echo "[editorial] ❌ 等了 ${waited}s 仍拿不到本機鎖；這一輪 $PROFILE 沒有產文"
+    osascript -e "display notification \"等鎖逾時，$PROFILE 未產文\" with title \"News Radar\"" 2>/dev/null || true
+    exit 1
+  fi
+  [ "$waited" -eq 0 ] && echo "[editorial] 另一個本機寫入者持有鎖，開始等待（上限 ${LOCK_WAIT_SECONDS}s）"
+  sleep 20
+  waited=$((waited + 20))
+done
 LOCAL_LOCKED=1
+rm -f "$WANT_FILE" 2>/dev/null || true
+WANTED=0
+[ "$waited" -gt 0 ] && echo "[editorial] 等待 ${waited}s 後取得本機鎖"
 
 # fetch 與 merge 分開判斷。原本兩者共用一句「cannot be fast-forwarded」，
 # 於是 2026-08-11 中午 GitHub 連不上時，日誌宣稱是合併問題——實際 merge

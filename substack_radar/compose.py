@@ -905,6 +905,21 @@ def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
     return f"{head}{title}"
 
 
+def split_column_prefix(title: str) -> Tuple[str, str]:
+    """把「專欄名｜標題」拆回兩截，給封面用。
+
+    專欄名留在主標會吃掉一整行——2026-08 的封面就被切成「吹牛免稅｜當／
+    AI 爭奪戰跨過／電網與邊界」。封面本來就有 kicker 這個分類欄位（見
+    COVER_SYSTEM D3），專欄名放那裡，主標只留標題本身。
+    找不到已知前綴就回 ("", 原標題)，手貼的標題不會被亂拆。"""
+    text = (title or "").strip()
+    for known in _ALL_PREFIXES:
+        head = f"{known}{COLUMN_PREFIX_SEP}"
+        if text.startswith(head):
+            return known, text[len(head):].strip()
+    return "", text
+
+
 def build_footer_block() -> str:
     """Reader-facing footer. Owner-approved wording — keep it to these three lines.
 
@@ -1003,19 +1018,22 @@ def render_substack_cover(
                 the fallback when no character asset is available yet.
     Pass ``source_image_path`` only for the legacy blurred-photo cover.
     """
+    column, hero_title = split_column_prefix(title)
     if source_image_path is None:
         # Route 3: character cover (returns None if no asset → fall through).
         try:
             from substack_radar.character_cover import render_character_cover
 
             p = render_character_cover(
-                title=title,
+                title=hero_title,
                 subtitle=subtitle,
                 topic_category=topic_category or "other",
                 character=character,
                 output_dir=output_dir,
                 expression=expression,
                 mode=mode,
+                kicker=column or None,
+                gaze_seed=title,
             )
             if p is not None:
                 print(f"[Cover] ✅ character cover ({character or 'auto'}) → {p.name}")
@@ -1028,10 +1046,11 @@ def render_substack_cover(
             from substack_radar.promise_cover import render_promise_cover
 
             return render_promise_cover(
-                title=title,
+                title=hero_title,
                 subtitle=subtitle,
                 topic_category=topic_category or "other",
                 output_dir=output_dir,
+                kicker=column or None,
             )
         except Exception as exc:
             print(f"[Cover] ⚠️ promise_cover failed ({exc}); falling back to legacy cover.")

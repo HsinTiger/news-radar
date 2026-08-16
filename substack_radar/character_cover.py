@@ -20,7 +20,9 @@ from substack_radar.promise_cover import (
     W, H, KICKER, _font, _wrap, _hx, palette_for,
     FONT_TITLE_PATH, FONT_SUBTITLE_PATH, _cap_lines,
 )
-from src.image_brain import pick_character, pick_expression, _anchor_gaze, _DEFAULT_EXPRESSION
+from src.image_brain import (
+    pick_character, pick_expression, remember_pick, _anchor_gaze, _DEFAULT_EXPRESSION,
+)
 
 ASSETS_DIR = Path(__file__).resolve().parent / "config" / "cover_ip" / "assets"
 _CREAM = (242, 238, 229)
@@ -76,6 +78,8 @@ def render_character_cover(
     output_dir: Path,
     expression: Optional[str] = None,
     mode: Optional[str] = None,
+    kicker: Optional[str] = None,
+    gaze_seed: Optional[str] = None,
 ) -> Optional[Path]:
     """Composite a character cover to ``output_dir/cover.png``. Returns the path,
     or None when no character asset is available (→ promise_cover fallback).
@@ -85,11 +89,13 @@ def render_character_cover(
     when that expression's asset isn't in the library yet."""
     from PIL import Image, ImageDraw
 
-    char = character if character in ("robot", "owl") else pick_character(topic_category, mode)
-    expr = expression or pick_expression(topic_category, mode, title)
+    char = character if character in ("robot", "owl") else pick_character(topic_category, mode, title)
+    expr = expression or pick_expression(topic_category, mode, title, char)
     asset = _find_asset(char, expr)
     if asset is None:
         return None  # graceful: no asset yet → text-poster cover handles it
+    # 記在真的用了素材之後：選了但沒素材而退回文字封面的那次，不該佔用輪替名額。
+    remember_pick(char, asset.stem.split("_")[1] if "_" in asset.stem else expr)
 
     pal = palette_for(topic_category)
     bg, ink, acc, sub = (_hx(pal[k]) for k in ("bg", "ink", "acc", "sub"))
@@ -98,7 +104,9 @@ def render_character_cover(
     # --- character: keyed, trimmed, scaled (taller for short titles = layout A,
     #     smaller for long titles = layout B), grounded near the lower third ---
     cut = _keyed_trim(Image.open(asset))
-    anchor, _ = _anchor_gaze(title)
+    # 用含專欄名的完整標題當左右構圖的種子：同一天兩篇 podcast 的主標可能很像，
+    # 但完整標題不同，站位才不會一起倒向同一邊。
+    anchor, _ = _anchor_gaze(gaze_seed or title)
     # Title sits opposite the anchor; flip the cutout so the character faces it.
     face_title = "right" if anchor == "left" else "left"
     if face_title != _ASSET_FACES:
@@ -124,7 +132,8 @@ def render_character_cover(
     tw = title_x1 - title_x0
 
     # --- kicker + the single accent rule (the one emphasis colour) ---
-    d.text((title_x0, 70), KICKER, font=_font(FONT_TITLE_PATH, 30), fill=acc)
+    # 專欄名（賺錢有道／吹牛免稅／主編精選）優先；沒有專欄才退回刊物名。
+    d.text((title_x0, 70), kicker or KICKER, font=_font(FONT_TITLE_PATH, 30), fill=acc)
     d.line((title_x0, 116, title_x0 + 112, 116), fill=acc, width=6)
 
     # --- hero title: pure ink, auto-fit the largest size that fits ≤3 lines ---

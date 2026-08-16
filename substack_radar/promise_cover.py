@@ -126,6 +126,7 @@ def render_promise_cover(
     subtitle: str,
     topic_category: str,
     output_dir: Path,
+    kicker: str | None = None,
 ) -> Path:
     """Render the typographic poster cover to ``output_dir/cover.png``; return it."""
     from PIL import Image, ImageDraw
@@ -137,8 +138,8 @@ def render_promise_cover(
     img = Image.new("RGB", (W, H), bg)
     d = ImageDraw.Draw(img)
 
-    # Kicker (publication name) + thin accent rule — the brand thread.
-    d.text((PAD, 68), KICKER, font=_font(FONT_TITLE_PATH, 32), fill=acc)
+    # Kicker（專欄名優先，沒有才退回刊物名）+ thin accent rule — the brand thread.
+    d.text((PAD, 68), kicker or KICKER, font=_font(FONT_TITLE_PATH, 32), fill=acc)
     d.line((PAD, 120, PAD + 118, 120), fill=acc, width=6)
 
     # Hero title: auto-fit the largest size that fits ≤3 lines within the top half.

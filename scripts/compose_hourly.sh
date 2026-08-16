@@ -16,6 +16,7 @@ LOCAL_REPO="${LOCAL_REPO:-$HOME/news_radar}"
 BUFFER_TARGET="${BUFFER_TARGET:-2}"
 LOG_ROOT="${LOG_ROOT:-$HOME/news_radar_snapshots/_compose_logs}"
 LOCAL_LOCK="$LOCAL_REPO/.runtime-state-local.lock.d"
+EDITORIAL_WANT="$LOCAL_REPO/.runtime-state-editorial-want"
 LEASE_FILE="$LOCAL_REPO/.runtime-state-lease.json"
 LOG_FILE="$LOG_ROOT/$(date +%Y%m%d_%H%M%S).log"
 LEASED=0
@@ -30,7 +31,7 @@ cleanup() {
       --repo "$REPO" --lease-file "$LEASE_FILE" || true
   fi
   if [ "$LOCAL_LOCKED" = "1" ]; then
-    rmdir "$LOCAL_LOCK" 2>/dev/null || true
+    rm -rf "$LOCAL_LOCK" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -49,10 +50,24 @@ if [ ! -d "$LOCAL_REPO/.git" ]; then
 fi
 cd "$LOCAL_REPO" || exit 3
 
+# 編輯排程（每天兩篇 podcast、每週一篇財報）正在等這把鎖時，這一輪讓位。
+# 每小時跑一次的 tick 少跑一輪沒有損失，專欄漏掉就是那一天沒有稿。
+# 60 分鐘以上的 want 檔視為殘骸（正常情況由編輯排程自己的 trap 清掉）。
+if [ -f "$EDITORIAL_WANT" ]; then
+  if [ -n "$(find "$EDITORIAL_WANT" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    echo "WARN: 殘留的編輯排程 want 檔（>60 分鐘），忽略並清掉"
+    rm -f "$EDITORIAL_WANT" 2>/dev/null || true
+  else
+    echo "INFO: 編輯排程正在等本機鎖；這一輪讓位"
+    exit 0
+  fi
+fi
+
 if ! mkdir "$LOCAL_LOCK" 2>/dev/null; then
   echo "INFO: another local state writer is active; skip this tick"
   exit 0
 fi
+echo $$ > "$LOCAL_LOCK/pid" 2>/dev/null || true
 LOCAL_LOCKED=1
 
 if git fetch --quiet origin main; then

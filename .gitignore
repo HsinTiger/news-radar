@@ -10,7 +10,11 @@
 # --- 秘鑰 / 本機設定 ---
 .env
 .runtime-state-lease.json
+.runtime-state-editorial-lease.json
 .runtime-state-substack-browser-handoff*.json
+# 本機互斥鎖與「編輯排程正在等鎖」旗標，純執行期狀態
+.runtime-state-local.lock.d/
+.runtime-state-editorial-want
 .env.*
 .env.local
 .env.*.local
