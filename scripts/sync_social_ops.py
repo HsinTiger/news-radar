@@ -1233,6 +1233,18 @@ def sync_payloads(
                 headers=headers,
                 json={name: chunk},
             )
+            # raise_for_status() 丟掉伺服器實際回了什麼，只留一個狀態碼。這個
+            # workflow 從 2026-08-06 起連續失敗上百次，每一次的紀錄都只有
+            # 「500 Internal Server Error」，看不出是哪一組資料、哪一個欄位出事。
+            # 錯誤要能自己說話，否則除錯只能靠猜。
+            if response.is_error:
+                print(
+                    f"[sync] group={name} rows={len(chunk)} "
+                    f"status={response.status_code} body={response.text[:600]}"
+                )
+                first = chunk[0] if chunk else {}
+                if isinstance(first, dict):
+                    print(f"[sync] first row keys: {sorted(first)}")
             response.raise_for_status()
             sent[name] += len(chunk)
     return sent
