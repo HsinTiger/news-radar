@@ -1295,6 +1295,15 @@ def report_submission_updates(
                 file=sys.stderr,
             )
             continue
+        # 同 sync_payloads：狀態碼本身說明不了是哪一筆、為什麼被拒。
+        # 這一步回的是 409，而 worker 對 409 有好幾種不同語意（發佈證據不足、
+        # 狀態轉換非法、publish-now 未啟用），不看內容分不出來。
+        if response.is_error:
+            print(
+                f"[sync] submission_update id={update.get('submission_id')!r} "
+                f"status={response.status_code} body={response.text[:400]}"
+            )
+            print(f"[sync]    payload={payload}")
         response.raise_for_status()
         reported += 1
     return reported
