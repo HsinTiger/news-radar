@@ -1286,9 +1286,27 @@ def push_to_substack_draft(
                             f"{api.publication_url}/publication/post-tag", {"name": name}
                         )
                         if created.status_code >= 400:
-                            print(f"[Substack] ⚠️ tag「{name}」建不起來：HTTP {created.status_code}")
-                            continue
-                        tag_id = by_name[name] = created.json()["id"]
+                            # 建 tag 失敗有兩個常見原因：別的行程剛好建過同名的
+                            # （清單是上面一次抓的，會過期），或是短暫被擋。
+                            # 兩者都靠「重抓清單再試一次」解決；2026-08-16 的
+                            # 「公共衛生」HTTP 400 就是這種，事後重建即成功。
+                            refreshed = api.get_publication_post_tags() or []
+                            by_name.update({
+                                t["name"]: t["id"] for t in refreshed
+                                if isinstance(t, dict) and t.get("name") and t.get("id")
+                            })
+                            tag_id = by_name.get(name)
+                            if tag_id is None:
+                                created = _post_with_backoff(
+                                    f"{api.publication_url}/publication/post-tag",
+                                    {"name": name},
+                                )
+                                if created.status_code >= 400:
+                                    print(f"[Substack] ⚠️ tag「{name}」建不起來：HTTP {created.status_code}")
+                                    continue
+                                tag_id = by_name[name] = created.json()["id"]
+                        else:
+                            tag_id = by_name[name] = created.json()["id"]
                     r = _post_with_backoff(
                         f"{api.publication_url}/post/{draft_id}/tag/{tag_id}"
                     )
