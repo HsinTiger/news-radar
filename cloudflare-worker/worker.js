@@ -846,9 +846,15 @@ async function syncOperationalData(request, env, cors) {
     const kind = cleanString(row.editorial_kind, "substack.editorial_kind", 20, true);
     const status = cleanString(row.status, "substack.status", 20, true);
     const remoteDraftId = cleanString(row.remote_draft_id, "substack.remote_draft_id", 200);
-    const remotePostId = cleanString(row.remote_post_id, "substack.remote_post_id", 200);
-    const publicUrl = cleanString(row.public_url, "substack.public_url", 1000);
-    const publishedAt = cleanString(row.published_at, "substack.published_at", 60);
+    // cleanString() 把缺值一律轉成 ""，但這三欄在資料庫裡是「可為空」的欄位，
+    // 而 uq_substack_public_post 是 partial index（WHERE remote_post_id IS NOT
+    // NULL）。空字串不是 NULL，於是每一筆還沒發佈的草稿都帶著 "" 擠進那個唯一
+    // 索引，第二筆起全部衝突——batch 是原子的，一筆撞牆就讓整批寫不進去。
+    // 這正是 Operational Sync 從 2026-08-06 起連續失敗上百次的原因。
+    // 空值就要寫成 NULL，不能寫成空字串。
+    const remotePostId = cleanString(row.remote_post_id, "substack.remote_post_id", 200) || null;
+    const publicUrl = cleanString(row.public_url, "substack.public_url", 1000) || null;
+    const publishedAt = cleanString(row.published_at, "substack.published_at", 60) || null;
     if (!new Set(["submission", "podcast", "company", "editorial"]).has(kind)) {
       throw new HTTPError(400, "invalid Substack editorial kind", "invalid_input");
     }
