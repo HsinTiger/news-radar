@@ -58,6 +58,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import time
 import unicodedata
 from datetime import datetime, date, timezone
 from pathlib import Path
@@ -1262,15 +1263,31 @@ def push_to_substack_draft(
                 # 不要用 api.add_tags_to_post：它每掛一個 tag 就重抓一次全站 tag
                 # 清單（這裡有 260+ 個），5 個 tag = 11 個請求，實測補標時 3 篇
                 # 就吃到 429。清單上面已經抓過了，直接用 id 掛，一個 tag 一個請求。
+                # Substack 的速率限制很容易踩到（429 回的還是 HTML，.json()
+                # 會直接炸開）。踩到就退避重試，不要整篇的 tag 一起放棄。
+                def _post_with_backoff(url, json_body=None, tries=4):
+                    delay = 5.0
+                    for attempt in range(tries):
+                        r = api._session.post(url, json=json_body) if json_body else api._session.post(url)
+                        if r.status_code != 429:
+                            return r
+                        if attempt < tries - 1:
+                            print(f"[Substack] ⏳ 429，等 {delay:.0f}s 再試 tag")
+                            time.sleep(delay)
+                            delay *= 2
+                    return r
+
                 for name in applied:
                     tag_id = by_name.get(name)
                     if tag_id is None:
-                        created = api._session.post(
-                            f"{api.publication_url}/publication/post-tag",
-                            json={"name": name},
+                        created = _post_with_backoff(
+                            f"{api.publication_url}/publication/post-tag", {"name": name}
                         )
+                        if created.status_code >= 400:
+                            print(f"[Substack] ⚠️ tag「{name}」建不起來：HTTP {created.status_code}")
+                            continue
                         tag_id = by_name[name] = created.json()["id"]
-                    r = api._session.post(
+                    r = _post_with_backoff(
                         f"{api.publication_url}/post/{draft_id}/tag/{tag_id}"
                     )
                     # 「Tag already set」是 400，但那代表已經掛好了，不是錯。
