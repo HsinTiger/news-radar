@@ -1242,18 +1242,40 @@ def push_to_substack_draft(
                 )
         # Tag 只能在草稿存在之後掛上，而且掛失敗不該讓一篇寫好的稿子算失敗——
         # 它是站內導覽與 SEO/AEO 的加分項，不是草稿成立的條件。
+        # 專欄名固定當第一個 tag。原本 263 個 tag 幾乎都只用過一次，站內沒有
+        # 一條「同一個專欄的文章在這裡」的路；讀者與搜尋引擎都只看到碎片。
+        # 釘住專欄名後，賺錢有道／吹牛免稅／主編精選各自有一頁夠厚的彙整頁。
+        column, _ = split_column_prefix(title)
+        tags = ([column] + list(tags or [])) if column else tags
         applied: list[str] = []
         if tags:
             try:
                 existing = api.get_publication_post_tags()
                 if isinstance(existing, dict):
                     existing = existing.get("post_tags") or existing.get("tags") or []
-                names = [
-                    t.get("name") if isinstance(t, dict) else str(t) for t in existing
-                ]
-                applied = normalise_tags(tags, [n for n in names if n])
-                if applied:
-                    api.add_tags_to_post(draft_id, applied)
+                by_name = {
+                    t["name"]: t["id"]
+                    for t in existing
+                    if isinstance(t, dict) and t.get("name") and t.get("id")
+                }
+                applied = normalise_tags(tags, list(by_name))
+                # 不要用 api.add_tags_to_post：它每掛一個 tag 就重抓一次全站 tag
+                # 清單（這裡有 260+ 個），5 個 tag = 11 個請求，實測補標時 3 篇
+                # 就吃到 429。清單上面已經抓過了，直接用 id 掛，一個 tag 一個請求。
+                for name in applied:
+                    tag_id = by_name.get(name)
+                    if tag_id is None:
+                        created = api._session.post(
+                            f"{api.publication_url}/publication/post-tag",
+                            json={"name": name},
+                        )
+                        tag_id = by_name[name] = created.json()["id"]
+                    r = api._session.post(
+                        f"{api.publication_url}/post/{draft_id}/tag/{tag_id}"
+                    )
+                    # 「Tag already set」是 400，但那代表已經掛好了，不是錯。
+                    if r.status_code >= 400 and "already set" not in r.text:
+                        print(f"[Substack] ⚠️ tag「{name}」掛不上：HTTP {r.status_code} {r.text[:120]}")
             except Exception as exc:
                 print(f"[Substack] ⚠️ Tag apply failed (draft kept): {type(exc).__name__}: {exc}")
                 applied = []
