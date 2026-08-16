@@ -1242,9 +1242,27 @@ def sync_payloads(
                     f"[sync] group={name} rows={len(chunk)} "
                     f"status={response.status_code} body={response.text[:600]}"
                 )
-                first = chunk[0] if chunk else {}
-                if isinstance(first, dict):
-                    print(f"[sync] first row keys: {sorted(first)}")
+                # D1 的 batch() 失敗時只回一個未捕捉的例外，不會說是哪一筆。
+                # 整批送不出去時逐筆重送一次：成功的略過，失敗的就是元兇，把它
+                # 印出來。多送 N 次請求只發生在已經壞掉的路徑上，正常情況不受影響。
+                if len(chunk) > 1:
+                    print(f"[sync] bisecting {len(chunk)} rows to find the offender…")
+                    for row in chunk:
+                        probe = client.post(
+                            f"{api_url.rstrip('/')}/api/service/sync",
+                            headers=headers,
+                            json={name: [row]},
+                        )
+                        if probe.is_error:
+                            rid = row.get("id") if isinstance(row, dict) else None
+                            print(
+                                f"[sync] ❌ offending row id={rid!r} "
+                                f"status={probe.status_code} body={probe.text[:300]}"
+                            )
+                            print(f"[sync]    row={row}")
+                            break
+                    else:
+                        print("[sync] 逐筆全部成功——問題出在整批一起送，不是單筆資料")
             response.raise_for_status()
             sent[name] += len(chunk)
     return sent
