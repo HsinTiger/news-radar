@@ -7,6 +7,7 @@ LOCAL_REPO="${LOCAL_REPO:-$HOME/news_radar}"
 REPO="${REPO:-HsinTiger/news-radar}"
 PY="$LOCAL_REPO/.venv/bin/python"
 LOCAL_LOCK="$LOCAL_REPO/.runtime-state-local.lock.d"
+EDITORIAL_WANT="$LOCAL_REPO/.runtime-state-editorial-want"
 TMPROOT=""
 LEASE_FILE=""
 LEASED=0
@@ -18,7 +19,7 @@ cleanup() {
       --repo "$REPO" --lease-file "$LEASE_FILE" || true
   fi
   [ -n "$TMPROOT" ] && rm -rf "$TMPROOT"
-  if [ "$LOCAL_LOCKED" = "1" ]; then rmdir "$LOCAL_LOCK" 2>/dev/null || true; fi
+  if [ "$LOCAL_LOCKED" = "1" ]; then rm -rf "$LOCAL_LOCK" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 
@@ -63,7 +64,22 @@ fi
 # fail the drain.
 "$PY" -u scripts/nudge_stuck_submissions.py || true
 
+# 這支每 300 秒跑一次，是搶這把鎖最兇的一個（compose 每小時才一次）。
+# 09:00 的週報與 12:00 的 podcast 專欄整批消失，主要就是被它擋掉的。
+# 編輯排程在等鎖時就讓位：drain 少跑一輪，5 分鐘後就有下一輪；
+# 專欄漏掉就是那一天沒有稿。60 分鐘以上的 want 檔視為殘骸。
+if [ -f "$EDITORIAL_WANT" ]; then
+  if [ -n "$(find "$EDITORIAL_WANT" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    echo "[fast-drain] 殘留的編輯排程 want 檔（>60 分鐘），忽略並清掉"
+    rm -f "$EDITORIAL_WANT" 2>/dev/null || true
+  else
+    echo "[fast-drain] 編輯排程正在等本機鎖；這一輪讓位"
+    exit 0
+  fi
+fi
+
 if ! mkdir "$LOCAL_LOCK" 2>/dev/null; then echo "[fast-drain] another local writer is active; skip"; exit 0; fi
+echo $$ > "$LOCAL_LOCK/pid" 2>/dev/null || true
 LOCAL_LOCKED=1
 
 TMPROOT=$(mktemp -d -t nr_immediate_state.XXXXXX)
