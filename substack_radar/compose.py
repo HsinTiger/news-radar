@@ -1606,6 +1606,9 @@ def write_metadata(
         "editorial_profile": editorial_profile,
         "editorial_kind": source.get("editorial_kind", editorial_profile),
         "generated_by": getattr(draft, "generated_by", None),
+        # tag 現在同時決定 Substack 分類與封面選角，本機紀錄要留得下來，
+        # 之後重出封面或回頭稽核才對得上當初的判斷。
+        "tags": list(getattr(draft, "tags", None) or []),
         "source": source,
         "audit_warnings": audit_warnings,
         "created_at": datetime.now().isoformat(timespec="seconds"),
