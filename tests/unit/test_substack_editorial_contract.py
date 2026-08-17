@@ -301,8 +301,10 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     )
 
 
-def test_public_cadence_copy_matches_two_daily_podcast_extensions() -> None:
-    expected = "每天兩篇思想延伸 · 每週一篇公司拆解"
+def test_public_cadence_copy_matches_the_reader_facing_promise() -> None:
+    """對外承諾是「每天一篇、每週日一篇」。每天產兩篇 podcast 草稿是我們自己
+    的排程（緩衝），不是給讀者看的數字——2026-08-17 owner 明確區分了這兩件事。"""
+    expected = "每天一篇思想延伸 · 每週日一篇公司拆解"
 
     assert expected in compose.build_footer_block()
     assert promise_cover.SLOGAN == expected

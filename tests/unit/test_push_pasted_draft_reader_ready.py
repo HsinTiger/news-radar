@@ -9,6 +9,7 @@ optional_post.Post = object
 sys.modules.setdefault("substack", optional_substack)
 sys.modules.setdefault("substack.post", optional_post)
 
+from substack_radar import compose
 from substack_radar import push_pasted_draft as helper
 
 
@@ -81,7 +82,7 @@ def test_pasted_draft_push_needs_no_cover_prompts_and_sends_reader_only(
     assert captured["post_kwargs"]["audience"] == "everyone"
     raw = captured["draft_body"]
     assert "讀者正文" in raw
-    assert "每天兩篇思想延伸" in raw
+    assert compose.PUBLIC_CADENCE in raw   # 節奏文案只有 compose 一份來源
     assert captured["markdown"] == "讀者正文\n\n讀者結尾"
     for forbidden in (
         "封面圖 Prompt",

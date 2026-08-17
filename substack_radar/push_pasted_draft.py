@@ -27,7 +27,7 @@ from substack_radar.audience import (  # noqa: E402
     DEFAULT_SUBSTACK_AUDIENCE,
     validate_substack_audience,
 )
-from substack_radar.compose import BRAND_TAGLINE  # noqa: E402
+from substack_radar.compose import BRAND_TAGLINE, PUBLIC_CADENCE  # noqa: E402
 from substack_radar.composer import (  # noqa: E402
     assert_reader_ready_markdown,
     strip_generated_footer,
@@ -64,11 +64,16 @@ def _make_subscribe_widget() -> dict:
 
 
 def _make_footer_blockquote() -> dict:
+    """跟 compose.build_footer_block 共用同一組常數。
+
+    這支原本自己寫死了第三種說法（「每天兩篇對談延伸 · 每週一篇公司深拆」
+    ＋「你可以直接回信」），兩者都是已退役的文案，於是同一份刊物在不同路徑
+    上對讀者講了不一樣的節奏。改動節奏只該改 compose 裡的常數。"""
     tagline = BRAND_TAGLINE.strip("「」")
     return _make_bq(
         f"{tagline}\n\n"
-        "📅 每天兩篇對談延伸 · 每週一篇公司深拆\n"
-        "✉️ 你可以直接回信，告訴我哪個判斷值得再追"
+        f"📅 {PUBLIC_CADENCE}\n"
+        "💬 有想法？留言區聊聊。"
     )
 
 
@@ -78,7 +83,7 @@ def _assert_reader_ready_body(body: dict) -> None:
     assert_reader_ready_markdown(raw)
     if BRAND_TAGLINE.strip("「」") not in raw:
         raise ValueError("reader-ready gate rejected body without brand footer")
-    if "📅 每天兩篇對談延伸" not in raw:
+    if PUBLIC_CADENCE not in raw:
         raise ValueError("reader-ready gate rejected body without cadence promise")
 
 

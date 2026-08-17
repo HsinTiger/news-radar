@@ -824,7 +824,7 @@ def _resolve_company_ticker(args) -> str:
 # Footer is deterministic and intentionally outside the writer prompt.
 BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的部分。」"
 # 交付節奏文案。與封面圖共用同一份（promise_cover.SLOGAN），改動須兩處同步。
-PUBLIC_CADENCE = "每天兩篇思想延伸 · 每週一篇公司拆解"
+PUBLIC_CADENCE = "每天一篇思想延伸 · 每週日一篇公司拆解"
 
 # 專欄識別前綴（2026-08-12 owner）：讀者在列表頁／email 標題列一眼分辨這是哪一路。
 # 刻意在 SubstackDraft 驗證「≤15 字」之後才貼上——prefix 是欄目標籤，不該吃掉
