@@ -185,3 +185,49 @@ def report(article_md: str, *, sources: list[dict] | None = None,
             lines.append(f"  {'✅' if where else '❌'} {value}{unit} → "
                          f"{where or '找不到出處'}")
     return "\n".join(lines) or "  （文中沒有具名歸屬的數字）"
+
+
+# --- E4 時效性 -------------------------------------------------------------
+# 目標價、股價、市值、評等這類數字有保鮮期。2026-08-18 的聯發科稿引用了
+# 2025-11 的報導（9 個月前）裡的「大摩目標價 1,288 元、高盛 1,400 元」，
+# 而當時股價 3,885——等於暗示外資看空 65%。來源活著、也切題，就是過期。
+_TIME_SENSITIVE = ("目標價", "評等", "調降", "調升", "降評", "升評", "股價",
+                   "市值", "本益比", "outperform", "neutral", "buy", "sell")
+_STALE_DAYS = 120
+# E4 專用：時效性敘述裡的數字常帶「元」，而且會有千分位逗號（1,288 元）。
+# 共用的 _QUANTITY 沒有「元」、也不吃逗號，所以 E4 第一版整個沒觸發。
+_TS_QUANTITY = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(元|億|兆|%|％|倍)")
+
+
+def stale_claims(article_md: str, sources: list[dict], *, max_age_days: int = _STALE_DAYS):
+    """回傳「引用了過期來源的時效性敘述」。需要 sources 帶 age_days。"""
+    from substack_radar.source_dates import age_days
+
+    stale = []
+    for src in sources or []:
+        age = src.get("age_days")
+        if age is None:
+            age = age_days(str(src.get("url") or ""), str(src.get("excerpt") or ""))
+        if age is not None and age > max_age_days:
+            stale.append((src, age))
+    if not stale:
+        return []
+
+    issues = []
+    for sentence in _SENTENCE.findall(article_md or ""):
+        if not any(k in sentence.lower() for k in _TIME_SENSITIVE):
+            continue
+        for value, unit in _TS_QUANTITY.findall(sentence):
+            for src, age in stale:
+                excerpt = str(src.get("excerpt") or "")
+                if _norm(f"{value}{unit}") in _norm(excerpt) or _norm(value) in _norm(excerpt):
+                    issues.append(EvidenceIssue(
+                        rule="E4 引用過期來源的時效性數字",
+                        sentence=sentence,
+                        detail=f"「{value}{unit}」出自 {src.get('publisher')}（{age} 天前）。"
+                               "目標價／評等／股價／市值有保鮮期——改寫成明確的歷史敘述"
+                               f"（例：「{src.get('published_on') or f'{age // 30} 個月前'}時外資給的目標價是…」）"
+                               "並對照當前數字，或整段刪除。",
+                    ))
+                    break
+    return issues

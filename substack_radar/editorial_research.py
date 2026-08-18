@@ -744,13 +744,29 @@ def build_research_bundle(
     )
 
 
+def _age_note(url: str, excerpt: str) -> str:
+    """給模型看的來源新鮮度標註。過期的來源不一定要丟掉——舊報導講的機制
+    往往仍然成立——但**它裡面的價格、目標價、市值、評等一定不能當現況寫**。
+    2026-08-18 的聯發科稿就是把 9 個月前的目標價寫成當前的外資示警。"""
+    from substack_radar.source_dates import age_days
+
+    days = age_days(url, excerpt)
+    if days is None:
+        return "（日期不明）"
+    if days <= 45:
+        return f"（{days} 天前）"
+    months = days // 30
+    return (f"（**{months} 個月前**；裡面的股價／目標價／市值／評等已過期，"
+            "只能當歷史敘述，不可寫成現況）")
+
+
 def prompt_block(sources: Sequence[ResearchSource]) -> str:
     """Render a compact, attributable evidence pack for the final writer."""
     validated = validate_research_sources(sources)
     blocks = []
     for index, source in enumerate(validated, 1):
         blocks.append(
-            f"[{index}] {source.title}\n"
+            f"[{index}] {source.title} {_age_note(source.url, source.excerpt)}\n"
             f"Publisher: {source.publisher}\n"
             f"Role: {source.evidence_role}\n"
             f"URL: {source.url}\n"

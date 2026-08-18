@@ -182,7 +182,14 @@ def _format_md(d: dict) -> str:
         L.append(f"- 年度（新→舊）：{d['years']}")
         if d.get("revenue_b"):
             rev_cn = "、".join(_cn(v, cur) for v in d["revenue_b"])
-            L.append(f"- 營收（新→舊）：{rev_cn}（原值 {d['revenue_b']}B；近 {len(d['years'])} 年 CAGR≈{d.get('rev_cagr','N/A')}%）")
+            # 標籤原本寫「近 {年度數} 年 CAGR」。4 個年度資料點（2022→2025）
+            # 只跨 3 年，rev_cagr 本身也是用 n = 資料點數-1 算的——算式對、
+            # 標籤錯，於是 2026-08-18 的聯發科稿照抄成「過去四年的複合年成長率」。
+            # 跟「管理層信用」那次同一類：標籤錯，每一篇都會錯。
+            _yrs = d["years"]
+            _span = f"{_yrs[-1]}→{_yrs[0]}（{len(_yrs) - 1} 年）" if len(_yrs) > 1 else "N/A"
+            L.append(f"- 營收（新→舊）：{rev_cn}（原值 {d['revenue_b']}B；"
+                     f"{_span} CAGR≈{d.get('rev_cagr','N/A')}%）")
         if d.get("op_income_b"):
             # 這兩行原本只丟原始 B 值。營收與市值都經過 _cn() 換成中文單位，
             # 只有這裡沒有——於是 2026-08-18 的瑞昱稿把 14.39B 直接寫成

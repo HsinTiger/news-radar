@@ -141,3 +141,52 @@ def test_only_ten_fold_slips_are_reported():
     facts = {"營業利益": 1.024e11}
     assert reconcile("這個市場約 10 億元。", facts) == []      # ×100，不查
     assert len(reconcile("營業利益 102.4 億元。", facts)) == 1  # ×10，要抓
+
+
+def test_chinese_numerals_with_units_are_flagged():
+    """2026-08-18 三篇實測，同一條管線的中文數字分佈是 0／7／81 處——
+    不是規則問題，是模型每次心情不同，所以要有閘門而不是只靠 prompt。"""
+    from substack_radar.quality_loop import chinese_numerals
+    hits = chinese_numerals("股價站上三千八百八十五元、本益比六十四倍，營收五千九百六十億。")
+    assert len(hits) == 3
+
+
+def test_ordinary_chinese_numerals_are_left_alone():
+    """序數與慣用語不是量，不該被抓。"""
+    from substack_radar.quality_loop import chinese_numerals
+    assert chinese_numerals("第一次看到這三大廠商，兩者都值得注意。") == []
+
+
+def test_cagr_label_states_the_real_span():
+    """4 個年度資料點（2022→2025）只跨 3 年。標籤原本寫「近 4 年 CAGR」，
+    寫手照抄成「過去四年的複合年成長率」——算式對、標籤錯。"""
+    from substack_radar.company_financials import _format_md
+    md = _format_md({"years": [2025, 2024, 2023, 2022], "currency": "TWD",
+                     "revenue_b": [595.97, 530.59, 433.45, 548.8], "rev_cagr": 2.8})
+    assert "2022→2025（3 年）" in md
+    assert "近 4 年" not in md
+
+
+def test_stale_target_prices_are_flagged():
+    """2026-08-18 聯發科稿引用 2025-11 的報導（9 個月前）裡的「大摩目標價
+    1,288 元、高盛 1,400 元」，而當時股價 3,885——等於暗示外資看空 65%。
+    來源活著、也切題，就是過期。"""
+    from substack_radar.evidence_gate import stale_claims
+    srcs = [{"publisher": "n.yam.com", "url": "https://n.yam.com/Article/20251124477055",
+             "excerpt": "摩根士丹利調降聯發科目標價至1288元，高盛下修至1400元。"}]
+    issues = stale_claims("摩根士丹利調降目標價至 1,288 元，高盛下修至 1,400 元。", srcs)
+    assert len(issues) == 2 and all(i.rule.startswith("E4") for i in issues)
+
+
+def test_fresh_sources_do_not_trigger_staleness():
+    from substack_radar.evidence_gate import stale_claims
+    srcs = [{"publisher": "x", "url": "https://x.com/2026/08/13/a", "excerpt": "目標價1288元"}]
+    assert stale_claims("目標價 1,288 元。", srcs) == []
+
+
+def test_source_date_is_read_from_the_url():
+    from datetime import date
+    from substack_radar.source_dates import published_on, age_days
+    assert published_on("https://n.yam.com/Article/20251124477055") == date(2025, 11, 24)
+    assert age_days("https://n.yam.com/Article/20251124477055", today=date(2026, 8, 18)) == 267
+    assert published_on("https://money.udn.com/money/story/5612/9675870") is None

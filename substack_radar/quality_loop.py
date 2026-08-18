@@ -60,6 +60,22 @@ _MISATTRIBUTION = ("管理層指引", "管理層的指引", "管理層財測", "
                    "管理層預估", "公司財測落空", "指引落空", "指引失準")
 
 
+
+# 中文數字：財經內容寫「三千八百八十五元」「一千零三十五億」比阿拉伯數字難讀
+# 一個量級。2026-08-18 三篇實測，同一個管線的分佈是 0／7／81 處——不是規則
+# 問題，是模型每次心情不同，所以要有閘門而不是只靠 prompt。
+# 只抓「數字＋度量單位」，放過「第一」「一次」「三大」「兩者」這類正常中文。
+_CN_DIGITS = "零一二三四五六七八九十百千萬"
+_CN_QUANTITY = re.compile(
+    rf"[{_CN_DIGITS}]{{2,}}(?:點[{_CN_DIGITS}]+)?\s*(?:億|兆|萬|元|倍|%|％|個百分點|奈米|美元)"
+)
+_CN_NUMERAL_LIMIT = int(os.getenv("SUBSTACK_CN_NUMERAL_LIMIT", "3"))
+
+
+def chinese_numerals(article_md: str) -> list[str]:
+    return _CN_QUANTITY.findall(article_md or "")
+
+
 @dataclass
 class Violation:
     kind: str
@@ -91,8 +107,13 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
 
     # 證據法則：歸屬給外部來源的數字要指得出處（見 evidence_gate）。
     from substack_radar.evidence_gate import check as _evidence_check
+    from substack_radar.evidence_gate import stale_claims as _stale_claims
 
     for issue in _evidence_check(article_md, sources=sources or [], fact_block=fact_block):
+        out.append(Violation(kind=issue.rule, detail=issue.detail,
+                             fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
+    # E4：來源活著、也切題，但過期。目標價／評等／股價／市值有保鮮期。
+    for issue in _stale_claims(article_md, sources or []):
         out.append(Violation(kind=issue.rule, detail=issue.detail,
                              fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
 
@@ -113,6 +134,17 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
                 fix_hint="改寫成「低於分析師共識」「賣方預估與實際脫節」；"
                          "不得推論管理層誠信或指引可信度，也不要拿它當證偽條件。",
             ))
+
+    hits = chinese_numerals(article_md)
+    if len(hits) > _CN_NUMERAL_LIMIT:
+        sample = "、".join(dict.fromkeys(hits))[:80]
+        out.append(Violation(
+            kind="中文數字",
+            detail=f"有 {len(hits)} 處把數量寫成中文數字（例：{sample}）。",
+            fix_hint="全部改成阿拉伯數字（三千八百八十五元 → 3,885 元；"
+                     "六十四倍 → 64 倍；十五點八 → 15.8）。"
+                     "序數與慣用語（第一、一次、三大、兩者）保持中文。",
+        ))
 
     for url in source_urls or []:
         if not re.match(r"^https?://", url or ""):
