@@ -921,6 +921,30 @@ def split_column_prefix(title: str) -> Tuple[str, str]:
     return "", text
 
 
+def _company_fact_values(fin_data) -> dict:
+    """把 fetch_financials 的年度序列攤成「標籤 → 絕對數值」，給數字對帳用。
+
+    yfinance 的 *_b 欄位單位是十億，事實表已經換算成億給模型看，但對帳要用
+    絕對值才不會又繞回同一個換算坑。非 company 模式回空 dict＝不做數字對帳。
+    """
+    if not isinstance(fin_data, dict):
+        return {}
+    out: dict[str, float] = {}
+    years = fin_data.get("years") or []
+    for key, label in (("revenue_b", "營收"), ("op_income_b", "營業利益"),
+                       ("net_income_b", "淨利")):
+        series = fin_data.get(key) or []
+        for i, value in enumerate(series):
+            if not isinstance(value, (int, float)):
+                continue
+            year = years[i] if i < len(years) else f"第{i + 1}期"
+            out[f"{year} {label}"] = float(value) * 1e9
+    cap = fin_data.get("market_cap_b")
+    if isinstance(cap, (int, float)):
+        out["市值"] = float(cap) * 1e9
+    return out
+
+
 def build_footer_block() -> str:
     """Reader-facing footer. Owner-approved wording — keep it to these three lines.
 
@@ -2150,6 +2174,37 @@ async def _run_inner(args: argparse.Namespace) -> int:
     # 註解區塊搬到開場之後、分析之前（見 move_glossary_after_opening）。模型會把它插在第一次用到
     # 術語的位置，那會把論證切斷（見 move_glossary_to_end）。
     draft.body_markdown = move_glossary_after_opening(draft.body_markdown)
+
+    # 4b) 品質迴圈：確定性閘門 → 稽核 session → 重驗（見 quality_loop）。
+    # 放在寫檔之前，所以本機檔案、OneDrive 鏡像與 Substack 草稿拿到的是同一份
+    # 修訂後全文。整段以 SUBSTACK_QUALITY_LOOP=0 關閉；任何失敗都保留原文不擋稿。
+    if os.getenv("SUBSTACK_QUALITY_LOOP", "1") == "1":
+        try:
+            from substack_radar.quality_loop import (
+                auditor_for, open_domain_audit, run_quality_loop,
+            )
+
+            fact_values = _company_fact_values(locals().get("fin_data"))
+            fact_block = locals().get("fin_md") or raw_content or ""
+            auditor = auditor_for(getattr(draft, "generated_by", None))
+            print(f"[QualityLoop] 稽核模型 = {auditor}（寫手 = "
+                  f"{getattr(draft, 'generated_by', None) or 'unknown'}）")
+            body, report = run_quality_loop(
+                draft.body_markdown,
+                fact_values=fact_values,
+                fact_block=fact_block,
+                has_management_guidance=False,
+                model=auditor,
+            )
+            body, _ = open_domain_audit(body, fact_block, model=auditor)
+            draft.body_markdown = body
+            if not report.passed:
+                for v in report.remaining:
+                    warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
+        except Exception as exc:
+            print(f"[QualityLoop] ⚠️ 迴圈本身失敗（{type(exc).__name__}: {exc}）；"
+                  "保留原文繼續，不因為稽核工具壞掉就掉一篇稿")
+
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
     write_article_full_md(

@@ -238,9 +238,8 @@ _OPEN_AUDIT_PROMPT = """你是一份中文財經電子報的事實查核編輯�
 """
 
 
-def open_domain_audit(article_md: str, fact_block: str, *,
-                      model: str = AUDIT_MODEL, timeout_s: int = AUDIT_TIMEOUT_S) -> tuple[str, bool]:
-    """回傳 (文章, 是否有改)。失敗一律回原文，不擋稿。"""
+def _open_audit_once(article_md: str, fact_block: str, model: str,
+                     timeout_s: int) -> tuple[str, bool]:
     prompt = _OPEN_AUDIT_PROMPT.format(facts=fact_block[:6000], article=article_md)
     try:
         raw = _run_agy(prompt, model, timeout_s)
@@ -248,11 +247,36 @@ def open_domain_audit(article_md: str, fact_block: str, *,
         print(f"[QualityLoop] ⚠️ 領域稽核失敗（{type(exc).__name__}: {exc}）；保留原文")
         return article_md, False
     if "CLEAN" in (raw or "")[:200] and "<<<ARTICLE>>>" not in raw:
-        print("[QualityLoop] ✅ 領域稽核：未發現事實錯誤")
         return article_md, False
     patched = _extract_article(raw)
     if not patched or patched.strip() == article_md.strip():
-        print("[QualityLoop] ℹ️ 領域稽核沒有提出可用的修訂")
         return article_md, False
-    print("[QualityLoop] ✏️ 領域稽核提出修訂並已套用")
     return patched, True
+
+
+def open_domain_audit(article_md: str, fact_block: str, *,
+                      model: str = AUDIT_MODEL, timeout_s: int = AUDIT_TIMEOUT_S,
+                      max_rounds: int = MAX_ROUNDS) -> tuple[str, bool]:
+    """一直跑到回 CLEAN 或不再有修改為止。回傳 (文章, 是否曾修改)。
+
+    為什麼要 loop：2026-08-18 實測，第一輪抓到了「四成毛利→八成」「戴爾電腦
+    當市調機構」「SoIC→SoC」，卻漏掉同一段裡的「0.18 微米→0.13 微米→90 奈米」
+    ——那在 2026 年錯了十幾年。開放式查核一次掃不乾淨是常態：模型改完前面幾處
+    就收手了。改完再讀一遍，注意力會落到不同地方。
+
+    失敗一律回目前版本，不擋稿。
+    """
+    current = article_md
+    changed_any = False
+    for round_index in range(max_rounds):
+        current, changed = _open_audit_once(current, fact_block, model, timeout_s)
+        if not changed:
+            if round_index == 0:
+                print("[QualityLoop] ✅ 領域稽核：未發現事實錯誤")
+            else:
+                print(f"[QualityLoop] ✅ 領域稽核第 {round_index + 1} 輪無新問題，收斂")
+            return current, changed_any
+        changed_any = True
+        print(f"[QualityLoop] ✏️ 領域稽核第 {round_index + 1}/{max_rounds} 輪提出修訂並已套用")
+    print(f"[QualityLoop] ⚠️ 領域稽核跑滿 {max_rounds} 輪仍在改，不再繼續（保留最後版本）")
+    return current, changed_any
