@@ -35,6 +35,14 @@ AUDIT_MODEL = os.getenv("SUBSTACK_AUDIT_MODEL", "Claude Opus 4.6 (Thinking)")
 # 模型，「不同模型互稽」的保證就沒了——同一個模型讀自己的輸出會重現同一組盲點。
 # 這時改用 Gemini 3.1 Pro (High)：換家族、推理強度仍是該家族最高的一檔。
 AUDIT_FALLBACK_MODEL = os.getenv("SUBSTACK_AUDIT_FALLBACK_MODEL", "Gemini 3.1 Pro (High)")
+# 稽核也要有鏈。2026-08-19 台積電那篇就是這樣掉的：agy 的 Claude 供應端整批
+# 掛掉（Opus 與 Sonnet 都回 "Agent execution terminated due to error"，跟 .env
+# 裡 8/10 記錄的同一個故障），稽核直接放棄，稿子未經修訂就出去。寫手早就有
+# AGY_MODEL_CHAIN 當後備，稽核卻只有一個模型——這是漏掉的一半。
+AUDIT_MODEL_CHAIN = [m.strip() for m in os.getenv(
+    "SUBSTACK_AUDIT_MODEL_CHAIN",
+    "Claude Opus 4.6 (Thinking),Gemini 3.1 Pro (High),Gemini 3.7 Flash (High)",
+).split(",") if m.strip()]
 
 
 def _same_family(a: str, b: str) -> bool:
@@ -171,17 +179,36 @@ def _audit_prompt(article_md: str, violations: list[Violation], fact_block: str)
     )
 
 
-def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
-    """每次呼叫都是新的 subprocess（cwd=/tmp）＝獨立 session、乾淨 context。"""
+def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
+    """一次呼叫＝一個新的 subprocess（cwd=/tmp）＝獨立 session、乾淨 context。"""
     if not os.path.exists(AGY_BIN):
         raise FileNotFoundError(f"agy not found at {AGY_BIN}")
     proc = subprocess.run(
         [AGY_BIN, "-p", prompt, "--model", model, "--print-timeout", f"{timeout_s}s"],
         capture_output=True, text=True, cwd="/tmp", timeout=timeout_s + 60,
     )
-    if proc.returncode != 0:
-        raise RuntimeError(f"agy exit={proc.returncode}: {(proc.stderr or '')[:300]}")
-    return proc.stdout or ""
+    out = proc.stdout or ""
+    err = proc.stderr or ""
+    # agy 的供應端故障會走 returncode=0 但 stdout 寫錯誤訊息這條路，所以兩邊都看。
+    if proc.returncode != 0 or "Agent execution terminated" in out or "Agent execution terminated" in err:
+        raise RuntimeError(f"agy exit={proc.returncode}: {(err or out)[:200]}")
+    return out
+
+
+def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
+    """依鏈逐個試。第一個成功就回；全掛才 raise。"""
+    chain = [model] + [m for m in AUDIT_MODEL_CHAIN if m != model]
+    last = None
+    for index, candidate in enumerate(chain):
+        try:
+            result = _run_agy_once(prompt, candidate, timeout_s)
+            if index:
+                print(f"[QualityLoop] ℹ️ 稽核改用後備模型 {candidate}（前 {index} 個不可用）")
+            return result
+        except Exception as exc:
+            last = exc
+            print(f"[QualityLoop] ⚠️ {candidate} 不可用：{str(exc)[:110]}")
+    raise RuntimeError(f"稽核鏈全部不可用；最後一個錯誤：{last}")
 
 
 def _extract_article(raw: str) -> str | None:
@@ -288,14 +315,17 @@ def _open_audit_once(article_md: str, fact_block: str, model: str,
     try:
         raw = _run_agy(prompt, model, timeout_s)
     except Exception as exc:
-        print(f"[QualityLoop] ⚠️ 領域稽核失敗（{type(exc).__name__}: {exc}）；保留原文")
-        return article_md, False
+        raise _AuditUnavailable(str(exc)) from exc
     if "CLEAN" in (raw or "")[:200] and "<<<ARTICLE>>>" not in raw:
         return article_md, False
     patched = _extract_article(raw)
     if not patched or patched.strip() == article_md.strip():
         return article_md, False
     return patched, True
+
+
+class _AuditUnavailable(RuntimeError):
+    """稽核沒跑成，跟「跑了但沒發現問題」是兩件事，不可以印成同一句。"""
 
 
 def open_domain_audit(article_md: str, fact_block: str, *,
@@ -313,10 +343,17 @@ def open_domain_audit(article_md: str, fact_block: str, *,
     current = article_md
     changed_any = False
     for round_index in range(max_rounds):
-        current, changed = _open_audit_once(current, fact_block, model, timeout_s)
+        try:
+            current, changed = _open_audit_once(current, fact_block, model, timeout_s)
+        except _AuditUnavailable as exc:
+            # 以前這裡吞掉例外、回 (原文, False)，外層就印出「✅ 未發現事實錯誤」
+            # ——稽核根本沒跑，卻報告成通過。2026-08-19 台積電那篇就是這樣出去的。
+            print(f"[QualityLoop] ❌ 領域稽核無法執行（{exc}）；"
+                  "這篇**沒有經過領域查核**，不是「查過沒問題」")
+            return current, changed_any
         if not changed:
             if round_index == 0:
-                print("[QualityLoop] ✅ 領域稽核：未發現事實錯誤")
+                print("[QualityLoop] ✅ 領域稽核：跑過了，未發現事實錯誤")
             else:
                 print(f"[QualityLoop] ✅ 領域稽核第 {round_index + 1} 輪無新問題，收斂")
             return current, changed_any
