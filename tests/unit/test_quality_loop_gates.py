@@ -207,3 +207,20 @@ def test_recent_content_is_not_aged_by_the_estimator():
     from datetime import date
     from substack_radar.source_dates import estimated_age_days
     assert estimated_age_days("https://x.com/a", "2026年第二季營收", date(2026, 8, 18)) == 0
+
+
+def test_thousand_separated_amounts_are_parsed_whole():
+    """「第二季營收 1,521.83 億元」曾被切成「521.83 億」，然後拿去跟年營收
+    比對，報出一個不存在的 10 倍誤植。"""
+    from substack_radar.fact_reconcile import article_amounts
+    got = [(v, u) for v, u, _, _ in article_amounts("第二季營收 1,521.83 億元")]
+    assert got == [(1521.83, "億")]
+
+
+def test_rounded_figures_are_not_treated_as_scale_errors():
+    """市值與股價每天在動，稿子寫「超過 6 兆」對上 6.2 兆是正常寫法。
+    舊版用 3% 判斷，差 3.24% 就被推去比對錯誤量級，報出「6 兆對到年營收、
+    差 0.1 倍」這種荒謬結果。"""
+    facts = {"2025 營收": 5.9597e11, "市值": 6.2008e12}
+    assert reconcile("一邊是超過 6 兆元的龐大市值。", facts) == []
+    assert len(reconcile("2025 全年營收 596 億元。", facts)) == 1

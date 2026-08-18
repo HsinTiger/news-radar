@@ -2201,9 +2201,22 @@ async def _run_inner(args: argparse.Namespace) -> int:
             )
             body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
             draft.body_markdown = body
-            if not report.passed:
-                for v in report.remaining:
-                    warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
+            remaining = list(report.remaining)
+            if domain_changed:
+                # 領域稽核是最後一個動文字的環節，它改完就直接送印了。
+                # 它可能引進新的問題（改寫時補上查不到出處的歸屬、動到數字），
+                # 所以確定性閘門要在它之後再跑一次——否則整條線的最後一哩沒人看。
+                from substack_radar.quality_loop import evaluate as _evaluate
+
+                remaining = _evaluate(
+                    body, fact_values=fact_values,
+                    has_management_guidance=False,
+                    sources=[item.model_dump() for item in (research_sources or [])],
+                    fact_block=fact_block,
+                )
+                print(f"[QualityLoop] 領域稽核後複驗：{len(remaining)} 項違規")
+            for v in remaining:
+                warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
             # 產文路線要同時記寫手與稽核。稿子經過第二個模型改寫之後，
             # 只標寫手就不再是真話——讀者看到的句子有一部分是稽核模型寫的。
             writer = (getattr(draft, "generated_by", None) or "unknown").strip()

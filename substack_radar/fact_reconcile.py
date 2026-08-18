@@ -22,9 +22,18 @@ from dataclasses import dataclass
 # 中文金額單位 → 絕對倍率。稿子習慣用「億」，事實表用原始數值。
 _UNITS = {"兆": 1e12, "千億": 1e11, "百億": 1e10, "億": 1e8, "千萬": 1e7, "百萬": 1e6, "萬": 1e4}
 _UNIT_RE = "|".join(sorted(_UNITS, key=len, reverse=True))
-_VALUE_WITH_UNIT = re.compile(rf"(?<![\d.])(\d{{1,3}}(?:,\d{{3}})+|\d+(?:\.\d+)?)\s*({_UNIT_RE})")
+# lookbehind 要連逗號一起排除，數字本身也要吃得下「1,521.83」這種千分位＋小數。
+# 舊版把「第二季營收 1,521.83 億元」切成「521.83 億」，然後拿去跟年營收比對，
+# 報出一個不存在的 10 倍誤植（2026-08-18 聯發科第三次實跑）。
+_VALUE_WITH_UNIT = re.compile(
+    rf"(?<![\d.,])(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*({_UNIT_RE})"
+)
 
-_TOLERANCE = 0.03          # 3%：容得下四捨五入與抓取時間差
+_TOLERANCE = 0.03          # 3%：判定「錯誤量級」時要嚴，才不會亂報
+# 判定「這個數字是對的」時要寬。市值與股價每天在動，稿子寫「超過 6 兆」對上
+# 6.2 兆是正常寫法；舊版用 3% 判斷，差 3.24% 就被推去比對錯誤量級，於是報出
+# 「6 兆對到 2025 營收、差 0.1 倍」這種荒謬結果。
+_MATCH_TOLERANCE = 0.15
 # 只查 10 倍的誤植。真正的量級災難就是「十億 vs 億」這一種（14.39 → 143.9）。
 # 原本連 100 倍、1000 倍也查，結果 2026-08-18 的聯發科稿把「120 億美元」的
 # ASIC 市場規模比對到台幣淨利 1,181 億（×10 差 1.6%，在容差內）、把「10 億
@@ -83,8 +92,8 @@ def reconcile(article_md: str, fact_values: dict[str, float]) -> list[ScaleIssue
         return []
     issues: list[ScaleIssue] = []
     for written, unit, absolute, context in article_amounts(article_md):
-        if any(abs(absolute - f) <= abs(f) * _TOLERANCE for f in facts.values()):
-            continue  # 對得上，正確
+        if any(abs(absolute - f) <= abs(f) * _MATCH_TOLERANCE for f in facts.values()):
+            continue  # 對得上（含合理的四捨五入與盤中變動），正確
         hit = None
         for scale in _WRONG_SCALES:
             for label, f in facts.items():
