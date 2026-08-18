@@ -190,3 +190,20 @@ def test_source_date_is_read_from_the_url():
     assert published_on("https://n.yam.com/Article/20251124477055") == date(2025, 11, 24)
     assert age_days("https://n.yam.com/Article/20251124477055", today=date(2026, 8, 18)) == 267
     assert published_on("https://money.udn.com/money/story/5612/9675870") is None
+
+
+def test_undated_source_age_is_estimated_from_content_years():
+    """瑞昱稿引用的理財周刊文章沒有任何日期格式，卻是約 18 年前的報導，
+    提供了被寫成現況的市佔率。「日期不明」不等於新鮮。"""
+    from datetime import date
+    from substack_radar.source_dates import newest_year_mentioned, estimated_age_days
+    text = "2003年起…2005全年營收…2006年占出貨比重…2007年展望"
+    assert newest_year_mentioned(text) == 2007
+    age = estimated_age_days("https://example.com/no-date", text, date(2026, 8, 18))
+    assert age and age > 6000
+
+
+def test_recent_content_is_not_aged_by_the_estimator():
+    from datetime import date
+    from substack_radar.source_dates import estimated_age_days
+    assert estimated_age_days("https://x.com/a", "2026年第二季營收", date(2026, 8, 18)) == 0

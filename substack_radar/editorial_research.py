@@ -8,6 +8,8 @@ clear publisher.  Fewer than five usable extension sources fails closed.
 
 from __future__ import annotations
 
+import os
+
 import html
 import json
 import ipaddress
@@ -29,6 +31,14 @@ MIN_EXCERPT_CHARS = 120
 # 於是 2026-08-18 的瑞昱稿收到「YouTube 測試不可略過廣告」「Arteris 財報」這種
 # 完全無關的來源。摘要是發現用的線索，全文才是證據。
 MIN_PAGE_RELEVANCE_HITS = 3
+# 新鮮度策略（2026-08-18 owner 拍板）。財報／估值專欄的資訊必須相對於撰稿當下
+# 是「還取得得到的最新」，所以只用一條數字規則，不做複雜分級：
+#   * 超過 FRESH_MAX_AGE_DAYS 的來源直接淘汰，不進最終清單
+#   * 但至少留 MIN_RESEARCH_SOURCES 個；真的湊不滿才回頭收次新的，並標註年齡
+# 抓不到日期時用「內文提到的最新年份」保守推估（見 source_dates），
+# 因為「日期不明」不等於新鮮——瑞昱稿引用的理財周刊文章沒有任何日期格式，
+# 實際是約 18 年前的報導，卻提供了被寫成現況的市佔率。
+FRESH_MAX_AGE_DAYS = int(os.getenv("SUBSTACK_SOURCE_MAX_AGE_DAYS", "540"))
 # 補搜輪數：一輪淘完不夠 5 個就換問法再找，而不是把勉強及格的塞滿。
 MAX_SEARCH_ROUNDS = 3
 MAX_EXCERPT_CHARS = 2600
@@ -640,8 +650,10 @@ def build_research_pack(
     seen: set[str] = set()
     domains: Counter[str] = Counter()
     accepted: list[ResearchSource] = []
+    benched: list[tuple[int, ResearchSource, str]] = []
     rejected_offtopic = 0
     rejected_thin = 0
+    rejected_stale = 0
 
     # Loop：一輪＝搜尋 → 抓全文 → 用全文驗相關性 → 收下合格的。
     # 收不滿最低門檻就換問法再跑一輪，而不是把勉強及格的湊數塞進去。
@@ -697,6 +709,10 @@ def build_research_pack(
                     print(f"[EditorialResearch] 淘汰離題來源（全文命中 {hits}"
                           f" < {MIN_PAGE_RELEVANCE_HITS}）：{item['url'][:66]}")
                     continue
+            # 新鮮度閘：太舊就先擱著，等真的湊不滿最低門檻再回頭撿。
+            from substack_radar.source_dates import estimated_age_days
+
+            age = estimated_age_days(item["url"], excerpt)
             try:
                 source = ResearchSource(
                     title=item.get("title") or item["domain"],
@@ -707,14 +723,34 @@ def build_research_pack(
                 )
             except Exception:
                 continue
+            if age is not None and age > FRESH_MAX_AGE_DAYS:
+                rejected_stale += 1
+                print(f"[EditorialResearch] 擱置過舊來源（約 {age // 30} 個月）："
+                      f"{item['url'][:62]}")
+                benched.append((age, source, item["domain"]))
+                continue
             accepted.append(source)
             domains[item["domain"]] += 1
             if len(accepted) >= MAX_RESEARCH_SOURCES:
                 break
 
-    if rejected_offtopic or rejected_thin:
+    # 湊不滿最低門檻才回頭撿最新的那幾個舊來源——寧可帶著年齡標註，也不要
+    # 因為新鮮度而整篇產不出來。標註由 prompt_block 的 _age_note 負責。
+    if len(accepted) < MIN_RESEARCH_SOURCES and benched:
+        benched.sort(key=lambda x: x[0])
+        for age, source, domain in benched:
+            if len(accepted) >= MIN_RESEARCH_SOURCES:
+                break
+            if domains[domain] >= 2:
+                continue
+            accepted.append(source)
+            domains[domain] += 1
+            print(f"[EditorialResearch] 來源不足，回收約 {age // 30} 個月前的："
+                  f"{source.url[:58]}")
+    if rejected_offtopic or rejected_thin or rejected_stale:
         print(f"[EditorialResearch] 來源閘門：離題淘汰 {rejected_offtopic}、"
-              f"內容太少淘汰 {rejected_thin}、收下 {len(accepted)}")
+              f"內容太少淘汰 {rejected_thin}、過舊擱置 {rejected_stale}、"
+              f"收下 {len(accepted)}")
     return validate_research_sources(accepted)
 
 

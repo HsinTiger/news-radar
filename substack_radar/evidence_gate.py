@@ -220,7 +220,17 @@ def stale_claims(article_md: str, sources: list[dict], *, max_age_days: int = _S
         for value, unit in _TS_QUANTITY.findall(sentence):
             for src, age in stale:
                 excerpt = str(src.get("excerpt") or "")
-                if _norm(f"{value}{unit}") in _norm(excerpt) or _norm(value) in _norm(excerpt):
+                folded = _norm(excerpt)
+                pos = folded.find(_norm(f"{value}{unit}"))
+                if pos < 0:
+                    continue
+                # 跟 locate() 一樣的教訓：裸數字比對會撞出巧合。瑞昱稿的
+                # 49% 毛利率、30% ROE 來自 yfinance 事實表（當前資料），
+                # 只是數字剛好也出現在舊來源裡，第一版 E4 全都誤報成過期。
+                window = excerpt[max(0, pos - 90):pos + 90]
+                if not (_topic_words(sentence) & _topic_words(window)):
+                    continue
+                if True:
                     issues.append(EvidenceIssue(
                         rule="E4 引用過期來源的時效性數字",
                         sentence=sentence,

@@ -42,8 +42,40 @@ def published_on(url: str = "", text: str = "") -> date | None:
                 return got
     m = _TEXT_DATE.search((text or "")[:1500])
     if m:
-        return _mk(*m.groups())
+        got = _mk(*m.groups())
+        if got:
+            return got
     return None
+
+
+_YEAR = re.compile(r"(20[0-2]\d)\s*年")
+
+
+def newest_year_mentioned(text: str) -> int | None:
+    """內文提到的最新年份，當作「這篇最早也不可能比這年新」的上界。
+
+    網址與內文都抓不到日期時，這是最後的線索。2026-08-18 的瑞昱稿引用的
+    理財周刊文章沒有任何日期格式，但內文只出現 2003–2007 年——那是一篇
+    約 20 年前的報導，而它提供的「乙太網路市佔率超過 70%」被寫成現況。
+    日期不明不等於安全，對財報類文章尤其不是。
+    """
+    years = [int(y) for y in _YEAR.findall(str(text or "")[:6000])]
+    return max(years) if years else None
+
+
+def estimated_age_days(url: str = "", text: str = "", today: date | None = None) -> int | None:
+    """先用確切日期；沒有就用「內文最新年份」估一個保守下限。"""
+    exact = age_days(url, text, today)
+    if exact is not None:
+        return exact
+    year = newest_year_mentioned(text)
+    if year is None:
+        return None
+    ref = today or date.today()
+    if year >= ref.year:
+        return 0
+    # 保守估：假設它寫於該年最後一天，算出來的天數只會低估、不會高估
+    return (ref - date(year, 12, 31)).days
 
 
 def age_days(url: str = "", text: str = "", today: date | None = None) -> int | None:
@@ -56,7 +88,13 @@ def age_days(url: str = "", text: str = "", today: date | None = None) -> int | 
 def annotate(sources: list[dict], today: date | None = None) -> list[dict]:
     """就地補上 published_on / age_days，讓事實表與閘門都看得到。"""
     for src in sources or []:
-        got = published_on(str(src.get("url") or ""), str(src.get("excerpt") or ""))
+        url, excerpt = str(src.get("url") or ""), str(src.get("excerpt") or "")
+        got = published_on(url, excerpt)
         src["published_on"] = got.isoformat() if got else None
-        src["age_days"] = ((today or date.today()) - got).days if got else None
+        exact = ((today or date.today()) - got).days if got else None
+        src["age_days"] = exact
+        if exact is None:
+            est = estimated_age_days(url, excerpt, today)
+            src["age_days_estimated"] = est
+            src["age_days"] = est          # 給閘門用：估計值總比當成新鮮好
     return sources
