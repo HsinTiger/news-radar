@@ -43,3 +43,14 @@ def test_allows_guidance_wording_when_real_guidance_exists():
 def test_correct_consensus_wording_passes():
     art = "實際 EPS 連續四季低於分析師共識，賣方預估與實際脫節。"
     assert evaluate(art, fact_values={}, has_management_guidance=False) == []
+
+
+def test_auditor_never_shares_a_family_with_the_writer():
+    """寫手鏈的鏈尾也是 Claude Opus 4.6。稽核若用同一個模型，
+    「不同模型互稽」的保證就沒了——同一個模型讀自己的輸出會重現同一組盲點。"""
+    from substack_radar.quality_loop import auditor_for, AUDIT_MODEL, AUDIT_FALLBACK_MODEL
+
+    assert auditor_for("Gemini 3.7 Flash (High)") == AUDIT_MODEL
+    assert auditor_for("Claude Opus 4.6 (Thinking)") == AUDIT_FALLBACK_MODEL
+    # generated_by 是「antigravity_cli · 模型 X」這種字串，也要判得出家族
+    assert auditor_for("antigravity_cli · 模型 Claude Opus 4.6 (Thinking)") == AUDIT_FALLBACK_MODEL

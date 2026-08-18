@@ -31,6 +31,27 @@ AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
 # 寫手是 Gemini 3.6 Flash (High)。稽核刻意換家族＋最高推理強度：
 # 同一個模型讀自己的輸出，會重現同一組盲點。
 AUDIT_MODEL = os.getenv("SUBSTACK_AUDIT_MODEL", "Claude Opus 4.6 (Thinking)")
+# 寫手鏈的鏈尾也是 Claude Opus 4.6。寫手若一路 fallback 到它，稽核再用同一個
+# 模型，「不同模型互稽」的保證就沒了——同一個模型讀自己的輸出會重現同一組盲點。
+# 這時改用 Gemini 3.1 Pro (High)：換家族、推理強度仍是該家族最高的一檔。
+AUDIT_FALLBACK_MODEL = os.getenv("SUBSTACK_AUDIT_FALLBACK_MODEL", "Gemini 3.1 Pro (High)")
+
+
+def _same_family(a: str, b: str) -> bool:
+    def fam(m: str) -> str:
+        m = (m or "").lower()
+        for key in ("claude", "gemini", "gpt"):
+            if key in m:
+                return key
+        return m
+    return fam(a) == fam(b)
+
+
+def auditor_for(writer_model: str | None, *, preferred: str = AUDIT_MODEL) -> str:
+    """挑一個跟寫手不同家族的稽核模型。"""
+    if writer_model and _same_family(writer_model, preferred):
+        return AUDIT_FALLBACK_MODEL
+    return preferred
 AUDIT_TIMEOUT_S = int(os.getenv("SUBSTACK_AUDIT_TIMEOUT_S", "600"))
 MAX_ROUNDS = int(os.getenv("SUBSTACK_QUALITY_ROUNDS", "3"))
 
@@ -182,3 +203,56 @@ def run_quality_loop(
     if final:
         print(f"[QualityLoop] ❌ 用完 {max_rounds} 輪仍有 {len(final)} 項違規（不靜默放行）")
     return current, report
+
+
+# --- 第二段：開放式領域稽核 ------------------------------------------------
+# 確定性閘門只抓得到「能算的」。2026-08-18 的瑞昱稿還有一批錯是算不出來的：
+#   * 「營業費用吞噬掉將近四成毛利」——實際吃掉 77% 毛利（四成是對營收）
+#   * 製程寫「0.18 微米→0.13 微米→90 奈米」，2026 年的 IC 設計龍頭早就不是
+#   * 把 SoIC（台積電 3D 堆疊）說成「系統單晶片」（那是 SoC）
+#   * 把「戴爾電腦」當市調機構
+# 這些要靠領域知識，正是第二個模型該做的事。刻意放在確定性閘門之後：
+# 地基乾淨了，它才不會把注意力浪費在數字與標籤上。
+
+_OPEN_AUDIT_PROMPT = """你是一份中文財經電子報的事實查核編輯，專長是半導體與財報分析。
+下面是一篇已經通過數字對帳的草稿，以及管線抓到的原始事實表。
+
+請只找**事實錯誤**，不要評論風格、結構或觀點。特別注意這幾類：
+1. 比率算錯分母（例如「費用吃掉四成毛利」但實際是對營收的四成）
+2. 產業常識過時或錯誤（製程節點、技術世代、規格名稱）
+3. 專有名詞用錯（例如把 SoIC 當成 SoC）
+4. 把不是研究機構的公司當成資料來源
+5. 前後文自相矛盾的數字或比率
+
+=== 原始事實表 ===
+{facts}
+
+=== 草稿全文 ===
+{article}
+
+=== 輸出格式（最高優先）===
+若找到問題，輸出修訂後的完整 Markdown 全文，包在
+<<<ARTICLE>>> 與 <<<END>>> 之間，只改錯的地方，其餘一字不動。
+把握不足的地方寧可刪掉整句，也不要換成另一個你不確定的說法。
+若通篇沒有事實錯誤，只輸出一行：CLEAN
+"""
+
+
+def open_domain_audit(article_md: str, fact_block: str, *,
+                      model: str = AUDIT_MODEL, timeout_s: int = AUDIT_TIMEOUT_S) -> tuple[str, bool]:
+    """回傳 (文章, 是否有改)。失敗一律回原文，不擋稿。"""
+    prompt = _OPEN_AUDIT_PROMPT.format(facts=fact_block[:6000], article=article_md)
+    try:
+        raw = _run_agy(prompt, model, timeout_s)
+    except Exception as exc:
+        print(f"[QualityLoop] ⚠️ 領域稽核失敗（{type(exc).__name__}: {exc}）；保留原文")
+        return article_md, False
+    if "CLEAN" in (raw or "")[:200] and "<<<ARTICLE>>>" not in raw:
+        print("[QualityLoop] ✅ 領域稽核：未發現事實錯誤")
+        return article_md, False
+    patched = _extract_article(raw)
+    if not patched or patched.strip() == article_md.strip():
+        print("[QualityLoop] ℹ️ 領域稽核沒有提出可用的修訂")
+        return article_md, False
+    print("[QualityLoop] ✏️ 領域稽核提出修訂並已套用")
+    return patched, True
