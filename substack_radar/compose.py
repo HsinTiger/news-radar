@@ -2199,11 +2199,19 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 sources=[item.model_dump() for item in (research_sources or [])],
                 model=auditor,
             )
-            body, _ = open_domain_audit(body, fact_block, model=auditor)
+            body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
             draft.body_markdown = body
             if not report.passed:
                 for v in report.remaining:
                     warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
+            # 產文路線要同時記寫手與稽核。稿子經過第二個模型改寫之後，
+            # 只標寫手就不再是真話——讀者看到的句子有一部分是稽核模型寫的。
+            writer = (getattr(draft, "generated_by", None) or "unknown").strip()
+            draft.generated_by = (
+                f"{writer}｜稽核 {auditor} · 對帳 {report.rounds} 輪"
+                f"{'／領域查核有修訂' if domain_changed else '／領域查核無修訂'}"
+                f"{'' if report.passed else '（仍有未解違規）'}"
+            )
         except Exception as exc:
             print(f"[QualityLoop] ⚠️ 迴圈本身失敗（{type(exc).__name__}: {exc}）；"
                   "保留原文繼續，不因為稽核工具壞掉就掉一篇稿")
