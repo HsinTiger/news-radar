@@ -25,7 +25,14 @@ _UNIT_RE = "|".join(sorted(_UNITS, key=len, reverse=True))
 _VALUE_WITH_UNIT = re.compile(rf"(?<![\d.])(\d{{1,3}}(?:,\d{{3}})+|\d+(?:\.\d+)?)\s*({_UNIT_RE})")
 
 _TOLERANCE = 0.03          # 3%：容得下四捨五入與抓取時間差
-_WRONG_SCALES = (0.001, 0.01, 0.1, 10.0, 100.0, 1000.0)
+# 只查 10 倍的誤植。真正的量級災難就是「十億 vs 億」這一種（14.39 → 143.9）。
+# 原本連 100 倍、1000 倍也查，結果 2026-08-18 的聯發科稿把「120 億美元」的
+# ASIC 市場規模比對到台幣淨利 1,181 億（×10 差 1.6%，在容差內）、把「10 億
+# 美元」比對到營業利益（×100）。純屬數字巧合，卻白燒掉一輪稽核。
+_WRONG_SCALES = (0.1, 10.0)
+# 外幣金額不比對：事實表是公司自己的本位幣，稿子裡的「億美元」多半在講別人
+# 的市場規模或同業，拿來跟本國幣值比對只會撞出巧合。
+_FOREIGN_CURRENCY = ("美元", "美金", "USD", "日圓", "日元", "歐元", "EUR", "人民幣", "港幣")
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,10 @@ def article_amounts(text: str) -> list[tuple[float, str, float, str]]:
         if v == 0:
             continue
         unit = m.group(2)
+        # 單位後面緊接著外幣就跳過（「120 億美元」不是本位幣金額）。
+        tail = text[m.end():m.end() + 4]
+        if any(cur in tail for cur in _FOREIGN_CURRENCY):
+            continue
         lo, hi = max(0, m.start() - 16), min(len(text), m.end() + 16)
         out.append((v, unit, v * _UNITS[unit], re.sub(r"\s+", " ", text[lo:hi]).strip()))
     return out

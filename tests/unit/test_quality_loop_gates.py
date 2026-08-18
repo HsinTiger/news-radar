@@ -125,3 +125,19 @@ def test_named_source_matching_is_not_greedy():
              "excerpt": "瑞昱乙太網路晶片全球市占率超過70％。"}]
     issues = check("根據理財周刊引述 Dell 的統計，市佔率超過 70%。", sources=srcs)
     assert issues == []
+
+
+def test_foreign_currency_amounts_are_not_reconciled():
+    """2026-08-18 聯發科稿：「營收規模將衝上 70 至 120 億美元、拿下全球 ASIC
+    市場」被比對到聯發科台幣淨利 1,181 億（×10 差 1.6%，落在容差內）。
+    事實表是公司本位幣，稿子裡的外幣金額多半在講別人的市場規模。"""
+    facts = {"2022 淨利": 1.181e11, "2024 營業利益": 1.024e11}
+    assert reconcile("營收規模將衝上 70 至 120 億美元。", facts) == []
+    assert reconcile("上看 20 億美元，比原先預期的 10 億美元翻倍。", facts) == []
+
+
+def test_only_ten_fold_slips_are_reported():
+    """真正的量級災難是「十億 vs 億」。查到 100、1000 倍只會撞出巧合。"""
+    facts = {"營業利益": 1.024e11}
+    assert reconcile("這個市場約 10 億元。", facts) == []      # ×100，不查
+    assert len(reconcile("營業利益 102.4 億元。", facts)) == 1  # ×10，要抓
