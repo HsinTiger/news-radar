@@ -83,9 +83,18 @@ class LoopReport:
 
 def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
              source_urls: list[str] | None = None,
-             has_management_guidance: bool = False) -> list[Violation]:
+             has_management_guidance: bool = False,
+             sources: list[dict] | None = None,
+             fact_block: str = "") -> list[Violation]:
     """只回報程式能確定的違規。判斷題留給稽核 agent。"""
     out: list[Violation] = []
+
+    # 證據法則：歸屬給外部來源的數字要指得出處（見 evidence_gate）。
+    from substack_radar.evidence_gate import check as _evidence_check
+
+    for issue in _evidence_check(article_md, sources=sources or [], fact_block=fact_block):
+        out.append(Violation(kind=issue.rule, detail=issue.detail,
+                             fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
 
     for issue in reconcile(article_md, fact_values or {}):
         out.append(Violation(
@@ -158,6 +167,7 @@ def run_quality_loop(
     fact_block: str = "",
     source_urls: list[str] | None = None,
     has_management_guidance: bool = False,
+    sources: list[dict] | None = None,
     max_rounds: int = MAX_ROUNDS,
     model: str = AUDIT_MODEL,
 ) -> tuple[str, LoopReport]:
@@ -170,7 +180,8 @@ def run_quality_loop(
     current = article_md
     for round_index in range(max_rounds):
         violations = evaluate(current, fact_values=fact_values, source_urls=source_urls,
-                              has_management_guidance=has_management_guidance)
+                              has_management_guidance=has_management_guidance,
+                              sources=sources, fact_block=fact_block)
         report.history.append(violations)
         report.rounds = round_index + 1
         if not violations:
@@ -197,7 +208,8 @@ def run_quality_loop(
         current = patched
 
     final = evaluate(current, fact_values=fact_values, source_urls=source_urls,
-                     has_management_guidance=has_management_guidance)
+                     has_management_guidance=has_management_guidance,
+                     sources=sources, fact_block=fact_block)
     report.history.append(final)
     report.passed = not final
     if final:

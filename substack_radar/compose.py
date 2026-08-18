@@ -2080,9 +2080,10 @@ async def _run_inner(args: argparse.Namespace) -> int:
         source["research_brief"] = research_brief.model_dump(
             exclude={"generated_by"}
         )
-        source["research_sources"] = [
-            item.model_dump(exclude={"excerpt"}) for item in research_sources
-        ]
+        # excerpt 原本被排除（純粹為了縮小 metadata）。但抓回來的全文摘錄就是
+        # 「哪篇文章的哪一段」那份證據本身——沒有它，事後無法查證稿子裡的數字
+        # 到底出自哪個來源，證據稽核也就無從做起（2026-08-18 owner 要求）。
+        source["research_sources"] = [item.model_dump() for item in research_sources]
         source["research_source_count"] = len(research_sources)
         source["social_reach"] = social_reach.model_dump() if social_reach else None
         print(
@@ -2194,6 +2195,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 fact_values=fact_values,
                 fact_block=fact_block,
                 has_management_guidance=False,
+                # 證據法則要對照抓回來的全文摘錄，才知道數字出自哪一段
+                sources=[item.model_dump() for item in (research_sources or [])],
                 model=auditor,
             )
             body, _ = open_domain_audit(body, fact_block, model=auditor)
