@@ -110,10 +110,12 @@ def fetch_financials(ticker: str) -> Tuple[dict, str]:
         pass
 
 
-    # --- 管理層信用：財報預估 vs 實際 --------------------------------
-    # 為什麼加這個：財務比率講的是「公司現在體質如何」，這一組講的是
-    # 「管理層的說法可不可信」。四季全 miss 且失準幅度逐季擴大，比任何
-    # 定性描述都更能支撐或推翻一篇公司分析的判斷。
+    # --- 分析師共識 EPS vs 實際 EPS ----------------------------------
+    # yfinance 的 earnings_history 給的是**賣方分析師共識 EPS** 與實際 EPS，
+    # 不是公司自己在法說會給的財測。這個註解與下方 prompt 原本都寫成
+    # 「管理層信用／管理層的說法可不可信」，2026-08-18 的瑞昱稿就照著這個
+    # 標籤寫出「管理層指引連續四季落空、誠信度打折」——整段論證與一條
+    # 證偽條件都建在誤讀上。標籤錯，寫手就會錯，而且每篇公司分析都會錯。
     # 資料來自既有相依 yfinance，無新增第三方程式碼。
     try:
         eh = t.earnings_history
@@ -182,11 +184,19 @@ def _format_md(d: dict) -> str:
             rev_cn = "、".join(_cn(v, cur) for v in d["revenue_b"])
             L.append(f"- 營收（新→舊）：{rev_cn}（原值 {d['revenue_b']}B；近 {len(d['years'])} 年 CAGR≈{d.get('rev_cagr','N/A')}%）")
         if d.get("op_income_b"):
-            L.append(f"- 營業利益（B）：{d['op_income_b']}")
+            # 這兩行原本只丟原始 B 值。營收與市值都經過 _cn() 換成中文單位，
+            # 只有這裡沒有——於是 2026-08-18 的瑞昱稿把 14.39B 直接寫成
+            # 「14.39 億」（正確 143.9 億，差 10 倍），而同一篇的營收 1227 億
+            # 反而寫對了。差別就在這一行有沒有先換算好。
+            L.append("- 營業利益（新→舊）：" + "、".join(
+                _cn(v, cur) for v in d["op_income_b"]
+            ) + f"（原值 {d['op_income_b']}B）")
         if d.get("op_margin_trend"):
             L.append(f"- 營益率趨勢（%，新→舊）：{d['op_margin_trend']}")
         if d.get("net_income_b"):
-            L.append(f"- 淨利（B）：{d['net_income_b']}")
+            L.append("- 淨利（新→舊）：" + "、".join(
+                _cn(v, cur) for v in d["net_income_b"]
+            ) + f"（原值 {d['net_income_b']}B）")
     if d.get("price") is not None:
         L.append(
             f"- 股價：{d['price']}（52 週區間 {d.get('range_52w','N/A')}；"
@@ -198,9 +208,14 @@ def _format_md(d: dict) -> str:
     if track:
         beats = d.get("earnings_beat_count", "N/A")
         L.append("")
-        L.append(f"### 管理層信用：財報預估 vs 實際（達標 {beats}）")
-        L.append("（這一組回答的不是「公司體質如何」，而是「管理層的說法可不可信」。"
-                 "連續未達標、且失準幅度擴大，是判斷指引可信度的直接證據。）")
+        L.append(f"### 分析師共識 EPS vs 實際 EPS（達標 {beats}）")
+        L.append("（**這不是公司自己給的財測／法說會指引**，是 yfinance 的 "
+                 "`earnings_dates`＝賣方分析師共識 EPS 與實際 EPS 的落差。"
+                 "它回答的是「市場對這家公司的預期準不準」，不是「管理層說話算不算話」。"
+                 "寫作時**不得**把它寫成「管理層指引落空」「管理層誠信度」——"
+                 "2026-08-18 的瑞昱稿就是這樣寫錯，整段論證與一條證偽條件都建在誤讀上。"
+                 "正確說法：連續低於共識代表分析師模型與實際脫節，可能是需求能見度低，"
+                 "也可能是賣方過度樂觀，兩者都要另找證據才能斷。）")
         for r in track:
             mark = "達標" if r["beat"] else "未達標"
             sp = r.get("surprise_pct")

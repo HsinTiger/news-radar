@@ -25,6 +25,12 @@ from pydantic import BaseModel, Field, field_validator
 MIN_RESEARCH_SOURCES = 5
 MAX_RESEARCH_SOURCES = 10
 MIN_EXCERPT_CHARS = 120
+# 抓回全文之後才做的第二道相關性門檻。第一道只看搜尋摘要、命中 1 個詞就放行，
+# 於是 2026-08-18 的瑞昱稿收到「YouTube 測試不可略過廣告」「Arteris 財報」這種
+# 完全無關的來源。摘要是發現用的線索，全文才是證據。
+MIN_PAGE_RELEVANCE_HITS = 3
+# 補搜輪數：一輪淘完不夠 5 個就換問法再找，而不是把勉強及格的塞滿。
+MAX_SEARCH_ROUNDS = 3
 MAX_EXCERPT_CHARS = 2600
 MAX_SOCIAL_EXCERPT_CHARS = 1600
 MIN_SOCIAL_DIRECT_CHARS = 120
@@ -569,6 +575,26 @@ def _search_candidates(
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
+def _widen_queries(queries: Sequence[str], subject: str, round_index: int) -> list[str]:
+    """補搜用的問法。同一組問句再搜一次只會拿到同一批結果，所以要換角度。
+
+    第 2 輪：把主題詞跟原問句的關鍵詞重新組合（更聚焦在主題本身）。
+    第 3 輪：只用主題詞加上通用的證據型詞彙（財報／數據／市佔／分析）。
+    回空陣列代表沒有可用的新問法，呼叫端就停止補搜——寧可來源少而準，
+    也不要為了湊數把離題結果放進讀者看得到的清單。
+    """
+    subject_text = re.sub(r"\s+", " ", str(subject or "")).strip()
+    core = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9.\-]{2,}|[一-鿿]{2,}", subject_text)][:4]
+    if not core:
+        return []
+    if round_index == 1:
+        heads = [re.sub(r"\s+", " ", q).strip() for q in queries if (q or "").strip()][:3]
+        out = [f"{' '.join(core[:2])} {h}"[:120] for h in heads]
+    else:
+        out = [f"{' '.join(core[:3])} {tail}" for tail in ("財報 數據", "市佔 分析", "風險 爭議")]
+    return [q for q in dict.fromkeys(out) if q]
+
+
 def build_research_pack(
     queries: Sequence[str],
     *,
@@ -582,43 +608,13 @@ def build_research_pack(
     remaining slots.  A domain may contribute at most two sources so one outlet
     cannot masquerade as independent corroboration.
     """
-    candidates: list[dict] = []
-    for item in seed_sources or []:
-        url = _canonical_url(str(item.get("url") or ""))
-        if url:
-            candidates.append(
-                {
-                    "title": item.get("title") or _publisher_for(url),
-                    "url": url,
-                    "snippet": item.get("excerpt") or item.get("body") or "",
-                    "score": 3,
-                }
-            )
     # 主題詞彙來自主來源標題加上研究問句本身——查證問句就是這篇在問的事。
     subject_terms = _subject_terms(subject, *queries)
-    candidates.extend(_search_candidates(queries, subject_terms=subject_terms))
 
-    primary = _canonical_url(primary_url or "")
-    seen: set[str] = set()
-    candidate_domains: Counter[str] = Counter()
-    eligible: list[dict] = []
     try:
         from scripts.submit_source import _fetch_page_text
     except Exception as exc:  # pragma: no cover - repository import should exist
         raise InsufficientResearchError("page-text fetcher is unavailable") from exc
-
-    for item in candidates:
-        url = _canonical_url(item.get("url") or "")
-        if not url or url == primary or url in seen:
-            continue
-        domain = _publisher_for(url)
-        if candidate_domains[domain] >= 3:
-            continue
-        seen.add(url)
-        candidate_domains[domain] += 1
-        eligible.append({**item, "url": url, "domain": domain})
-        if len(eligible) >= 30:
-            break
 
     def _read(item: dict) -> str:
         try:
@@ -626,36 +622,99 @@ def build_research_pack(
         except Exception:
             return ""
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        page_texts = list(pool.map(_read, eligible))
+    seed_candidates: list[dict] = []
+    for item in seed_sources or []:
+        url = _canonical_url(str(item.get("url") or ""))
+        if url:
+            seed_candidates.append(
+                {
+                    "title": item.get("title") or _publisher_for(url),
+                    "url": url,
+                    "snippet": item.get("excerpt") or item.get("body") or "",
+                    "score": 3,
+                    "seed": True,
+                }
+            )
 
+    primary = _canonical_url(primary_url or "")
+    seen: set[str] = set()
     domains: Counter[str] = Counter()
     accepted: list[ResearchSource] = []
-    for item, page_text in zip(eligible, page_texts):
-        url = item["url"]
-        domain = item["domain"]
-        if domains[domain] >= 2:
-            continue
-        # A search-result snippet is discovery metadata, not evidence.  Count a
-        # source only after the page-text reader actually obtained enough text.
-        excerpt = re.sub(r"\s+", " ", page_text).strip()
-        if len(excerpt) < MIN_EXCERPT_CHARS:
-            continue
-        try:
-            source = ResearchSource(
-                title=item.get("title") or domain,
-                url=url,
-                publisher=domain,
-                excerpt=excerpt[:MAX_EXCERPT_CHARS],
-                evidence_role=_role_for(url, item.get("title") or ""),
-            )
-        except Exception:
-            continue
-        accepted.append(source)
-        domains[domain] += 1
-        if len(accepted) >= MAX_RESEARCH_SOURCES:
-            break
+    rejected_offtopic = 0
+    rejected_thin = 0
 
+    # Loop：一輪＝搜尋 → 抓全文 → 用全文驗相關性 → 收下合格的。
+    # 收不滿最低門檻就換問法再跑一輪，而不是把勉強及格的湊數塞進去。
+    # 這是 2026-08-18 稽核的直接結果：舊版只用搜尋摘要驗一次、命中 1 個詞就過。
+    for round_index in range(MAX_SEARCH_ROUNDS):
+        if len(accepted) >= MIN_RESEARCH_SOURCES:
+            break
+        if round_index == 0:
+            batch = list(seed_candidates)
+            batch.extend(_search_candidates(queries, subject_terms=subject_terms))
+        else:
+            widened = _widen_queries(queries, subject, round_index)
+            if not widened:
+                break
+            print(f"[EditorialResearch] 只收到 {len(accepted)} 個合格來源，"
+                  f"換問法補搜第 {round_index + 1}/{MAX_SEARCH_ROUNDS} 輪")
+            batch = _search_candidates(widened, subject_terms=subject_terms)
+
+        eligible: list[dict] = []
+        candidate_domains: Counter[str] = Counter()
+        for item in batch:
+            url = _canonical_url(item.get("url") or "")
+            if not url or url == primary or url in seen:
+                continue
+            domain = _publisher_for(url)
+            if candidate_domains[domain] >= 3 or domains[domain] >= 2:
+                continue
+            seen.add(url)
+            candidate_domains[domain] += 1
+            eligible.append({**item, "url": url, "domain": domain})
+            if len(eligible) >= 30:
+                break
+        if not eligible:
+            continue
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            page_texts = list(pool.map(_read, eligible))
+
+        for item, page_text in zip(eligible, page_texts):
+            if domains[item["domain"]] >= 2:
+                continue
+            # 搜尋摘要是發現用的線索，不是證據。只有抓得回來的全文才算數。
+            excerpt = re.sub(r"\s+", " ", page_text).strip()
+            if len(excerpt) < MIN_EXCERPT_CHARS:
+                rejected_thin += 1
+                continue
+            # 第二道相關性：對全文，而且門檻比搜尋摘要那道高。
+            # seed 來源是上游明確指定的素材，不受此門檻限制。
+            if not item.get("seed"):
+                hits = _relevance_hits(f"{item.get('title', '')} {excerpt}", subject_terms)
+                if hits < MIN_PAGE_RELEVANCE_HITS:
+                    rejected_offtopic += 1
+                    print(f"[EditorialResearch] 淘汰離題來源（全文命中 {hits}"
+                          f" < {MIN_PAGE_RELEVANCE_HITS}）：{item['url'][:66]}")
+                    continue
+            try:
+                source = ResearchSource(
+                    title=item.get("title") or item["domain"],
+                    url=item["url"],
+                    publisher=item["domain"],
+                    excerpt=excerpt[:MAX_EXCERPT_CHARS],
+                    evidence_role=_role_for(item["url"], item.get("title") or ""),
+                )
+            except Exception:
+                continue
+            accepted.append(source)
+            domains[item["domain"]] += 1
+            if len(accepted) >= MAX_RESEARCH_SOURCES:
+                break
+
+    if rejected_offtopic or rejected_thin:
+        print(f"[EditorialResearch] 來源閘門：離題淘汰 {rejected_offtopic}、"
+              f"內容太少淘汰 {rejected_thin}、收下 {len(accepted)}")
     return validate_research_sources(accepted)
 
 
