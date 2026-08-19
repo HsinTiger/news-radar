@@ -271,3 +271,37 @@ def test_split_reads_both_prefix_and_suffix_forms():
     from substack_radar.compose import split_column_prefix
     assert split_column_prefix("台積電還能不能買？｜賺錢有道") == ("賺錢有道", "台積電還能不能買？")
     assert split_column_prefix("賺錢有道｜台積電還能不能買？") == ("賺錢有道", "台積電還能不能買？")
+
+
+# --- E1 精準度（2026-08-19 BTC 稿把三輪稽核燒在假警報上之後修的） -----------
+_E1_SRCS = [{"publisher": "moneyweekly.com.tw",
+             "title": "數位家庭起飛 瑞昱獲利攀高峰 - 理財周刊", "excerpt": "x" * 200}]
+
+
+def _e1(art):
+    from substack_radar.evidence_gate import check
+    return [i for i in check(art, sources=_E1_SRCS) if i.rule.startswith("E1")]
+
+
+def test_e1_ignores_generic_phrases_after_gen_ju():
+    """「根據傳統的週期經驗」不是具名來源。第一版把這種一般說法當成機構報上來。"""
+    assert _e1("根據傳統的週期經驗，底部通常出現在減半後。") == []
+
+
+def test_e1_accepts_the_pipelines_own_data_providers():
+    """CoinMetrics 是事實表的提供者，只是不在延伸來源清單裡。"""
+    assert _e1("根據 CoinMetrics 的數據，MVRV 為 1.23。") == []
+
+
+def test_e1_latin_names_compare_whole_words_not_substrings():
+    """「CoinShares」曾靠 `oin` 三個字元比對到「CoinMetrics」，
+    一個捏造的分析師就被當成合法出處放行。"""
+    assert len(_e1("根據 CoinShares 研究主管 James Butterfill 的說法，資金正在回流。")) == 1
+
+
+def test_e1_still_catches_org_suffixed_phantoms():
+    assert len(_e1("根據摩根士丹利證券的研究評估，目標價下修。")) == 1
+
+
+def test_e1_still_accepts_a_real_listed_source():
+    assert _e1("根據理財周刊引述 Dell 的統計，市佔率超過 70%。") == []

@@ -54,22 +54,74 @@ def _norm(text: str) -> str:
     return re.sub(r"[\s,，]", "", str(text or "").translate(_FOLD))
 
 
-def _names_overlap(named: str, known: set[str], min_len: int = 3) -> bool:
-    """具名來源與清單裡任一來源有沒有夠長的共同子字串。
+# 事實表的資料提供者也是合法出處。稿子寫「CoinMetrics 的數據顯示」是對的——
+# 那份數字就是管線自己抓的，只是它不在 research_sources 裡（那是延伸來源清單）。
+_FACT_PROVIDERS = ("coinmetrics", "coingecko", "mempool.space", "blockchair",
+                   "yfinance", "yahoo finance", "defillama")
 
-    第一版用 re.findall 貪婪切詞，於是「理財周刊引述Dell的統計」被切成
-    ['理財周刊引述','Dell','的統計']，而來源標題只含「理財周刊」——明明是
-    同一家卻判成不存在。改成滑動視窗比對。
+# 「根據X」的 X 不一定是來源。E1 第一版把「根據傳統的週期經驗」「根據當日…」
+# 「初步」這種一般說法都當成具名機構報上來，2026-08-19 的 BTC 稿因此把三輪
+# 稽核全燒在假警報上。只有看起來像**具名實體**的才查：含拉丁字母，或帶機構後綴。
+_ORG_SUFFIX = ("證券", "銀行", "研究院", "研究所", "週刊", "周刊", "日報", "時報",
+               "新聞", "財經", "媒體", "公司", "基金", "資本", "投顧", "交易所",
+               "大學", "智庫", "顧問")
+_GENERIC_HEADS = ("傳統", "當日", "初步", "業界", "市場", "歷史", "上述", "目前",
+                  "過去", "近期", "經驗", "估算", "說法", "觀察", "支持", "反方",
+                  "這項", "這些", "有分析", "有人", "部分", "多數", "一般")
+
+
+def _looks_like_named_entity(named: str) -> bool:
+    """看起來像不像一個「被指名的出處」。
+
+    以一般說法開頭的（傳統／當日／初步／業界…）一律不是；太長的是句子不是名字。
+    其餘：有拉丁字母、有機構後綴、或是一段不長的中文詞，都當成具名實體。
+    最後那條是為了「戴爾電腦」——沒有拉丁也沒有機構後綴，但它確實是個名字。
     """
+    text = (named or "").strip()
+    if len(text) < 2:
+        return False
+    if any(text.startswith(g) for g in _GENERIC_HEADS):
+        return False
+    # 有拉丁字母或機構後綴＝裡面有個名字，即使正則多抓了幾個字也算。
+    # （「CoinShares 研究主管 James Butterfill 的說法」有 36 字元，但它確實是歸屬。）
+    if re.search(r"[A-Za-z]{3,}", text) or any(sfx in text for sfx in _ORG_SUFFIX):
+        return True
+    # 純中文：短的是名字（戴爾電腦），長的是句子。
+    # 先去空白——正則抓到的是「戴爾電腦 等機構數據」，中間那個空格會讓 fullmatch 失敗。
+    return bool(re.fullmatch(r"[一-鿿]{2,12}", re.sub(r"\s+", "", text)))
+
+
+def _names_overlap(named: str, known: set[str], min_cjk: int = 3) -> bool:
+    """具名來源與清單裡任一來源是不是同一個。
+
+    拉丁字母比**整詞**，中文比 3 字元以上的連續子字串。
+    第一版兩者都用 3 字元滑動視窗，於是「CoinShares」靠 `oin` 比對到
+    「CoinMetrics」，一個捏造的分析師就被當成合法出處放行（2026-08-19 BTC 稿）。
+    中文沒有詞界可用，只能靠長度；拉丁有空白與大小寫，就該用整詞。
+    """
+    named = (named or "").strip()
+    if not named:
+        return False
+    named_latin = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9.\-]{3,}", named)}
+    named_cjk = re.findall(r"[一-鿿]{2,}", named)
     for k in known:
         if not k:
             continue
-        if k in named or named in k:
+        k_latin = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9.\-]{3,}", k)}
+        if named_latin & k_latin:
             return True
-        for size in range(len(named), min_len - 1, -1):
-            for i in range(len(named) - size + 1):
-                if named[i:i + size] in k:
+        # 「moneyweekly」對「moneyweekly.com.tw」：同一家，只是一邊帶網域後綴。
+        # 用前綴比對而不是子字串——「coinshares」與「coinmetrics」共用 coin，
+        # 但誰都不是誰的前綴，仍然分得開。
+        for a in named_latin:
+            for b in k_latin:
+                if len(a) >= 5 and len(b) >= 5 and (a.startswith(b) or b.startswith(a)):
                     return True
+        for run in named_cjk:
+            for size in range(len(run), min_cjk - 1, -1):
+                for i in range(len(run) - size + 1):
+                    if run[i:i + size] in k:
+                        return True
     return False
 
 
@@ -142,6 +194,7 @@ def check(article_md: str, *, sources: list[dict] | None = None,
     sources = sources or []
     known = {_norm(s.get("publisher")) for s in sources}
     known |= {_norm(s.get("title")) for s in sources}
+    known |= {_norm(name) for name in _FACT_PROVIDERS}
     known.discard("")
     issues: list[EvidenceIssue] = []
 
@@ -151,7 +204,7 @@ def check(article_md: str, *, sources: list[dict] | None = None,
             continue
         named = (m.group(2) or m.group(3) or "").strip()
         # E1：具名的來源要真的在清單裡（用寬鬆包含比對，容得下「MIC 等研究機構」）
-        if named:
+        if named and _looks_like_named_entity(named):
             named_norm = _norm(named)
             if named_norm and not _names_overlap(named_norm, known):
                 issues.append(EvidenceIssue(
