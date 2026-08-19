@@ -936,6 +936,24 @@ def split_column_prefix(title: str) -> Tuple[str, str]:
     return "", text
 
 
+def _crypto_fact_values(fin_data) -> dict:
+    """幣圈的絕對數值。營收序列那套不適用，改用市值／價格／供給。"""
+    out: dict[str, float] = {}
+    for key, label in (("market_cap", "市值"), ("price", "價格"),
+                       ("total_crypto_mcap", "全市場市值"),
+                       ("volume_24h", "24 小時成交額")):
+        v = fin_data.get(key)
+        if isinstance(v, (int, float)) and v:
+            out[label] = float(v)
+    oc = fin_data.get("onchain") or {}
+    for key, label in (("FlowInExUSD", "交易所流入"), ("FlowOutExUSD", "交易所流出"),
+                       ("IssTotUSD", "單日新發行價值")):
+        v = oc.get(key)
+        if isinstance(v, (int, float)) and v:
+            out[label] = float(v)
+    return out
+
+
 def _company_fact_values(fin_data) -> dict:
     """把 fetch_financials 的年度序列攤成「標籤 → 絕對數值」，給數字對帳用。
 
@@ -1944,11 +1962,23 @@ async def _run_inner(args: argparse.Namespace) -> int:
         if not ticker:
             print("[ERROR] company mode 需要 ticker（--ticker / .company_next / watchlist）。")
             return 2
-        from substack_radar.company_financials import fetch_financials
-        print(f"[Company] {ticker} → 先抓 yfinance 財報事實…")
-        fin_data, fin_md = fetch_financials(ticker)
-        raw_title = fin_data.get("name") or ticker          # 占位；composer 依 editorial brief 生標題
-        topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
+        # 幣圈走同一個 company 模式（賺錢有道），只是事實表換一份：BTC/ETH 沒有
+        # 營收毛利 EPS，硬跑 yfinance 財報會拿到一份幾乎空白的表，然後寫手就會
+        # 自己「補」——那正是四道閘門在防的事。crypto_facts 同介面，其餘全沿用。
+        _crypto = ticker.upper().replace("-USD", "").strip()
+        if _crypto in ("BTC", "ETH"):
+            from substack_radar.crypto_facts import fetch_crypto
+            print(f"[Company] {_crypto} → 抓市場與鏈上事實（CoinMetrics／CoinGecko）…")
+            fin_data, fin_md = fetch_crypto(_crypto)
+        else:
+            from substack_radar.company_financials import fetch_financials
+            print(f"[Company] {ticker} → 先抓 yfinance 財報事實…")
+            fin_data, fin_md = fetch_financials(ticker)
+        raw_title = fin_data.get("name") or fin_data.get("symbol") or ticker
+        if fin_data.get("symbol") in ("BTC", "ETH"):
+            topic_category = "crypto"
+        else:
+            topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
         raw_content = fin_md
         source = {
             "id": None,
@@ -2200,7 +2230,10 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 auditor_for, open_domain_audit, run_quality_loop,
             )
 
-            fact_values = _company_fact_values(locals().get("fin_data"))
+            _fd = locals().get("fin_data")
+            fact_values = (_crypto_fact_values(_fd)
+                           if isinstance(_fd, dict) and _fd.get("symbol") in ("BTC", "ETH")
+                           else _company_fact_values(_fd))
             fact_block = locals().get("fin_md") or raw_content or ""
             auditor = auditor_for(getattr(draft, "generated_by", None))
             print(f"[QualityLoop] 稽核模型 = {auditor}（寫手 = "
