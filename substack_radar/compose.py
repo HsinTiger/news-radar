@@ -889,21 +889,33 @@ def normalise_tags(
     return out
 
 
-def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
-    """Prepend the column label. Idempotent, so re-runs don't stack prefixes."""
-    prefix = COLUMN_PREFIX.get(mode)
-    if not prefix:
-        return title
-    head = f"{prefix}{COLUMN_PREFIX_SEP}"
-    if title.startswith(head):
-        return title
-    # 任一已知欄目前綴都先剝掉，避免題型改判時留下舊標籤。
+def strip_column_label(title: str) -> str:
+    """把任一已知專欄名從標題頭或尾剝掉。前後綴兩種寫法都認得，
+    因為 2026-08-19 之前的稿子是前綴、之後是後綴。"""
+    text = (title or "").strip()
     for known in _ALL_PREFIXES:
-        old = f"{known}{COLUMN_PREFIX_SEP}"
-        if title.startswith(old):
-            title = title[len(old):]
-            break
-    return f"{head}{title}"
+        head = f"{known}{COLUMN_PREFIX_SEP}"
+        if text.startswith(head):
+            return text[len(head):].strip()
+        tail = f"{COLUMN_PREFIX_SEP}{known}"
+        if text.endswith(tail):
+            return text[: -len(tail)].strip()
+    return text
+
+
+def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
+    """把專欄名接在標題**後面**。Idempotent，重跑不會疊。
+
+    2026-08-19 從前綴改成後綴。Substack 沒有獨立的 email 主旨欄位，主旨就是
+    文章標題——前綴等於每一封信的開頭 5 個字都一樣，手機收件匣只顯示前 30–40
+    字元，真正有差異的部分被推到右邊截掉。owner 五篇實測：帶前綴平均開信率
+    13.7%（12%／20%／9%），不帶前綴 19.5%（20%／19%）；樣本小，但機制明確，
+    而且標題是最貴的版位，專欄識別已經由封面 kicker 與 tag 承擔了。
+    """
+    label = COLUMN_PREFIX.get(mode)
+    if not label:
+        return title
+    return f"{strip_column_label(title)}{COLUMN_PREFIX_SEP}{label}"
 
 
 def split_column_prefix(title: str) -> Tuple[str, str]:
@@ -915,7 +927,10 @@ def split_column_prefix(title: str) -> Tuple[str, str]:
     找不到已知前綴就回 ("", 原標題)，手貼的標題不會被亂拆。"""
     text = (title or "").strip()
     for known in _ALL_PREFIXES:
-        head = f"{known}{COLUMN_PREFIX_SEP}"
+        tail = f"{COLUMN_PREFIX_SEP}{known}"
+        if text.endswith(tail):
+            return known, text[: -len(tail)].strip()
+        head = f"{known}{COLUMN_PREFIX_SEP}"      # 2026-08-19 之前的前綴寫法
         if text.startswith(head):
             return known, text[len(head):].strip()
     return "", text

@@ -247,3 +247,27 @@ def test_aeo_requires_one_time_anchor_when_perishable_numbers_appear():
     assert any(i.rule.startswith("A3") for i in check("# 標題\n\n本益比 26 倍，毛利率 49%。"))
     assert [i for i in check("# 標題\n\n截至 2026 年 8 月，本益比 26 倍，毛利率 49%。")
             if i.rule.startswith("A3")] == []
+
+
+# --- 專欄名改後綴（2026-08-19） -------------------------------------------
+def test_column_label_goes_to_the_end():
+    """Substack 沒有獨立的 email 主旨欄位，主旨就是標題。前綴等於每封信開頭
+    5 個字都一樣，手機收件匣只顯示前 30–40 字元，差異部分被截掉。
+    owner 五篇實測：帶前綴平均開信率 13.7%，不帶 19.5%。"""
+    from substack_radar.compose import apply_column_prefix
+    assert apply_column_prefix("台積電還能不能買？", "company") == "台積電還能不能買？｜賺錢有道"
+
+
+def test_old_prefix_titles_are_migrated_not_stacked():
+    from substack_radar.compose import apply_column_prefix
+    assert apply_column_prefix("賺錢有道｜台積電還能不能買？", "company") == "台積電還能不能買？｜賺錢有道"
+    assert apply_column_prefix("台積電還能不能買？｜賺錢有道", "company") == "台積電還能不能買？｜賺錢有道"
+    # 退役的舊專欄名也要剝掉
+    assert apply_column_prefix("科技前沿｜舊稿標題", "podcast") == "舊稿標題｜吹牛免稅"
+
+
+def test_split_reads_both_prefix_and_suffix_forms():
+    """2026-08-19 之前的稿子是前綴，之後是後綴；封面 kicker 兩種都要認得。"""
+    from substack_radar.compose import split_column_prefix
+    assert split_column_prefix("台積電還能不能買？｜賺錢有道") == ("賺錢有道", "台積電還能不能買？")
+    assert split_column_prefix("賺錢有道｜台積電還能不能買？") == ("賺錢有道", "台積電還能不能買？")
