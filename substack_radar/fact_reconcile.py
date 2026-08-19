@@ -25,8 +25,12 @@ _UNIT_RE = "|".join(sorted(_UNITS, key=len, reverse=True))
 # lookbehind 要連逗號一起排除，數字本身也要吃得下「1,521.83」這種千分位＋小數。
 # 舊版把「第二季營收 1,521.83 億元」切成「521.83 億」，然後拿去跟年營收比對，
 # 報出一個不存在的 10 倍誤植（2026-08-18 聯發科第三次實跑）。
+# 負號要一起吃進來。季度序列進事實表之後（2026-08-19），虧損是常態：
+# 稿子寫「營業利益轉負為 -0.3 億美元」是對的（Q2 = -0.03B），但正則只抓到
+# 「0.3 億」＝ +3e7，對不上事實裡的 -3e7，接著誤配到另一季的 +3e8，
+# 報出一個不存在的 10 倍誤植。虧損的公司整篇都會這樣。
 _VALUE_WITH_UNIT = re.compile(
-    rf"(?<![\d.,])(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*({_UNIT_RE})"
+    rf"(?<![\d.,])([-−﹣－]?\s?)(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*({_UNIT_RE})"
 )
 
 _TOLERANCE = 0.03          # 3%：判定「錯誤量級」時要嚴，才不會亂報
@@ -80,18 +84,25 @@ def article_amounts(text: str, base_currency: str = "TWD") -> list[tuple[float, 
     out = []
     for m in _VALUE_WITH_UNIT.finditer(text or ""):
         try:
-            v = float(m.group(1).replace(",", ""))
+            v = float(m.group(2).replace(",", ""))
         except ValueError:
             continue
         if v == 0:
             continue
-        unit = m.group(2)
+        if m.group(1).strip():          # 負號
+            v = -v
+        unit = m.group(3)
         # 單位後面緊接著外幣就跳過（「120 億美元」不是本位幣金額）。
         tail = text[m.end():m.end() + 4]
         if any(cur in tail for cur in _foreign_words(base_currency)):
             continue
         lo, hi = max(0, m.start() - 16), min(len(text), m.end() + 16)
-        out.append((v, unit, v * _UNITS[unit], re.sub(r"\s+", " ", text[lo:hi]).strip()))
+        context = re.sub(r"\s+", " ", text[lo:hi]).strip()
+        # 中文常用詞代替負號：「虧損 6.7 億」「淨流出 4.1 億」「減少 3 億」。
+        if v > 0 and re.search(r"(虧損|淨損|流出|減少|下滑|負)\s*$",
+                               text[max(0, m.start() - 8):m.start()]):
+            v = -v
+        out.append((v, unit, v * _UNITS[unit], context))
     return out
 
 
@@ -107,13 +118,17 @@ def reconcile(article_md: str, fact_values: dict[str, float],
     if not facts:
         return []
     issues: list[ScaleIssue] = []
+    # 一律比絕對值。這個閘門查的是**量級**，正負號不是它的事——而且季度序列
+    # 進來之後，虧損公司整篇都是負數，靠正則猜正負號只會製造新的誤報
+    # （「最近 3 季分別虧損 6.7 億、3.9 億與 3.6 億」只有第一個數字前面有「虧損」）。
     for written, unit, absolute, context in article_amounts(article_md, base_currency):
-        if any(abs(absolute - f) <= abs(f) * _MATCH_TOLERANCE for f in facts.values()):
+        mag = abs(absolute)
+        if any(abs(mag - abs(f)) <= abs(f) * _MATCH_TOLERANCE for f in facts.values()):
             continue  # 對得上（含合理的四捨五入與盤中變動），正確
         hit = None
         for scale in _WRONG_SCALES:
             for label, f in facts.items():
-                if abs(absolute * scale - f) <= abs(f) * _TOLERANCE:
+                if abs(mag * scale - abs(f)) <= abs(f) * _TOLERANCE:
                     hit = (label, f)
                     break
             if hit:

@@ -370,3 +370,15 @@ def test_chinese_percentage_notation_is_flagged():
 def test_cheng_idioms_are_not_flagged():
     from substack_radar.quality_loop import chinese_numerals
     assert chinese_numerals("這件事一成不變，他完成了任務，成本很高。") == []
+
+
+def test_reconcile_compares_magnitudes_not_signs():
+    """季度序列進事實表之後，虧損公司整篇都是負數。稿子寫
+    「營業利益轉負為 -0.3 億美元」是對的（Q2 = -0.03B），但正則抓不到負號，
+    +3e7 對不上 -3e7，接著誤配到另一季的 +3e8，報出不存在的 10 倍誤植。
+    這個閘門查的是量級，正負號不是它的事。"""
+    facts = {"2026-06-30 營業利益": -0.03e9, "2025-12-31 營業利益": 0.3e9,
+             "2025-12-31 淨利": -0.67e9, "2026-06-30 營收": 1.22e9}
+    ok = "營業利益轉負為 -0.3 億美元，最近 3 季分別虧損 6.7 億美元，Q2 營收 12.2 億美元。"
+    assert reconcile(ok, facts, "USD") == []
+    assert len(reconcile("Q2 營收 122 億美元。", facts, "USD")) == 1
