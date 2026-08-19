@@ -337,3 +337,24 @@ def test_inline_markdown_links_to_listed_sources_are_valid_attribution():
     art = ("目前已有科研團隊正依據 [Campbell 提出的理論模型]"
            "(https://www.prlog.org/13031782-new-quantum-experiments.html) 進行實驗。")
     assert [i for i in check(art, sources=srcs) if i.rule.startswith("E1")] == []
+
+
+def test_currency_skipping_follows_the_reporting_currency():
+    """第一版寫死「美元＝外幣」，對台股沒錯，對 Coinbase（本位幣就是 USD）
+    等於把整篇金額全部略過，「Q2 營收 122 億美元」這種 10 倍誤植抓不到。"""
+    usd = {"2026-06-30 營收": 1.22e9}
+    twd = {"2025 營業利益": 1.439e10}
+    assert len(reconcile("第二季營收 122 億美元。", usd, "USD")) == 1   # 本位幣，要查
+    assert reconcile("第二季營收 12.2 億美元。", usd, "USD") == []      # 正確值
+    assert reconcile("市場規模 120 億美元。", twd, "TWD") == []          # 外幣，略過
+
+
+def test_quarterly_series_reaches_the_fact_values():
+    """事實表只有年度時，寫「剛發佈的財報」的稿子會自己編季度數字；
+    2026-08-19 的 Coinbase 稿寫「Q2 營收 12.2 億」其實是對的（1.22B），
+    卻因為對不上而被稽核刪掉。"""
+    from substack_radar.compose import _company_fact_values
+    fv = _company_fact_values({"years": [2025], "revenue_b": [7.18],
+                               "quarters": ["2026-06-30", "2026-03-31"],
+                               "q_revenue_b": [1.22, 1.41]})
+    assert fv["2026-06-30 營收"] == 1.22e9

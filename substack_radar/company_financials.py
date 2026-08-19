@@ -22,6 +22,16 @@ def _pct(x) -> str:
     return f"{x * 100:.0f}%" if isinstance(x, (int, float)) else "N/A"
 
 
+def _cn_q(b, cur: str) -> str:
+    """季度金額用一位小數。季度之間的差距小，四捨五入到整數會把訊號抹掉
+    ——1.22B 變成「12 億」、-0.03B 變成「-0 億」，看不出季減也看不出虧損。"""
+    if not isinstance(b, (int, float)):
+        return "N/A"
+    if abs(b) >= 1000:
+        return f"{b / 1000:.2f} 兆{cur}"
+    return f"{b * 10:.1f} 億{cur}"
+
+
 def _cn(b, cur: str) -> str:
     """把『B（十億）』換成中文單位，杜絕 LLM 把 4490.91B 誤寫成 4490 億（差 10 倍）。
     1B = 10 億、1000B = 1 兆。"""
@@ -109,6 +119,29 @@ def fetch_financials(ticker: str) -> Tuple[dict, str]:
     except Exception:
         pass
 
+
+    # --- 季度序列 ------------------------------------------------------
+    # 只有年度資料時，寫「剛發佈的財報」這種題材，寫手會自己編季度數字。
+    # 2026-08-19 的 Coinbase 稿寫了「Q2 營收 12.2 億美元」——那是**對的**
+    # （1.22B），但事實表裡沒有，E3 判定無法定位，稽核就把正確的數字刪掉了。
+    # 閘門因為事實表不完整而砍掉真資訊，比放行假資訊更難發現。
+    try:
+        qf = t.quarterly_financials
+        if qf is not None and not qf.empty:
+            cols = list(qf.columns)[:5]
+            out["quarters"] = [str(c)[:10] for c in cols]
+            for row, key in (("Total Revenue", "q_revenue_b"),
+                             ("Gross Profit", "q_gross_profit_b"),
+                             ("Operating Income", "q_op_income_b"),
+                             ("Net Income", "q_net_income_b")):
+                if row in qf.index:
+                    vals = []
+                    for c in cols:
+                        v = qf.loc[row, c]
+                        vals.append(round(float(v) / 1e9, 2) if v == v else None)
+                    out[key] = vals
+    except Exception:
+        pass
 
     # --- 分析師共識 EPS vs 實際 EPS ----------------------------------
     # yfinance 的 earnings_history 給的是**賣方分析師共識 EPS** 與實際 EPS，
@@ -204,6 +237,19 @@ def _format_md(d: dict) -> str:
             L.append("- 淨利（新→舊）：" + "、".join(
                 _cn(v, cur) for v in d["net_income_b"]
             ) + f"（原值 {d['net_income_b']}B）")
+    if d.get("quarters"):
+        L.append("")
+        L.append(f"### 最近 {len(d['quarters'])} 季（新→舊）")
+        L.append("（要寫「最新財報」「上一季」時用這一組，不要用年度數字回推。"
+                 f"最新一季是 {d['quarters'][0]}。）")
+        for key, label in (("q_revenue_b", "營收"), ("q_gross_profit_b", "毛利"),
+                           ("q_op_income_b", "營業利益"), ("q_net_income_b", "淨利")):
+            series = d.get(key)
+            if not series:
+                continue
+            cells = "、".join(_cn_q(v, cur) if v is not None else "N/A" for v in series)
+            L.append(f"- {label}：{cells}（原值 {series}B）")
+
     if d.get("price") is not None:
         L.append(
             f"- 股價：{d['price']}（52 週區間 {d.get('range_52w','N/A')}；"

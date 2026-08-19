@@ -109,7 +109,8 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
              source_urls: list[str] | None = None,
              has_management_guidance: bool = False,
              sources: list[dict] | None = None,
-             fact_block: str = "") -> list[Violation]:
+             fact_block: str = "",
+             base_currency: str = "TWD") -> list[Violation]:
     """只回報程式能確定的違規。判斷題留給稽核 agent。"""
     out: list[Violation] = []
 
@@ -125,7 +126,7 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
         out.append(Violation(kind=issue.rule, detail=issue.detail,
                              fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
 
-    for issue in reconcile(article_md, fact_values or {}):
+    for issue in reconcile(article_md, fact_values or {}, base_currency):
         out.append(Violation(
             kind="數字量級",
             detail=str(issue),
@@ -234,6 +235,7 @@ def run_quality_loop(
     source_urls: list[str] | None = None,
     has_management_guidance: bool = False,
     sources: list[dict] | None = None,
+    base_currency: str = "TWD",
     max_rounds: int = MAX_ROUNDS,
     model: str = AUDIT_MODEL,
 ) -> tuple[str, LoopReport]:
@@ -247,7 +249,8 @@ def run_quality_loop(
     for round_index in range(max_rounds):
         violations = evaluate(current, fact_values=fact_values, source_urls=source_urls,
                               has_management_guidance=has_management_guidance,
-                              sources=sources, fact_block=fact_block)
+                              sources=sources, fact_block=fact_block,
+                              base_currency=base_currency)
         report.history.append(violations)
         report.rounds = round_index + 1
         if not violations:
@@ -275,7 +278,8 @@ def run_quality_loop(
 
     final = evaluate(current, fact_values=fact_values, source_urls=source_urls,
                      has_management_guidance=has_management_guidance,
-                     sources=sources, fact_block=fact_block)
+                     sources=sources, fact_block=fact_block,
+                     base_currency=base_currency)
     report.history.append(final)
     report.passed = not final
     if final:

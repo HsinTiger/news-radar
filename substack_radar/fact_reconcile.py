@@ -39,9 +39,24 @@ _MATCH_TOLERANCE = 0.15
 # ASIC 市場規模比對到台幣淨利 1,181 億（×10 差 1.6%，在容差內）、把「10 億
 # 美元」比對到營業利益（×100）。純屬數字巧合，卻白燒掉一輪稽核。
 _WRONG_SCALES = (0.1, 10.0)
-# 外幣金額不比對：事實表是公司自己的本位幣，稿子裡的「億美元」多半在講別人
-# 的市場規模或同業，拿來跟本國幣值比對只會撞出巧合。
-_FOREIGN_CURRENCY = ("美元", "美金", "USD", "日圓", "日元", "歐元", "EUR", "人民幣", "港幣")
+# 外幣金額不比對：稿子裡的外幣多半在講別人的市場規模或同業，跟本位幣比對
+# 只會撞出巧合。但**哪個是外幣要看公司本位幣**——第一版寫死「美元＝外幣」，
+# 對台股沒錯，對 Coinbase（本位幣就是 USD）就等於把整篇的金額全部略過，
+# 「Q2 營收 122 億美元」這種 10 倍誤植完全抓不到（2026-08-19 實測）。
+_CURRENCY_WORDS = {
+    "TWD": ("台幣", "臺幣", "新台幣", "新臺幣", "NTD", "TWD"),
+    "USD": ("美元", "美金", "USD"),
+    "JPY": ("日圓", "日元", "JPY"),
+    "EUR": ("歐元", "EUR"),
+    "CNY": ("人民幣", "CNY", "RMB"),
+    "HKD": ("港幣", "HKD"),
+}
+
+
+def _foreign_words(base_currency: str) -> tuple:
+    base = (base_currency or "TWD").upper()
+    return tuple(w for code, words in _CURRENCY_WORDS.items()
+                 if code != base for w in words)
 
 
 @dataclass(frozen=True)
@@ -60,8 +75,8 @@ class ScaleIssue:
                 f"｜…{self.context}…")
 
 
-def article_amounts(text: str) -> list[tuple[float, str, float, str]]:
-    """回傳 (寫出來的數字, 單位, 絕對值, 上下文)。"""
+def article_amounts(text: str, base_currency: str = "TWD") -> list[tuple[float, str, float, str]]:
+    """回傳 (寫出來的數字, 單位, 絕對值, 上下文)。``base_currency`` 決定哪些算外幣。"""
     out = []
     for m in _VALUE_WITH_UNIT.finditer(text or ""):
         try:
@@ -73,14 +88,15 @@ def article_amounts(text: str) -> list[tuple[float, str, float, str]]:
         unit = m.group(2)
         # 單位後面緊接著外幣就跳過（「120 億美元」不是本位幣金額）。
         tail = text[m.end():m.end() + 4]
-        if any(cur in tail for cur in _FOREIGN_CURRENCY):
+        if any(cur in tail for cur in _foreign_words(base_currency)):
             continue
         lo, hi = max(0, m.start() - 16), min(len(text), m.end() + 16)
         out.append((v, unit, v * _UNITS[unit], re.sub(r"\s+", " ", text[lo:hi]).strip()))
     return out
 
 
-def reconcile(article_md: str, fact_values: dict[str, float]) -> list[ScaleIssue]:
+def reconcile(article_md: str, fact_values: dict[str, float],
+              base_currency: str = "TWD") -> list[ScaleIssue]:
     """``fact_values``：標籤 → 絕對數值（例如 {"2025 營業利益": 1.439e10}）。
 
     只有當稿子裡的金額「用錯誤倍率對上某個已知事實」時才回報。
@@ -91,7 +107,7 @@ def reconcile(article_md: str, fact_values: dict[str, float]) -> list[ScaleIssue
     if not facts:
         return []
     issues: list[ScaleIssue] = []
-    for written, unit, absolute, context in article_amounts(article_md):
+    for written, unit, absolute, context in article_amounts(article_md, base_currency):
         if any(abs(absolute - f) <= abs(f) * _MATCH_TOLERANCE for f in facts.values()):
             continue  # 對得上（含合理的四捨五入與盤中變動），正確
         hit = None

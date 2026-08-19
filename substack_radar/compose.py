@@ -972,6 +972,17 @@ def _company_fact_values(fin_data) -> dict:
                 continue
             year = years[i] if i < len(years) else f"第{i + 1}期"
             out[f"{year} {label}"] = float(value) * 1e9
+    # 季度也要進對帳與證據定位。2026-08-19 的 Coinbase 稿寫「Q2 營收 12.2 億」
+    # 是對的（1.22B），但事實表當時只有年度資料，E3 判定無法定位，稽核就把
+    # 正確的數字刪掉了——閘門因為事實表不完整而砍掉真資訊。
+    quarters = fin_data.get("quarters") or []
+    for key, label in (("q_revenue_b", "營收"), ("q_gross_profit_b", "毛利"),
+                       ("q_op_income_b", "營業利益"), ("q_net_income_b", "淨利")):
+        for i, value in enumerate(fin_data.get(key) or []):
+            if not isinstance(value, (int, float)) or not value:
+                continue
+            label_q = quarters[i] if i < len(quarters) else f"第{i + 1}季前"
+            out[f"{label_q} {label}"] = float(value) * 1e9
     cap = fin_data.get("market_cap_b")
     if isinstance(cap, (int, float)):
         out["市值"] = float(cap) * 1e9
@@ -2245,6 +2256,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 has_management_guidance=False,
                 # 證據法則要對照抓回來的全文摘錄，才知道數字出自哪一段
                 sources=[item.model_dump() for item in (research_sources or [])],
+                base_currency=(_fd or {}).get("currency") or "TWD",
                 model=auditor,
             )
             body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
@@ -2261,6 +2273,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     has_management_guidance=False,
                     sources=[item.model_dump() for item in (research_sources or [])],
                     fact_block=fact_block,
+                    base_currency=(_fd or {}).get("currency") or "TWD",
                 )
                 print(f"[QualityLoop] 領域稽核後複驗：{len(remaining)} 項違規")
             for v in remaining:
