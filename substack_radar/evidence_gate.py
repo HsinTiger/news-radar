@@ -65,6 +65,11 @@ _FACT_PROVIDERS = ("coinmetrics", "coingecko", "mempool.space", "blockchair",
 _ORG_SUFFIX = ("證券", "銀行", "研究院", "研究所", "週刊", "周刊", "日報", "時報",
                "新聞", "財經", "媒體", "公司", "基金", "資本", "投顧", "交易所",
                "大學", "智庫", "顧問")
+# 虛詞／功能詞：出現任何一個就代表這是一段敘述，不是一個名字。
+_PHRASE_MARKERS = ("的", "了", "是", "在", "與", "和", "也", "仍", "會", "被",
+                   "把", "讓", "使", "就", "都", "而", "但", "雖", "因", "所",
+                   "我們", "他們", "你們", "必須", "可以", "嘗試", "沒有", "缺乏",
+                   "面對", "一套", "一個", "這", "那", "其", "之", "對於", "如果")
 _GENERIC_HEADS = ("傳統", "當日", "初步", "業界", "市場", "歷史", "上述", "目前",
                   "過去", "近期", "經驗", "估算", "說法", "觀察", "支持", "反方",
                   "這項", "這些", "有分析", "有人", "部分", "多數", "一般")
@@ -86,9 +91,13 @@ def _looks_like_named_entity(named: str) -> bool:
     # （「CoinShares 研究主管 James Butterfill 的說法」有 36 字元，但它確實是歸屬。）
     if re.search(r"[A-Za-z]{3,}", text) or any(sfx in text for sfx in _ORG_SUFFIX):
         return True
-    # 純中文：短的是名字（戴爾電腦），長的是句子。
-    # 先去空白——正則抓到的是「戴爾電腦 等機構數據」，中間那個空格會讓 fullmatch 失敗。
-    return bool(re.fullmatch(r"[一-鿿]{2,12}", re.sub(r"\s+", "", text)))
+    # 純中文：機構名不含虛詞。「指出／表示」在中文裡本來就是普通動詞
+    # （「用一套演算法表示…」），抽象題材的文章滿篇都是，所以光看長度會誤報一片
+    # ——2026-08-19 那篇談模擬假說的 podcast 被報了 8 項，全部是假的。
+    core = re.sub(r"\s+", "", text)
+    if not re.fullmatch(r"[一-鿿]{2,10}", core):
+        return False
+    return not any(w in core for w in _PHRASE_MARKERS)
 
 
 def _names_overlap(named: str, known: set[str], min_cjk: int = 3) -> bool:

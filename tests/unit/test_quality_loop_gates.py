@@ -305,3 +305,21 @@ def test_e1_still_catches_org_suffixed_phantoms():
 
 def test_e1_still_accepts_a_real_listed_source():
     assert _e1("根據理財周刊引述 Dell 的統計，市佔率超過 70%。") == []
+
+
+def test_e1_rejects_descriptive_phrases_before_zhi_chu():
+    """「指出／表示」在中文裡本來就是普通動詞（「用一套演算法表示…」），
+    抽象題材的文章滿篇都是。2026-08-19 那篇談模擬假說的 podcast 被報了 8 項
+    E1，全部是假的：「一套嚴密的因果演算法」「雖然」「我們必須明確」…
+    機構名不含虛詞，用這個分。"""
+    from substack_radar.evidence_gate import _looks_like_named_entity as looks
+    for phrase in ("一套嚴密的因果演算法", "雖然", "在面對主觀感知與",
+                   "我們必須明確", "嚴謹的反面論證架構", "**"):
+        assert not looks(phrase), phrase
+
+
+def test_e1_still_recognises_real_org_names():
+    from substack_radar.evidence_gate import _looks_like_named_entity as looks
+    for name in ("戴爾電腦", "摩根士丹利", "理財周刊", "鉅亨網", "經濟日報",
+                 "CoinShares 研究主管"):
+        assert looks(name), name
