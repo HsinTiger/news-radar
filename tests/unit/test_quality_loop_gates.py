@@ -224,3 +224,26 @@ def test_rounded_figures_are_not_treated_as_scale_errors():
     facts = {"2025 營收": 5.9597e11, "市值": 6.2008e12}
     assert reconcile("一邊是超過 6 兆元的龐大市值。", facts) == []
     assert len(reconcile("2025 全年營收 596 億元。", facts)) == 1
+
+
+# --- AEO 閘門（2026-08-19 從兩支影片萃取後實作） -------------------------
+def test_aeo_flags_pronoun_opening_after_a_subhead():
+    """AI 是擷取單一片段去比較；以代名詞開頭的段落被切出來時認不出主詞，
+    就不會被引用（影片 07:38-07:57）。"""
+    from substack_radar.aeo_gate import check
+    issues = check("# 標題\n\n## 第一節\n它的毛利率是 49%，比同業高。")
+    assert any(i.rule.startswith("A2") for i in issues)
+
+
+def test_aeo_accepts_an_explicit_subject():
+    from substack_radar.aeo_gate import check
+    art = "# 標題\n\n截至 2026 年 8 月，毛利率 49%。\n\n## 第一節\n瑞昱的研發費用佔營收 28.6%。"
+    assert [i for i in check(art) if i.rule.startswith("A2")] == []
+
+
+def test_aeo_requires_one_time_anchor_when_perishable_numbers_appear():
+    """時間錨點只需要全篇一個。第一版逐句檢查，誤報很兇。"""
+    from substack_radar.aeo_gate import check
+    assert any(i.rule.startswith("A3") for i in check("# 標題\n\n本益比 26 倍，毛利率 49%。"))
+    assert [i for i in check("# 標題\n\n截至 2026 年 8 月，本益比 26 倍，毛利率 49%。")
+            if i.rule.startswith("A3")] == []

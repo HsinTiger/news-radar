@@ -143,6 +143,13 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
                          "不得推論管理層誠信或指引可信度，也不要拿它當證偽條件。",
             ))
 
+    # AEO：讓文章被 AI 引用得到（依據 2026-08-19 萃取的兩支影片，見 aeo_gate）
+    from substack_radar.aeo_gate import check as _aeo_check
+
+    for issue in _aeo_check(article_md):
+        out.append(Violation(kind=issue.rule, detail=issue.detail,
+                             fix_hint=f"例：{issue.sample[:70]}"))
+
     hits = chinese_numerals(article_md)
     if len(hits) > _CN_NUMERAL_LIMIT:
         sample = "、".join(dict.fromkeys(hits))[:80]
