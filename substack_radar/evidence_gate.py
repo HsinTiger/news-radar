@@ -198,9 +198,33 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
     return None
 
 
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
+
+
+def _resolve_inline_links(text: str, sources: list[dict]) -> str:
+    """把 markdown 行內連結換成純文字，連結指向清單裡的來源就順便把出處名帶進來。
+
+    稽核 agent 修 E1 的正當做法之一，就是去取材清單找到出處、用行內連結標上
+    （2026-08-19 那篇模擬假說的稿子就是這樣修的）。但閘門直接對原始 markdown
+    做比對，抓到的名字變成「[Campbell 提出的理論模型](https://www.prlog.or」，
+    於是把一個**修對了**的句子繼續報成違規。差點讓我以為稽核在捏造來源。
+    """
+    known = {s.get("url", ""): (s.get("publisher") or "") for s in sources}
+
+    def repl(m):
+        label, url = m.group(1), m.group(2)
+        for src_url, publisher in known.items():
+            if src_url and (url.startswith(src_url[:60]) or src_url.startswith(url[:60])):
+                return f"{label}（{publisher}）"
+        return label
+
+    return _MD_LINK.sub(repl, text or "")
+
+
 def check(article_md: str, *, sources: list[dict] | None = None,
           fact_block: str = "") -> list[EvidenceIssue]:
     sources = sources or []
+    article_md = _resolve_inline_links(article_md, sources)
     known = {_norm(s.get("publisher")) for s in sources}
     known |= {_norm(s.get("title")) for s in sources}
     known |= {_norm(name) for name in _FACT_PROVIDERS}

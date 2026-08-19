@@ -323,3 +323,17 @@ def test_e1_still_recognises_real_org_names():
     for name in ("戴爾電腦", "摩根士丹利", "理財周刊", "鉅亨網", "經濟日報",
                  "CoinShares 研究主管"):
         assert looks(name), name
+
+
+def test_inline_markdown_links_to_listed_sources_are_valid_attribution():
+    """稽核 agent 修 E1 的正當做法之一，就是去取材清單找到出處、用行內連結標上。
+    閘門直接對原始 markdown 比對時，抓到的名字會變成
+    「[Campbell 提出的理論模型](https://www.prlog.or」，於是把一個修對了的
+    句子繼續報成違規——差點讓我以為稽核在捏造來源。"""
+    from substack_radar.evidence_gate import check
+    srcs = [{"publisher": "prlog.org", "title": "New Quantum Experiments",
+             "url": "https://www.prlog.org/13031782-new-quantum-experiments.html",
+             "excerpt": "x" * 200}]
+    art = ("目前已有科研團隊正依據 [Campbell 提出的理論模型]"
+           "(https://www.prlog.org/13031782-new-quantum-experiments.html) 進行實驗。")
+    assert [i for i in check(art, sources=srcs) if i.rule.startswith("E1")] == []
