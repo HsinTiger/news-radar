@@ -358,3 +358,15 @@ def test_quarterly_series_reaches_the_fact_values():
                                "quarters": ["2026-06-30", "2026-03-31"],
                                "q_revenue_b": [1.22, 1.41]})
     assert fv["2026-06-30 營收"] == 1.22e9
+
+
+def test_chinese_percentage_notation_is_flagged():
+    """「八成六毛利救不了這家公司」——成數前面只有一位數字，
+    原本的「2 位數字以上＋單位」規則抓不到。"""
+    from substack_radar.quality_loop import chinese_numerals
+    assert chinese_numerals("八成六毛利，市佔兩成，毛利率三成五。") == ["八成六", "兩成", "三成五"]
+
+
+def test_cheng_idioms_are_not_flagged():
+    from substack_radar.quality_loop import chinese_numerals
+    assert chinese_numerals("這件事一成不變，他完成了任務，成本很高。") == []

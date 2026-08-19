@@ -77,11 +77,15 @@ _CN_DIGITS = "零一二三四五六七八九十百千萬"
 _CN_QUANTITY = re.compile(
     rf"[{_CN_DIGITS}]{{2,}}(?:點[{_CN_DIGITS}]+)?\s*(?:億|兆|萬|元|倍|%|％|個百分點|奈米|美元)"
 )
+# 「八成六毛利」「兩成」也是中文數字，但前面只有一位數字，上面那條抓不到。
+# 「一成不變」是成語不是比例，排除。
+_CN_PERCENT = re.compile(r"(?!一成不變)[一二三四五六七八九兩]成(?:[一二三四五六七八九])?")
 _CN_NUMERAL_LIMIT = int(os.getenv("SUBSTACK_CN_NUMERAL_LIMIT", "3"))
 
 
 def chinese_numerals(article_md: str) -> list[str]:
-    return _CN_QUANTITY.findall(article_md or "")
+    text = article_md or ""
+    return _CN_QUANTITY.findall(text) + _CN_PERCENT.findall(text)
 
 
 @dataclass
