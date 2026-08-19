@@ -382,3 +382,21 @@ def test_reconcile_compares_magnitudes_not_signs():
     ok = "營業利益轉負為 -0.3 億美元，最近 3 季分別虧損 6.7 億美元，Q2 營收 12.2 億美元。"
     assert reconcile(ok, facts, "USD") == []
     assert len(reconcile("Q2 營收 122 億美元。", facts, "USD")) == 1
+
+
+def test_scale_match_requires_the_same_metric():
+    """「平均 USDC 餘額創下 200 億美元新高」跟「2022 營業利益 -19.5 億」
+    在數學上差剛好 10 倍，但根本不是同一件事。沒有指標鄰近判斷的話，
+    任何兩個差 10 倍的數字都會被配成一對。"""
+    facts = {"2022 營業利益": -1.95e9, "2026-06-30 營收": 1.22e9}
+    assert reconcile("平均 USDC 餘額創下 200 億美元的歷史新高。", facts, "USD") == []
+    assert len(reconcile("第二季營收 122 億美元。", facts, "USD")) == 1
+
+
+def test_derived_percentages_are_not_treated_as_unsourced():
+    """稿子寫「訂閱與服務營收 5.55 億，佔營收 45.5%」——5.55÷12.2＝45.5%，
+    算式正確，但 45.5 在事實表與來源裡都查不到。推導出來的比率是分析，不是引用。"""
+    from substack_radar.evidence_gate import _is_derived_ratio
+    fv = {"2026-06-30 營收": 1.22e9, "訂閱服務營收": 5.55e8}
+    assert _is_derived_ratio("45.5", "%", fv)
+    assert not _is_derived_ratio("88.8", "%", fv)

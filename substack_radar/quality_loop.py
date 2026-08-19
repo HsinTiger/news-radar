@@ -122,7 +122,8 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
     from substack_radar.evidence_gate import check as _evidence_check
     from substack_radar.evidence_gate import stale_claims as _stale_claims
 
-    for issue in _evidence_check(article_md, sources=sources or [], fact_block=fact_block):
+    for issue in _evidence_check(article_md, sources=sources or [], fact_block=fact_block,
+                                 fact_values=fact_values or {}):
         out.append(Violation(kind=issue.rule, detail=issue.detail,
                              fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
     # E4：來源活著、也切題，但過期。目標價／評等／股價／市值有保鮮期。

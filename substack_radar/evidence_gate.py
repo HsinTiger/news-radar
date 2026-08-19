@@ -221,8 +221,29 @@ def _resolve_inline_links(text: str, sources: list[dict]) -> str:
     return _MD_LINK.sub(repl, text or "")
 
 
+def _is_derived_ratio(value: str, unit: str, fact_values: dict) -> bool:
+    """這個百分比是不是由事實表裡兩個數字相除得到的。
+
+    2026-08-19 的 Coinbase 稿寫「訂閱與服務營收 5.55 億，佔營收 45.5%」——
+    5.55 ÷ 12.2 = 45.5%，算式完全正確，但 45.5 這個數字在事實表與來源裡
+    都查不到，E3 因此判它無出處。推導出來的比率是分析，不是引用。
+    """
+    if unit not in ("%", "％") or not fact_values:
+        return False
+    try:
+        pct = float(value)
+    except ValueError:
+        return False
+    vals = [abs(v) for v in fact_values.values() if isinstance(v, (int, float)) and v]
+    for a in vals:
+        for b in vals:
+            if b and abs(a / b * 100 - pct) <= 0.6:      # 0.6 個百分點內
+                return True
+    return False
+
+
 def check(article_md: str, *, sources: list[dict] | None = None,
-          fact_block: str = "") -> list[EvidenceIssue]:
+          fact_block: str = "", fact_values: dict | None = None) -> list[EvidenceIssue]:
     sources = sources or []
     article_md = _resolve_inline_links(article_md, sources)
     known = {_norm(s.get("publisher")) for s in sources}
@@ -248,6 +269,8 @@ def check(article_md: str, *, sources: list[dict] | None = None,
                 ))
         # E2/E3：歸屬句裡的量要定位得到
         for value, unit in _QUANTITY.findall(sentence):
+            if _is_derived_ratio(value, unit, fact_values or {}):
+                continue
             where = locate(value, unit, sources, fact_block, topic=sentence)
             if where is None:
                 issues.append(EvidenceIssue(

@@ -63,6 +63,20 @@ def _foreign_words(base_currency: str) -> tuple:
                  if code != base for w in words)
 
 
+# 事實標籤裡的指標名。稿子那句話要提到同一個指標，數字比對才算數——
+# 「平均 USDC 餘額創下 200 億美元新高」跟「2022 營業利益 -19.5 億」在數學上
+# 差剛好 10 倍，但它們根本不是同一件事（2026-08-19 Coinbase 稿實測）。
+_METRIC_WORDS = ("營收", "營業利益", "淨利", "毛利", "市值", "價格", "成交額",
+                 "流入", "流出", "發行", "獲利", "虧損", "收入")
+
+
+def _metric_of(label: str) -> str:
+    for word in _METRIC_WORDS:
+        if word in (label or ""):
+            return word
+    return ""
+
+
 @dataclass(frozen=True)
 class ScaleIssue:
     written: float
@@ -73,9 +87,9 @@ class ScaleIssue:
     context: str
 
     def __str__(self) -> str:
-        ratio = self.expected / self.absolute if self.absolute else 0
+        ratio = abs(self.expected / self.absolute) if self.absolute else 0
         return (f"「{self.written:g} {self.unit}」對到事實「{self.fact_label}」，"
-                f"但量級差 {ratio:g} 倍（應為 {self.expected / _UNITS[self.unit]:,.4g} {self.unit}）"
+                f"但量級差 {ratio:g} 倍（應為 {abs(self.expected) / _UNITS[self.unit]:,.4g} {self.unit}）"
                 f"｜…{self.context}…")
 
 
@@ -128,9 +142,14 @@ def reconcile(article_md: str, fact_values: dict[str, float],
         hit = None
         for scale in _WRONG_SCALES:
             for label, f in facts.items():
-                if abs(mag * scale - abs(f)) <= abs(f) * _TOLERANCE:
-                    hit = (label, f)
-                    break
+                if abs(mag * scale - abs(f)) > abs(f) * _TOLERANCE:
+                    continue
+                # 同一個指標才算。沒有這一層，任何兩個差 10 倍的數字都會配成一對。
+                metric = _metric_of(label)
+                if metric and metric not in context:
+                    continue
+                hit = (label, f)
+                break
             if hit:
                 break
         if hit:
