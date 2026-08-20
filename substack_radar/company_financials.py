@@ -8,6 +8,43 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 
+
+# yfinance 只給英文名（REALTEK SEMICONDUCTOR CORP），但中文標題寫的是「瑞昱」。
+# 這張表讓閘門判斷得出「標題有沒有點名這家公司」。covered 的代號才需要進來；
+# 沒收錄的會退回用代號數字與英文首字判斷，不會誤擋。
+_TITLE_ALIASES = {
+    "2330": ("台積電", "臺積電", "台積", "TSMC"),
+    "2454": ("聯發科", "MediaTek"),
+    "2379": ("瑞昱", "Realtek"),
+    "2308": ("台達電", "Delta"),
+    "2317": ("鴻海", "Foxconn"),
+    "MSTR": ("微策略", "Strategy", "MicroStrategy"),
+    "COIN": ("Coinbase",),
+    "NVDA": ("輝達", "Nvidia", "NVIDIA"),
+    "TSLA": ("特斯拉", "Tesla"),
+    "AAPL": ("蘋果", "Apple"),
+    "GOOGL": ("谷歌", "Google", "Alphabet"),
+    "AMZN": ("亞馬遜", "Amazon"),
+    "MSFT": ("微軟", "Microsoft"),
+    "BTC": ("比特幣", "BTC"),
+    "ETH": ("以太幣", "以太坊", "ETH"),
+}
+
+
+def title_aliases(ticker: str, name: str = "") -> tuple:
+    """這家公司在中文標題裡可能長什麼樣。用來檢查標題有沒有點名主體。"""
+    root = (ticker or "").upper().split(".")[0].replace("-USD", "").strip()
+    out = list(_TITLE_ALIASES.get(root, ()))
+    if root and root not in out:
+        out.append(root)                      # 代號本身：2379、COIN
+    first = (name or "").split(",")[0].split()
+    if first:
+        token = first[0].strip().title()      # Realtek / Coinbase / Mediatek
+        if len(token) >= 4 and token not in out:
+            out.append(token)
+    return tuple(out)
+
+
 def _b(v) -> Optional[float]:
     try:
         f = float(v)

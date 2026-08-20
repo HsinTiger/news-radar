@@ -400,3 +400,33 @@ def test_derived_percentages_are_not_treated_as_unsourced():
     fv = {"2026-06-30 營收": 1.22e9, "訂閱服務營收": 5.55e8}
     assert _is_derived_ratio("45.5", "%", fv)
     assert not _is_derived_ratio("88.8", "%", fv)
+
+
+# --- 標題要點名主體（2026-08-20 owner 反映收件匣看不出在講哪家公司）--------
+def _title_warnings(title, aliases=()):
+    from substack_radar.composer import audit_substack_draft, SubstackDraft, WEEKLY_PROFILE
+    draft = SubstackDraft.model_construct(
+        title=title, subtitle="副標補上具體反差與數字", body_markdown="內文" * 1200,
+        tags=[], seo_title="x", seo_description="y")
+    return [w for w in audit_substack_draft(draft, profile=WEEKLY_PROFILE,
+                                            subject_aliases=aliases) if "標題" in w]
+
+
+def test_company_title_must_name_the_subject():
+    """21 篇 company 稿有 10 篇標題沒點名。Substack 沒有獨立的 email 主旨欄位，
+    主旨就是標題——「49% 毛利背後的獲利漏斗」在收件匣看不出在講哪家公司。"""
+    assert any("沒點名主體" in w for w in _title_warnings("49% 毛利背後的獲利漏斗", ("瑞昱", "Realtek")))
+    assert _title_warnings("瑞昱：49% 毛利背後的獲利漏斗", ("瑞昱", "Realtek")) == []
+
+
+def test_company_titles_get_a_longer_cap_and_may_use_a_colon():
+    """15 字要同時塞鉤子與公司名，寫手只會留鉤子。對標的曼報自己也是 19–25 字，
+    結構是「系列名＋冒號＋角度」。"""
+    assert _title_warnings("瑞昱：49% 毛利背後的獲利漏斗", ("瑞昱",)) == []          # 16 字含冒號
+    assert any("標題過長" in w for w in
+               _title_warnings("瑞昱：這是一個非常非常長的標題會超過二十個字元限制", ("瑞昱",)))
+
+
+def test_non_company_titles_keep_the_old_rules():
+    assert _title_warnings("當用戶不再打開 Canva") == []
+    assert any("雙焦點" in w for w in _title_warnings("情緒：可能不是一種感覺"))

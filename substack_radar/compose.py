@@ -2212,7 +2212,14 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"  - {f}")
 
     # 3) Audit (remaining ambiguous terms + blacklist still surface as warnings)
-    warnings = audit_substack_draft(draft, profile=profile)
+    # 公司分析要檢查標題有沒有點名主體；非 company 模式傳空、規則自動退回 15 字。
+    _aliases: tuple = ()
+    if mode == "company":
+        from substack_radar.company_financials import title_aliases
+        _fd_now = locals().get("fin_data") or {}
+        _aliases = title_aliases(str(locals().get("ticker") or ""),
+                                 str(_fd_now.get("name") or ""))
+    warnings = audit_substack_draft(draft, profile=profile, subject_aliases=_aliases)
     if warnings:
         print(f"[Audit] ⚠️ {len(warnings)} warning(s):")
         for w in warnings:

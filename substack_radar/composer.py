@@ -785,6 +785,7 @@ def audit_substack_draft(
     draft: SubstackDraft,
     *,
     profile: EditorialProfile = DAILY_PROFILE,
+    subject_aliases: Sequence[str] = (),
 ) -> List[str]:
     """Return list of soft-fail warnings (empty = clean).
 
@@ -796,9 +797,31 @@ def audit_substack_draft(
     word_floor, word_cap = word_range_for(profile)
 
     # 0. 列表頁承諾：短標題只承諾一件事，副標不能只是重複一次。
-    if len(draft.title) > 15:
-        warnings.append(f"[標題過長] {len(draft.title)} 字 > 15；請只留一個閱讀承諾。")
-    if any(mark in draft.title for mark in ("：", ":")):
+    #
+    # 公司分析放寬到 20 字，而且**必須點名主體**。Substack 沒有獨立的 email
+    # 主旨欄位，主旨就是標題；15 字要同時塞鉤子與公司名，寫手只會留鉤子，
+    # 於是收件匣長這樣：「49% 毛利背後的獲利漏斗」——看不出在講哪家公司。
+    # 實測 21 篇 company 稿有 10 篇沒點名（2026-08-20 owner 反映）。
+    # 對標的曼報自己也不是 15 字：「過路財神 V：如何正確估值一門優異的生意」19 字、
+    # 「一字千金 III：連 2008 年金融危機都打不倒的信用評級系統」25 字，
+    # 結構是「系列名＋冒號＋角度」——我們拿它當標竿卻用了比它更嚴的規則。
+    title = draft.title
+    named = [a for a in subject_aliases if a and a.lower() in title.lower()]
+    cap = 20 if subject_aliases else 15
+    if len(title) > cap:
+        warnings.append(f"[標題過長] {len(title)} 字 > {cap}；請只留一個閱讀承諾。")
+    if subject_aliases and not named:
+        warnings.append(
+            f"[標題沒點名主體] 標題沒有出現 {'／'.join(subject_aliases[:3])}；"
+            "讀者在收件匣看不出這篇在講哪家公司。建議「公司名：鉤子」。"
+        )
+    # 「瑞昱：49% 毛利背後的獲利漏斗」是刻意的格式，冒號前是主體不是第二個焦點。
+    _colon_is_subject = bool(named) and any(
+        title.split(mark, 1)[0].strip() and
+        any(a.lower() in title.split(mark, 1)[0].lower() for a in named)
+        for mark in ("：", ":") if mark in title
+    )
+    if any(mark in title for mark in ("：", ":")) and not _colon_is_subject:
         warnings.append("[標題雙焦點] 標題含冒號；除人物訪談外，通常代表塞了兩件事。")
     if draft.title.strip("？?。！! ") in draft.subtitle:
         warnings.append("[副標重複] 副標應補具體反差或 payoff，不要重述主標。")
@@ -1112,7 +1135,10 @@ def _build_deep_writer_prompt(
         "=== 呈現 ===\n"
         "Podcast 文先讓讀者看見那段值得追的對談與觀點，再進入延伸調研；"
         "不寫成逐字稿摘要。公司文先交代商業問題，再讓數字檢驗敘事。"
-        "使用 5–7 個內容型小標。標題 ≤15 字，副標補具體反差。"
+        "使用 5–7 個內容型小標。副標補具體反差。\n"
+        "標題：公司／資產分析一律用「主體：鉤子」，主體放最前面且 ≤20 字"
+        "（例「瑞昱：49% 毛利背後的獲利漏斗」）——Substack 的 email 主旨就是標題，"
+        "讀者在收件匣要一眼看出這篇在講誰。其餘題材維持 ≤15 字、不用冒號。"
         "最後留一個本文特有的具體回信問題。"
         "不輸出製程、生圖 prompt、來源清單、footer 或訂閱 CTA。\n\n"
         "=== 輸出格式：直接回一個 JSON object ===\n"
