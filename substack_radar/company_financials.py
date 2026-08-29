@@ -16,6 +16,9 @@ _TITLE_ALIASES = {
     "2330": ("台積電", "臺積電", "台積", "TSMC"),
     "2454": ("聯發科", "MediaTek"),
     "2379": ("瑞昱", "Realtek"),
+    "3034": ("聯詠", "Novatek"),
+    "2377": ("微星", "MSI"),
+    "3711": ("日月光", "ASE"),
     "2308": ("台達電", "Delta"),
     "2317": ("鴻海", "Foxconn"),
     "MSTR": ("微策略", "Strategy", "MicroStrategy"),
@@ -276,16 +279,24 @@ def _format_md(d: dict) -> str:
             ) + f"（原值 {d['net_income_b']}B）")
     if d.get("quarters"):
         L.append("")
-        L.append(f"### 最近 {len(d['quarters'])} 季（新→舊）")
+        L.append(f"### 季度資料（新→舊，共 {len(d['quarters'])} 個季別）")
         L.append("（要寫「最新財報」「上一季」時用這一組，不要用年度數字回推。"
-                 f"最新一季是 {d['quarters'][0]}。）")
+                 f"最新一季是 {d['quarters'][0]}。**季別可能不連續**——每個數字前面"
+                 "都標了它自己的季別，算季增率前先看清楚是不是相鄰兩季。）")
         for key, label in (("q_revenue_b", "營收"), ("q_gross_profit_b", "毛利"),
                            ("q_op_income_b", "營業利益"), ("q_net_income_b", "淨利")):
             series = d.get(key)
             if not series:
                 continue
-            cells = "、".join(_cn_q(v, cur) if v is not None else "N/A" for v in series)
-            L.append(f"- {label}：{cells}（原值 {series}B）")
+            # 每個數值都綁上它自己的季別。yfinance 會跳號（聯發科／聯詠都缺
+            # 2025-09-30），只寫「最近 5 季」會讓 5 個點看起來是連續 5 季，
+            # 寫手就會算出錯的季增率。
+            cells = "、".join(
+                f"{(d['quarters'][i] if i < len(d['quarters']) else '?')[:7]} "
+                f"{_cn_q(v, cur) if v is not None else 'N/A'}"
+                for i, v in enumerate(series)
+            )
+            L.append(f"- {label}：{cells}")
 
     if d.get("price") is not None:
         L.append(
