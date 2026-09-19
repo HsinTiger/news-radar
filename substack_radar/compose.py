@@ -1198,6 +1198,21 @@ def render_substack_cover(
 # Substack could break/detect it. We treat this as opt-in (SUBSTACK_AUTO_DRAFT=1).
 # The OneDrive paste path is the always-available fallback.
 
+def _record_draft_id(out_dir: Path, draft_id) -> None:
+    """把 Substack draft id 寫回 metadata.json。
+
+    賺錢有道沒有 news_items 那一列可掛 receipt，本機資料夾原本對不回遠端草稿；
+    FB 跟發（substack_radar/fb_follow.py）要靠這個 id 判斷草稿還在不在、發佈了沒。
+    寫不進去只影響 FB 跟發改用標題比對，不能讓草稿推送失敗。"""
+    meta_path = out_dir / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["substack_draft_id"] = str(draft_id)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        print(f"[Substack] ⚠️ draft id 沒寫回 metadata.json（{exc}）")
+
+
 def push_to_substack_draft(
     *,
     article_md_path: Path,
@@ -1384,6 +1399,7 @@ def push_to_substack_draft(
             except Exception as exc:
                 print(f"[Substack] ⚠️ Tag apply failed (draft kept): {type(exc).__name__}: {exc}")
                 applied = []
+        _record_draft_id(article_md_path.parent, draft_id)
         print(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
             f"audience={audience} cover={'yes' if cover_path else 'no'} "

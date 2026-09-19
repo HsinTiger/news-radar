@@ -14,6 +14,7 @@
 .runtime-state-substack-browser-handoff*.json
 # 本機互斥鎖與「編輯排程正在等鎖」旗標，純執行期狀態
 .runtime-state-local.lock.d/
+.fb-follow.lock.d/
 .runtime-state-editorial-want
 .env.*
 .env.local

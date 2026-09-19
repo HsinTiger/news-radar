@@ -574,6 +574,7 @@ async def publish_threads_carousel(
 async def publish_fb_carousel(
     images: list[str],
     message: str,
+    expected_count: int = 3,
 ) -> Dict:
     """發 FB 多圖貼文（multi-photo feed post）。
 
@@ -594,8 +595,9 @@ async def publish_fb_carousel(
         print(f"[Publisher: FB] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
-    if len(images or []) != 3:
-        msg = f"FB carousel 契約要求恰好 3 張圖,實得 {len(images or [])} 張,拒發"
+    # 張數契約由呼叫端決定：Meta carousel 線固定 3 張，FB 跟發線（fb_follow）固定 2 張。
+    if len(images or []) != expected_count:
+        msg = f"FB carousel 契約要求恰好 {expected_count} 張圖,實得 {len(images or [])} 張,拒發"
         print(f"[Publisher: FB] {msg}")
         return {"success": False, "error": {"local_reject": msg}}
 
