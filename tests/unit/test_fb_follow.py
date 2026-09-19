@@ -237,3 +237,17 @@ def test_sync_post_blocked_when_substack_fact_audit_failed(tmp_path, monkeypatch
                  audit_warnings=["[品質迴圈未通過] E1：假出處"])
     piece = SimpleNamespace(fb_hook="鉤子", fb_point="重點", fb_figure="", fb_post="內文")
     assert fb_follow.post_with_draft(folder, piece) == "skipped"
+
+
+def test_own_platform_names_are_not_flagged():
+    assert not any("名字" in i for i in deterministic_issues("完整版在 Substack，" + "字" * 200, ARTICLE))
+
+
+def test_sync_post_accepts_relative_folder(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    folder = _mk(tmp_path, "2026-09-20", "x", datetime.now())
+    monkeypatch.chdir(tmp_path)
+    empty = SimpleNamespace(fb_hook="", fb_point="", fb_figure="", fb_post="")
+    assert fb_follow.post_with_draft(Path("2026-09-20/x"), empty) == "skipped"

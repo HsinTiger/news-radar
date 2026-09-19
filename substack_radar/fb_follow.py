@@ -448,6 +448,8 @@ _FAKE_TRADE = re.compile(
     r"(?:買了|買進|賣了|賣掉|持有|抱著|加碼|停損|進場|出場|虧了|賠了|賺了|梭哈|all\s*in)", re.I)
 # 逐字比對（不抓整串）：「Sam Altman OpenAI」連在一起在文章裡找不到，但三個字各自都在。
 _LATIN_NAME = re.compile(r"(?<![A-Za-z])[A-Z][A-Za-z0-9&'\-]{2,}")
+# 自家平台與通用名稱：貼文本來就會提（「完整版在 Substack」），不是文章裡的出處。
+_OWN_NAMES = ("Substack", "Facebook", "YouTube", "Podcast", PAGE_NAME)
 _HYPE = ("必漲", "穩賺", "保證獲利", "無腦買", "閉眼買", "買爆", "梭哈")
 
 
@@ -531,7 +533,8 @@ def deterministic_issues(post: str, article: str, source: SourceInfo | None = No
         issues.append(f"貼文沒有點名原始節目「{source.show}」。要大方說出處。")
     # 英文人名／機構名要在文章或原始來源裡找得到。FB 版跟 Substack 同一次寫出來，
     # 之後 Substack 會被稽核迴圈改掉假出處，FB 版不會——這一關把那種落差擋下來。
-    known = (article + " " + " ".join(source.fact_strings() + (source.show,) if source else ())).lower()
+    known = (article + " " + " ".join(source.fact_strings() + (source.show,) if source else ())
+             + " " + " ".join(_OWN_NAMES)).lower()
     unknown = sorted({w for w in _LATIN_NAME.findall(post) if w.lower() not in known})
     if unknown:
         issues.append(f"這些名字在文章裡找不到：{'、'.join(unknown)}。只能提文章裡有的人名、機構。")
@@ -724,6 +727,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
     不再呼叫 agy：FB 版由 Substack 寫手在同一次輸出裡產出，這裡只跑確定性檢查——
     而且是對「稽核迴圈改完之後」的最終文章檢查，所以稽核刪掉的數字或假出處，
     FB 版若還留著會在這裡被擋下。"""
+    out_dir = Path(out_dir).resolve()
     meta = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
     column, headline = split_column(meta.get("title", ""))
     cand = Candidate(folder=out_dir, meta=meta,
