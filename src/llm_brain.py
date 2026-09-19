@@ -358,9 +358,16 @@ AGY_MODEL_CHAIN = os.getenv(
 
 
 def _agy_model_chain() -> list:
-    """回傳去重後的嘗試順序。AGY_MODEL 若有設就置頂。"""
+    """回傳去重後的嘗試順序。AGY_MODEL 若有設就置頂。
+
+    設定的鏈會先經過 agy_models.with_latest：agy 上架了更新一代的 Gemini 就自動
+    排到最前面，不必每次改 .env（見 src/agy_models.py）。AGY_MODEL 是明確指定，
+    不受這個自動判斷影響。"""
+    from src.agy_models import with_latest
+
     chain = []
-    for name in [os.getenv("AGY_MODEL") or ""] + AGY_MODEL_CHAIN.split(","):
+    configured = with_latest(AGY_MODEL_CHAIN.split(","))
+    for name in [os.getenv("AGY_MODEL") or ""] + configured:
         name = name.strip()
         if name and name not in chain:
             chain.append(name)

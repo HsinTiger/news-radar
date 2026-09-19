@@ -193,3 +193,41 @@ sources:
   - url: https://www.youtube.com/@SharpTechPodcast/videos
     topic_category: us_stocks
     max_videos: 1                        # VERIFIED: ~127k chars, auto-subs
+
+  # ======================================================================
+  # 第九類：大佬雲集型（2026-09-19，對標 All-In）
+  # 用 venv 的 yt-dlp 實測最新一集長篇的 en 字幕（去重後字元數）。
+  # 未收：@stripe（Cheeky Pint，無字幕）、@BloombergPodcasts／@RealVisionFinance／
+  # @BigTechnologyPodcast／@TBPNLive（最新幾支多是 8–30 分鐘的片段，max_videos=1
+  # 會抓到片段而不是正集）、@TheProfGShow／@MacroVoicesPodcast（handle 解析失敗）。
+  # ======================================================================
+
+  # Moonshots（Peter Diamandis＋固定班底 Salim Ismail 等，每週圓桌，最像 All-In）
+  - url: https://www.youtube.com/@peterdiamandis/videos
+    topic_category: ai_application
+    max_videos: 1                        # VERIFIED 2026-09-19: ~144k chars, 2h21m
+
+  # The Diary of a CEO（Steven Bartlett，大咖長訪）
+  - url: https://www.youtube.com/@TheDiaryOfACEO/videos
+    topic_category: other
+    max_videos: 1                        # VERIFIED 2026-09-19: ~161k chars, 2h24m
+
+  # Sequoia「Training Data」（紅杉合夥人訪 Databricks／Box 等 CEO）
+  - url: https://www.youtube.com/@sequoiacapital/videos
+    topic_category: ai_application
+    max_videos: 1                        # VERIFIED 2026-09-19: ~84k chars, 1h14m
+
+  # Uncapped（Jack Altman 訪創辦人與投資人：Cerebras、Founders Fund…）
+  - url: https://www.youtube.com/@UncappedPod/videos
+    topic_category: us_stocks
+    max_videos: 1                        # VERIFIED 2026-09-19: ~61k chars, 1h03m
+
+  # Prof G Markets（Scott Galloway，市場與總經）
+  - url: https://www.youtube.com/@profgmarkets/videos
+    topic_category: us_stocks
+    max_videos: 1                        # VERIFIED 2026-09-19: ~60k chars, 1h03m
+
+  # The Knowledge Project（Shane Parrish 訪 Tobi Lütke 等）
+  - url: https://www.youtube.com/@tkppodcast/videos
+    topic_category: other
+    max_videos: 1                        # VERIFIED 2026-09-19: ~62k chars, 1h05m

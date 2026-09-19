@@ -1887,7 +1887,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     feed_name="YouTube Podcast",
                     tags=["youtube", "video", "podcast"],
                     min_chars=3000,        # an interview, not a clip
-                    global_budget_s=420,   # a touch more room for 9 long episodes
+                    global_budget_s=510,   # 2026-09-19：來源 34→40，按比例放寬（新來源排在最後，最先被截掉）
                 )
             else:
                 from substack_radar.harvest_inspiration import _run as _harvest_run

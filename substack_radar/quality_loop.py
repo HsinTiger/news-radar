@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from substack_radar.fact_reconcile import ScaleIssue, reconcile
 
 AGY_BIN = os.path.expanduser(os.getenv("AGY_BIN", "~/.local/bin/agy"))
-# 寫手是 Gemini 3.6 Flash (High)。稽核刻意換家族＋最高推理強度：
+# 寫手是 agy 上最新一代的 Gemini（src/agy_models.py 自動判斷）。稽核刻意換家族＋最高推理強度：
 # 同一個模型讀自己的輸出，會重現同一組盲點。
 AUDIT_MODEL = os.getenv("SUBSTACK_AUDIT_MODEL", "Claude Opus 4.6 (Thinking)")
 # 寫手鏈的鏈尾也是 Claude Opus 4.6。寫手若一路 fallback 到它，稽核再用同一個
