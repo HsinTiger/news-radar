@@ -109,7 +109,12 @@ def test_em_dash_replaced_and_tells_detected():
 
 
 def test_rules_ban_ai_openers():
-    assert "故事是這樣的" in fb_follow.FB_RULES and "150 到 300 字" in fb_follow.FB_RULES
+    assert "故事是這樣的" in fb_follow.FB_RULES and "300 到 700 字" in fb_follow.FB_RULES
+
+
+def test_separator_line_kept_but_inline_dash_replaced():
+    out = fb_follow._humanize("哇，他卸任了\n\n———\n\n講完——然後呢")
+    assert "\n———\n" in out and "講完，然後呢" in out
 
 
 def test_published_post_links_to_article():

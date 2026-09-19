@@ -355,10 +355,16 @@ FB_RULES = """【粉專定位】
 5. 純文字：不用 markdown（不要 **、#、項目符號），不寫任何網址，不加 hashtag，系統會自己補。
 6. emoji 最多 2 個。
 
-【結構】FB 版面很擠，寧短勿長。
-- 第一行就要讓人想按「查看更多」，25 字以內，每篇的開法都要不一樣。
-- 接著 2 到 4 段，只講文章裡「一個」最有意思的洞察，不要把整篇摘要一遍。
-- 全文 150 到 300 字。
+【結構】長一點沒關係，但要好滑（2026-09-20 信哥拿流量好的粉專當範例：開頭一句隨口的反應，
+接著把原始內容一小段一小段講出來，每段一兩句、大量留白）。
+- 開頭一兩句，像你剛看完隨口跟朋友說的反應（例如「哇，老巴連董事長也卸任了」這種語氣），
+  要讓人想按「查看更多」。每篇的開法都要不一樣。
+- 接著用很多個短段落講內容：每段一到兩句就換行，段落之間空一行。長句拆短。
+- 多用來賓／原始資料自己的話：把文章裡的關鍵說法用引號轉述出來（只能用文章裡有的），
+  讓讀者感覺是在讀第一手內容，而不是讀我們的摘要。
+- 可以在開頭反應和內容之間放一行「———」分隔。
+- 我們自己的看法放最後，一兩句就好。
+- 全文 300 到 700 字。
 
 這篇是我們自己「{column}」專欄的文章（{column_desc}）。要提專欄就用「我們的{column}」這種說法，不要寫成你去讀了別人的專欄；不提也可以。
 
@@ -464,7 +470,14 @@ _AI_TELLS = ("故事是這樣的", "值得注意的是", "關鍵在於", "換句
 
 
 def _humanize(text: str) -> str:
-    return re.sub(r"\s*(?:——|—|－－)\s*", "，", text)
+    """句中的破折號換成逗號；整行只有橫線的分隔線（「———」）保留。"""
+    out = []
+    for line in text.split("\n"):
+        if line.strip() and set(line.strip()) <= set("—－-_─"):
+            out.append("———")
+        else:
+            out.append(re.sub(r"\s*(?:——|—|－－)\s*", "，", line))
+    return "\n".join(out)
 
 
 def ai_tells(text: str) -> list[str]:
@@ -562,8 +575,8 @@ def deterministic_issues(post: str, article: str, source: SourceInfo | None = No
     body_len = len(re.sub(r"\s", "", post))
     if body_len < 100:
         issues.append(f"太短（{body_len} 字）。至少寫到 150 字，把洞察講清楚。")
-    if body_len > 450:
-        issues.append(f"太長（{body_len} 字）。刪到 300 字以內，只留一個洞察。")
+    if body_len > 1000:
+        issues.append(f"太長（{body_len} 字）。刪到 700 字以內。")
     if _MARKDOWN.search(post):
         issues.append("用了 markdown 語法（**、#、項目符號或連結）。FB 不會渲染，改成純文字。")
     if _URL.search(post):
