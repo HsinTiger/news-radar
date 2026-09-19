@@ -94,11 +94,22 @@ def test_must_name_the_original_show():
 
 # ---------------- 連結與專欄 ----------------
 
-def test_links_original_show_and_substack():
+def test_only_substack_cta_no_source_link():
+    # 信哥 2026-09-20：FB 很擠，不附原始節目連結，只留訂閱 CTA
     src = SourceInfo(kind="youtube", show="All-In", url="https://youtube.com/watch?v=abc")
     text = finalize("內文", "吹牛免稅", "draft", None, src)
-    assert "https://youtube.com/watch?v=abc" in text and "hsin73.substack.com" in text
+    assert "youtube.com" not in text and "hsin73.substack.com" in text and "訂閱" in text
     assert text.rstrip().endswith("#吹牛免稅 #主力爸爸我錯了")
+
+
+def test_em_dash_replaced_and_tells_detected():
+    text = finalize("講完——然後呢", "吹牛免稅", "draft", None)
+    assert "——" not in text
+    assert fb_follow.ai_tells("故事是這樣的：與其擔心不如") == ["故事是這樣的", "與其"]
+
+
+def test_rules_ban_ai_openers():
+    assert "故事是這樣的" in fb_follow.FB_RULES and "150 到 300 字" in fb_follow.FB_RULES
 
 
 def test_published_post_links_to_article():

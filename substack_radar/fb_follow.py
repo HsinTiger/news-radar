@@ -331,27 +331,34 @@ def source_info_for(src: dict) -> SourceInfo:
 
 FB_RULES = """【粉專定位】
 幫台灣讀者過濾國外的雜訊：把國外的長篇深度對談、商業分析，整理成幾分鐘看得完的重點。
-我們不假裝原創。大方說出原始節目、來賓、出處，清楚表明這是我們整理、翻譯、再加上評論的二手資訊——具體的原始出處，反而讓讀者更相信。
+我們不假裝原創。大方說出原始節目、來賓、出處，清楚表明這是我們整理、翻譯、再加上評論的二手資訊；具體的原始出處，反而讓讀者更相信。
+想當的是「國外深度資訊的谷阿莫」：學他的精神（快、好笑、講重點），不要學他的口頭禪（「故事是這樣的」）。
 
-【口吻：國外深度資訊的谷阿莫】
-- 像谷阿莫講電影：節奏快、口語、台灣用語、短句，帶點吐槽和幽默，把好幾個小時的內容壓成幾分鐘的重點。
-- 但重點一定要講對、講清楚：好笑是包裝，洞察才是內容。
-- 分清楚「節目裡／原始資料怎麼說」和「我們怎麼看」，不要把自己的評論說成是來賓講的。
+【口吻：像一個真人在跟朋友聊他剛看完的東西】
+- 快、口語、台灣用語，帶點吐槽和幽默，把好幾個小時的內容壓成幾句重點。好笑是包裝，洞察才是內容，重點一定要講對。
+- 寫得像真人打字：句子長短不一，有的很短，有的一口氣講完；段落長短也不一樣。可以有語氣詞（欸、真的、老實說），但一篇最多一兩個，別堆。
+- 分清楚「節目裡講的」和「我們怎麼看」，不要把自己的評論說成是來賓講的。但不要用「我們的看法是：」這種標籤句來切換，自然帶過去就好。
 - 自稱「我」或「小編」都可以。不油、不說教、不喊單、不給任何買賣建議。
+
+【不要寫出 AI 腔】2026-09-20 信哥看完第一篇的回饋：轉折太有套路，一看就是 AI。以下一律不要用：
+- 開場套路：「故事是這樣的」「X 分鐘看完 Y」「你有沒有想過」「今天來聊聊」
+- 轉折套路：「結果……」開段、「但事實是」「然而」「值得注意的是」「關鍵在於」「換句話說」「說白了」「簡單來說」「總而言之」「更重要的是」
+- 句型套路：「與其……不如……」「不是……而是……」「不是 A，是 B」、自問自答（「那……會不會……？答案是……」）、三個並列的排比、每段最後一句都是金句
+- 符號：破折號「——」、冒號引出結論（「我們的看法是：」「重點是：」）
+- 結尾：不一定要丟問題。要問就問一個你真的好奇、朋友會想回的問題，不要像作文題。
 
 【鐵則】
 1. 只能用文章裡有的事實、數字、人名、公司。不得新增任何文章裡沒有的數字或事件。
 2. 可以有感受和看法，但不能捏造具體的個人經歷：不能說自己買了、賣了、持有、賺了、賠了什麼，也不能說見過誰、去過哪。
-3. 【原始來源】有給節目或出處名稱的話，貼文裡一定要點名（例如「My First Million 這集 1 小時 26 分的訪談」）。
+3. 【原始來源】有給節目或出處名稱的話，貼文裡要自然提到節目名（一次就好，不必放第一句，也不用寫長度）。
 4. 數字一律用阿拉伯數字（寫「38%」「1,200 億」，不寫「三成八」「一千兩百億」）。
-5. 純文字：不用 markdown（不要 **、#、項目符號），不寫任何網址，不加 hashtag——系統會自己補。
+5. 純文字：不用 markdown（不要 **、#、項目符號），不寫任何網址，不加 hashtag，系統會自己補。
 6. emoji 最多 2 個。
 
-【結構】
-- 第一行是鉤子，25 字以內，讓人想按「查看更多」。有節目長度時，可以用「X 分鐘看完 Y 的 Z 小時訪談」這類谷阿莫式開場，但不要每篇都一樣。
-- 接著 3 到 5 個短段落，講清楚文章裡「一個」最有意思的洞察，不要把整篇摘要一遍。
-- 最後一句丟一個具體的問題，邀請大家留言。
-- 全文 250 到 500 字。
+【結構】FB 版面很擠，寧短勿長。
+- 第一行就要讓人想按「查看更多」，25 字以內，每篇的開法都要不一樣。
+- 接著 2 到 4 段，只講文章裡「一個」最有意思的洞察，不要把整篇摘要一遍。
+- 全文 150 到 300 字。
 
 這篇是我們自己「{column}」專欄的文章（{column_desc}）。要提專欄就用「我們的{column}」這種說法，不要寫成你去讀了別人的專欄；不提也可以。
 
@@ -450,6 +457,20 @@ _FAKE_TRADE = re.compile(
 _LATIN_NAME = re.compile(r"(?<![A-Za-z])[A-Z][A-Za-z0-9&'\-]{2,}")
 # 自家平台與通用名稱：貼文本來就會提（「完整版在 Substack」），不是文章裡的出處。
 _OWN_NAMES = ("Substack", "Facebook", "YouTube", "Podcast", PAGE_NAME)
+# AI 腔（信哥 2026-09-20 回饋）。同步發文只有一次產出、沒有重寫迴圈，所以這些
+# 只記錄不擋稿——擋了就等於那天沒有 FB。破折號是純符號，直接換掉。
+_AI_TELLS = ("故事是這樣的", "值得注意的是", "關鍵在於", "換句話說", "說白了", "簡單來說",
+             "總而言之", "更重要的是", "與其", "我們的看法是", "但事實是", "你有沒有想過")
+
+
+def _humanize(text: str) -> str:
+    return re.sub(r"\s*(?:——|—|－－)\s*", "，", text)
+
+
+def ai_tells(text: str) -> list[str]:
+    return [t for t in _AI_TELLS if t in text]
+
+
 _HYPE = ("必漲", "穩賺", "保證獲利", "無腦買", "閉眼買", "買爆", "梭哈")
 
 
@@ -539,10 +560,10 @@ def deterministic_issues(post: str, article: str, source: SourceInfo | None = No
     if unknown:
         issues.append(f"這些名字在文章裡找不到：{'、'.join(unknown)}。只能提文章裡有的人名、機構。")
     body_len = len(re.sub(r"\s", "", post))
-    if body_len < 150:
-        issues.append(f"太短（{body_len} 字）。至少寫到 250 字，把洞察講清楚。")
-    if body_len > 650:
-        issues.append(f"太長（{body_len} 字）。刪到 500 字以內，只留一個洞察。")
+    if body_len < 100:
+        issues.append(f"太短（{body_len} 字）。至少寫到 150 字，把洞察講清楚。")
+    if body_len > 450:
+        issues.append(f"太長（{body_len} 字）。刪到 300 字以內，只留一個洞察。")
     if _MARKDOWN.search(post):
         issues.append("用了 markdown 語法（**、#、項目符號或連結）。FB 不會渲染，改成純文字。")
     if _URL.search(post):
@@ -705,16 +726,13 @@ def compose_post(cand: Candidate) -> Draft:
 
 def finalize(post: str, column: str, status: str, url: str | None,
              source: SourceInfo | None = None) -> str:
-    links = []
-    if source and source.kind == "youtube" and source.url:
-        links.append(f"🎧 原始節目：{source.url}")
-    elif source and source.kind == "web" and source.url:
-        links.append(f"📄 原文：{source.url}")
+    # 2026-09-20 信哥：FB 字數已經很擠，不附原始節目連結，只留訂閱 CTA。
+    # （source 參數保留給呼叫端相容；節目名已在內文和圖卡上。）
     if status == "published" and url:
-        links.append(f"👉 我們的完整整理：{url}")
+        cta = f"👉 完整版在這，歡迎訂閱：{url}"
     else:
-        links.append(f"👉 完整版在 Substack，免費訂閱：{PUB_HOME}")
-    return f"{post.strip()}\n\n" + "\n".join(links) + f"\n\n#{column} #{PAGE_NAME}"
+        cta = f"👉 完整版在 Substack，歡迎免費訂閱：{PUB_HOME}"
+    return f"{_humanize(post.strip())}\n\n{cta}\n\n#{column} #{PAGE_NAME}"
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +786,9 @@ def post_with_draft(out_dir: Path, draft) -> str:
     if issues:
         print("[FBFollow] 🛑 FB 版沒過檢查，不發：" + "；".join(issues))
         return record("held", issues=issues)
+    tells = ai_tells(piece.post)
+    if tells:
+        print(f"[FBFollow] ⚠️ AI 腔（不擋稿，記錄追蹤）：{'、'.join(tells)}")
     if os.getenv("FB_FOLLOW_LIVE") != "1":
         print("[FBFollow] （FB_FOLLOW_LIVE 未開，只產出不發）\n" + text)
         return "preview"
@@ -780,7 +801,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
         print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
         return record("failed", error=str(res.get("error"))[:300])
     print(f"[FBFollow] ✅ 已同步發 FB：{res.get('id')}　{headline}")
-    return record("posted", fb_id=res.get("id"), route="compose-sync")
+    return record("posted", fb_id=res.get("id"), route="compose-sync", ai_tells=tells)
 
 
 # ---------------------------------------------------------------------------
