@@ -190,3 +190,50 @@ def test_writer_outage_does_not_burn_attempts(tmp_path, monkeypatch):
     monkeypatch.setattr(fb_follow, "compose_post", boom)
     assert fb_follow.run(dry_run=False, only=str(folder)) == 2
     assert not (tmp_path / ".fb_posted.json").exists()
+
+
+def test_unknown_english_name_is_flagged():
+    art = "Joe Hudson 指導過 Sam Altman。"
+    issues = deterministic_issues("McKinsey 報告說 Joe Hudson 很強，" + "字" * 200, art)
+    assert any("McKinsey" in i for i in issues)
+    assert not any("找不到：" in i and "Hudson" in i for i in issues)
+
+
+def test_names_checked_word_by_word():
+    art = "Sam Altman 的 OpenAI"
+    assert not any("名字" in i for i in deterministic_issues("Sam Altman OpenAI 這件事，" + "字" * 200, art))
+
+
+def test_compose_brief_names_column_and_fields():
+    brief = fb_follow.compose_brief({"ticker": "3034", "title": "聯詠"}, "company")
+    assert "fb_hook" in brief and "賺錢有道" in brief and "谷阿莫" in brief
+    assert fb_follow.compose_brief({}, "unknown_mode") == ""
+
+
+def test_writer_schema_never_rejects_article_over_missing_fb_fields():
+    # FB 是附帶產物：模型漏寫 fb_* 不能讓整篇 Substack 作廢
+    from substack_radar.composer import SubstackDraft
+    d = SubstackDraft.model_validate({
+        "title": "越拚命為何越失控", "subtitle": "一個高管教練的反直覺觀察與它的盲點",
+        "seo_title": "t", "seo_description": "d", "tags": [], "body_markdown": "內文",
+    })
+    assert (d.fb_hook, d.fb_point, d.fb_figure, d.fb_post) == ("", "", "", "")
+
+
+def test_sync_post_skips_when_writer_gave_no_fb_version(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    folder = _mk(tmp_path, "2026-09-20", "x", datetime.now())
+    empty = SimpleNamespace(fb_hook="", fb_point="", fb_figure="", fb_post="")
+    assert fb_follow.post_with_draft(folder, empty) == "skipped"
+
+
+def test_sync_post_blocked_when_substack_fact_audit_failed(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    folder = _mk(tmp_path, "2026-09-20", "x", datetime.now(),
+                 audit_warnings=["[品質迴圈未通過] E1：假出處"])
+    piece = SimpleNamespace(fb_hook="鉤子", fb_point="重點", fb_figure="", fb_post="內文")
+    assert fb_follow.post_with_draft(folder, piece) == "skipped"

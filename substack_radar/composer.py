@@ -99,6 +99,15 @@ class SubstackDraft(BaseModel):
         ),
         max_length=5,
     )
+    # 2026-09-20：FB 粉專版在同一次寫稿裡一起產出（信哥：省 token）。原本 FB
+    # 要另開一輪 agy 重讀全文再稽核，現在只多幾百字輸出。寫法規則在 prompt 尾端的
+    # 【FB 粉專版】區塊（substack_radar/fb_follow.compose_brief）。
+    # 跟 SEO 欄一樣：schema 必填才會確實產出，漏填由 validator 補空字串——FB 是
+    # 附帶產物，絕不能讓它否決一篇已經寫完的 Substack 文章。
+    fb_hook: str = Field(..., description="FB 圖卡一的大字鉤子，照【FB 粉專版】規則。")
+    fb_point: str = Field(..., description="FB 圖卡二的一句重點，照【FB 粉專版】規則。")
+    fb_figure: str = Field(..., description="FB 圖卡二的關鍵數字，沒有就空字串。")
+    fb_post: str = Field(..., description="FB 貼文本文（純文字），照【FB 粉專版】規則。")
     body_markdown: str = Field(
         ...,
         description=(
@@ -128,6 +137,9 @@ class SubstackDraft(BaseModel):
             return data
         subtitle = (data.get("subtitle") or "").strip()
         title = (data.get("title") or "").strip()
+        for key in ("fb_hook", "fb_point", "fb_figure", "fb_post"):
+            if not isinstance(data.get(key), str):
+                data[key] = ""
         # tags 同理：schema 必填是為了讓 prompt 要求模型產出，不是為了有權退稿。
         raw_tags = data.get("tags")
         if not isinstance(raw_tags, list):
@@ -1387,6 +1399,7 @@ async def compose_substack_article(
     research_sources: Sequence[Any] = (),
     social_reach: Any = None,
     temperature: float = 0.4,
+    fb_brief: str = "",
 ) -> Optional[SubstackDraft]:
     """產出單篇 Substack 長文草稿。
 
@@ -1424,6 +1437,8 @@ async def compose_substack_article(
     except Exception as exc:
         print(f"[SubstackComposer] ❌ 研究包未通過，拒絕產稿：{exc}")
         return None
+    if fb_brief:
+        prompt = f"{prompt}\n\n{fb_brief}"
 
     backends = _resolve_backends()
     result = await call_for_json(

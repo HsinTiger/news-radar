@@ -71,6 +71,11 @@ def test_antigravity_schema_prompt_has_only_current_writer_fields() -> None:
         "seo_title",
         "seo_description",
         "tags",
+        # 2026-09-20：FB 粉專版跟 Substack 同一次寫（fb_follow.compose_brief）。
+        "fb_hook",
+        "fb_point",
+        "fb_figure",
+        "fb_post",
         "body_markdown",
     )
     assert "cover_character" not in compact

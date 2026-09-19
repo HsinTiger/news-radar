@@ -2164,6 +2164,14 @@ async def _run_inner(args: argparse.Namespace) -> int:
             f"social={social_reach.health if social_reach else {}}"
         )
 
+    # FB 粉專版跟 Substack 同一次寫（2026-09-20，省掉另一輪 agy）。
+    try:
+        from substack_radar.fb_follow import compose_brief
+        fb_brief = compose_brief(source, mode)
+    except Exception as exc:
+        print(f"[FBFollow] ⚠️ FB 區塊略過：{exc}")
+        fb_brief = ""
+
     # 2) Final writer. Deep modes receive the digest/evidence pack, not the full
     # transcript again; Daily modes retain the direct single-pass path.
     draft = await compose_substack_article(
@@ -2177,6 +2185,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
         research_brief=research_brief,
         research_sources=research_sources,
         social_reach=social_reach,
+        fb_brief=fb_brief,
     )
     if draft is None:
         print("[ERROR] LLM total failure. Aborting.")
@@ -2369,6 +2378,15 @@ async def _run_inner(args: argparse.Namespace) -> int:
     publication: Optional[Dict[str, str]] = None
     if getattr(args, "publish_now", False) and draft_id is not None and source_id:
         publication = publish_substack_draft(draft_id, source_id=source_id)
+
+    # 7b) FB 粉專同步發文。只在這次真的建了 Substack 草稿時才發（重用舊草稿＝重跑，
+    # 不重發）；任何例外都吞掉——FB 是附帶產物，不能讓 Substack 這一輪失敗。
+    if draft_id is not None and not existing_evidence.get("draft_id") and not args.no_draft:
+        try:
+            from substack_radar.fb_follow import post_with_draft
+            post_with_draft(local_dir, draft)
+        except Exception as exc:
+            print(f"[FBFollow] ⚠️ FB 同步發文失敗（Substack 不受影響）：{exc}")
     evidence_recorded = True
     if source_id:
         _mark_used(source_id)

@@ -5,7 +5,11 @@
 沒人發。這條線改成跟著 Substack 三個專欄的草稿走：有草稿，就改寫成 FB 原生
 貼文（擬人化口吻）配封面圖發出去。
 
-流程（每次排程只發一篇）：
+主路徑（2026-09-20 起，信哥：省 token）：Substack 寫手在同一次輸出裡順便寫 FB 版，
+compose 建好草稿後呼叫 post_with_draft() 立即發文，不另外跑 agy。
+
+下面這條是舊的獨立流程，留作手動補發（python -m substack_radar.fb_follow --folder …），
+它會另外呼叫 agy 寫稿與稽核：
   1. 掃本機草稿資料夾，挑出「夠久、還沒發過、事實稽核有過」的最舊一篇。
   2. 問 Substack 這篇草稿還在不在：被刪掉 → 不發；已公開 → 貼文附文章連結；
      還是草稿 → 貼文自己講完重點，連結導到訂閱首頁。
@@ -287,7 +291,10 @@ def _youtube_meta(url: str) -> tuple[str, int, str]:
 
 
 def source_info(cand: Candidate) -> SourceInfo:
-    src = cand.meta.get("source") or {}
+    return source_info_for(cand.meta.get("source") or {})
+
+
+def source_info_for(src: dict) -> SourceInfo:
     refs = []
     for r in src.get("research_sources") or []:
         name = (r.get("publisher") or "").strip()
@@ -322,9 +329,7 @@ def source_info(cand: Candidate) -> SourceInfo:
 # 寫手與稽核
 # ---------------------------------------------------------------------------
 
-WRITER_PROMPT = """你是 Facebook 粉絲專頁「{page}」的小編，要把一篇電子報文章改寫成一則 FB 貼文。
-
-【粉專定位】
+FB_RULES = """【粉專定位】
 幫台灣讀者過濾國外的雜訊：把國外的長篇深度對談、商業分析，整理成幾分鐘看得完的重點。
 我們不假裝原創。大方說出原始節目、來賓、出處，清楚表明這是我們整理、翻譯、再加上評論的二手資訊——具體的原始出處，反而讓讀者更相信。
 
@@ -335,12 +340,12 @@ WRITER_PROMPT = """你是 Facebook 粉絲專頁「{page}」的小編，要把一
 - 自稱「我」或「小編」都可以。不油、不說教、不喊單、不給任何買賣建議。
 
 【鐵則】
-1. 只能用下面文章裡有的事實、數字、人名、公司。不得新增任何文章裡沒有的數字或事件。
+1. 只能用文章裡有的事實、數字、人名、公司。不得新增任何文章裡沒有的數字或事件。
 2. 可以有感受和看法，但不能捏造具體的個人經歷：不能說自己買了、賣了、持有、賺了、賠了什麼，也不能說見過誰、去過哪。
-6. 下面【原始來源】有給節目或出處名稱的話，貼文裡一定要點名（例如「My First Million 這集 1 小時 26 分的訪談」）。
-3. 數字一律用阿拉伯數字（寫「38%」「1,200 億」，不寫「三成八」「一千兩百億」）。
-4. 純文字：不用 markdown（不要 **、#、項目符號），不寫任何網址，不加 hashtag——系統會自己補。
-5. emoji 最多 2 個。
+3. 【原始來源】有給節目或出處名稱的話，貼文裡一定要點名（例如「My First Million 這集 1 小時 26 分的訪談」）。
+4. 數字一律用阿拉伯數字（寫「38%」「1,200 億」，不寫「三成八」「一千兩百億」）。
+5. 純文字：不用 markdown（不要 **、#、項目符號），不寫任何網址，不加 hashtag——系統會自己補。
+6. emoji 最多 2 個。
 
 【結構】
 - 第一行是鉤子，25 字以內，讓人想按「查看更多」。有節目長度時，可以用「X 分鐘看完 Y 的 Z 小時訪談」這類谷阿莫式開場，但不要每篇都一樣。
@@ -353,7 +358,11 @@ WRITER_PROMPT = """你是 Facebook 粉絲專頁「{page}」的小編，要把一
 【兩張圖卡】貼文會配兩張橫式圖卡，讀者滑過動態牆時一眼就要看懂，所以卡上只放極少的字：
 - HOOK：第一張的大字鉤子。16 字以內，分成 1 到 2 行，用「／」標出換行位置，每行 8 字以內；換行要落在語意斷點（例如「台積電／還能不能買？」），行首不能是標點。
 - POINT：第二張的一句重點。30 字以內，分成 1 到 3 行，用「／」換行，每行 16 字以內；是文章最關鍵的一個洞察或反差，不要跟 HOOK 重複。
-- FIGURE：如果重點有一個關鍵數字，放在這裡當大字（例如「58%」「1,200 億」），10 字以內，POINT 裡就不要再寫一次這個數字；沒有就留空。必須是文章裡原本就有的數字。
+- FIGURE：如果重點有一個關鍵數字，放在這裡當大字（例如「58%」「1,200 億」），10 字以內，POINT 裡就不要再寫一次這個數字；沒有就留空。必須是文章裡原本就有的數字。"""
+
+WRITER_PROMPT = """你是 Facebook 粉絲專頁「{page}」的小編，要把一篇電子報文章改寫成一則 FB 貼文。
+
+{rules}
 
 【原始來源】
 {source_block}
@@ -400,6 +409,36 @@ AUDIT_PROMPT = """你是 FB 貼文的事實稽核員。下面是一篇已經過�
 
 {post}"""
 
+COMPOSE_BRIEF = """【FB 粉專版】（同一次輸出，填進 fb_hook／fb_point／fb_figure／fb_post 四個欄位）
+這篇寫完後會同步發到 Facebook 粉絲專頁「{page}」。請用上面這篇文章的內容，另外寫一則 FB 貼文和兩張圖卡上的字。
+欄位對應：fb_hook＝下面說的 HOOK，fb_point＝POINT，fb_figure＝FIGURE（沒有就空字串），fb_post＝貼文本文。
+
+{rules}
+
+【原始來源】
+{source_block}"""
+
+
+def compose_brief(source: dict, mode: str) -> str:
+    """給 Substack 寫手的 FB 區塊。任何錯誤都回空字串——FB 不能擋 Substack。"""
+    try:
+        column = {"company": "賺錢有道", "podcast": "吹牛免稅",
+                  "morning": "主編精選", "evening": "主編精選"}.get(mode, "")
+        if not column:
+            return ""
+        info = source_info_for(source or {})
+        cand = Candidate(folder=DRAFTS_DIR, meta={"source": source or {}}, created_at=datetime.now(),
+                         column=column, headline="", key="")
+        return COMPOSE_BRIEF.format(
+            page=PAGE_NAME,
+            rules=FB_RULES.format(column=column, column_desc=COLUMN_DESC[column]),
+            source_block=info.prompt_block(cand),
+        )
+    except Exception as exc:
+        print(f"[FBFollow] ⚠️ FB 區塊產生失敗，這篇不附 FB 版：{exc}")
+        return ""
+
+
 _MARKDOWN = re.compile(r"\*\*|^#+\s|^\s*[-*]\s|\]\(|`", re.M)
 _URL = re.compile(r"https?://|www\.", re.I)
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -407,6 +446,8 @@ _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _FAKE_TRADE = re.compile(
     r"我(?:之前|以前|當年|當初|去年|前年|今年|最近|前幾天|上週|昨天|早就|自己|曾經|也曾|也|都|還)*"
     r"(?:買了|買進|賣了|賣掉|持有|抱著|加碼|停損|進場|出場|虧了|賠了|賺了|梭哈|all\s*in)", re.I)
+# 逐字比對（不抓整串）：「Sam Altman OpenAI」連在一起在文章裡找不到，但三個字各自都在。
+_LATIN_NAME = re.compile(r"(?<![A-Za-z])[A-Z][A-Za-z0-9&'\-]{2,}")
 _HYPE = ("必漲", "穩賺", "保證獲利", "無腦買", "閉眼買", "買爆", "梭哈")
 
 
@@ -488,6 +529,12 @@ def deterministic_issues(post: str, article: str, source: SourceInfo | None = No
     issues = []
     if source and source.kind == "youtube" and source.show and source.show.lower() not in post.lower():
         issues.append(f"貼文沒有點名原始節目「{source.show}」。要大方說出處。")
+    # 英文人名／機構名要在文章或原始來源裡找得到。FB 版跟 Substack 同一次寫出來，
+    # 之後 Substack 會被稽核迴圈改掉假出處，FB 版不會——這一關把那種落差擋下來。
+    known = (article + " " + " ".join(source.fact_strings() + (source.show,) if source else ())).lower()
+    unknown = sorted({w for w in _LATIN_NAME.findall(post) if w.lower() not in known})
+    if unknown:
+        issues.append(f"這些名字在文章裡找不到：{'、'.join(unknown)}。只能提文章裡有的人名、機構。")
     body_len = len(re.sub(r"\s", "", post))
     if body_len < 150:
         issues.append(f"太短（{body_len} 字）。至少寫到 250 字，把洞察講清楚。")
@@ -615,7 +662,8 @@ def compose_post(cand: Candidate) -> Draft:
     for round_no in range(1, MAX_ROUNDS + 1):
         result.rounds = round_no
         prompt = WRITER_PROMPT.format(
-            page=PAGE_NAME, column=cand.column, column_desc=COLUMN_DESC[cand.column],
+            page=PAGE_NAME,
+            rules=FB_RULES.format(column=cand.column, column_desc=COLUMN_DESC[cand.column]),
             title=cand.headline, subtitle=cand.meta.get("subtitle", ""),
             article=article_for_prompt, feedback=feedback,
             source_block=source.prompt_block(cand),
@@ -667,7 +715,72 @@ def finalize(post: str, column: str, status: str, url: str | None,
 
 
 # ---------------------------------------------------------------------------
-# 主流程
+# 同步發文：Substack 寫手同一次輸出的 FB 版（2026-09-20 起的主路徑，零額外 agy）
+# ---------------------------------------------------------------------------
+
+def post_with_draft(out_dir: Path, draft) -> str:
+    """compose 建好 Substack 草稿後呼叫。回傳結果代碼（posted/held/skipped/preview）。
+
+    不再呼叫 agy：FB 版由 Substack 寫手在同一次輸出裡產出，這裡只跑確定性檢查——
+    而且是對「稽核迴圈改完之後」的最終文章檢查，所以稽核刪掉的數字或假出處，
+    FB 版若還留著會在這裡被擋下。"""
+    meta = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    column, headline = split_column(meta.get("title", ""))
+    cand = Candidate(folder=out_dir, meta=meta,
+                     created_at=datetime.fromisoformat(meta.get("created_at") or datetime.now().isoformat()),
+                     column=column, headline=headline, key=_dedupe_key(meta, headline),
+                     draft_id=str(meta.get("substack_draft_id") or "") or None)
+    figure = (getattr(draft, "fb_figure", "") or "").strip()
+    piece = Piece(hook=(getattr(draft, "fb_hook", "") or "").strip(),
+                  point=(getattr(draft, "fb_point", "") or "").strip(),
+                  figure="" if figure in ("無", "none", "None", "（空白）") else figure,
+                  post=(getattr(draft, "fb_post", "") or "").strip())
+    ledger = _load_ledger()
+
+    def record(status: str, **extra) -> str:
+        ledger[cand.rel] = {"status": status, "key": cand.key, "draft_id": cand.draft_id,
+                            "at": datetime.now().isoformat(timespec="seconds"), **extra}
+        _save_ledger(ledger)
+        return status
+
+    if not column:
+        print("[FBFollow] ⏭️ 不是三個專欄之一，不發 FB。")
+        return "skipped"
+    if not (piece.hook and piece.point and piece.post):
+        print("[FBFollow] ⏭️ 寫手這次沒產出 FB 版，不發。")
+        return record("skipped", reason="寫手沒產出 FB 版")
+    if any(str(w).startswith(FACT_FAIL_MARK) for w in meta.get("audit_warnings") or []):
+        print("[FBFollow] ⏭️ Substack 端事實稽核沒過，FB 不跟發。")
+        return record("skipped", reason="Substack 事實稽核沒過")
+    if any(v.get("status") == "posted" and v.get("key") == cand.key for v in ledger.values()):
+        print(f"[FBFollow] ⏭️ 同題材（{cand.key}）已經發過 FB。")
+        return "skipped"
+
+    article = (out_dir / "Article_Full.md").read_text(encoding="utf-8")
+    source = source_info(cand)
+    issues = deterministic_issues(piece.post, article, source) + card_issues(piece, article, cand, out_dir, source)
+    text = finalize(piece.post, column, "draft", None, source)
+    (out_dir / "fb_post.txt").write_text(text + "\n", encoding="utf-8")
+    if issues:
+        print("[FBFollow] 🛑 FB 版沒過檢查，不發：" + "；".join(issues))
+        return record("held", issues=issues)
+    if os.getenv("FB_FOLLOW_LIVE") != "1":
+        print("[FBFollow] （FB_FOLLOW_LIVE 未開，只產出不發）\n" + text)
+        return "preview"
+
+    from src.publisher import publish_fb_carousel
+
+    cards = [str(out_dir / "fb_card1.png"), str(out_dir / "fb_card2.png")]
+    res = asyncio.run(publish_fb_carousel(cards, text, expected_count=2))
+    if not res.get("success"):
+        print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
+        return record("failed", error=str(res.get("error"))[:300])
+    print(f"[FBFollow] ✅ 已同步發 FB：{res.get('id')}　{headline}")
+    return record("posted", fb_id=res.get("id"), route="compose-sync")
+
+
+# ---------------------------------------------------------------------------
+# 主流程（手動補發用：會另外呼叫 agy，平常不走這條）
 # ---------------------------------------------------------------------------
 
 def run(*, dry_run: bool, only: str | None = None, ignore_age: bool = False) -> int:
