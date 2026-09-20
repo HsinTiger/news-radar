@@ -163,7 +163,9 @@ def point_card(point: str, *, figure: str = ""):
 
     if visible_len(point.replace(LINE_SEP, "")) > POINT_MAX_CHARS:
         raise LayoutError(f"重點句 {visible_len(point.replace(LINE_SEP, ''))} 字，超過 {POINT_MAX_CHARS} 字上限。")
-    lines = split_lines(point, POINT_MAX_LINES if not figure else 2, "重點句")
+    # 有大數字時原本只准 2 行，但 prompt 寫的是「1 到 3 行」——2026-09-20 波音那篇
+    # 連三輪都卡在這個自相矛盾的規則上。版面放得下 3 行（字級會自動縮），所以統一成 3。
+    lines = split_lines(point, POINT_MAX_LINES, "重點句")
     if figure and visible_len(figure) > FIGURE_MAX_CHARS:
         raise LayoutError(f"數字欄 {visible_len(figure)} 字，超過 {FIGURE_MAX_CHARS} 字上限。")
     img = Image.new("RGB", (W, H), _CREAM)

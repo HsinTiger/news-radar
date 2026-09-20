@@ -267,3 +267,46 @@ def test_sync_post_accepts_relative_folder(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     empty = SimpleNamespace(fb_hook="", fb_point="", fb_figure="", fb_post="")
     assert fb_follow.post_with_draft(Path("2026-09-20/x"), empty) == "skipped"
+
+
+def test_stale_fb_version_is_rewritten_from_the_audited_article(tmp_path, monkeypatch):
+    """稽核砍掉的數字若留在 FB 版，要用最終文章重寫（2026-09-20 波音：472、541）。"""
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    monkeypatch.delenv("FB_FOLLOW_LIVE", raising=False)
+    folder = _mk(tmp_path, "2026-09-20", "x", datetime.now())
+    (folder / "Article_Full.md").write_text("營收 100 億，毛利率 38%。", encoding="utf-8")
+    good = Piece(hook="好鉤子／兩行", point="重點句／第二行", figure="",
+                 post="營收 100 億，毛利率 38%。" + "字" * 200)
+    monkeypatch.setattr(fb_follow, "_write", lambda _p: (good, "claude CLI"))
+    monkeypatch.setattr(fb_follow, "card_issues", lambda *a, **k: [])
+    stale = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="",
+                            fb_post="營收 472 億（稽核已刪）" + "字" * 200)
+    assert fb_follow.post_with_draft(folder, stale) == "preview"
+    assert "100 億" in (folder / "fb_post.txt").read_text()
+
+
+def test_agy_is_skipped_for_the_rest_of_the_process_once_quota_is_gone(monkeypatch):
+    """五個模型共用一份額度：第一次 429 之後每輪再試一遍 ＝ 每輪白等 5 分鐘。"""
+    from substack_radar import quality_loop as q
+
+    monkeypatch.setattr(q, "_AGY_DEAD", False)
+    calls = []
+    def dead(prompt, model, timeout):
+        calls.append(model)
+        raise RuntimeError("agy exit=3: RESOURCE_EXHAUSTED (code 429)")
+    monkeypatch.setattr(q, "_run_agy_once", dead)
+    monkeypatch.setattr(q, "run_claude_cli", lambda p, t: "AUDIT")
+    assert q._run_agy("p", "Claude Opus 4.6 (Thinking)", 10) == "AUDIT"
+    first_round = len(calls)
+    assert q._run_agy("p", "Claude Opus 4.6 (Thinking)", 10) == "AUDIT"
+    assert len(calls) == first_round == 1   # 第二輪完全沒再碰 agy
+
+
+def test_point_card_allows_three_lines_even_with_a_figure(tmp_path):
+    """提示詞說 1–3 行、程式只准 2 行 → 寫手連三輪被自己的規則擋掉（2026-09-20 波音）。"""
+    paths = render_pair(hook="波音的／真實利潤", point="翻正的營業利益／來自售後服務／飛機本身還在虧",
+                        figure="82 億美元", column="賺錢有道", mode="company",
+                        topic_category="us_stocks", title="波音", out_dir=tmp_path)
+    assert len(paths) == 2

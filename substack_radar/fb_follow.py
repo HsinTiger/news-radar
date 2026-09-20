@@ -639,8 +639,10 @@ def _write(prompt: str) -> tuple[Piece, str]:
     from src.llm_brain import _agy_model_chain
     from substack_radar.quality_loop import _run_agy_once
 
+    from substack_radar.quality_loop import agy_is_dead, note_agy_failure
+
     last = None
-    for model in _agy_model_chain():
+    for model in ([] if agy_is_dead() else _agy_model_chain()):
         try:
             piece = _extract(_run_agy_once(prompt, model, AGY_TIMEOUT_S))
             if piece:
@@ -648,16 +650,31 @@ def _write(prompt: str) -> tuple[Piece, str]:
             last = RuntimeError(f"{model} 沒有照格式輸出 HOOK／POINT／FIGURE／POST")
         except Exception as exc:
             last = exc
+            note_agy_failure(exc)
         print(f"[FBFollow] ⚠️ 寫手 {model} 不可用：{str(last)[:100]}")
-    raise RuntimeError(f"寫手鏈全部失敗：{last}")
+        if agy_is_dead():
+            break
+    from substack_radar.quality_loop import run_claude_cli
+
+    piece = _extract(run_claude_cli(prompt, AGY_TIMEOUT_S))
+    if piece:
+        print("[FBFollow] ℹ️ agy 全鏈不可用，改用 claude CLI 寫 FB 版（付費）")
+        return piece, "claude CLI"
+    raise RuntimeError(f"寫手鏈全部失敗（含 claude CLI）：{last}")
 
 
 def _audit(prompt: str, writer: str) -> tuple[str, str]:
     """稽核鏈：先換家族（寫手是 Gemini 就先 Claude），真的都不行才退回同家族，
     並且照實記下是誰稽核的——2026-09-19 試跑時 Opus 429，實際由 Gemini 稽核
     Gemini，紀錄卻寫 Opus。"""
-    from substack_radar.quality_loop import AUDIT_MODEL_CHAIN, _run_agy_once, _same_family, auditor_for
+    from substack_radar.quality_loop import (
+        AUDIT_MODEL_CHAIN, _run_agy_once, _same_family, agy_is_dead, auditor_for, note_agy_failure,
+    )
 
+    if agy_is_dead():
+        from substack_radar.quality_loop import run_claude_cli
+
+        return run_claude_cli(prompt, AGY_TIMEOUT_S), "claude CLI"
     pool = [auditor_for(writer), "Claude Sonnet 4.6 (Thinking)", *AUDIT_MODEL_CHAIN]
     order = []
     for model in pool:
@@ -673,7 +690,10 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
             return raw, model
         except Exception as exc:
             last = exc
+            note_agy_failure(exc)
             print(f"[FBFollow] ⚠️ 稽核 {model} 不可用：{str(exc)[:100]}")
+            if agy_is_dead():
+                break
     from substack_radar.quality_loop import run_claude_cli
 
     print("[FBFollow] ℹ️ agy 全鏈不可用，改用 claude CLI 稽核（付費）")
@@ -799,6 +819,27 @@ def post_with_draft(out_dir: Path, draft) -> str:
     issues = deterministic_issues(piece.post, article, source) + card_issues(piece, article, cand, out_dir, source)
     text = finalize(piece.post, column, "draft", None, source)
     (out_dir / "fb_post.txt").write_text(text + "\n", encoding="utf-8")
+    if issues:
+        # FB 版跟 Substack 同一次寫，但稽核迴圈之後又改了文章——被刪掉的數字還留在
+        # FB 版裡（2026-09-20 波音那篇：472、541 都是稽核砍掉的）。用改完的最終文章
+        # 重寫一次再驗；還是不過才收手。
+        print("[FBFollow] ♻️ FB 版沒過檢查，用稽核後的最終文章重寫一次：" + "；".join(i[:70] for i in issues))
+        try:
+            piece, writer = _write(WRITER_PROMPT.format(
+                page=PAGE_NAME,
+                rules=FB_RULES.format(column=column, column_desc=COLUMN_DESC[column]),
+                title=headline, subtitle=meta.get("subtitle", ""),
+                article=article[:12000],
+                feedback="【上一版被退回，這些問題必須全部修掉】\n" + "\n".join(f"- {i}" for i in issues),
+                source_block=source.prompt_block(cand),
+            ))
+            issues = (deterministic_issues(piece.post, article, source)
+                      + card_issues(piece, article, cand, out_dir, source))
+            text = finalize(piece.post, column, "draft", None, source)
+            (out_dir / "fb_post.txt").write_text(text + "\n", encoding="utf-8")
+            print(f"[FBFollow] ♻️ 重寫完成（{writer}），剩 {len(issues)} 項問題")
+        except Exception as exc:
+            print(f"[FBFollow] ⚠️ 重寫失敗：{str(exc)[:140]}")
     if issues:
         print("[FBFollow] 🛑 FB 版沒過檢查，不發：" + "；".join(issues))
         return record("held", issues=issues)
