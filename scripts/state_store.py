@@ -308,19 +308,45 @@ class GitHubReleaseStore:
     def _asset_map(release: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {asset["name"]: asset for asset in release.get("assets", [])}
 
-    def download_asset(self, asset: dict[str, Any], destination: Path) -> None:
+    def download_asset(self, asset: dict[str, Any], destination: Path, attempts: int = 4) -> None:
+        """下載並確認收完整。
+
+        2026-09-20：GitHub 會在傳輸中途斷線（實測 29,016,889 bytes 只收到
+        26,311,639 就 RemoteProtocolError）。這裡原本沒有重試也沒有長度檢查，
+        於是一次抖動就讓整輪排程結束——9/18 的 podcast 整批不見、9/20 的週報
+        手動補跑都是死在這一行。"""
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with self.client.stream(
-            "GET", asset["url"], headers={"Accept": "application/octet-stream"}
-        ) as response:
-            if response.is_error:
-                raise StateStoreError(
-                    f"asset download failed ({response.status_code}): "
-                    f"{response.text[:500]}"
-                )
-            with destination.open("wb") as output:
-                for chunk in response.iter_bytes(1024 * 1024):
-                    output.write(chunk)
+        expected = int(asset.get("size") or 0)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                with self.client.stream(
+                    "GET", asset["url"], headers={"Accept": "application/octet-stream"}
+                ) as response:
+                    if response.is_error:
+                        raise StateStoreError(
+                            f"asset download failed ({response.status_code}): "
+                            f"{response.text[:500]}"
+                        )
+                    with destination.open("wb") as output:
+                        for chunk in response.iter_bytes(1024 * 1024):
+                            output.write(chunk)
+                got = destination.stat().st_size
+                if expected and got != expected:
+                    raise StateStoreError(
+                        f"asset truncated: got {got} bytes, expected {expected}"
+                    )
+                return
+            except (StateStoreError, httpx.HTTPError) as exc:
+                last_error = exc
+                if attempt < attempts:
+                    print(
+                        f"[state-store] ⚠️ 下載第 {attempt} 次未完成（{str(exc)[:90]}），"
+                        f"{2 ** attempt}s 後重試",
+                        file=sys.stderr,
+                    )
+                    time.sleep(2 ** attempt)
+        raise StateStoreError(f"asset download failed after {attempts} attempts: {last_error}")
 
     def upload_asset(
         self, release: dict[str, Any], source: Path, name: str, content_type: str
