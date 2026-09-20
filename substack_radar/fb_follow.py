@@ -674,7 +674,10 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
         except Exception as exc:
             last = exc
             print(f"[FBFollow] ⚠️ 稽核 {model} 不可用：{str(exc)[:100]}")
-    raise RuntimeError(f"稽核鏈全部不可用：{last}")
+    from substack_radar.quality_loop import run_claude_cli
+
+    print("[FBFollow] ℹ️ agy 全鏈不可用，改用 claude CLI 稽核（付費）")
+    return run_claude_cli(prompt, AGY_TIMEOUT_S), "claude CLI"
 
 
 @dataclass

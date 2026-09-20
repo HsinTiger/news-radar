@@ -20,8 +20,10 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 
@@ -208,8 +210,32 @@ def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
     return out
 
 
+def run_claude_cli(prompt: str, timeout_s: int) -> str:
+    """agy 全掛時的稽核後備（信哥 2026-09-20 指定）。
+
+    走的是付費 API，所以只在 agy 整條鏈都不可用時才會到這裡——2026-09-20 週報
+    那輪就是 agy 全模型 429，稽核直接沒跑，稿子等於沒有第二個模型看過。"""
+    binary = shutil.which(os.getenv("CLAUDE_CLI_BIN", "claude"))
+    if not binary:
+        raise FileNotFoundError("claude 不在 PATH")
+    proc = subprocess.run(
+        [binary, "-p", "--output-format", "json",
+         "--model", os.getenv("CLAUDE_MODEL", "opus"),
+         "--effort", os.getenv("CLAUDE_EFFORT", "high"),   # 稽核一律最高推理強度
+         "--no-session-persistence", prompt],
+        capture_output=True, text=True, cwd="/tmp", timeout=timeout_s + 60,
+    )
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        raise RuntimeError(f"claude 輸出不是 JSON：{str(proc.stdout)[:120]}") from exc
+    if data.get("is_error") or not data.get("result"):
+        raise RuntimeError(f"claude 失敗：{str(data.get('result'))[:160]}")
+    return str(data["result"])
+
+
 def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
-    """依鏈逐個試。第一個成功就回；全掛才 raise。"""
+    """依鏈逐個試。第一個成功就回；agy 全掛才退到 claude CLI（付費）。"""
     chain = [model] + [m for m in AUDIT_MODEL_CHAIN if m != model]
     last = None
     for index, candidate in enumerate(chain):
@@ -221,7 +247,12 @@ def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
         except Exception as exc:
             last = exc
             print(f"[QualityLoop] ⚠️ {candidate} 不可用：{str(exc)[:110]}")
-    raise RuntimeError(f"稽核鏈全部不可用；最後一個錯誤：{last}")
+    try:
+        result = run_claude_cli(prompt, timeout_s)
+        print("[QualityLoop] ℹ️ agy 全鏈不可用，改用 claude CLI 稽核（付費）")
+        return result
+    except Exception as exc:
+        raise RuntimeError(f"稽核鏈全部不可用（含 claude CLI：{str(exc)[:100]}）；最後一個 agy 錯誤：{last}")
 
 
 def _extract_article(raw: str) -> str | None:

@@ -430,3 +430,56 @@ def test_company_titles_get_a_longer_cap_and_may_use_a_colon():
 def test_non_company_titles_keep_the_old_rules():
     assert _title_warnings("當用戶不再打開 Canva") == []
     assert any("雙焦點" in w for w in _title_warnings("情緒：可能不是一種感覺"))
+
+import pytest
+
+
+# --- agy 全掛時退到 claude CLI（信哥 2026-09-20；那天週報就是 agy 全 429 → 稽核沒跑） ---
+
+def test_audit_falls_back_to_claude_cli_when_agy_chain_is_down(monkeypatch):
+    from substack_radar import quality_loop as q
+
+    def dead_agy(*_a, **_k):
+        raise RuntimeError("agy exit=3: RESOURCE_EXHAUSTED (code 429)")
+    monkeypatch.setattr(q, "_run_agy_once", dead_agy)
+    monkeypatch.setattr(q, "run_claude_cli", lambda prompt, t: "CLAUDE-AUDIT")
+    assert q._run_agy("prompt", "Claude Opus 4.6 (Thinking)", 30) == "CLAUDE-AUDIT"
+
+
+def test_audit_raises_when_both_agy_and_claude_are_down(monkeypatch):
+    from substack_radar import quality_loop as q
+
+    monkeypatch.setattr(q, "_run_agy_once", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429")))
+    def dead_claude(*_a, **_k):
+        raise RuntimeError("OAuth session expired")
+    monkeypatch.setattr(q, "run_claude_cli", dead_claude)
+    with pytest.raises(RuntimeError, match="OAuth session expired"):
+        q._run_agy("prompt", "Claude Opus 4.6 (Thinking)", 30)
+
+
+def test_claude_cli_audit_uses_highest_effort(monkeypatch):
+    import subprocess
+    from substack_radar import quality_loop as q
+
+    seen = {}
+    class Done:
+        stdout = '{"is_error": false, "result": "ok"}'
+    def fake_run(args, **_k):
+        seen["args"] = args
+        return Done()
+    monkeypatch.setattr(q.shutil, "which", lambda _x: "/Users/hsin/.local/bin/claude")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert q.run_claude_cli("p", 30) == "ok"
+    assert "--effort" in seen["args"] and "high" in seen["args"]
+
+
+def test_claude_cli_error_is_not_silently_treated_as_pass(monkeypatch):
+    import subprocess
+    from substack_radar import quality_loop as q
+
+    class Failed:
+        stdout = '{"is_error": true, "result": "Failed to authenticate: OAuth session expired"}'
+    monkeypatch.setattr(q.shutil, "which", lambda _x: "/x/claude")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Failed())
+    with pytest.raises(RuntimeError, match="OAuth"):
+        q.run_claude_cli("p", 30)
