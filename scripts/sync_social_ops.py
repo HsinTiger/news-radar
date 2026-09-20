@@ -448,12 +448,23 @@ def build_recovery_experiments(conn: sqlite3.Connection) -> list[dict[str, Any]]
     return [dict(row) for row in rows]
 
 
-def _plist_schedule(path: Path) -> dict[str, int]:
+def _plist_schedules(path: Path) -> list[dict[str, int]]:
+    """launchd 的 StartCalendarInterval 可以是一個 dict，也可以是一串 dict。
+
+    2026-09-20 company-compose 改成週日 09/13/16/19 重試（09:00 那輪三個寫手後備
+    同時倒下、整週開天窗），這裡原本只認 dict，遇到清單會炸掉整份契約。"""
     try:
         value = plistlib.loads(path.read_bytes()).get("StartCalendarInterval", {})
-        return {str(key): int(item) for key, item in value.items()}
     except (OSError, ValueError, plistlib.InvalidFileException):
-        return {}
+        return []
+    entries = value if isinstance(value, list) else [value]
+    return [{str(k): int(v) for k, v in entry.items()} for entry in entries if isinstance(entry, dict)]
+
+
+def _plist_schedule(path: Path) -> dict[str, int]:
+    """第一個時段（＝正常那一輪；其後是重試）。"""
+    slots = _plist_schedules(path)
+    return slots[0] if slots else {}
 
 
 def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
@@ -484,6 +495,10 @@ def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     podcast_time = f"{podcast_schedule.get('Hour', 12):02d}:{podcast_schedule.get('Minute', 0):02d}"
     company_day = "Sun" if company_schedule.get("Weekday", 0) == 0 else f"weekday-{company_schedule.get('Weekday')}"
     company_time = f"{company_day} {company_schedule.get('Hour', 9):02d}:{company_schedule.get('Minute', 0):02d}"
+    retries = [f"{slot.get('Hour', 0):02d}:{slot.get('Minute', 0):02d}"
+               for slot in _plist_schedules(company_plist)[1:]]
+    if retries:
+        company_time += "（失敗重試 " + "／".join(retries) + "）"
     return {
         "schema_version": 3,
         "publication_mode": "draft_only",

@@ -252,7 +252,11 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
 
     assert noon["StartCalendarInterval"] == {"Hour": 12, "Minute": 0}
     assert noon["ProgramArguments"][-1] == "podcast-batch"
-    assert company["StartCalendarInterval"] == {"Weekday": 0, "Hour": 9, "Minute": 0}
+    # 2026-09-20：週報改成週日 09:00 正常跑，失敗再試 13/16/19（腳本有 same-day guard，
+    # 當天已經有 company_* 草稿就直接結束，不會寫出第二篇）。
+    assert company["StartCalendarInterval"] == [
+        {"Weekday": 0, "Hour": hour, "Minute": 0} for hour in (9, 13, 16, 19)
+    ]
     assert company["ProgramArguments"][-1] == "weekly"
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-daily.plist").exists()
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-noon-1.plist").exists()
