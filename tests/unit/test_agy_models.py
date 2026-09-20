@@ -66,3 +66,28 @@ def test_explicit_agy_model_still_wins(monkeypatch):
     monkeypatch.setenv("AGY_MODEL", "Claude Opus 4.6 (Thinking)")
     monkeypatch.setattr(agy_models, "available_models", lambda **_: LISTED)
     assert llm_brain._agy_model_chain()[0] == "Claude Opus 4.6 (Thinking)"
+
+
+# --- agy 帳號層級不可用時不要逐一空等（2026-09-20：中午排程佔著鎖跑 70 分鐘沒結果） ---
+
+def test_quota_and_hang_errors_are_account_level():
+    from src.llm_brain import _agy_quota_or_hang
+    assert _agy_quota_or_hang("agy exit 3: RESOURCE_EXHAUSTED (code 429)")
+    assert _agy_quota_or_hang("[agy] print timeout after 30m0s with turn in progress")
+    # 這個是「這次輸出不合 schema」，換模型或重試有意義，不能跳過整條鏈
+    assert not _agy_quota_or_hang("4 validation errors for EditorialResearchBrief")
+
+
+def test_single_agy_call_wait_is_capped():
+    from src import llm_brain
+    assert llm_brain.AGY_PRINT_TIMEOUT_MAX_S <= 900
+
+
+def test_claude_cli_gets_the_same_json_field_contract_as_agy():
+    """2026-09-20：claude 沒拿到欄位表，自己編結構 → 9 個必填欄位 missing。"""
+    from src.llm_brain import _json_contract_block
+    from substack_radar.composer import EditorialResearchBrief
+
+    block = _json_contract_block(EditorialResearchBrief)
+    assert "article_form" in block and "source_digest" in block
+    assert "raw JSON" in block

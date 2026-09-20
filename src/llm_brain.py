@@ -351,6 +351,18 @@ AGY_MODEL = os.getenv("AGY_MODEL", "Gemini 3.1 Pro (High)")
 # （AGY_MODEL="..." python compose.py）語意不變，仍然「優先用我指定的」。
 # 同一模型的重試次數。agy 偶發輸出不合 schema，重試比換模型便宜也更可能成功。
 AGY_RETRIES_PER_MODEL = int(os.getenv("AGY_RETRIES_PER_MODEL", "2"))
+# 單次 agy 呼叫最多等多久（秒）。見 _try_agy 裡的說明。
+AGY_PRINT_TIMEOUT_MAX_S = int(os.getenv("AGY_PRINT_TIMEOUT_MAX_S", "600"))
+
+
+def _agy_quota_or_hang(error: str) -> bool:
+    """這個錯誤是不是「整個 agy 帳號現在不能用」？
+
+    agy 鏈上每個模型共用同一個訂閱額度，所以第一個回 RESOURCE_EXHAUSTED 時，
+    後面四個必定也一樣——再試只是讓排程多等好幾十分鐘（2026-09-20 實例）。
+    掛住（print timeout）同理：供應端不回應，換模型不會變好。"""
+    text = str(error or "").lower()
+    return any(k in text for k in ("resource_exhausted", "429", "print timeout", "timeout", "quota"))
 AGY_MODEL_CHAIN = os.getenv(
     "AGY_MODEL_CHAIN",
     "Claude Opus 4.6 (Thinking),Gemini 3.6 Flash (High),Gemini 3.1 Pro (High)",
@@ -478,7 +490,10 @@ async def _try_agy(
     cmd = [
         AGY_BIN, "-p", full_prompt,
         "--model", model_name,
-        "--print-timeout", f"{int(timeout_s)}s",
+        # agy 掛住（不回錯、就是不回）時，print-timeout 就是實際等待時間。寫稿階段
+        # timeout_s=1800，一個模型兩次重試、鏈上五個模型＝最壞要等好幾個小時才輪到
+        # 後備（2026-09-20 中午的 podcast 排程就是這樣佔著鎖跑了 70 分鐘還沒完）。
+        "--print-timeout", f"{min(int(timeout_s), AGY_PRINT_TIMEOUT_MAX_S)}s",
     ]
     dirs = _agy_home_dirs()
     last_error = "unknown"
@@ -932,6 +947,23 @@ async def _try_claude_cli(
     return last_result
 
 
+def _json_contract_block(response_model: Type[T]) -> str:
+    """要模型回哪些 JSON 欄位。agy 與 claude CLI 共用。
+
+    2026-09-20：這段原本只加在 agy 那條路。agy 全掛、第一次真的輪到 claude 寫稿時，
+    claude 完全沒看過欄位表，自己編了 {'stage': ...} 的結構 → 9 個必填欄位 missing，
+    整個 backend 被判失敗，稿子掉到更弱的 gemini-2.5-flash。"""
+    schema_compact, required_names = _compact_schema_for_prompt(response_model)
+    required = ", ".join(required_names) or "（無）"
+    return (
+        f"輸出 JSON 欄位表（值照欄位說明寫；<a|b|c> 表示三選一）：\n{schema_compact}\n\n"
+        f"=== 最終指令（最高優先，覆蓋以上任何衝突）===\n"
+        f"1. 只根據上面『任務素材 / USER PROMPT』指定的那一篇來寫；不要把寫作規則或輸出示例當成文章內容。\n"
+        f"2. 只輸出一個 raw JSON 物件（無 markdown 圍欄、無任何說明或思考過程）。\n"
+        f"3. JSON **必含 schema 全部必填欄位**：{required}。所有欄位遵守上方標示的型別與列舉值。"
+    )
+
+
 async def _try_claude_cli_once(
     *,
     system: str,
@@ -1010,7 +1042,7 @@ async def _try_claude_cli_once(
     args += [
         "--system-prompt", system.strip(),
         "--no-session-persistence",  # boolean → safe directly before positional
-        prompt.strip(),              # user prompt as positional argv
+        f"{prompt.strip()}\n\n{_json_contract_block(response_model)}",  # 欄位表放最後＝最高注意力
     ]
 
     try:
@@ -1624,6 +1656,10 @@ async def call_for_json(
                         print(f"[llm_brain] ↻ agy「{_agy_model}」第 {_attempt + 1} 次未產出"
                               f"（{str(result.raw_error)[:60]}），重試。")
                 if result.data is not None:
+                    break
+                if _agy_quota_or_hang(result.raw_error):
+                    print(f"[llm_brain] ⛔ agy 帳號層級不可用（{str(result.raw_error)[:60]}），"
+                          "整條 agy 鏈跳過，直接換下一個 backend。")
                     break
                 _remaining = _agy_model_chain()[_idx + 1:]
                 if _remaining:
