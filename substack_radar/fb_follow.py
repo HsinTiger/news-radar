@@ -469,6 +469,41 @@ _AI_TELLS = ("故事是這樣的", "值得注意的是", "關鍵在於", "換句
              "總而言之", "更重要的是", "與其", "我們的看法是", "但事實是", "你有沒有想過")
 
 
+def _strip_hashtags(text: str) -> str:
+    """把寫手自己加的 hashtag 拿掉——系統會在結尾統一補。
+
+    2026-09-24 那篇就是卡在這裡：重寫一輪之後只剩這一項，整篇因此沒發。
+    這是純格式問題，用程式刪掉比退稿重寫合理。"""
+    cleaned = re.sub(r"(?m)^[ \t]*(?:#[^\s#]+[ \t]*)+$\n?", "", text)
+    cleaned = re.sub(r"(?<!\w)#[^\s#]+", "", cleaned)
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
+
+def _publish_cards(cards: list[str], text: str) -> dict:
+    """發兩張圖卡＋文字到 FB。
+
+    compose 是在 async 流程裡呼叫 post_with_draft 的，直接 asyncio.run() 會拋
+    「cannot be called from a running event loop」——2026-09-23／24 每一篇草稿都
+    死在這一行，FB 因此五天沒有新貼文（Substack 端完全正常，所以不明顯）。
+    丟到另一條執行緒跑自己的 loop，兩種呼叫情境都成立。"""
+    import threading
+
+    from src.publisher import publish_fb_carousel
+
+    box: dict = {}
+
+    def _worker() -> None:
+        try:
+            box["res"] = asyncio.run(publish_fb_carousel(cards, text, expected_count=2))
+        except Exception as exc:  # noqa: BLE001
+            box["res"] = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    thread = threading.Thread(target=_worker, name="fb-publish")
+    thread.start()
+    thread.join()
+    return box.get("res") or {"success": False, "error": "publisher thread produced no result"}
+
+
 def _humanize(text: str) -> str:
     """句中的破折號換成逗號；整行只有橫線的分隔線（「———」）保留。"""
     out = []
@@ -581,8 +616,7 @@ def deterministic_issues(post: str, article: str, source: SourceInfo | None = No
         issues.append("用了 markdown 語法（**、#、項目符號或連結）。FB 不會渲染，改成純文字。")
     if _URL.search(post):
         issues.append("貼文裡有網址。刪掉，系統會自己補連結。")
-    if post.count("#") > 0:
-        issues.append("貼文裡有 hashtag。刪掉，系統會自己補。")
+    # hashtag 不再退稿：finalize 會自己刪（2026-09-24 有一篇只剩這一項而整篇沒發）。
 
     article_numbers = allowed_numbers(article, source.fact_strings() if source else ())
     missing = sorted({n for n in _NUMBER.findall(post)
@@ -768,7 +802,7 @@ def finalize(post: str, column: str, status: str, url: str | None,
         cta = f"👉 完整版在這，歡迎訂閱：{url}"
     else:
         cta = f"👉 完整版在 Substack，歡迎免費訂閱：{PUB_HOME}"
-    return f"{_humanize(post.strip())}\n\n{cta}\n\n#{column} #{PAGE_NAME}"
+    return f"{_humanize(_strip_hashtags(post.strip()))}\n\n{cta}\n\n#{column} #{PAGE_NAME}"
 
 
 # ---------------------------------------------------------------------------
@@ -850,10 +884,8 @@ def post_with_draft(out_dir: Path, draft) -> str:
         print("[FBFollow] （FB_FOLLOW_LIVE 未開，只產出不發）\n" + text)
         return "preview"
 
-    from src.publisher import publish_fb_carousel
-
     cards = [str(out_dir / "fb_card1.png"), str(out_dir / "fb_card2.png")]
-    res = asyncio.run(publish_fb_carousel(cards, text, expected_count=2))
+    res = _publish_cards(cards, text)
     if not res.get("success"):
         print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
         return record("failed", error=str(res.get("error"))[:300])
@@ -926,10 +958,8 @@ def run(*, dry_run: bool, only: str | None = None, ignore_age: bool = False) -> 
             print("[FBFollow] （試跑，不發）\n" + text)
             return 0
 
-        from src.publisher import publish_fb_carousel
-
         cards = [str(cand.folder / "fb_card1.png"), str(cand.folder / "fb_card2.png")]
-        res = asyncio.run(publish_fb_carousel(cards, text, expected_count=2))
+        res = _publish_cards(cards, text)
         if not res.get("success"):
             print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
             ledger[cand.rel] = {**entry, "status": "failed", "key": cand.key,

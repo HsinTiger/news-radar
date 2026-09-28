@@ -80,9 +80,10 @@ def test_fabricated_trade_is_flagged():
     assert any("交易經歷" in i for i in issues)
 
 
-def test_markdown_url_hashtag_flagged():
-    issues = deterministic_issues("**重點** https://x.com #標籤 " + "字" * 200, ARTICLE)
-    assert len(issues) >= 3
+def test_markdown_and_url_flagged():
+    # hashtag 改由 finalize 自動刪，不再退稿（見 test_writer_hashtags_are_stripped_not_rejected）
+    issues = deterministic_issues("**重點** https://x.com " + "字" * 200, ARTICLE)
+    assert len(issues) >= 2
 
 
 def test_must_name_the_original_show():
@@ -310,3 +311,30 @@ def test_point_card_allows_three_lines_even_with_a_figure(tmp_path):
                         figure="82 億美元", column="賺錢有道", mode="company",
                         topic_category="us_stocks", title="波音", out_dir=tmp_path)
     assert len(paths) == 2
+
+
+def test_publish_works_from_inside_a_running_event_loop(monkeypatch):
+    """compose 是 async：直接 asyncio.run() 會炸，FB 因此五天沒發（2026-09-23/24）。"""
+    import asyncio as aio
+
+    async def fake_publish(cards, text, expected_count=3):
+        return {"success": True, "id": "fb123", "cards": len(cards)}
+    monkeypatch.setattr("src.publisher.publish_fb_carousel", fake_publish)
+
+    async def caller():
+        return fb_follow._publish_cards(["a.png", "b.png"], "內文")
+    assert aio.run(caller()) == {"success": True, "id": "fb123", "cards": 2}
+
+
+def test_publish_also_works_without_a_loop(monkeypatch):
+    async def fake_publish(cards, text, expected_count=3):
+        return {"success": True, "id": "fb456"}
+    monkeypatch.setattr("src.publisher.publish_fb_carousel", fake_publish)
+    assert fb_follow._publish_cards(["a.png", "b.png"], "內文")["id"] == "fb456"
+
+
+def test_writer_hashtags_are_stripped_not_rejected():
+    text = finalize("重點在這 #AI #投資", "吹牛免稅", "draft", None)
+    assert "#AI" not in text and "重點在這" in text
+    assert text.rstrip().endswith("#吹牛免稅 #主力爸爸我錯了")
+    assert not any("hashtag" in i for i in deterministic_issues("內容 #標籤 " + "字" * 200, ARTICLE))

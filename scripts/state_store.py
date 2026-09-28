@@ -321,7 +321,10 @@ class GitHubReleaseStore:
         for attempt in range(1, attempts + 1):
             try:
                 with self.client.stream(
-                    "GET", asset["url"], headers={"Accept": "application/octet-stream"}
+                    "GET", asset["url"], headers={"Accept": "application/octet-stream"},
+                    # 這顆 bundle 約 29MB：家用網路抖一下就超過預設的 120s 讀取上限
+                    # （2026-09-28 中午的排程因此四次重試全逾時、整輪 11 小時零產出）。
+                    timeout=httpx.Timeout(600.0, connect=30.0),
                 ) as response:
                     if response.is_error:
                         raise StateStoreError(
