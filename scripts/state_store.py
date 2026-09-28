@@ -65,6 +65,38 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 同一顆 bundle 不重複下載。每 5 分鐘的 fast-drain 每次都重抓這 ~29MB，下載期間
+# 佔著本機鎖；網路一慢（2026-09-28 深夜實測 GitHub CDN 約 50 KB/s，一次 10 分鐘以上）
+# 它就幾乎一直佔著鎖，中午的編輯排程只能乾等。bundle 名稱與 sha256 都寫在 manifest
+# 裡，內容沒變時直接用本機快取。
+STATE_CACHE_DIR = Path(
+    os.getenv("NEWS_RADAR_STATE_CACHE", str(Path.home() / ".cache" / "news-radar" / "state"))
+)
+STATE_CACHE_KEEP = 3
+
+
+def _cache_lookup(name: str, expected_sha: str | None) -> Path | None:
+    path = STATE_CACHE_DIR / name
+    if expected_sha and path.is_file() and _sha256(path) == expected_sha:
+        return path
+    return None
+
+
+def _cache_store(source: Path, name: str) -> None:
+    """寫進快取（原子替換），只留最新幾顆。快取失敗不影響主流程。"""
+    try:
+        STATE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_CACHE_DIR / f".{name}.tmp"
+        shutil.copyfile(source, tmp)
+        tmp.replace(STATE_CACHE_DIR / name)
+        bundles = sorted(STATE_CACHE_DIR.glob("news-radar-state-*.zip"),
+                         key=lambda item: item.stat().st_mtime, reverse=True)
+        for old in bundles[STATE_CACHE_KEEP:]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def validate_database(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise StateStoreError(f"database not found: {path}")
@@ -559,11 +591,17 @@ class GitHubReleaseStore:
         asset = self._asset_map(release).get(bundle_name)
         if not asset:
             raise StateStoreError(f"manifest points to missing asset: {bundle_name}")
+        cached = _cache_lookup(bundle_name, manifest.get("bundle_sha256"))
+        if cached is not None:
+            print(f"[state-store] 使用本機快取 {bundle_name}（未變更，略過下載）", file=sys.stderr)
+            db_meta = restore_bundle(cached, root, manifest)
+            return {"manifest": manifest, "database": db_meta, "cache": "hit"}
         with tempfile.TemporaryDirectory(prefix="news-radar-pull-") as tmp:
             bundle_path = Path(tmp) / bundle_name
             self.download_asset(asset, bundle_path)
             db_meta = restore_bundle(bundle_path, root, manifest)
-        return {"manifest": manifest, "database": db_meta}
+            _cache_store(bundle_path, bundle_name)
+        return {"manifest": manifest, "database": db_meta, "cache": "miss"}
 
     def push(
         self,
@@ -585,6 +623,7 @@ class GitHubReleaseStore:
                 f"news-radar-state-{meta['database']['sha256'][:12]}-"
                 f"{meta['bundle_sha256'][:12]}.zip"
             )
+            _cache_store(bundle_path, bundle_name)  # 自己剛推的，下一次 pull 不必再下載
             if bundle_name not in assets:
                 self.upload_asset(release, bundle_path, bundle_name, "application/zip")
                 release = self.release(create=False)

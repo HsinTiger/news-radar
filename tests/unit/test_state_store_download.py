@@ -69,3 +69,31 @@ def test_server_error_is_retried(tmp_path, monkeypatch):
     store = _store([_ErrResp(502), _Resp([b"x" * 10])])
     store.download_asset({"url": "u", "size": 10}, tmp_path / "f.zip")
     assert (tmp_path / "f.zip").stat().st_size == 10
+
+
+def test_unchanged_bundle_is_not_downloaded_twice(tmp_path, monkeypatch):
+    """fast-drain 每 5 分鐘都重抓 29MB 並佔著鎖；網路慢時中午排程整晚等不到鎖（2026-09-28）。"""
+    monkeypatch.setattr(state_store, "STATE_CACHE_DIR", tmp_path / "cache")
+    payload = b"bundle-bytes"
+    sha = __import__("hashlib").sha256(payload).hexdigest()
+    manifest = {"bundle_asset": "news-radar-state-aaa-bbb.zip", "bundle_sha256": sha}
+
+    store = state_store.GitHubReleaseStore.__new__(state_store.GitHubReleaseStore)
+    downloads = []
+    def fake_download(asset, dest, attempts=4):
+        downloads.append(dest)
+        Path(dest).write_bytes(payload)
+    store.download_asset = fake_download
+    store.load_manifest = lambda: ({"assets": [{"name": manifest["bundle_asset"], "url": "u"}]}, manifest)
+    monkeypatch.setattr(state_store, "restore_bundle", lambda path, root, m: {"restored_from": str(path)})
+
+    first = store.pull(tmp_path / "root")
+    second = store.pull(tmp_path / "root")
+    assert (first["cache"], second["cache"]) == ("miss", "hit")
+    assert len(downloads) == 1
+
+
+def test_cache_with_wrong_sha_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setattr(state_store, "STATE_CACHE_DIR", tmp_path)
+    (tmp_path / "x.zip").write_bytes(b"tampered")
+    assert state_store._cache_lookup("x.zip", "0" * 64) is None
