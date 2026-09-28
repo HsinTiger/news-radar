@@ -53,6 +53,10 @@ class StateStoreError(RuntimeError):
     """Raised when a state transition cannot be proven complete."""
 
 
+class AssetGone(StateStoreError):
+    """Asset 在列出後被刪除（404）。"""
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -327,7 +331,12 @@ class GitHubReleaseStore:
                     timeout=httpx.Timeout(600.0, connect=30.0),
                 ) as response:
                     if response.is_error:
-                        raise StateStoreError(
+                        # 串流回應要先 read() 才能取 .text，否則拋 httpx.ResponseNotRead——
+                        # 那不是 StateStoreError，會繞過 acquire_lock 的「讀不到就當沒有租約」
+                        # 保護，整個排程 exit 5（2026-09-28 23:40 實測）。
+                        response.read()
+                        error_cls = AssetGone if response.status_code == 404 else StateStoreError
+                        raise error_cls(
                             f"asset download failed ({response.status_code}): "
                             f"{response.text[:500]}"
                         )
@@ -340,7 +349,10 @@ class GitHubReleaseStore:
                         f"asset truncated: got {got} bytes, expected {expected}"
                     )
                 return
-            except (StateStoreError, httpx.HTTPError) as exc:
+            except AssetGone:
+                # 列出來之後被別的行程刪掉（例如租約剛釋放）。重試不會變好，直接交給呼叫端。
+                raise
+            except (StateStoreError, httpx.HTTPError, httpx.StreamError) as exc:
                 last_error = exc
                 if attempt < attempts:
                     print(
