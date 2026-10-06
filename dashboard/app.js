@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20260807-research-writer-v5";
+} from "./ops-core.mjs?v=20261006-remember-fix";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";

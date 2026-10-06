@@ -469,8 +469,16 @@ def test_claude_cli_audit_uses_highest_effort(monkeypatch):
         return Done()
     monkeypatch.setattr(q.shutil, "which", lambda _x: "/Users/hsin/.local/bin/claude")
     monkeypatch.setattr(subprocess, "run", fake_run)
+    # 這個測試原本沒固定環境：在 CLAUDE_EFFORT=max 的 shell 裡跑就會失敗
+    # （2026-10-06，Claude Code 工作階段把自己的 effort 傳給子行程）。
+    monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
     assert q.run_claude_cli("p", 30) == "ok"
-    assert "--effort" in seen["args"] and "high" in seen["args"]
+    args = seen["args"]
+    assert args[args.index("--effort") + 1] == "high"
+    monkeypatch.setenv("CLAUDE_EFFORT", "max")
+    q.run_claude_cli("p", 30)
+    args = seen["args"]
+    assert args[args.index("--effort") + 1] == "max"
 
 
 def test_claude_cli_error_is_not_silently_treated_as_pass(monkeypatch):
