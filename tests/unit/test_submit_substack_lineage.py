@@ -239,3 +239,65 @@ def test_current_control_lane_prioritizes_immediate_and_excludes_legacy(
     selected = drain_substack._candidates(only_current_control=True)
     assert [row[0] for row in selected] == [priority["id"], normal["id"]]
     assert "legacy-unverified" not in {row[0] for row in selected}
+
+
+# --- 儀表板「重產新版本」（2026-10-06）：當成獨立新稿，舊的不動 -------------------
+
+def _fresh_db(monkeypatch, tmp_path):
+    db_path = tmp_path / "news_radar.db"
+    monkeypatch.setattr(submit_substack.dbmod, "DB_PATH", db_path)
+    monkeypatch.setattr(drain_substack, "DB", db_path)
+    submit_substack.dbmod.init_db()
+
+
+def test_variant_of_same_source_becomes_a_separate_draft_candidate(monkeypatch, tmp_path) -> None:
+    _fresh_db(monkeypatch, tmp_path)
+    text = "同一份素材，主編想換一個角度重寫一版，舊版草稿要保留。" * 3
+    original = submit_substack.process_text(
+        text, "原本的角度", immediate=True, submission_id="substack-submit-101")
+    variant = submit_substack.process_text(
+        text, "新的提示：更白話", immediate=True, submission_id="substack-submit-102", variant=True)
+    assert (original["status"], variant["status"]) == ("created", "created")
+    assert original["id"] != variant["id"]
+    candidates = {row[0]: row for row in drain_substack._candidates(only_current_control=True)}
+    assert set(candidates) == {original["id"], variant["id"]}
+    assert candidates[variant["id"]][1] == "新的提示：更白話"        # 新提示就是寫手看到的標題
+    assert "regenerated" in candidates[variant["id"]][5]
+
+
+def test_same_variant_submission_redelivered_is_idempotent(monkeypatch, tmp_path) -> None:
+    _fresh_db(monkeypatch, tmp_path)
+    text = "雲端重送同一筆重產投稿，不能變成兩篇。" * 4
+    first = submit_substack.process_text(text, "x", immediate=True,
+                                         submission_id="substack-submit-201", variant=True)
+    again = submit_substack.process_text(text, "x", immediate=True,
+                                         submission_id="substack-submit-201", variant=True)
+    assert (first["status"], again["status"]) == ("created", "already_exists")
+    assert first["id"] == again["id"]
+
+
+def test_variant_of_url_source_does_not_collide_on_unique_url(monkeypatch, tmp_path) -> None:
+    _fresh_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(submit_substack, "_fetch_page_text", lambda _url: "Readable evidence " * 20)
+    url = "https://example.com/deep-interview"
+    first = submit_substack.process_url(url, "角度一", immediate=True, submission_id="substack-submit-301")
+    second = submit_substack.process_url(url, "角度二", immediate=True,
+                                         submission_id="substack-submit-302", variant=True)
+    assert (first["status"], second["status"]) == ("created", "created")
+    assert first["id"] != second["id"]
+
+
+def test_variant_requires_a_submission_id(monkeypatch, tmp_path) -> None:
+    import pytest
+    _fresh_db(monkeypatch, tmp_path)
+    with pytest.raises(ValueError):
+        submit_substack.process_text("素材" * 50, "x", variant=True)
+
+
+def test_plain_resubmission_still_merges_without_variant(monkeypatch, tmp_path) -> None:
+    """既有規則不變：不是重產的重複投稿照樣併入同一篇。"""
+    _fresh_db(monkeypatch, tmp_path)
+    text = "不是重產，只是又送了一次。" * 5
+    a = submit_substack.process_text(text, "x", submission_id="substack-submit-401")
+    b = submit_substack.process_text(text, "x", submission_id="substack-submit-402")
+    assert (a["status"], b["status"]) == ("created", "already_exists")

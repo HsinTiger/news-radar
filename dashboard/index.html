@@ -15,7 +15,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="投稿">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="stylesheet" href="styles.css?v=20261006-remember-fix">
+  <link rel="stylesheet" href="styles.css?v=20261006-regenerate">
 </head>
 <body>
   <a class="skip-link" href="#main">跳到主要內容</a>
@@ -313,6 +313,7 @@
           <aside class="panel history-panel">
             <div class="panel-heading"><div><p class="eyebrow">RECENT INBOX</p><h2>最近投稿</h2></div><button class="icon-button" id="refresh-history" type="button" aria-label="重新整理投稿紀錄">↻</button></div>
             <div id="submission-history" class="history-list"><div class="locked-placeholder">解鎖後顯示投稿進度。</div></div>
+            <p class="form-message" id="history-message" role="status" hidden></p>
           </aside>
         </div>
       </section>
@@ -337,6 +338,22 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=20261006-remember-fix"></script>
+  <!-- 重產新版本：同一個素材換提示再寫一版，舊的草稿不動（2026-10-06）。 -->
+  <dialog class="auth-dialog" id="regen-dialog">
+    <form method="dialog" class="dialog-card" id="regen-form">
+      <div class="dialog-heading"><div><p class="eyebrow">NEW VERSION</p><h2>用新提示產新版本</h2></div><button class="icon-button" value="cancel" aria-label="關閉">×</button></div>
+      <p class="regen-source" id="regen-source"></p>
+      <label class="field"><span>給寫手的提示</span><textarea id="regen-note" rows="5" maxlength="500" placeholder="例如：更白話，聚焦在來賓給年輕人的建議"></textarea></label>
+      <p class="regen-hint">舊的草稿會保留。新版本只建草稿，不會自動公開；同一支影片已經發過 FB 的話，也不會再發一次。</p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button class="button button-quiet" value="cancel">取消</button>
+        <button class="button button-primary" id="regen-submit" type="submit">送出新版本</button>
+      </div>
+      <p class="dialog-status" id="regen-status" role="status"></p>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js?v=20261006-regenerate"></script>
 </body>
 </html>

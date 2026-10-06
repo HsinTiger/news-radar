@@ -44,6 +44,11 @@ on:
         required: false
         default: ""
         type: string
+      variant:
+        description: "重產新版本：當成獨立的新稿，不併入同一素材的舊投稿"
+        required: false
+        default: "false"
+        type: string
 
 concurrency:
   group: news-radar-production
@@ -58,7 +63,10 @@ env:
 jobs:
   submit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 原本 10 分鐘。Mac 寫稿時會佔著寫入鎖（中午那輪兩篇可到 60–70 分鐘），雲端等
+    # 不到就撞上 10 分鐘上限被強制中止——2026-09 四筆失敗投稿有三筆是這個原因。
+    # repo 是 public，Actions 分鐘不計費，等久一點沒有成本。
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v5
 
@@ -71,15 +79,18 @@ jobs:
         run: pip install -r requirements.txt -q
 
       - name: Acquire canonical state write lease
+        id: lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python scripts/state_store.py lock --repo "$GITHUB_REPOSITORY" \
             --producer "github:${{ github.workflow }}:${{ github.run_id }}" \
-            --lease-file .runtime-state-lease.json
+            --lease-file .runtime-state-lease.json \
+            --wait-seconds 4800
 
       - name: Restore verified runtime state
+        id: restore
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -102,10 +113,12 @@ jobs:
           [ "${{ inputs.immediate }}" = "true" ] && IMM="--immediate"
           PUB=""
           [ "${{ inputs.publish_now }}" = "true" ] && PUB="--publish-now"
+          VAR=""
+          [ "${{ inputs.variant }}" = "true" ] && VAR="--variant"
           python scripts/submit_substack.py \
             "$FLAG" "${{ inputs.content }}" \
             --note "${{ inputs.note }}" \
-            --submission-id "${{ inputs.submission_id }}" $IMM $PUB 2>&1
+            --submission-id "${{ inputs.submission_id }}" $IMM $PUB $VAR 2>&1
 
       - name: Persist verified runtime state
         id: persist
@@ -133,6 +146,8 @@ jobs:
           SOCIAL_OPS_API_URL: ${{ vars.SOCIAL_OPS_API_URL }}
           SOCIAL_OPS_SERVICE_TOKEN: ${{ secrets.SOCIAL_OPS_SERVICE_TOKEN }}
           SUBMISSION_ID: ${{ inputs.submission_id }}
+          LOCK_STATUS: ${{ steps.lock.outcome }}
+          RESTORE_STATUS: ${{ steps.restore.outcome }}
           PROCESS_STATUS: ${{ steps.process.outcome }}
           PERSIST_STATUS: ${{ steps.persist.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -140,4 +155,18 @@ jobs:
           # This workflow queues a source. It does NOT prove a Substack draft exists.
           STATUS="source_queued"
           [ "$PROCESS_STATUS" = "success" ] && [ "$PERSIST_STATUS" = "success" ] || STATUS="failed"
-          python scripts/control_plane.py status "$SUBMISSION_ID" "$STATUS" --workflow-run-url "$RUN_URL"
+          # 失敗要寫原因，手機上的投稿紀錄才看得出為什麼（原本一律只有「失敗」兩字）。
+          ERROR=""
+          if [ "$STATUS" = "failed" ]; then
+            if [ "$LOCK_STATUS" != "success" ]; then
+              ERROR="等不到寫入鎖：Mac 正在寫稿，80 分鐘內沒有釋放（可直接按一鍵重產）"
+            elif [ "$RESTORE_STATUS" != "success" ]; then
+              ERROR="下載雲端狀態檔失敗，多半是網路暫時不穩（可直接按一鍵重產）"
+            elif [ "$PROCESS_STATUS" != "success" ]; then
+              ERROR="素材處理失敗：網址打不開或抓不到內容，詳見執行紀錄"
+            else
+              ERROR="狀態寫回失敗，多半是網路暫時不穩（可直接按一鍵重產）"
+            fi
+          fi
+          python scripts/control_plane.py status "$SUBMISSION_ID" "$STATUS" \
+            --workflow-run-url "$RUN_URL" --error "$ERROR"

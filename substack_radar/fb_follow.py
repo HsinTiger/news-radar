@@ -109,14 +109,67 @@ def split_column(title: str) -> tuple[str, str]:
     return "", text
 
 
+_YT_ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})")
+
+
+def _source_url(source_id: str) -> str:
+    if not source_id or not NEWS_DB.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{NEWS_DB}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT url FROM news_items WHERE id=?", (source_id,)).fetchone()
+        finally:
+            conn.close()
+        return (row[0] or "") if row else ""
+    except Exception:
+        return ""
+
+
+def _canonical_source(url: str) -> str:
+    """同一個原始來源的不同寫法收斂成同一把鑰匙（YouTube 用影片 ID；其他去掉 # 之後）。"""
+    if not url:
+        return ""
+    match = _YT_ID.search(url)
+    if match:
+        return f"yt:{match.group(1)}"
+    if url.lower().startswith(("http://", "https://")):
+        return "url:" + url.split("#", 1)[0].rstrip("/")
+    if url.startswith("manual-text://"):   # 全文投稿的合成網址＝內容雜湊；重產版本在 # 後面加編號
+        return "text:" + url.split("#", 1)[0][len("manual-text://"):]
+    return ""
+
+
 def _dedupe_key(meta: dict, headline: str) -> str:
-    """同一個題材重跑會留下新舊兩版草稿，FB 只能發一版。"""
+    """同一個原始來源，FB 只發一次。
+
+    2026-10-06 起儀表板可以「重產新版本」：同一支影片可能有好幾版草稿，每版的
+    news id 都不同。用 news id 當鑰匙會讓每一版都再發一次 FB，所以改看原始來源。"""
     source = meta.get("source") or {}
     if source.get("ticker"):
         return f"company:{source['ticker']}"
+    canonical = _canonical_source(_source_url(source.get("id", "")))
+    if canonical:
+        return canonical
     if source.get("id"):
         return f"source:{source['id']}"
     return f"title:{headline}"
+
+
+def _posted_keys(ledger: dict) -> set:
+    """已發過的鑰匙。舊紀錄的鑰匙是 news id 格式，從它的草稿資料夾重新換算一次，
+    改鑰匙規則前發過的影片才不會被重產版本再發一次。"""
+    keys = set()
+    for rel, entry in ledger.items():
+        if entry.get("status") != "posted":
+            continue
+        keys.add(entry.get("key"))
+        try:
+            meta = json.loads((DRAFTS_DIR / rel / "metadata.json").read_text(encoding="utf-8"))
+            keys.add(_dedupe_key(meta, ""))
+        except Exception:
+            pass
+    return keys
 
 
 def _draft_id_from_db(meta: dict) -> str | None:
@@ -140,7 +193,7 @@ def scan(now: datetime | None = None, ledger: dict | None = None) -> list[Candid
     """回傳可發的候選（最舊的在前）。被排除的不回傳，原因印在 log。"""
     now = now or datetime.now()
     ledger = _load_ledger() if ledger is None else ledger
-    posted_keys = {v.get("key") for v in ledger.values() if v.get("status") == "posted"}
+    posted_keys = _posted_keys(ledger)
 
     found: list[Candidate] = []
     for day_dir in sorted(DRAFTS_DIR.glob("20??-??-??")):
@@ -844,7 +897,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
     if any(str(w).startswith(FACT_FAIL_MARK) for w in meta.get("audit_warnings") or []):
         print("[FBFollow] ⏭️ Substack 端事實稽核沒過，FB 不跟發。")
         return record("skipped", reason="Substack 事實稽核沒過")
-    if any(v.get("status") == "posted" and v.get("key") == cand.key for v in ledger.values()):
+    if cand.key in _posted_keys(ledger):
         print(f"[FBFollow] ⏭️ 同題材（{cand.key}）已經發過 FB。")
         return "skipped"
 

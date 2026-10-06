@@ -338,3 +338,40 @@ def test_writer_hashtags_are_stripped_not_rejected():
     assert "#AI" not in text and "重點在這" in text
     assert text.rstrip().endswith("#吹牛免稅 #主力爸爸我錯了")
     assert not any("hashtag" in i for i in deterministic_issues("內容 #標籤 " + "字" * 200, ARTICLE))
+
+
+# --- 重產新版本不能讓 FB 重複發（2026-10-06） ---------------------------------------
+
+def test_canonical_source_unifies_youtube_and_text_variants():
+    c = fb_follow._canonical_source
+    assert c("https://www.youtube.com/watch?v=6AgOfiZOWiY") == c("https://youtu.be/6AgOfiZOWiY?t=9") == "yt:6AgOfiZOWiY"
+    assert c("https://www.youtube.com/watch?v=6AgOfiZOWiY#news-radar-substack=x") == "yt:6AgOfiZOWiY"
+    assert c("manual-text://abc") == c("manual-text://abc#variant-sub-1") == "text:abc"
+    assert c("https://ex.com/a/#frag") == "url:https://ex.com/a"
+
+
+def test_regenerated_version_of_an_already_posted_video_is_not_reposted(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    urls = {"orig-news": "https://youtu.be/AAAAAAAAAAA", "variant-news": "https://www.youtube.com/watch?v=AAAAAAAAAAA#news-radar-substack=v"}
+    monkeypatch.setattr(fb_follow, "_source_url", lambda sid: urls.get(sid, ""))
+    first = _mk(tmp_path, "2026-10-06", "orig", datetime.now(), source={"id": "orig-news"})
+    (tmp_path / "l.json").write_text(json.dumps({"2026-10-06/orig": {"status": "posted", "key": "source:orig-news"}}))
+    variant = _mk(tmp_path, "2026-10-07", "variant", datetime.now(), source={"id": "variant-news"})
+    piece = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="", fb_post="內文" * 100)
+    assert fb_follow.post_with_draft(variant, piece) == "skipped"
+
+
+def test_retry_of_a_never_posted_failed_submission_still_posts(tmp_path, monkeypatch):
+    """失敗重產（之前從沒發過 FB）要照常發。"""
+    from types import SimpleNamespace
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / "l.json")
+    monkeypatch.delenv("FB_FOLLOW_LIVE", raising=False)
+    monkeypatch.setattr(fb_follow, "_source_url", lambda sid: "https://youtu.be/BBBBBBBBBBB")
+    monkeypatch.setattr(fb_follow, "card_issues", lambda *a, **k: [])
+    monkeypatch.setattr(fb_follow, "deterministic_issues", lambda *a, **k: [])
+    folder = _mk(tmp_path, "2026-10-07", "retry", datetime.now(), source={"id": "retry-news"})
+    piece = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="", fb_post="內文" * 100)
+    assert fb_follow.post_with_draft(folder, piece) == "preview"

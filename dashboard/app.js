@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20261006-remember-fix";
+} from "./ops-core.mjs?v=20261006-regenerate";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
@@ -36,6 +36,11 @@ const STATUS_COPY = {
   quality_held: "品質閘門暫停", failed: "失敗", rejected: "已拒絕", unknown: "未知",
   healthy: "正常", degraded: "降級", error: "錯誤", success: "通過", cancelled: "已取消",
 };
+const MODE_COPY = {
+  draft: "草稿", draft_priority: "優先草稿", publish_now: "立即發布",
+  draft_variant: "重產新版本", queue: "排程",
+};
+const SOURCE_COPY = {youtube: "YouTube", url: "網址", text: "全文"};
 const HEALTH_COPY = {
   daily_publish_cadence: "每日發布節奏", latest_post_canary: "最新貼文回讀",
   engagement_api: "互動數據 API", scheduler_delivery: "GitHub 排程送達",
@@ -678,14 +683,18 @@ function renderHistory() {
   rows.slice(0, 15).forEach((row) => {
     const item = node("article", "history-row");
     const head = node("div", "history-head");
-    head.append(node("strong", "", row.note || (row.target === "substack" ? "Substack 素材" : "Meta 素材")), node("time", "", age(row.created_at)));
-    item.append(head, node("p", "", `${row.target === "substack" ? "Substack" : "Meta"} · ${row.source_type} · ${row.requested_mode}`), statusChip(row.status));
+    const title = node("strong", "", row.note || (row.target === "substack" ? "Substack 素材" : "Meta 素材"));
+    if (row.regenerated_from) title.append(node("span", "lineage-chip", "↻ 重產版本"));
+    head.append(title, node("time", "", age(row.created_at)));
+    const route = `${row.target === "substack" ? "Substack" : "Meta"} · ${SOURCE_COPY[row.source_type] || row.source_type} · ${MODE_COPY[row.requested_mode] || row.requested_mode}`;
+    item.append(head, node("p", "", route), statusChip(row.status));
     if (row.result_url) {
       const link = node("a", "", "查看公開文章");
       link.href = row.result_url; link.target = "_blank"; link.rel = "noreferrer";
       item.append(link);
     }
-    if (row.error) item.append(node("p", "", row.error));
+    if (row.error) item.append(node("p", "history-error", row.error));
+    if (row.target === "substack") item.append(historyActions(row));
     box.append(item);
   });
 }
@@ -755,6 +764,85 @@ function formMessage(message, kind = "") {
   box.hidden = !message;
   box.className = `form-message ${kind}`;
   box.textContent = message;
+}
+
+// ── 重產新版本（2026-10-06）────────────────────────────────────────────────
+// 失敗的：一鍵用原提示重跑。每一筆：換提示產新版本。都是建一筆新的投稿，舊的
+// 投稿與草稿完全不動；Worker 端一律只建草稿（draft_variant）。
+function historyActions(row) {
+  const actions = node("div", "history-actions");
+  if (row.status === "failed") {
+    const retry = node("button", "button button-primary", "一鍵重產");
+    retry.type = "button";
+    retry.addEventListener("click", () => regenerate(row.id, null, retry));
+    actions.append(retry);
+  }
+  const variant = node("button", "button button-quiet", "用新提示產新版本");
+  variant.type = "button";
+  variant.addEventListener("click", () => openRegenDialog(row));
+  actions.append(variant);
+  return actions;
+}
+
+function historyMessage(message, kind = "") {
+  const box = $("history-message");
+  box.hidden = !message;
+  box.className = `form-message ${kind}`;
+  box.textContent = message;
+}
+
+async function regenerate(sourceId, note, button) {
+  if (!state.dashboard || !currentToken()) {
+    historyMessage("請先解鎖營運資料。", "bad");
+    return false;
+  }
+  const label = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "送出中…";
+  }
+  try {
+    const idempotency = window.crypto?.randomUUID?.().replaceAll("-", "") || `regen${Date.now()}${Math.random().toString(16).slice(2)}`;
+    const result = await request(`/api/submissions/${encodeURIComponent(sourceId)}/regenerate`, {
+      method: "POST",
+      headers: {"Idempotency-Key": `regen_${idempotency}`.slice(0, 80)},
+      body: JSON.stringify(note === null ? {} : {note}),
+    });
+    const id = result.submission?.id ? `（${result.submission.id.slice(0, 8)}）` : "";
+    historyMessage(`已送出新版本${id}。大約 10–30 分鐘後出現在 Substack 草稿匣，舊的草稿不會動。`, "good");
+    await loadPrivateData(currentToken(), {quiet: true});
+    return true;
+  } catch (error) {
+    if (error.status === 401) showAuthNotice(error.message);
+    historyMessage(`沒有送出：${error.message}`, "bad");
+    return false;
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+}
+
+function openRegenDialog(row) {
+  state.regenSource = row;
+  $("regen-source").textContent = `素材：${SOURCE_COPY[row.source_type] || row.source_type}，${age(row.created_at)}投稿。下面是原本的提示，改成你要的方向再送出。`;
+  $("regen-note").value = row.note || "";
+  $("regen-status").textContent = "";
+  $("regen-dialog").showModal();
+  setTimeout(() => $("regen-note").focus(), 0);
+}
+
+async function submitRegen(event) {
+  // 「取消」也是表單送出鈕：一定要先放行，否則按取消會真的送出一篇新版本。
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  const row = state.regenSource;
+  if (!row) return;
+  $("regen-status").textContent = "";
+  const ok = await regenerate(row.id, $("regen-note").value.trim(), $("regen-submit"));
+  if (ok) $("regen-dialog").close();
+  else $("regen-status").textContent = $("history-message").textContent;
 }
 
 async function submitMaterial(event) {
@@ -857,6 +945,7 @@ function bindEvents() {
     setTimeout(() => $("owner-token").focus(), 0);
   });
   $("auth-form").addEventListener("submit", unlock);
+  $("regen-form").addEventListener("submit", submitRegen);
   $("forget-token").addEventListener("click", explicitForget);
   $("submission-form").addEventListener("submit", submitMaterial);
   document.querySelectorAll('input[name="target"], input[name="source"], input[name="meta-mode"], input[name="substack-mode"]').forEach((input) => input.addEventListener("change", updateSubmissionUi));

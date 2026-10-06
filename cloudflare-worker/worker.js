@@ -116,6 +116,14 @@ export default {
         await requireToken(request, env.OWNER_TOKEN, "owner");
         return await listSubmissions(url, env, cors);
       }
+      const regenerateMatch = url.pathname.match(
+        /^\/api\/submissions\/([A-Za-z0-9_-]{8,80})\/regenerate$/,
+      );
+      if (request.method === "POST" && regenerateMatch) {
+        await requireToken(request, env.OWNER_TOKEN, "owner");
+        await enforceOwnerRateLimit(env);
+        return await regenerateSubmission(request, env, regenerateMatch[1], cors);
+      }
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         await requireToken(request, env.OWNER_TOKEN, "owner");
         return await dashboard(env, cors);
@@ -416,7 +424,7 @@ function cleanString(value, name, max, required = false) {
 
 async function enforceOwnerRateLimit(env) {
   const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM audit_events WHERE actor='owner' AND action='create_submission' AND datetime(created_at) >= datetime('now','-1 minute')",
+    "SELECT COUNT(*) AS count FROM audit_events WHERE actor='owner' AND action IN ('create_submission','regenerate_submission') AND datetime(created_at) >= datetime('now','-1 minute')",
   ).first();
   if (Number(row?.count || 0) >= OWNER_RATE_LIMIT_PER_MINUTE) {
     throw new HTTPError(429, "Too many submissions; retry in one minute", "rate_limited");
@@ -592,6 +600,81 @@ async function createSubmission(request, env, cors) {
   await nudgeSubmissionPoller(env, id);
   return reply(
     { ok: true, submission: { id, target, status: "queued", mode, platforms, created_at: now } },
+    202,
+    cors,
+  );
+}
+
+// 重產：用同一個素材再產一版 Substack 草稿，舊的投稿與草稿完全不動（2026-10-06 信哥要的）。
+//   - 不帶 note ＝ 原提示重跑（失敗的一鍵重產）；帶 note ＝ 用新提示產新版本。
+//   - requested_mode 固定 draft_variant：只建草稿、絕不自動公開，下游會把它當成一篇
+//     獨立的新稿（不跟原投稿合併），見 scripts/submit_substack.py --variant。
+//   - 從哪一篇重產記在 audit_events（不改 D1 schema）。
+const VARIANT_MODE = "draft_variant";
+
+async function regenerateSubmission(request, env, sourceId, cors) {
+  const body = await bodyJson(request);
+  const original = await env.DB.prepare(
+    "SELECT id,target,source_type,content,note FROM submissions WHERE id=?",
+  )
+    .bind(sourceId)
+    .first();
+  if (!original) throw new HTTPError(404, "submission not found", "not_found");
+  if (original.target !== "substack") {
+    throw new HTTPError(400, "只有 Substack 投稿可以重產新版本", "unsupported_target");
+  }
+  const noteProvided = Object.prototype.hasOwnProperty.call(body, "note");
+  const note = noteProvided ? cleanString(body.note, "note", 500) : original.note;
+  const idempotencyKey = cleanString(
+    request.headers.get("Idempotency-Key") || body.idempotency_key,
+    "idempotency_key",
+    80,
+    true,
+  );
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(idempotencyKey)) {
+    throw new HTTPError(400, "invalid idempotency_key", "invalid_input");
+  }
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO submissions(
+          id,idempotency_key,target,source_type,content,note,platforms_json,
+          requested_mode,status,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(
+        id, idempotencyKey, "substack", original.source_type, original.content, note,
+        "[]", VARIANT_MODE, "queued", now, now,
+      ),
+      env.DB.prepare(
+        "INSERT INTO audit_events(actor,action,subject_id,status,metadata_json,created_at) VALUES('owner','regenerate_submission',?,'accepted',?,?)",
+      ).bind(
+        id,
+        JSON.stringify({ from: original.id, note_changed: note !== original.note }),
+        now,
+      ),
+    ]);
+  } catch (error) {
+    if (String(error).includes("UNIQUE constraint failed")) {
+      const existing = await env.DB.prepare(
+        "SELECT id,target,status,created_at,updated_at FROM submissions WHERE idempotency_key=?",
+      )
+        .bind(idempotencyKey)
+        .first();
+      return reply({ ok: true, duplicate: true, submission: existing }, 200, cors);
+    }
+    throw error;
+  }
+  await nudgeSubmissionPoller(env, id);
+  return reply(
+    {
+      ok: true,
+      submission: {
+        id, target: "substack", status: "queued", mode: VARIANT_MODE,
+        created_at: now, regenerated_from: original.id,
+      },
+    },
     202,
     cors,
   );
@@ -1289,9 +1372,11 @@ async function dashboard(env, cors) {
     runtimeState, recoveryExperiments, events,
   ] = await env.DB.batch([
     env.DB.prepare("SELECT target,status,COUNT(*) AS count FROM submissions GROUP BY target,status"),
-    env.DB.prepare(`SELECT id,target,source_type,note,platforms_json,requested_mode,status,
-      workflow_run_url,error,external_post_id,result_url,published_at,created_at,updated_at
-      FROM submissions ORDER BY created_at DESC LIMIT 25`),
+    env.DB.prepare(`SELECT s.id,s.target,s.source_type,s.note,s.platforms_json,s.requested_mode,s.status,
+      s.workflow_run_url,s.error,s.external_post_id,s.result_url,s.published_at,s.created_at,s.updated_at,
+      (SELECT json_extract(a.metadata_json,'$.from') FROM audit_events a
+        WHERE a.action='regenerate_submission' AND a.subject_id=s.id LIMIT 1) AS regenerated_from
+      FROM submissions s ORDER BY s.created_at DESC LIMIT 25`),
     env.DB.prepare("SELECT platform,status,COUNT(*) AS count,MAX(posted_at) AS last_posted_at FROM platform_posts GROUP BY platform,status"),
     env.DB.prepare(`WITH ranked_engagement AS (
       SELECT *,ROW_NUMBER() OVER(

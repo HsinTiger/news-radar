@@ -29,12 +29,16 @@ def build_dispatch(submission: dict[str, Any]) -> Dispatch:
         "submission_id": submission["id"],
     }
     if submission["target"] == "substack":
+        mode = submission.get("mode")
         return Dispatch(
             "substack-submit.yml",
             {
                 **common,
-                "immediate": "true" if submission.get("mode") in {"draft_priority", "publish_now"} else "false",
-                "publish_now": "true" if submission.get("mode") == "publish_now" else "false",
+                # draft_variant＝儀表板「重產新版本」：跟優先投稿一樣立刻寫，但當成獨立的
+                # 新稿（不併入同一素材的舊投稿），而且永遠只建草稿。
+                "immediate": "true" if mode in {"draft_priority", "publish_now", "draft_variant"} else "false",
+                "publish_now": "true" if mode == "publish_now" else "false",
+                "variant": "true" if mode == "draft_variant" else "false",
             },
         )
     if submission["target"] != "meta":

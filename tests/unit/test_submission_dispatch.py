@@ -69,3 +69,18 @@ def test_meta_queue_uses_submit_source() -> None:
     )
     assert result.workflow == "submit-source.yml"
     assert result.inputs["platforms"] == "ig"
+
+
+def test_regenerated_variant_is_immediate_draft_only_and_marked_variant():
+    """儀表板重產（draft_variant）：立刻寫、獨立新稿、絕不自動公開。"""
+    from scripts.submission_dispatch import build_dispatch
+
+    base = {"id": "11111111-2222", "target": "substack", "source_type": "youtube",
+            "content": "https://youtu.be/abc", "note": "新提示"}
+    variant = build_dispatch({**base, "mode": "draft_variant"})
+    assert variant.workflow == "substack-submit.yml"
+    assert variant.inputs["immediate"] == "true"
+    assert variant.inputs["publish_now"] == "false"
+    assert variant.inputs["variant"] == "true"
+    plain = build_dispatch({**base, "mode": "draft_priority"})
+    assert plain.inputs["variant"] == "false"

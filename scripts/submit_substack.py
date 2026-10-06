@@ -68,11 +68,23 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
                         body: str, source_type: str, extra_tags: list[str],
                         immediate: bool = False,
                         publish_now: bool = False,
-                        submission_id: str = "") -> dict:
-    conn = dbmod.get_conn()
+                        submission_id: str = "",
+                        variant: bool = False) -> dict:
     if submission_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", submission_id):
-        conn.close()
         raise ValueError("invalid control-plane submission id")
+    if variant:
+        # 儀表板「重產新版本」（2026-10-06）。平常同一個素材再投一次會刻意併入同一篇
+        # （test_duplicate_substack_source_merges_*），重產則要當成獨立的新稿：身分證改由
+        # 「素材＋這次投稿編號」組成。同一筆投稿重送仍然冪等。
+        if not submission_id:
+            raise ValueError("variant submissions require a control-plane submission id")
+        news_id = _make_news_id(f"{news_id}:variant:{submission_id}")
+        extra_tags = [*extra_tags, "regenerated"]
+        if url and not url.lower().startswith(("http://", "https://")):
+            # 全文投稿的合成網址（manual-text://雜湊）不會走 _submission_url 的去重，
+            # 同一份全文重產會撞 news_items.url 的 UNIQUE；加上投稿編號區隔。
+            url = f"{url}#variant-{submission_id}"
+    conn = dbmod.get_conn()
     desired_tags = [
         SUBSTACK_TAG,
         "user_submission_substack",
@@ -136,7 +148,7 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
 
 def process_url(url: str, note: str = "", immediate: bool = False,
                 publish_now: bool = False,
-                submission_id: str = "") -> dict:
+                submission_id: str = "", variant: bool = False) -> dict:
     news_id = _make_news_id("substack_" + url)
     body = _fetch_page_text(url) or ""
     if len(body.strip()) < 80:
@@ -148,12 +160,12 @@ def process_url(url: str, note: str = "", immediate: bool = False,
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="article", extra_tags=[], immediate=immediate,
                                publish_now=publish_now,
-                               submission_id=submission_id)
+                               submission_id=submission_id, variant=variant)
 
 
 def process_text(text: str, note: str = "", immediate: bool = False,
                  publish_now: bool = False,
-                 submission_id: str = "") -> dict:
+                 submission_id: str = "", variant: bool = False) -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
     title = note or (text[:60] + ("..." if len(text) > 60 else ""))
@@ -164,12 +176,12 @@ def process_text(text: str, note: str = "", immediate: bool = False,
     return _save_substack_item(news_id, url=synthetic_url, title=title, body=text,
                                source_type="text", extra_tags=["user_text"], immediate=immediate,
                                publish_now=publish_now,
-                               submission_id=submission_id)
+                               submission_id=submission_id, variant=variant)
 
 
 def process_youtube(url: str, note: str = "", immediate: bool = False,
                     publish_now: bool = False,
-                    submission_id: str = "") -> dict:
+                    submission_id: str = "", variant: bool = False) -> dict:
     info = _extract_yt_transcript(url)
     if not info:
         # No transcript — fall back to treating it as a URL source.
@@ -180,19 +192,19 @@ def process_youtube(url: str, note: str = "", immediate: bool = False,
                                    body=body, source_type="youtube",
                                    extra_tags=["youtube", "video", "enrich_yt", "no_caption"],
                                    immediate=immediate, publish_now=publish_now,
-                                   submission_id=submission_id)
+                                   submission_id=submission_id, variant=variant)
     news_id = _make_news_id("substack_yt_" + info["video_id"])
     title = note or info["title"]
     body = f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}"
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"],
                                immediate=immediate, publish_now=publish_now,
-                               submission_id=submission_id)
+                               submission_id=submission_id, variant=variant)
 
 
 def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = False,
                           publish_now: bool = False,
-                          submission_id: str = "") -> dict:
+                          submission_id: str = "", variant: bool = False) -> dict:
     """多支 YouTube 種子（巨人之聲多源）：把全部網址寫進 body，讓 Mac 端 drain
     觸發 enrich_youtube_sources.py 建『一主題 × 多一手源 + 書面深度報告』素材包。"""
     urls = [u.strip() for u in urls if u.strip()]
@@ -201,7 +213,7 @@ def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = Fal
     if len(urls) == 1:
         return process_youtube(
             urls[0], note, immediate=immediate, publish_now=publish_now,
-            submission_id=submission_id,
+            submission_id=submission_id, variant=variant,
         )
     key = hashlib.md5("|".join(sorted(urls)).encode()).hexdigest()
     news_id = _make_news_id("substack_ytmulti_" + key)
@@ -213,7 +225,7 @@ def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = Fal
                                source_type="youtube",
                                extra_tags=["youtube", "video", "enrich_yt", "multi_source"],
                                immediate=immediate, publish_now=publish_now,
-                               submission_id=submission_id)
+                               submission_id=submission_id, variant=variant)
 
 
 _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
@@ -221,7 +233,7 @@ _RAW_BASE = "https://raw.githubusercontent.com/HsinTiger/news-radar/main/"
 
 def process_images(paths: list[str], note: str = "", immediate: bool = False,
                    publish_now: bool = False,
-                   submission_id: str = "") -> dict:
+                   submission_id: str = "", variant: bool = False) -> dict:
     """One or more uploaded screenshots → ONE Substack draft seed.
 
     There is no OCR in the cloud, so `note` is REQUIRED and used as the textual
@@ -241,7 +253,7 @@ def process_images(paths: list[str], note: str = "", immediate: bool = False,
     return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=note, body=body,
                                source_type="image", extra_tags=["user_image", f"images:{len(paths)}"],
                                immediate=immediate, publish_now=publish_now,
-                               submission_id=submission_id)
+                               submission_id=submission_id, variant=variant)
 
 
 def main():
@@ -261,24 +273,26 @@ def main():
     )
     p.add_argument("--submission-id", default="",
                    help="Social Ops control-plane ID; stored as metadata for truthful draft reporting")
+    p.add_argument("--variant", action="store_true",
+                   help="重產新版本：當成獨立的新稿，不併入同一素材的舊投稿（需要 --submission-id）")
     args = p.parse_args()
 
     if args.url:
         result = process_url(args.url, args.note, immediate=args.immediate,
                              publish_now=args.publish_now,
-                             submission_id=args.submission_id)
+                             submission_id=args.submission_id, variant=args.variant)
     elif args.text:
         result = process_text(args.text, args.note, immediate=args.immediate,
                               publish_now=args.publish_now,
-                              submission_id=args.submission_id)
+                              submission_id=args.submission_id, variant=args.variant)
     elif args.yt:
         result = process_youtube_multi(args.yt.split(","), args.note, immediate=args.immediate,
                                        publish_now=args.publish_now,
-                                       submission_id=args.submission_id)
+                                       submission_id=args.submission_id, variant=args.variant)
     elif args.images:
         result = process_images(args.images.split(","), args.note, immediate=args.immediate,
                                 publish_now=args.publish_now,
-                                submission_id=args.submission_id)
+                                submission_id=args.submission_id, variant=args.variant)
     else:
         result = {"status": "error", "error": "one of --url / --text / --yt / --images required"}
 
