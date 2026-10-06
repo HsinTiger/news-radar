@@ -227,7 +227,10 @@ function updateAuthUi(verified = Boolean(state.dashboard)) {
   const hasToken = Boolean(currentToken());
   $("open-auth").textContent = verified ? "已解鎖 · 管理" : (hasToken ? "重新驗證" : "解鎖營運資料");
   $("forget-token").hidden = !hasToken;
-  $("remember-token").checked = Boolean(localStorage.getItem(TOKEN_KEY));
+  // 這裡原本會把「保留在這台裝置」重設成 localStorage 現況。updateAuthUi 在公開資料
+  // 載完時也會跑（renderRuntime），手機網路慢時常常剛好發生在使用者已勾選、還沒按
+  // 解鎖之間——勾勾被悄悄取消，token 只存進 sessionStorage，App 一滑掉就要重新授權
+  // （2026-10-06 信哥回報）。勾選框改成只在打開對話框時設定一次。
   $("submit-button").disabled = !verified;
   $("submit-button").textContent = verified ? submissionButtonCopy() : "先解鎖再投稿";
   const connection = $("connection-pill");
@@ -846,6 +849,10 @@ function bindEvents() {
   $("refresh-history").addEventListener("click", () => loadPrivateData(currentToken(), {quiet: false}));
   $("open-auth").addEventListener("click", () => {
     $("auth-status").textContent = "";
+    // 從主畫面打開（standalone）就預設保留：加到主畫面本來就是為了不要每次重貼。
+    const standalone = window.navigator.standalone === true
+      || window.matchMedia?.("(display-mode: standalone)").matches;
+    $("remember-token").checked = Boolean(localStorage.getItem(TOKEN_KEY)) || standalone;
     $("auth-dialog").showModal();
     setTimeout(() => $("owner-token").focus(), 0);
   });
