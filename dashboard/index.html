@@ -7,6 +7,14 @@
   <meta name="theme-color" content="#11110f">
   <meta name="description" content="HsinTiger 的 Substack 與 Meta 三平台營運駕駛艙">
   <title>HsinTiger · 營運駕駛艙</title>
+  <!-- 加入主畫面：iPhone Safari 會把連續 7 天沒開的網站資料（含記住的 token）刪掉，
+       主畫面 App 不受這個限制。從主畫面打開直接進投稿頁。 -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="投稿">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -315,7 +323,9 @@
     <form method="dialog" class="dialog-card" id="auth-form">
       <div class="dialog-heading"><div><p class="eyebrow">OWNER ACCESS</p><h2>解鎖營運資料</h2></div><button class="icon-button" value="cancel" aria-label="關閉">×</button></div>
       <p>沿用你既有的一次性投稿授權。Token 只會送往既有 Cloudflare Worker，不會出現在網址或分析紀錄。</p>
-      <label class="field"><span>Owner token</span><input id="owner-token" type="password" autocomplete="current-password" placeholder="貼上 token"></label>
+      <!-- 給 iPhone 密碼功能一個帳號名，它才會提議儲存這個 token；之後被清掉也能 Face ID 一鍵填回。 -->
+      <input class="visually-hidden" type="text" name="username" autocomplete="username" value="hsintiger-owner" tabindex="-1" aria-hidden="true" readonly>
+      <label class="field"><span>Owner token</span><input id="owner-token" name="password" type="password" autocomplete="current-password" placeholder="貼上 token"></label>
       <label class="remember-row"><input id="remember-token" type="checkbox"><span>保留在這台裝置（localStorage）</span></label>
       <div class="dialog-actions">
         <button class="button button-danger" id="forget-token" type="button" hidden>鎖定此裝置</button>
