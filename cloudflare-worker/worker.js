@@ -634,6 +634,11 @@ async function regenerateSubmission(request, env, sourceId, cors) {
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(idempotencyKey)) {
     throw new HTTPError(400, "invalid idempotency_key", "invalid_input");
   }
+  // 從哪一篇重產，直接編進這一列自己的 idempotency_key（rg_<原投稿 id>_<client key>）。
+  // 原本是讓儀表板每一列都去 audit_events 查——那張表沒有可用的索引，25 列＝把整張表
+  // 掃 25 次，每 60 秒輪詢一次，一晚就吃光 D1 免費版每天 500 萬筆讀取（2026-10-08）。
+  // 編在自己身上：顯示時零額外讀取；同一個 client key 重送仍撞 UNIQUE ＝ 冪等。
+  const storedKey = `rg_${original.id}_${idempotencyKey}`.slice(0, 80);
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   try {
@@ -644,7 +649,7 @@ async function regenerateSubmission(request, env, sourceId, cors) {
           requested_mode,status,created_at,updated_at
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
       ).bind(
-        id, idempotencyKey, "substack", original.source_type, original.content, note,
+        id, storedKey, "substack", original.source_type, original.content, note,
         "[]", VARIANT_MODE, "queued", now, now,
       ),
       env.DB.prepare(
@@ -660,7 +665,7 @@ async function regenerateSubmission(request, env, sourceId, cors) {
       const existing = await env.DB.prepare(
         "SELECT id,target,status,created_at,updated_at FROM submissions WHERE idempotency_key=?",
       )
-        .bind(idempotencyKey)
+        .bind(storedKey)
         .first();
       return reply({ ok: true, duplicate: true, submission: existing }, 200, cors);
     }
@@ -1374,8 +1379,7 @@ async function dashboard(env, cors) {
     env.DB.prepare("SELECT target,status,COUNT(*) AS count FROM submissions GROUP BY target,status"),
     env.DB.prepare(`SELECT s.id,s.target,s.source_type,s.note,s.platforms_json,s.requested_mode,s.status,
       s.workflow_run_url,s.error,s.external_post_id,s.result_url,s.published_at,s.created_at,s.updated_at,
-      (SELECT json_extract(a.metadata_json,'$.from') FROM audit_events a
-        WHERE a.action='regenerate_submission' AND a.subject_id=s.id LIMIT 1) AS regenerated_from
+      CASE WHEN substr(s.idempotency_key,1,3)='rg_' THEN substr(s.idempotency_key,4,36) END AS regenerated_from
       FROM submissions s ORDER BY s.created_at DESC LIMIT 25`),
     env.DB.prepare("SELECT platform,status,COUNT(*) AS count,MAX(posted_at) AS last_posted_at FROM platform_posts GROUP BY platform,status"),
     env.DB.prepare(`WITH ranked_engagement AS (

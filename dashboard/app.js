@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20261006-regenerate";
+} from "./ops-core.mjs?v=20261008-d1-reads";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
@@ -924,11 +924,22 @@ function explicitForget() {
   updateAuthUi(false);
 }
 
+// 只在畫面看得到時輪詢，間隔 3 分鐘。每次 /api/dashboard 都會讀 D1，免費版每天
+// 500 萬筆讀取有上限；App 放在背景（或 Mac 上分頁沒關）一直每 60 秒讀，是 2026-10-08
+// 讀取額度用光的放大器之一。回到畫面時立刻補讀一次，所以使用者不會看到舊資料。
+const POLL_MS = 180000;
+
 function startPolling() {
   clearInterval(state.refreshTimer);
   if (!currentToken()) return;
-  state.refreshTimer = setInterval(() => loadPrivateData(currentToken(), {quiet: true}), 60000);
+  state.refreshTimer = setInterval(() => {
+    if (!document.hidden) loadPrivateData(currentToken(), {quiet: true});
+  }, POLL_MS);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentToken() && state.refreshTimer) loadPrivateData(currentToken(), {quiet: true});
+});
 
 function bindEvents() {
   document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));

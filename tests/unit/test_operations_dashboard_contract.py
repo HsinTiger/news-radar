@@ -91,3 +91,19 @@ def test_dashboard_editorial_contract_reports_the_two_stage_writer() -> None:
     assert "OpenSquilla" in contract["writer"]["method_sources"]
     assert "MoAI" in contract["writer"]["method_sources"]
     assert "專有名詞註解" in contract["writer"]["cognitive_load"]
+
+
+def test_dashboard_submission_query_does_not_scan_audit_events_per_row() -> None:
+    """2026-10-08：每列一個 audit_events 子查詢（無索引＝每列全表掃描）＋每 60 秒輪詢，
+    一晚吃光 D1 免費版每天 500 萬筆讀取，整個投稿系統停擺到 UTC 午夜。"""
+    worker = (REPO / "cloudflare-worker" / "worker.js").read_text(encoding="utf-8")
+    query = worker.split("FROM submissions s ORDER BY s.created_at DESC LIMIT 25", 1)[0].rsplit("env.DB.prepare(", 1)[1]
+    assert "audit_events" not in query
+    assert "idempotency_key" in query  # 重產來源編在自己那一列，零額外讀取
+
+
+def test_dashboard_polls_only_when_visible_and_not_every_minute() -> None:
+    app = (REPO / "dashboard" / "app.js").read_text(encoding="utf-8")
+    poll = app.split("function startPolling()", 1)[1].split("\n}\n", 1)[0]
+    assert "document.hidden" in poll
+    assert re.search(r"POLL_MS = (\d+)", app) and int(re.search(r"POLL_MS = (\d+)", app).group(1)) >= 120000
