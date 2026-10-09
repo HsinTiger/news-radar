@@ -31,6 +31,7 @@ def _run_drain(monkeypatch, tmp_path, returncodes):
     monkeypatch.setattr(drain_substack, "DONE_FILE", tmp_path / ".done.json")
     monkeypatch.setattr(drain_substack, "_candidates", lambda **_k: rows)
     monkeypatch.setattr(drain_substack, "reconcile_remote_receipts", lambda *a, **k: (set(), 0))
+    monkeypatch.setattr(drain_substack, "_substack_auth_blocked", lambda: False)  # 不讀本機真實標記
     calls = []
     def fake_run(cmd, cwd=None):
         calls.append(cmd[cmd.index("--news-id") + 1])
@@ -60,3 +61,12 @@ def test_auth_failures_do_not_count_toward_the_cap(monkeypatch, tmp_path):
         _run_drain(monkeypatch, tmp_path, [9])
     assert not (tmp_path / ".substack_attempts.json").exists() or \
         json.loads((tmp_path / ".substack_attempts.json").read_text()) == {}
+
+
+def test_drain_stops_before_building_source_bundles(monkeypatch, tmp_path):
+    """標記生效時連素材包（Whisper／agy 讀字幕）都不能做。"""
+    monkeypatch.setattr(drain_substack, "_substack_auth_blocked", lambda: True)
+    monkeypatch.setattr(drain_substack, "_candidates", lambda **_k: (_ for _ in ()).throw(AssertionError("不該走到挑稿")))
+    monkeypatch.setattr(drain_substack, "_enrich", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不該建素材包")))
+    monkeypatch.setattr(sys, "argv", ["drain", "--only-current-control"])
+    assert drain_substack.main() == 0

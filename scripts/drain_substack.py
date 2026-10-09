@@ -49,6 +49,14 @@ ATTEMPTS_FILE = REPO / "data" / "substack_drafts" / ".substack_attempts.json"
 MAX_PUSH_ATTEMPTS = 3
 
 
+def _substack_auth_blocked() -> bool:
+    try:
+        from substack_radar.compose import substack_auth_blocked
+    except Exception:
+        return False
+    return substack_auth_blocked()
+
+
 def _load_attempts() -> dict:
     try:
         return json.loads(ATTEMPTS_FILE.read_text(encoding="utf-8"))
@@ -183,6 +191,13 @@ def main():
         ),
     )
     args = ap.parse_args()
+
+    if not args.dry_run and not args.mark and _substack_auth_blocked():
+        # 一定要在建素材包（Whisper、agy／Gemini 讀字幕）之前就停：只在 compose 裡檢查太晚，
+        # 2026-10-09 實測標記生效後，drain 仍先花好幾分鐘做素材包才被 compose 擋下。
+        print("[drain] 🛑 Substack 登入失效中，這一輪不處理任何投稿。"
+              "更新 cookie：bash scripts/update_substack_cookie.sh")
+        return 0
 
     done = _load_done()
 
