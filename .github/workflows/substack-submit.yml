@@ -50,8 +50,12 @@ on:
         default: "false"
         type: string
 
+# 原本跟其他正式流程共用 news-radar-production 一組。GitHub 一組最多「1 個在跑＋1 個
+# 排隊」，再來的會把排隊中的取消——2026-10-08 一分鐘內按 5 筆重產，3 筆被取消，而被取消
+# 的根本沒開始跑、不會回報狀態，就永遠停在「已派送」。寫入互斥本來就由 state_store 的
+# 租約負責（最多等 80 分鐘），這裡改成每筆投稿各自一組，只防同一筆被重複執行。
 concurrency:
-  group: news-radar-production
+  group: substack-submit-${{ inputs.submission_id || github.run_id }}
   cancel-in-progress: false
 
 permissions:

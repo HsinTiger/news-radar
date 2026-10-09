@@ -41,6 +41,24 @@ RECEIPTS_FILE = DEFAULT_RECEIPTS_PATH
 REMOTE_DRAFT_EVIDENCE_PENDING = 6
 SUBSTACK_PUBLISH_UNPROVEN = 7
 REMOTE_PUBLICATION_EVIDENCE_PENDING = 8
+# compose 偵測到 Substack 登入失效（401）時回這個碼：整輪停下，下一篇也不必試。
+SUBSTACK_AUTH_BLOCKED = 9
+# 同一篇「寫完了但推不上去」的次數上限。每次重試都要重新叫 AI 寫整篇；2026-10-07～09
+# 沒有上限，同三篇被重寫了 300 多次、把所有 AI 額度燒光。超過就擱置，等人處理。
+ATTEMPTS_FILE = REPO / "data" / "substack_drafts" / ".substack_attempts.json"
+MAX_PUSH_ATTEMPTS = 3
+
+
+def _load_attempts() -> dict:
+    try:
+        return json.loads(ATTEMPTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_attempts(attempts: dict) -> None:
+    ATTEMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ATTEMPTS_FILE.write_text(json.dumps(attempts, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # YouTube 種子偵測：submit 進來的 url 欄位 + 內文裡的 youtube 連結都算。
 _YT_RE = re.compile(r"https?://(?:www\.)?(?:youtube\.com/[^\s)\]]+|youtu\.be/[^\s)\]]+)", re.I)
@@ -193,10 +211,17 @@ def main():
         only_immediate=args.only_immediate,
         only_current_control=args.only_current_control,
     )
+    attempts = _load_attempts()
+    parked = [row[0] for row in rows if attempts.get(row[0], 0) >= MAX_PUSH_ATTEMPTS and row[0] not in done]
+    if parked:
+        print(f"[drain] ⏸️ {len(parked)} 篇推送已失敗 {MAX_PUSH_ATTEMPTS} 次，先擱置不再重寫："
+              + "、".join(rid[:12] for rid in parked)
+              + f"（要重試請從 {ATTEMPTS_FILE.name} 移除該 id）")
     pending = [
         row
         for row in rows
         if (row[0] not in done or "publish_now" in row[5])
+        and attempts.get(row[0], 0) < MAX_PUSH_ATTEMPTS
         and row[0] not in receipt_ids
     ]
     scope = (
@@ -237,6 +262,13 @@ def main():
                 if bundle:
                     cmd += ["--bundle", str(bundle)]
         r = subprocess.run(cmd, cwd=str(REPO))
+        if r.returncode == SUBSTACK_AUTH_BLOCKED:
+            print("[drain] 🛑 Substack 登入失效：整輪停止，不再嘗試其他篇。"
+                  "更新 cookie：bash scripts/update_substack_cookie.sh")
+            break
+        if r.returncode == 5:
+            attempts[rid] = attempts.get(rid, 0) + 1
+            _save_attempts(attempts)
         if r.returncode in (
             0,
             REMOTE_DRAFT_EVIDENCE_PENDING,
@@ -244,6 +276,8 @@ def main():
         ):
             done.add(rid)
             _save_done(done)          # persist after each success (crash-safe)
+            if attempts.pop(rid, None) is not None:
+                _save_attempts(attempts)
             if r.returncode == 0:
                 composed += 1
             else:

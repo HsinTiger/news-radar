@@ -711,10 +711,15 @@ async function listSubmissions(url, env, cors) {
 
 async function claimNextSubmission(env, cors) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    // dispatched 卡超過 150 分鐘的 Substack 投稿重新認領：雲端流程最長 95 分鐘，超過就是
+    // 流程沒開始就被取消或中途死掉、沒回報狀態（2026-10-08 有 3 筆永遠停在「已派送」）。
+    // 只限 Substack：同一筆投稿重送是冪等的；Meta 立即發布重送可能重複公開貼文，絕不自動重來。
     const row = await env.DB.prepare(
       `SELECT * FROM submissions
         WHERE status='queued'
            OR (status='claimed' AND datetime(lease_until) < datetime('now'))
+           OR (status='dispatched' AND target='substack'
+               AND datetime(updated_at) < datetime('now','-150 minutes'))
         ORDER BY created_at ASC LIMIT 1`,
     ).first();
     if (!row) return reply({ ok: true, submission: null }, 200, cors);
@@ -722,7 +727,10 @@ async function claimNextSubmission(env, cors) {
     const lease = new Date(Date.now() + 15 * 60_000).toISOString();
     const updated = await env.DB.prepare(
       `UPDATE submissions SET status='claimed',claimed_at=?,lease_until=?,updated_at=?
-        WHERE id=? AND (status='queued' OR (status='claimed' AND datetime(lease_until) < datetime('now')))`,
+        WHERE id=? AND (status='queued'
+          OR (status='claimed' AND datetime(lease_until) < datetime('now'))
+          OR (status='dispatched' AND target='substack'
+              AND datetime(updated_at) < datetime('now','-150 minutes')))`,
     )
       .bind(now, lease, now, row.id)
       .run();

@@ -1198,6 +1198,66 @@ def render_substack_cover(
 # Substack could break/detect it. We treat this as opt-in (SUBSTACK_AUTO_DRAFT=1).
 # The OneDrive paste path is the always-available fallback.
 
+# Substack 登入失效的暫停標記（2026-10-09）。cookie 過期後每次推草稿都 401，排程卻把它
+# 當成「這篇還沒完成」每 5 分鐘從頭重寫——三天重寫 300 多次、把 agy／Claude／Gemini
+# 額度全部燒光，一週沒有任何草稿、FB 也跟著停。現在第一次 401 就記標記並通知一次；
+# 之後每一輪都在叫 AI「之前」檢查，cookie 沒換就直接跳過。換了 cookie（指紋不同）
+# 或推送成功就自動解除。更新 cookie：scripts/update_substack_cookie.sh
+SUBSTACK_AUTH_MARKER = _REPO_ROOT / "data" / "substack_drafts" / ".substack_auth_failed"
+EXIT_SUBSTACK_AUTH_BLOCKED = 9
+
+
+def _cookie_fingerprint() -> str:
+    import hashlib
+
+    return hashlib.sha256((os.getenv("SUBSTACK_COOKIES_STRING") or "").encode()).hexdigest()[:16]
+
+
+def substack_auth_blocked() -> bool:
+    try:
+        data = json.loads(SUBSTACK_AUTH_MARKER.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return data.get("cookie") == _cookie_fingerprint()
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "401" in text or "please sign in" in text or "not logged in" in text
+
+
+def _mark_substack_auth_failed(exc: Exception) -> None:
+    first = not substack_auth_blocked()
+    try:
+        SUBSTACK_AUTH_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        SUBSTACK_AUTH_MARKER.write_text(json.dumps({
+            "cookie": _cookie_fingerprint(),
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "error": str(exc)[:200],
+        }, ensure_ascii=False), encoding="utf-8")
+    except Exception as write_exc:
+        print(f"[Substack] ⚠️ 無法寫入登入失效標記：{write_exc}")
+    if first:
+        print("[Substack] 🛑 Substack 登入失效，暫停所有寫稿直到更新 cookie"
+              "（bash scripts/update_substack_cookie.sh）")
+        try:
+            from src.notify import notify_substack_failure
+            notify_substack_failure(
+                mode="auth",
+                error_msg="Substack 登入過期（401），已暫停寫稿以免空燒 AI 額度。"
+                          "請在 Chrome 複製 cookie 後執行 scripts/update_substack_cookie.sh",
+            )
+        except Exception as notify_exc:
+            print(f"[notify] ❌ {notify_exc}")
+
+
+def _clear_substack_auth_marker() -> None:
+    try:
+        SUBSTACK_AUTH_MARKER.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _record_draft_id(out_dir: Path, draft_id) -> None:
     """把 Substack draft id 寫回 metadata.json。
 
@@ -1400,6 +1460,7 @@ def push_to_substack_draft(
                 print(f"[Substack] ⚠️ Tag apply failed (draft kept): {type(exc).__name__}: {exc}")
                 applied = []
         _record_draft_id(article_md_path.parent, draft_id)
+        _clear_substack_auth_marker()
         print(
             f"[Substack] ✅ Draft created. id={draft_id!s} "
             f"audience={audience} cover={'yes' if cover_path else 'no'} "
@@ -1409,6 +1470,8 @@ def push_to_substack_draft(
         # build the public URL for notify email.
         return draft_id
     except Exception as exc:
+        if _is_auth_error(exc):
+            _mark_substack_auth_failed(exc)
         print(
             f"[Substack] ❌ Draft push failed: {type(exc).__name__}: {exc}\n"
             f"    Common causes:\n"
@@ -1854,6 +1917,11 @@ async def run(args: argparse.Namespace) -> int:
 async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
     mode: str = args.mode
+
+    if not args.no_draft and substack_auth_blocked():
+        print("[Substack] 🛑 Substack 登入失效中（cookie 尚未更新），這一輪不寫稿，"
+              "避免寫完推不上去又空燒 AI 額度。更新：bash scripts/update_substack_cookie.sh")
+        return EXIT_SUBSTACK_AUTH_BLOCKED
 
     remote_required = bool(
         getattr(args, "require_substack_draft", False)
@@ -2403,6 +2471,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 print(f"[Substack] ⚠️ receipt cleanup deferred: {exc}")
     if getattr(args, "require_substack_draft", False) and draft_id is None:
         print("[Substack] ❌ local article exists but remote draft creation is unproven")
+        if substack_auth_blocked():
+            return EXIT_SUBSTACK_AUTH_BLOCKED
         return 5
     if (
         getattr(args, "publish_now", False)
