@@ -74,3 +74,24 @@ def tmp_db(tmp_path, monkeypatch):
 
     dbmod.init_db()
     yield tmp_db_path
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_runtime_markers(tmp_path_factory, monkeypatch):
+    """測試不准碰 Mac 上真實的執行期狀態檔。
+
+    2026-10-09：模擬「推送成功」的既有測試會走到清除 Substack 登入失效標記的路徑，
+    清的是 data/substack_drafts/ 底下真的那一份——跑一次完整測試，排程的防空轉保護
+    就被拿掉了。所有這類路徑一律導向暫存目錄。"""
+    sandbox = tmp_path_factory.mktemp("runtime-markers")
+    try:
+        from substack_radar import compose
+        monkeypatch.setattr(compose, "SUBSTACK_AUTH_MARKER", sandbox / ".substack_auth_failed")
+    except Exception:
+        pass
+    try:
+        from scripts import drain_substack
+        monkeypatch.setattr(drain_substack, "ATTEMPTS_FILE", sandbox / ".substack_attempts.json")
+        monkeypatch.setattr(drain_substack, "_substack_login_ok", lambda: True)
+    except Exception:
+        pass

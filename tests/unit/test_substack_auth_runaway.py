@@ -70,3 +70,23 @@ def test_drain_stops_before_building_source_bundles(monkeypatch, tmp_path):
     monkeypatch.setattr(drain_substack, "_enrich", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不該建素材包")))
     monkeypatch.setattr(sys, "argv", ["drain", "--only-current-control"])
     assert drain_substack.main() == 0
+
+
+def test_drain_checks_login_before_any_work(monkeypatch, tmp_path):
+    """標記被刪掉也一樣要停：直接試登入是最後一道防線。"""
+    monkeypatch.setattr(drain_substack, "_substack_auth_blocked", lambda: False)   # 標記不見了
+    monkeypatch.setattr(drain_substack, "_substack_login_ok", lambda: False)       # 但 cookie 是壞的
+    monkeypatch.setattr(drain_substack, "DONE_FILE", tmp_path / ".done.json")
+    monkeypatch.setattr(drain_substack, "reconcile_remote_receipts", lambda *a, **k: (set(), 0))
+    monkeypatch.setattr(drain_substack, "_candidates",
+                        lambda **_k: [("news-0", "t", 1, "manual-text://x", "b", set())])
+    monkeypatch.setattr(drain_substack.subprocess, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不該開始寫稿")))
+    monkeypatch.setattr(sys, "argv", ["drain", "--only-current-control"])
+    assert drain_substack.main() == 0
+
+
+def test_test_suite_cannot_touch_the_real_marker():
+    from pathlib import Path
+    assert "runtime-markers" in str(compose.SUBSTACK_AUTH_MARKER)
+    assert Path(compose.SUBSTACK_AUTH_MARKER).parent != Path(compose._REPO_ROOT) / "data" / "substack_drafts"

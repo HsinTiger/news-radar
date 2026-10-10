@@ -50,11 +50,39 @@ MAX_PUSH_ATTEMPTS = 3
 
 
 def _substack_auth_blocked() -> bool:
+    # 標記比對的是 cookie 指紋，而 drain 自己不載入 .env——沒載入時 cookie 是空字串，
+    # 指紋永遠對不上、檢查永遠放行（2026-10-09 上線後實測才發現）。先載入再比。
     try:
+        from dotenv import load_dotenv
+
+        load_dotenv(REPO / ".env")
         from substack_radar.compose import substack_auth_blocked
-    except Exception:
+    except Exception as exc:
+        print(f"[drain] ⚠️ 無法檢查 Substack 登入狀態：{exc}")
         return False
     return substack_auth_blocked()
+
+
+def _substack_login_ok() -> bool:
+    """直接用目前的 cookie 試一次 Substack（只讀一筆草稿清單，不花 AI 額度）。
+
+    暫停標記是一個檔案，可能被誤刪（2026-10-09 就被測試刪掉過）；這個檢查不依賴它。
+    只有「登入失效」才回 False——網路抖動或 429 照常放行，交給推送失敗次數上限兜底。"""
+    import os
+
+    try:
+        from dotenv import load_dotenv
+        from substack import Api
+
+        load_dotenv(REPO / ".env")
+        Api(
+            cookies_string=os.environ["SUBSTACK_COOKIES_STRING"],
+            publication_url=os.environ["SUBSTACK_PUBLICATION_URL"],
+        ).get_drafts(limit=1)
+        return True
+    except Exception as exc:
+        text = str(exc).lower()
+        return not ("401" in text or "please sign in" in text or "not logged in" in text)
 
 
 def _load_attempts() -> dict:
@@ -247,6 +275,11 @@ def main():
     print(f"[drain] {len(rows)} user_substack item(s){scope}, {len(pending)} pending compose")
     if (args.only_immediate or args.only_current_control) and not pending:
         return 0  # 快速通道沒事就安靜結束（每 5 分鐘跑一次，不洗 log）
+    if pending and not _substack_login_ok():
+        # 在建素材包、叫 AI 之前就停。寫完推不上去的稿子只會一直被重寫。
+        print("[drain] 🛑 Substack 登入失效（401），這一輪不處理任何投稿。"
+              "更新 cookie：bash scripts/update_substack_cookie.sh")
+        return 0
     for rid, title, wc, url, body, tags in pending:
         tag = "  🎥yt" if (not args.no_enrich and _yt_seeds(url, body)) else ""
         print(f"  · {rid[:12]}  {wc:>6}w  {title[:50]}{tag}")
