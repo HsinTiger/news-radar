@@ -250,14 +250,32 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
         (REPO / "scripts" / "com.hsin.news-radar.company-compose.plist").read_bytes()
     )
 
-    assert noon["StartCalendarInterval"] == {"Hour": 12, "Minute": 0}
-    assert noon["ProgramArguments"][-1] == "podcast-batch"
-    # 2026-09-20：週報改成週日 09:00 正常跑，失敗再試 13/16/19（腳本有 same-day guard，
-    # 當天已經有 company_* 草稿就直接結束，不會寫出第二篇）。
-    assert company["StartCalendarInterval"] == [
-        {"Weekday": 0, "Hour": hour, "Minute": 0} for hour in (9, 13, 16, 19)
-    ]
+    # 2026-10-15 起（信哥）：寫稿改到早上，07:30 由 daily-publish 發一篇並寄信。
+    #   平日 06:00 Podcast 第一篇（含抓素材）＋06:30 第二篇；週末 06:00 公司分析＋06:30 Podcast。
+    #   標籤沿用 substack-podcast-noon（儀表板與同步程式靠它），內容已是早上第一篇。
+    weekdays, weekend = (1, 2, 3, 4, 5), (6, 0)
+    assert noon["StartCalendarInterval"] == (
+        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in weekdays]
+        + [{"Weekday": d, "Hour": 6, "Minute": 30} for d in weekend]
+    )
+    assert noon["ProgramArguments"][-1] == "podcast-first"
+    second = plistlib.loads(
+        (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-second.plist").read_bytes()
+    )
+    assert second["StartCalendarInterval"] == [{"Weekday": d, "Hour": 6, "Minute": 30} for d in weekdays]
+    assert second["ProgramArguments"][-1] == "podcast-second"
+    assert company["StartCalendarInterval"] == (
+        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in weekend]
+        + [{"Weekday": d, "Hour": 13, "Minute": 0} for d in weekend]
+    )
     assert company["ProgramArguments"][-1] == "weekly"
+    publish = plistlib.loads(
+        (REPO / "scripts" / "com.hsin.news-radar.daily-publish.plist").read_bytes()
+    )
+    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}]
+    assert "substack_radar.daily_publish" in publish["ProgramArguments"][-1]
+    for plist in (noon, second, company, publish):
+        assert "HOME_DIR/.local/bin" in plist["EnvironmentVariables"]["PATH"]  # claude／agy 在這裡
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-daily.plist").exists()
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-noon-1.plist").exists()
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-noon-2.plist").exists()
@@ -266,7 +284,9 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     active_agents = installer.split("AGENTS=(", 1)[1].split(")", 1)[0]
     legacy_agents = installer.split("LEGACY_AGENTS=(", 1)[1].split(")", 1)[0]
     assert "substack-podcast-noon" in active_agents
+    assert "substack-podcast-second" in active_agents
     assert "company-compose" in active_agents
+    assert "daily-publish" in active_agents
     assert "company-pick" not in active_agents
     assert "substack-podcast-noon-1" in legacy_agents
     assert "substack-podcast-noon-2" in legacy_agents
@@ -293,7 +313,9 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     assert "state_store.py push" in worker
     assert "--require-substack-draft" in worker
     assert "podcast-batch" in worker
-    assert worker.count("substack_radar/compose.py podcast") == 2
+    # podcast-batch（相容保留）兩次＋早上 podcast-first、podcast-second 各一次
+    assert worker.count("substack_radar/compose.py podcast") == 4
+    assert "podcast-first" in worker and "podcast-second" in worker
     assert "substack_radar/compose.py podcast --harvest --editorial-profile weekly" in worker
     assert "substack_radar/compose.py podcast --editorial-profile weekly" in worker
     assert "COMPOSE_ARGS=(morning" not in worker
@@ -311,9 +333,10 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
 
 
 def test_public_cadence_copy_matches_the_reader_facing_promise() -> None:
-    """對外承諾是「每天一篇、每週日一篇」。每天產兩篇 podcast 草稿是我們自己
-    的排程（緩衝），不是給讀者看的數字——2026-08-17 owner 明確區分了這兩件事。"""
-    expected = "每天一篇思想延伸 · 每週日一篇公司拆解"
+    """對外承諾：每天早上發一篇（2026-10-15 起平日 Podcast 精選、週末公司拆解）。
+    每天產好幾篇草稿是我們自己的排程（緩衝），不是給讀者看的數字——2026-08-17 owner
+    明確區分了這兩件事。"""
+    expected = "每天早上一篇 · 平日 Podcast 精選 · 週末公司拆解"
 
     assert expected in compose.build_footer_block()
     assert promise_cover.SLOGAN == expected

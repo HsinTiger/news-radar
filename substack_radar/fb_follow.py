@@ -54,7 +54,7 @@ MAX_ROUNDS = int(os.getenv("FB_AUDIT_ROUNDS", "3"))
 AGY_TIMEOUT_S = int(os.getenv("FB_AGY_TIMEOUT_S", "420"))
 
 COLUMN_DESC = {
-    "賺錢有道": "每週日一篇公司拆解，看一家公司怎麼賺錢",
+    "賺錢有道": "每週六、日的公司拆解，看一家公司怎麼賺錢",
     "吹牛免稅": "每天一篇，從一集長篇 podcast 延伸出來的思考",
     "主編精選": "主編親自挑的題目",
 }

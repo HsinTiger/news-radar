@@ -13,7 +13,7 @@ import {
   readStoredToken,
   rememberToken,
   summarizeRecentContent,
-} from "./ops-core.mjs?v=20261008-d1-reads";
+} from "./ops-core.mjs?v=20261015-daily-publish";
 
 const API = "https://news-radar-submit.smartmmmoney.workers.dev";
 const WORKFLOWS_API = "https://api.github.com/repos/HsinTiger/news-radar/actions/runs?per_page=30";
@@ -363,7 +363,7 @@ function renderSubstack() {
   const schedule = $("substack-schedule");
   clear(schedule);
   schedule.append(
-    contractScheduleCard("每日", contract.podcast.local_time || "12:00", `Podcast 延伸文 × ${contract.podcast.drafts || 2}`, `候選限最近 ${contract.podcast.candidate_window_days || 7} 天；先消化對談，再查 ${rangeCopy(contract.podcast.research_sources || [5, 10])} 個延伸來源，每篇 ${rangeCopy(contract.podcast.target_chars)} 字。`),
+    contractScheduleCard("每日", contract.podcast.local_time || "06:00", `Podcast 延伸文 × ${contract.podcast.drafts || 2}`, `候選限最近 ${contract.podcast.candidate_window_days || 7} 天；先消化對談，再查 ${rangeCopy(contract.podcast.research_sources || [5, 10])} 個延伸來源，每篇 ${rangeCopy(contract.podcast.target_chars)} 字。`),
     contractScheduleCard("週日", (contract.company.local_time || "Sun 09:00").replace("Sun ", ""), `公司深度文 × ${contract.company.drafts || 1}`, `${contract.company.pick_and_compose ? "選題與寫作合併在同一輪" : "先選題後寫作"}；財報事實再加 ${rangeCopy(contract.company.research_sources || [5, 10])} 個延伸來源，每篇 ${rangeCopy(contract.company.target_chars)} 字。`),
   );
   const writer = $("writer-contract");
@@ -751,7 +751,7 @@ function updateSubmissionUi() {
   $("submission-route").textContent = target === "substack"
     ? (selected("substack-mode") === "publish_now"
       ? "這會立即進入 Mac 快速寫稿與發布流程；只有公開 URL 與 post ID 回讀後才算已發布。"
-      : "送出後立即進優先處理，不等 12:00 排程；完成以遠端 draft ID 為準，不會公開發布。")
+      : "送出後立即進優先處理，不等早上排程；完成以遠端 draft ID 為準，不會公開發布。")
     : (selected("meta-mode") === "publish_now"
       ? "這會要求 production runtime 立即發布；平台送達仍以 post ID 為準。"
       : "素材會先進入 Meta 佇列，不代表已經發布。 ");

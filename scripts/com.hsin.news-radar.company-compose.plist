@@ -5,7 +5,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/Users/hsin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<string>HOME_DIR/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
 	</dict>
 	<key>KeepAlive</key>
 	<false/>
@@ -14,7 +14,7 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>/Users/hsin/bin/news_radar_substack_editorial.sh</string>
+		<string>HOME_DIR/bin/news_radar_substack_editorial.sh</string>
 		<string>weekly</string>
 	</array>
 	<key>RunAtLoad</key>
@@ -27,7 +27,15 @@
 	<array>
 		<dict>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>6</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+			<key>Weekday</key>
+			<integer>6</integer>
+		</dict>
+		<dict>
+			<key>Hour</key>
+			<integer>6</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>
@@ -39,19 +47,11 @@
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>
-			<integer>0</integer>
+			<integer>6</integer>
 		</dict>
 		<dict>
 			<key>Hour</key>
-			<integer>16</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>19</integer>
+			<integer>13</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>

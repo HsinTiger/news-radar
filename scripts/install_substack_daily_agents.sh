@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Compatibility entry point: install one governed two-draft Podcast batch + Weekly.
-# It intentionally replaces the old five-drafts-per-day topology.
+# 安裝 Substack 編輯排程（2026-10-15 起）：
+#   早上 06:00／06:30 各寫一篇（平日 Podcast×2，週末 公司分析＋Podcast），
+#   07:30 由 daily-publish 從當天的稿子挑一篇發布並寄信，其餘留草稿。
 
 set -euo pipefail
 
@@ -10,7 +11,9 @@ BIN_DIR="$HOME/bin"
 MODE="${1:-install}"
 AGENTS=(
   "com.hsin.news-radar.substack-podcast-noon"
+  "com.hsin.news-radar.substack-podcast-second"
   "com.hsin.news-radar.company-compose"
+  "com.hsin.news-radar.daily-publish"
 )
 LEGACY_AGENTS=(
   "com.hsin.news-radar.substack-podcast-noon-1"
@@ -39,7 +42,7 @@ if [ "$MODE" = "--status" ]; then
   exit 0
 fi
 
-mkdir -p "$AGENT_DIR" "$BIN_DIR"
+mkdir -p "$AGENT_DIR" "$BIN_DIR" "$HOME/Library/Logs/news-radar"
 for label in "${AGENTS[@]}"; do
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   launchctl bootout "gui/$(id -u)" "$AGENT_DIR/$label.plist" 2>/dev/null || true
@@ -70,5 +73,5 @@ for label in "${AGENTS[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$label.plist"
 done
 
-echo "installed: two-article Podcast batch daily 12:00 + company pick-and-compose Sun 09:00"
+echo "installed: 平日 06:00/06:30 Podcast、週末 06:00 公司分析＋06:30 Podcast、每天 07:30 自動發布一篇"
 echo "owner submission immediate/hourly workers are unchanged"

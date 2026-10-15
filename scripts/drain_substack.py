@@ -290,7 +290,13 @@ def main():
 
     composed = 0
     evidence_pending = 0
+    editorial_want = REPO / ".runtime-state-editorial-want"
     for rid, title, wc, url, body, tags in pending:
+        if editorial_want.exists():
+            # 早上 06:00／06:30 的排程正在等本機鎖（07:30 要發文）。投稿積很多時，一輪
+            # 可能寫好幾個小時；做完手上這篇就讓位，剩下的下一輪再寫。
+            print("[drain] ⏸️ 編輯排程在等鎖，這一輪先停，剩下的下一輪再寫")
+            break
         print(f"[drain] composing {rid[:12]} …")
         cmd = [
             str(PY),

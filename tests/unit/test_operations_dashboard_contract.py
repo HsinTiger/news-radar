@@ -58,7 +58,7 @@ def test_dashboard_explains_scheduled_and_one_time_submission_routes() -> None:
     assert "一次性投稿不分早上、下午" in html
     assert "morning / evening" in html
     assert "不是投稿時段" in html
-    assert "立即進優先處理，不等 12:00 排程" in html
+    assert "立即進優先處理，不等早上排程" in html
     assert "Substack 與 Meta 都只有在你明確選擇「立即發布」時才會公開" in html
     assert "立即發布到 Substack" in app
     assert "公開 URL 與 post ID" in app

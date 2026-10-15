@@ -504,7 +504,9 @@ def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "publication_mode": "draft_only",
         "podcast": {
             "local_time": podcast_time,
-            "drafts": worker.count("substack_radar/compose.py podcast"),
+            # 2026-10-15 起每天由早上兩個模式各寫一篇（podcast-batch 只是相容保留）。
+            "drafts": sum(f'"$PROFILE" = "{p}"' in worker for p in ("podcast-first", "podcast-second"))
+            or worker.count("substack_radar/compose.py podcast"),
             "candidate_window_days": int(window_match.group(1)) if window_match else 7,
             "depth": "weekly",
             "article_kind": "podcast",

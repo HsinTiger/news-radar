@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Canonical scheduled Substack editorial worker.
-# One two-article Podcast batch or one Weekly company draft; draft-only, never publish.
+# Draft-only, never publish（發布由 substack_radar/daily_publish.py 在 07:30 負責）。
+#   podcast-first   早上第一篇 Podcast（含抓新素材）：週一～五 06:00、週六日 06:30
+#   podcast-second  早上第二篇 Podcast：週一～五 06:30
+#   weekly          公司分析：週六、日 06:00（13:00 重試，同一天只寫一篇）
+#   podcast-batch   舊的一次兩篇（保留相容，排程已不用）
 
 set -uo pipefail
 
 PROFILE="${1:-}"
 case "$PROFILE" in
-  podcast-batch|weekly) ;;
-  *) echo "usage: $0 podcast-batch|weekly"; exit 2 ;;
+  podcast-batch|podcast-first|podcast-second|weekly) ;;
+  *) echo "usage: $0 podcast-first|podcast-second|weekly|podcast-batch"; exit 2 ;;
 esac
 
 REPO="${REPO:-HsinTiger/news-radar}"
@@ -136,7 +140,20 @@ if [ "$PROFILE" = "podcast-batch" ]; then
   else
     COMPOSE_EXIT=0
   fi
+elif [ "$PROFILE" = "podcast-first" ]; then
+  "$PY" -u substack_radar/compose.py podcast --harvest --editorial-profile weekly --require-substack-draft
+  COMPOSE_EXIT=$?
+elif [ "$PROFILE" = "podcast-second" ]; then
+  "$PY" -u substack_radar/compose.py podcast --editorial-profile weekly --require-substack-draft
+  COMPOSE_EXIT=$?
 else
+  # 週日 09:00 失敗就整週沒有賺錢有道（2026-09-20：agy 全模型 429、claude 不在 PATH
+  # 且登入過期、gemini 503 → 三個後備同時倒下，一篇都沒產出）。改成當天可以重試，
+  # 這個 guard 保證已經產出過就不會再寫第二篇。
+  if ls -d "$LOCAL_REPO/data/substack_drafts/$(date +%F)"/company_* >/dev/null 2>&1; then
+    echo "[editorial] 今天已經有賺錢有道草稿，略過。"
+    exit 0
+  fi
   "$PY" scripts/pick_company_candidate.py
   PICK_EXIT=$?
   if [ "$PICK_EXIT" -ne 0 ] && [ "$PICK_EXIT" -ne 1 ]; then
