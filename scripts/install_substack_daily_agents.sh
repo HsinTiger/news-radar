@@ -14,6 +14,7 @@ AGENTS=(
   "com.hsin.news-radar.substack-podcast-second"
   "com.hsin.news-radar.company-compose"
   "com.hsin.news-radar.daily-publish"
+  "com.hsin.news-radar.fb-scheduled"
 )
 LEGACY_AGENTS=(
   "com.hsin.news-radar.substack-podcast-noon-1"
@@ -73,5 +74,5 @@ for label in "${AGENTS[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$label.plist"
 done
 
-echo "installed: 平日 06:00/06:30 Podcast、週末 06:00 公司分析＋06:30 Podcast、每天 07:30 自動發布一篇"
+echo "installed: 平日 06:00/06:30 Podcast、週末 06:00 公司分析＋06:30 Podcast、每天 07:30 自動發布一篇、FB 12:30／20:30"
 echo "owner submission immediate/hourly workers are unchanged"

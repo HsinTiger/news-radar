@@ -284,7 +284,7 @@ def test_stale_fb_version_is_rewritten_from_the_audited_article(tmp_path, monkey
     monkeypatch.setattr(fb_follow, "card_issues", lambda *a, **k: [])
     stale = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="",
                             fb_post="營收 472 億（稽核已刪）" + "字" * 200)
-    assert fb_follow.post_with_draft(folder, stale) == "preview"
+    assert fb_follow.post_with_draft(folder, stale) == "queued"
     assert "100 億" in (folder / "fb_post.txt").read_text()
 
 
@@ -389,4 +389,70 @@ def test_retry_of_a_never_posted_failed_submission_still_posts(tmp_path, monkeyp
     monkeypatch.setattr(fb_follow, "deterministic_issues", lambda *a, **k: [])
     folder = _mk(tmp_path, "2026-10-07", "retry", datetime.now(), source={"id": "retry-news"})
     piece = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="", fb_post="內文" * 100)
-    assert fb_follow.post_with_draft(folder, piece) == "preview"
+    assert fb_follow.post_with_draft(folder, piece) == "queued"
+
+
+
+# --- FB 自己的時段（2026-10-16）：12:30 發當天公開的那篇、20:30 發另一篇；不發主編精選 ---
+
+def _queue(tmp_path, monkeypatch, day, name, title, draft_id):
+    from types import SimpleNamespace
+    folder = _mk(tmp_path, day, name, datetime.now(), title=title, substack_draft_id=draft_id,
+                 source={"id": f"src-{name}"})
+    for card in ("fb_card1.png", "fb_card2.png"):
+        (folder / card).write_bytes(b"png")
+    monkeypatch.setattr(fb_follow, "card_issues", lambda *a, **k: [])
+    monkeypatch.setattr(fb_follow, "deterministic_issues", lambda *a, **k: [])
+    piece = SimpleNamespace(fb_hook="鉤子／兩行", fb_point="重點／兩行", fb_figure="", fb_post=f"{name} 內文")
+    return fb_follow.post_with_draft(folder, piece)
+
+
+def _slot_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(fb_follow, "DRAFTS_DIR", tmp_path)
+    monkeypatch.setattr(fb_follow, "LEDGER_PATH", tmp_path / ".fb_posted.json")
+    monkeypatch.setattr(fb_follow, "DAILY_PUBLISHED_PATH", tmp_path / ".daily_published.json")
+    monkeypatch.setattr(fb_follow, "_source_url", lambda sid: f"https://youtu.be/{sid[-11:]:0>11}")
+    monkeypatch.setenv("FB_FOLLOW_LIVE", "1")
+    posted = []
+    monkeypatch.setattr(fb_follow, "_publish_cards", lambda cards, text: posted.append(text) or {"success": True, "id": f"fb{len(posted)}"})
+    return posted
+
+
+def test_manual_submissions_never_go_to_fb(tmp_path, monkeypatch):
+    _slot_env(tmp_path, monkeypatch)
+    assert _queue(tmp_path, monkeypatch, "2026-10-16", "m", "我投的題目｜主編精選", "9") == "skipped"
+
+
+def test_noon_posts_todays_published_article_evening_posts_the_other(tmp_path, monkeypatch):
+    from datetime import date
+    posted = _slot_env(tmp_path, monkeypatch)
+    assert _queue(tmp_path, monkeypatch, "2026-10-16", "a", "第一篇｜吹牛免稅", "1") == "queued"
+    assert _queue(tmp_path, monkeypatch, "2026-10-16", "b", "第二篇｜吹牛免稅", "2") == "queued"
+    assert posted == []                                          # 寫稿時不發
+    (tmp_path / ".daily_published.json").write_text(json.dumps(
+        {"2026-10-16": {"folder": "2026-10-16/b", "post_url": "https://hsin73.substack.com/p/b"}}))
+    states = {"1": ("draft", None), "2": ("published", "https://hsin73.substack.com/p/b")}
+    monkeypatch.setattr(fb_follow, "remote_status", lambda c: states[c.draft_id])
+    assert fb_follow.post_scheduled("noon", today=date(2026, 10, 16)) == "posted"
+    assert "b 內文" in posted[0] and "/p/b" in posted[0]          # 中午：今天公開的那篇，連到文章
+    assert fb_follow.post_scheduled("evening", today=date(2026, 10, 16)) == "posted"
+    assert "a 內文" in posted[1] and "hsin73.substack.com" in posted[1]
+    assert fb_follow.post_scheduled("evening", today=date(2026, 10, 16)) == "none"
+
+
+def test_deleted_draft_is_not_posted_at_its_slot(tmp_path, monkeypatch):
+    from datetime import date
+    posted = _slot_env(tmp_path, monkeypatch)
+    _queue(tmp_path, monkeypatch, "2026-10-16", "a", "第一篇｜吹牛免稅", "1")
+    monkeypatch.setattr(fb_follow, "remote_status", lambda c: ("deleted", None))
+    assert fb_follow.post_scheduled("noon", today=date(2026, 10, 16)) == "skipped"
+    assert posted == []
+
+
+def test_old_queue_expires_instead_of_flooding(tmp_path, monkeypatch):
+    from datetime import date
+    posted = _slot_env(tmp_path, monkeypatch)
+    _queue(tmp_path, monkeypatch, "2026-10-13", "old", "三天前｜吹牛免稅", "1")
+    assert fb_follow.post_scheduled("noon", today=date(2026, 10, 16)) == "none"
+    assert posted == []
+    assert json.loads((tmp_path / ".fb_posted.json").read_text())["2026-10-13/old"]["status"] == "expired"

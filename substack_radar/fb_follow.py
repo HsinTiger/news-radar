@@ -898,6 +898,10 @@ def post_with_draft(out_dir: Path, draft) -> str:
     if not column:
         print("[FBFollow] ⏭️ 不是三個專欄之一，不發 FB。")
         return "skipped"
+    if column == MANUAL_COLUMN:
+        # 信哥 2026-10-16：FB 發每天排程產出的每一篇，但不發他自己投稿的（主編精選）。
+        print("[FBFollow] ⏭️ 主編精選（手動投稿）不發 FB。")
+        return record("skipped", reason="主編精選不發 FB")
     if not (piece.hook and piece.point and piece.post):
         print("[FBFollow] ⏭️ 寫手這次沒產出 FB 版，不發。")
         return record("skipped", reason="寫手沒產出 FB 版")
@@ -940,6 +944,14 @@ def post_with_draft(out_dir: Path, draft) -> str:
     tells = ai_tells(piece.post)
     if tells:
         print(f"[FBFollow] ⚠️ AI 腔（不擋稿，記錄追蹤）：{'、'.join(tells)}")
+    if os.getenv("FB_FOLLOW_TIMING", "slots") == "slots":
+        # 2026-10-16 起 FB 有自己的時段（12:30／20:30，見 post_scheduled）。寫稿時只把
+        # 檢查過的 FB 版與圖卡備好、排進佇列；到時段才貼，連結也會換成當下最新的狀態。
+        (out_dir / "fb_piece.json").write_text(json.dumps({
+            "hook": piece.hook, "point": piece.point, "figure": piece.figure, "post": piece.post,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[FBFollow] 🗓️ FB 版已備好，排進今天的 FB 時段：{headline}")
+        return record("queued", ai_tells=tells, column=column)
     if os.getenv("FB_FOLLOW_LIVE") != "1":
         print("[FBFollow] （FB_FOLLOW_LIVE 未開，只產出不發）\n" + text)
         return "preview"
@@ -951,6 +963,94 @@ def post_with_draft(out_dir: Path, draft) -> str:
         return record("failed", error=str(res.get("error"))[:300])
     print(f"[FBFollow] ✅ 已同步發 FB：{res.get('id')}　{headline}")
     return record("posted", fb_id=res.get("id"), route="compose-sync", ai_tells=tells)
+
+
+# ---------------------------------------------------------------------------
+# FB 自己的時段（2026-10-16 信哥：FB 可以有自己的排程時間）
+# ---------------------------------------------------------------------------
+#   12:30 午休：當天 07:30 發布的那篇（連結直接到文章）
+#   20:30 下班：當天另一篇排程草稿（連結到訂閱頁）
+#   主編精選不發。一個時段只貼一則，避免同一時間洗版吃掉觸及。
+
+MANUAL_COLUMN = "主編精選"
+DAILY_PUBLISHED_PATH = DRAFTS_DIR / ".daily_published.json"
+
+
+def _queued_for(day, ledger: dict) -> list:
+    prefix = day.isoformat() + "/"
+    return [rel for rel, e in sorted(ledger.items())
+            if e.get("status") == "queued" and rel.startswith(prefix)]
+
+
+def post_scheduled(slot: str, today=None) -> str:
+    from datetime import date as _date
+
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO / ".env", override=True)
+    today = today or _date.today()
+    ledger = _load_ledger()
+
+    # 超過一天還沒貼的就不貼了（Mac 睡著錯過時段時，不要隔天一次倒出來）
+    yesterday = today - timedelta(days=1)
+    for rel, e in list(ledger.items()):
+        if e.get("status") == "queued" and rel[:10] < yesterday.isoformat():
+            ledger[rel] = {**e, "status": "expired", "at": datetime.now().isoformat(timespec="seconds")}
+    _save_ledger(ledger)
+
+    pool = _queued_for(today, ledger) or _queued_for(yesterday, ledger)
+    if not pool:
+        print("[FBFollow] 這個時段沒有排隊中的 FB 貼文")
+        return "none"
+    try:
+        published = json.loads(DAILY_PUBLISHED_PATH.read_text(encoding="utf-8")).get(today.isoformat(), {})
+    except Exception:
+        published = {}
+    featured = published.get("folder") if published.get("post_url") else None
+    if slot == "noon" and featured in pool:
+        rel = featured
+    else:
+        rest = [r for r in pool if r != featured]
+        rel = (rest or pool)[0]
+
+    folder = DRAFTS_DIR / rel
+    entry = ledger[rel]
+    meta = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+    column, headline = split_column(meta.get("title", ""))
+    cand = Candidate(folder=folder, meta=meta, created_at=datetime.now(), column=column,
+                     headline=headline, key=entry.get("key") or _dedupe_key(meta, headline),
+                     draft_id=str(meta.get("substack_draft_id") or "") or None)
+    status, url = remote_status(cand)
+    if status in ("deleted", "unknown"):
+        reason = "主編已刪除這篇草稿" if status == "deleted" else "對不到 Substack 草稿編號"
+        ledger[rel] = {**entry, "status": "skipped", "reason": reason,
+                       "at": datetime.now().isoformat(timespec="seconds")}
+        _save_ledger(ledger)
+        print(f"[FBFollow] ⏭️ {rel}：{reason}，不發")
+        return "skipped"
+    if cand.key in _posted_keys({k: v for k, v in ledger.items() if k != rel}):
+        ledger[rel] = {**entry, "status": "skipped", "reason": "同題材已發過 FB"}
+        _save_ledger(ledger)
+        return "skipped"
+
+    piece = json.loads((folder / "fb_piece.json").read_text(encoding="utf-8"))
+    text = finalize(piece["post"], column, status, url)
+    (folder / "fb_post.txt").write_text(text + "\n", encoding="utf-8")
+    if os.getenv("FB_FOLLOW_LIVE") != "1":
+        print("[FBFollow] （FB_FOLLOW_LIVE 未開，只產出不發）\n" + text)
+        return "preview"
+    res = _publish_cards([str(folder / "fb_card1.png"), str(folder / "fb_card2.png")], text)
+    if not res.get("success"):
+        print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
+        ledger[rel] = {**entry, "status": "failed", "error": str(res.get("error"))[:300],
+                       "at": datetime.now().isoformat(timespec="seconds")}
+        _save_ledger(ledger)
+        return "failed"
+    ledger[rel] = {**entry, "status": "posted", "fb_id": res.get("id"), "route": f"slot-{slot}",
+                   "substack_status": status, "at": datetime.now().isoformat(timespec="seconds")}
+    _save_ledger(ledger)
+    print(f"[FBFollow] ✅ {slot} 時段已發 FB：{res.get('id')}　{headline}")
+    return "posted"
 
 
 # ---------------------------------------------------------------------------
@@ -1046,7 +1146,13 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="只產稿不發")
     ap.add_argument("--folder", help="指定一個草稿資料夾（試跑用）")
     ap.add_argument("--ignore-age", action="store_true", help="不等冷卻時間（試跑用）")
+    ap.add_argument("--slot", choices=("noon", "evening", "auto"),
+                    help="FB 時段發文（launchd 12:30／20:30 用）；auto＝依目前時間判斷")
     args = ap.parse_args(argv)
+    if args.slot:
+        slot = args.slot if args.slot != "auto" else ("noon" if datetime.now().hour < 16 else "evening")
+        result = post_scheduled(slot)
+        return 1 if result == "failed" else 0
     return run(dry_run=args.dry_run, only=args.folder, ignore_age=args.ignore_age)
 
 
