@@ -197,19 +197,29 @@ def _audit_prompt(article_md: str, violations: list[Violation], fact_block: str)
 # 同一個行程裡，agy 一旦回過「帳號層級不可用」（額度用完／掛住），後面每一次呼叫
 # 都還要再等它一輪——2026-09-20 的 FB 重寫每一輪都先在死掉的 agy 上耗掉 5 分鐘。
 # 五個模型共用同一個訂閱，所以第一次就足以判定。
-_AGY_DEAD = False
+# 2026-10-15 修正：額度是一家一份（agy 的 Gemini 沒 credits 時 Claude Opus 照常可用），
+# 所以按家族記，不再一家掛掉就整條 agy 放棄。
+_AGY_DEAD_FAMILIES: set = set()
+
+
+def agy_family_dead(model: str) -> bool:
+    from src.llm_brain import _agy_family
+
+    return _agy_family(model) in _AGY_DEAD_FAMILIES
 
 
 def agy_is_dead() -> bool:
-    return _AGY_DEAD
+    return {"claude", "gemini"} <= _AGY_DEAD_FAMILIES
 
 
-def note_agy_failure(error) -> None:
-    global _AGY_DEAD
-    from src.llm_brain import _agy_quota_or_hang
+def note_agy_failure(error, model: str = "") -> None:
+    from src.llm_brain import _agy_family, _agy_quota_or_hang
 
     if _agy_quota_or_hang(str(error)):
-        _AGY_DEAD = True
+        if model:
+            _AGY_DEAD_FAMILIES.add(_agy_family(model))
+        else:
+            _AGY_DEAD_FAMILIES.update({"claude", "gemini"})
 
 
 def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
@@ -254,9 +264,11 @@ def run_claude_cli(prompt: str, timeout_s: int) -> str:
 
 def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
     """依鏈逐個試。第一個成功就回；agy 全掛才退到 claude CLI（付費）。"""
-    chain = [] if agy_is_dead() else [model] + [m for m in AUDIT_MODEL_CHAIN if m != model]
-    last = "agy 本輪已判定不可用" if agy_is_dead() else None
+    chain = [m for m in [model] + [m for m in AUDIT_MODEL_CHAIN if m != model] if not agy_family_dead(m)]
+    last = "agy 本輪已判定不可用" if not chain else None
     for index, candidate in enumerate(chain):
+        if agy_family_dead(candidate):
+            continue
         try:
             result = _run_agy_once(prompt, candidate, timeout_s)
             if index:
@@ -264,10 +276,10 @@ def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
             return result
         except Exception as exc:
             last = exc
-            note_agy_failure(exc)
+            note_agy_failure(exc, candidate)
             print(f"[QualityLoop] ⚠️ {candidate} 不可用：{str(exc)[:110]}")
             if agy_is_dead():
-                print("[QualityLoop] ⛔ agy 帳號層級不可用，本輪不再試其餘 agy 模型")
+                print("[QualityLoop] ⛔ agy 各家額度都不可用，本輪不再試 agy")
                 break
     try:
         result = run_claude_cli(prompt, timeout_s)

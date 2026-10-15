@@ -726,10 +726,12 @@ def _write(prompt: str) -> tuple[Piece, str]:
     from src.llm_brain import _agy_model_chain
     from substack_radar.quality_loop import _run_agy_once
 
-    from substack_radar.quality_loop import agy_is_dead, note_agy_failure
+    from substack_radar.quality_loop import agy_family_dead, agy_is_dead, note_agy_failure
 
     last = None
-    for model in ([] if agy_is_dead() else _agy_model_chain()):
+    for model in _agy_model_chain():
+        if agy_family_dead(model):
+            continue
         try:
             piece = _extract(_run_agy_once(prompt, model, AGY_TIMEOUT_S))
             if piece:
@@ -737,7 +739,7 @@ def _write(prompt: str) -> tuple[Piece, str]:
             last = RuntimeError(f"{model} 沒有照格式輸出 HOOK／POINT／FIGURE／POST")
         except Exception as exc:
             last = exc
-            note_agy_failure(exc)
+            note_agy_failure(exc, model)
         print(f"[FBFollow] ⚠️ 寫手 {model} 不可用：{str(last)[:100]}")
         if agy_is_dead():
             break
@@ -755,7 +757,8 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
     並且照實記下是誰稽核的——2026-09-19 試跑時 Opus 429，實際由 Gemini 稽核
     Gemini，紀錄卻寫 Opus。"""
     from substack_radar.quality_loop import (
-        AUDIT_MODEL_CHAIN, _run_agy_once, _same_family, agy_is_dead, auditor_for, note_agy_failure,
+        AUDIT_MODEL_CHAIN, _run_agy_once, _same_family, agy_family_dead, agy_is_dead, auditor_for,
+        note_agy_failure,
     )
 
     if agy_is_dead():
@@ -770,6 +773,8 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
     order.sort(key=lambda m: _same_family(m, writer))  # 穩定排序：不同家族在前
     last = None
     for model in order:
+        if agy_family_dead(model):
+            continue
         try:
             raw = _run_agy_once(prompt, model, AGY_TIMEOUT_S)
             if _same_family(model, writer):
@@ -777,7 +782,7 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
             return raw, model
         except Exception as exc:
             last = exc
-            note_agy_failure(exc)
+            note_agy_failure(exc, model)
             print(f"[FBFollow] ⚠️ 稽核 {model} 不可用：{str(exc)[:100]}")
             if agy_is_dead():
                 break

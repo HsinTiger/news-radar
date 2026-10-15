@@ -292,7 +292,7 @@ def test_agy_is_skipped_for_the_rest_of_the_process_once_quota_is_gone(monkeypat
     """五個模型共用一份額度：第一次 429 之後每輪再試一遍 ＝ 每輪白等 5 分鐘。"""
     from substack_radar import quality_loop as q
 
-    monkeypatch.setattr(q, "_AGY_DEAD", False)
+    monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", set())
     calls = []
     def dead(prompt, model, timeout):
         calls.append(model)
@@ -302,7 +302,22 @@ def test_agy_is_skipped_for_the_rest_of_the_process_once_quota_is_gone(monkeypat
     assert q._run_agy("p", "Claude Opus 4.6 (Thinking)", 10) == "AUDIT"
     first_round = len(calls)
     assert q._run_agy("p", "Claude Opus 4.6 (Thinking)", 10) == "AUDIT"
-    assert len(calls) == first_round == 1   # 第二輪完全沒再碰 agy
+    assert first_round == 2                 # 每一家各試一次就判定（claude、gemini）
+    assert len(calls) == first_round        # 第二輪完全沒再碰 agy
+
+
+def test_one_family_out_of_credits_does_not_skip_the_other(monkeypatch):
+    """2026-10-15：agy 的 Gemini credits 不足，Claude Opus 照常可用，不能整條放棄改付費。"""
+    from substack_radar import quality_loop as q
+
+    monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", set())
+    def agy(prompt, model, timeout):
+        if "Gemini" in model:
+            raise RuntimeError("agy exit=3: Your AI credits balance is too low to continue. RESOURCE_EXHAUSTED")
+        return f"OK from {model}"
+    monkeypatch.setattr(q, "_run_agy_once", agy)
+    monkeypatch.setattr(q, "run_claude_cli", lambda p, t: (_ for _ in ()).throw(AssertionError("不該付費")))
+    assert q._run_agy("p", "Gemini 3.1 Pro (High)", 10).startswith("OK from Claude")
 
 
 def test_point_card_allows_three_lines_even_with_a_figure(tmp_path):

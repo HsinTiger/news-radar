@@ -355,6 +355,14 @@ AGY_RETRIES_PER_MODEL = int(os.getenv("AGY_RETRIES_PER_MODEL", "2"))
 AGY_PRINT_TIMEOUT_MAX_S = int(os.getenv("AGY_PRINT_TIMEOUT_MAX_S", "600"))
 
 
+def _agy_family(model: str) -> str:
+    m = (model or "").lower()
+    for key in ("claude", "gemini", "gpt"):
+        if key in m:
+            return key
+    return m
+
+
 def _agy_quota_or_hang(error: str) -> bool:
     """這個錯誤是不是「整個 agy 帳號現在不能用」？
 
@@ -1641,7 +1649,13 @@ async def call_for_json(
             # 「4 validation errors for EditorialResearchBrief」整條鏈就崩了，
             # 但同一天同一條管線手動跑兩次都一次過。
             # 沒有重試 = 把一個間歇性失敗當成永久失敗，然後掉到結構上更弱的後備。
+            # 額度是「一家一份」：2026-10-15 實測 agy 的 Gemini 回 credits 不足，同一時間
+            # agy 的 Claude Opus 4.6 照常可用。原本看到一家沒額度就整條 agy 跳過，直接
+            # 掉到付費的 claude CLI；改成只跳過同家族，其他家族照試。
+            _dead_families: set = set()
             for _idx, _agy_model in enumerate(_agy_model_chain()):
+                if _agy_family(_agy_model) in _dead_families:
+                    continue
                 for _attempt in range(AGY_RETRIES_PER_MODEL):
                     result = await _try_agy(
                         system=system,
@@ -1658,9 +1672,10 @@ async def call_for_json(
                 if result.data is not None:
                     break
                 if _agy_quota_or_hang(result.raw_error):
-                    print(f"[llm_brain] ⛔ agy 帳號層級不可用（{str(result.raw_error)[:60]}），"
-                          "整條 agy 鏈跳過，直接換下一個 backend。")
-                    break
+                    _dead_families.add(_agy_family(_agy_model))
+                    print(f"[llm_brain] ⛔ agy 的 {_agy_family(_agy_model)} 系列額度不可用"
+                          f"（{str(result.raw_error)[:50]}），跳過同家族，改試其他家族。")
+                    continue
                 _remaining = _agy_model_chain()[_idx + 1:]
                 if _remaining:
                     print(f"[llm_brain] ⟳ agy「{_agy_model}」未產出"
