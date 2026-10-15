@@ -246,13 +246,17 @@ def run_claude_cli(prompt: str, timeout_s: int) -> str:
     binary = shutil.which(os.getenv("CLAUDE_CLI_BIN", "claude"))
     if not binary:
         raise FileNotFoundError("claude 不在 PATH")
-    proc = subprocess.run(
-        [binary, "-p", "--output-format", "json",
-         "--model", os.getenv("CLAUDE_MODEL", "opus"),
-         "--effort", os.getenv("CLAUDE_EFFORT", "high"),   # 稽核一律最高推理強度
-         "--no-session-persistence", prompt],
-        capture_output=True, text=True, cwd="/tmp", timeout=timeout_s + 60,
-    )
+    # 信哥的排程模型順序最後一棒是 Haiku（CLAUDE_MODEL=haiku），不是付費的 Opus。
+    args = [binary, "-p", "--output-format", "json",
+            "--model", os.getenv("CLAUDE_MODEL") or "haiku",
+            "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+            "--system-prompt", "照使用者指定的格式輸出，不要多餘的說明。",
+            "--no-session-persistence"]
+    effort = os.getenv("CLAUDE_EFFORT", "")
+    if effort:
+        args += ["--effort", effort]
+    proc = subprocess.run(args, input=prompt, capture_output=True, text=True,
+                          cwd="/tmp", timeout=timeout_s + 60)
     try:
         data = json.loads(proc.stdout or "{}")
     except Exception as exc:
@@ -260,6 +264,47 @@ def run_claude_cli(prompt: str, timeout_s: int) -> str:
     if data.get("is_error") or not data.get("result"):
         raise RuntimeError(f"claude 失敗：{str(data.get('result'))[:160]}")
     return str(data["result"])
+
+
+def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
+    """本機 LiteLLM 閘道上的免費開源模型（設定由 src.llm_brain 載入）。"""
+    import httpx
+
+    import src.llm_brain  # noqa: F401  載入閘道環境變數
+
+    base = os.getenv("OSS_GATEWAY_BASE_URL", "http://127.0.0.1:4000/v1")
+    key = os.getenv("OSS_GATEWAY_KEY", "")
+    if not key:
+        raise RuntimeError("沒有開源模型閘道的金鑰")
+    resp = httpx.post(f"{base}/chat/completions", timeout=timeout_s,
+                      headers={"Authorization": f"Bearer {key}"},
+                      json={"model": model, "temperature": 0.2,
+                            "messages": [{"role": "user", "content": prompt}]})
+    if resp.status_code != 200:
+        raise RuntimeError(f"閘道 {model} HTTP {resp.status_code}: {resp.text[:120]}")
+    text = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    if not text.strip():
+        raise RuntimeError(f"閘道 {model} 回空字串")
+    return text
+
+
+OSS_FALLBACK_MODELS = ("deepseek-v4-flash-free", "qwen3.6-plus-free")
+
+
+def run_fallback_text(prompt: str, timeout_s: int) -> tuple[str, str]:
+    """agy 不能用之後的順序（信哥 2026-10-08／09 定的排程規則）：
+    平常 ② 開源模型 → ③ Haiku；agy 各家額度都用完時 Haiku 暫代第一順位。"""
+    oss = [(f"開源模型 {m}", lambda m=m: _oss_chat(m, prompt, timeout_s)) for m in OSS_FALLBACK_MODELS]
+    haiku = [("Claude Haiku", lambda: run_claude_cli(prompt, timeout_s))]
+    order = haiku + oss if agy_is_dead() else oss + haiku
+    last = None
+    for label, call in order:
+        try:
+            return call(), label
+        except Exception as exc:
+            last = exc
+            print(f"[QualityLoop] ⚠️ {label} 不可用：{str(exc)[:110]}")
+    raise RuntimeError(f"後備模型全部不可用；最後一個錯誤：{last}")
 
 
 def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
@@ -282,11 +327,11 @@ def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
                 print("[QualityLoop] ⛔ agy 各家額度都不可用，本輪不再試 agy")
                 break
     try:
-        result = run_claude_cli(prompt, timeout_s)
-        print("[QualityLoop] ℹ️ agy 全鏈不可用，改用 claude CLI 稽核（付費）")
+        result, label = run_fallback_text(prompt, timeout_s)
+        print(f"[QualityLoop] ℹ️ agy 不可用，改由 {label} 稽核")
         return result
     except Exception as exc:
-        raise RuntimeError(f"稽核鏈全部不可用（含 claude CLI：{str(exc)[:100]}）；最後一個 agy 錯誤：{last}")
+        raise RuntimeError(f"稽核鏈全部不可用（{str(exc)[:100]}）；最後一個 agy 錯誤：{last}")
 
 
 def _extract_article(raw: str) -> str | None:

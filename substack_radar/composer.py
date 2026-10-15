@@ -1250,6 +1250,8 @@ SUBSTACK_BACKEND = os.getenv(
 
 
 _KNOWN_BACKENDS = {
+    "oss_deepseek",
+    "oss_qwen",
     "codex_cli",
     "antigravity_cli",
     "claude_cli",

@@ -355,6 +355,20 @@ AGY_RETRIES_PER_MODEL = int(os.getenv("AGY_RETRIES_PER_MODEL", "2"))
 AGY_PRINT_TIMEOUT_MAX_S = int(os.getenv("AGY_PRINT_TIMEOUT_MAX_S", "600"))
 
 
+# 這一次 call_for_json 裡 agy 哪些家族額度用完（給 Haiku 暫代判斷用）。
+_AGY_DEAD_SNAPSHOT: set = set()
+_LAST_AGY_EXHAUSTED = False
+
+
+def _dead_families_snapshot() -> set:
+    return set(_AGY_DEAD_SNAPSHOT)
+
+
+def _set_agy_exhausted() -> None:
+    global _LAST_AGY_EXHAUSTED
+    _LAST_AGY_EXHAUSTED = True
+
+
 def _agy_family(model: str) -> str:
     m = (model or "").lower()
     for key in ("claude", "gemini", "gpt"):
@@ -1178,7 +1192,44 @@ class _OpenAICompatProvider:
     model_default: str
 
 
+def _load_oss_gateway_env() -> None:
+    """本機 LiteLLM 閘道（127.0.0.1:4000，免費開源模型）。
+
+    信哥 2026-10-08 定的排程模型順序：① agy → ② 開源模型（走 LiteLLM 閘道）→ ③ Claude
+    Haiku；agy 額度用完時 Haiku 暫代第一順位（2026-10-09）。閘道設定與套利王共用同一份
+    ~/.config/savings-radar/llm.env（LLM_BASE_URL／LLM_API_KEY），這裡只讀不寫。"""
+    if os.getenv("OSS_GATEWAY_KEY"):
+        return
+    try:
+        text = (Path.home() / ".config" / "savings-radar" / "llm.env").read_text(encoding="utf-8")
+    except OSError:
+        return
+    values = dict(re.findall(r"^([A-Z_]+)=(.*)$", text, re.M))
+    if values.get("LLM_API_KEY") and values.get("LLM_BASE_URL"):
+        os.environ.setdefault("OSS_GATEWAY_KEY", values["LLM_API_KEY"].strip())
+        os.environ.setdefault("OSS_GATEWAY_BASE_URL", values["LLM_BASE_URL"].strip().rstrip("/") + "/v1")
+
+
+_load_oss_gateway_env()
+
 _OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
+    # ② 開源模型（本機 LiteLLM 閘道）。寫長文的提示一萬多字，選上下文夠長的兩個。
+    "oss_deepseek": _OpenAICompatProvider(
+        name="oss_deepseek",
+        key_env="OSS_GATEWAY_KEY",
+        base_url_env="OSS_GATEWAY_BASE_URL",
+        base_url_default="http://127.0.0.1:4000/v1",
+        model_env="OSS_DEEPSEEK_MODEL",
+        model_default="deepseek-v4-flash-free",
+    ),
+    "oss_qwen": _OpenAICompatProvider(
+        name="oss_qwen",
+        key_env="OSS_GATEWAY_KEY",
+        base_url_env="OSS_GATEWAY_BASE_URL",
+        base_url_default="http://127.0.0.1:4000/v1",
+        model_env="OSS_QWEN_MODEL",
+        model_default="qwen3.6-plus-free",
+    ),
     # GitHub Actions can mint a short-lived GITHUB_TOKEN with ``models: read``.
     # This gives the cloud pipeline a governed fallback without another
     # long-lived third-party secret.  It still returns through the same
@@ -1577,7 +1628,9 @@ async def call_for_json(
 
     # 依 `allowed` 內的順序逐一嘗試（= 能力 / 可靠度排序），第一個成功就回。
     # 預設鏈：claude_cli(Max 主腦) → gemini(SDK structured) → groq → cerebras。
-    for name in allowed:
+    queue = list(allowed)
+    while queue:
+        name = queue.pop(0)
         if use_quota_circuit and name in _QUOTA_EXHAUSTED_BACKENDS:
             print(
                 f"[llm_brain] ℹ️ quota circuit 已開啟，略過本 process 已耗盡的 {name}。"
@@ -1652,7 +1705,9 @@ async def call_for_json(
             # 額度是「一家一份」：2026-10-15 實測 agy 的 Gemini 回 credits 不足，同一時間
             # agy 的 Claude Opus 4.6 照常可用。原本看到一家沒額度就整條 agy 跳過，直接
             # 掉到付費的 claude CLI；改成只跳過同家族，其他家族照試。
-            _dead_families: set = set()
+            _dead_families: set = set(_AGY_DEAD_SNAPSHOT)   # 本行程已知沒額度的家族直接跳過
+            global _LAST_AGY_EXHAUSTED
+            _LAST_AGY_EXHAUSTED = False
             for _idx, _agy_model in enumerate(_agy_model_chain()):
                 if _agy_family(_agy_model) in _dead_families:
                     continue
@@ -1673,6 +1728,7 @@ async def call_for_json(
                     break
                 if _agy_quota_or_hang(result.raw_error):
                     _dead_families.add(_agy_family(_agy_model))
+                    _AGY_DEAD_SNAPSHOT.update(_dead_families)
                     print(f"[llm_brain] ⛔ agy 的 {_agy_family(_agy_model)} 系列額度不可用"
                           f"（{str(result.raw_error)[:50]}），跳過同家族，改試其他家族。")
                     continue
@@ -1717,6 +1773,15 @@ async def call_for_json(
 
         last_error = result.raw_error
         print(f"[llm_brain] ⚠️ {name} 失敗。reason={result.raw_error}")
+        if name == "antigravity_cli":
+            families = {_agy_family(m) for m in _agy_model_chain()}
+            if families and families <= _dead_families_snapshot():
+                _set_agy_exhausted()
+                # 信哥 2026-10-09：agy 額度用完時，Haiku 暫代 agy 的第一順位（排在開源模型前）。
+                if os.getenv("LLM_HAIKU_STANDIN", "1") != "0" and "claude_cli" in queue:
+                    queue.remove("claude_cli")
+                    queue.insert(0, "claude_cli")
+                    print("[llm_brain] ℹ️ agy 各家額度都用完，Haiku 暫代第一順位（排在開源模型前）")
         if (
             use_quota_circuit
             and result.raw_error

@@ -446,39 +446,52 @@ def test_audit_falls_back_to_claude_cli_when_agy_chain_is_down(monkeypatch):
     assert q._run_agy("prompt", "Claude Opus 4.6 (Thinking)", 30) == "CLAUDE-AUDIT"
 
 
-def test_audit_raises_when_both_agy_and_claude_are_down(monkeypatch):
+def test_audit_raises_when_agy_and_every_fallback_are_down(monkeypatch):
     from substack_radar import quality_loop as q
 
     monkeypatch.setattr(q, "_run_agy_once", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429")))
-    def dead_claude(*_a, **_k):
-        raise RuntimeError("OAuth session expired")
-    monkeypatch.setattr(q, "run_claude_cli", dead_claude)
+    def all_down(*_a, **_k):
+        raise RuntimeError("後備模型全部不可用；最後一個錯誤：OAuth session expired")
+    monkeypatch.setattr(q, "run_fallback_text", all_down)
     with pytest.raises(RuntimeError, match="OAuth session expired"):
         q._run_agy("prompt", "Claude Opus 4.6 (Thinking)", 30)
 
 
-def test_claude_cli_audit_uses_highest_effort(monkeypatch):
+def test_fallback_order_follows_the_owner_rule(monkeypatch):
+    """信哥 2026-10-08／09：② 開源模型 → ③ Haiku；agy 各家額度都用完時 Haiku 頂到第一位。"""
+    from substack_radar import quality_loop as q
+
+    tried = []
+    monkeypatch.setattr(q, "_oss_chat", lambda m, p, t: tried.append(f"oss:{m}") or (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(q, "run_claude_cli", lambda p, t: tried.append("haiku") or "ok")
+    monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", set())
+    assert q.run_fallback_text("p", 10) == ("ok", "Claude Haiku")
+    assert tried == ["oss:deepseek-v4-flash-free", "oss:qwen3.6-plus-free", "haiku"]
+    tried.clear()
+    monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", {"claude", "gemini"})
+    assert q.run_fallback_text("p", 10)[1] == "Claude Haiku"
+    assert tried == ["haiku"]                       # agy 全掛：Haiku 暫代第一順位
+
+
+def test_claude_fallback_is_haiku_not_paid_opus(monkeypatch):
     import subprocess
     from substack_radar import quality_loop as q
 
     seen = {}
     class Done:
         stdout = '{"is_error": false, "result": "ok"}'
-    def fake_run(args, **_k):
-        seen["args"] = args
+    def fake_run(args, **kwargs):
+        seen["args"], seen["input"] = args, kwargs.get("input")
         return Done()
     monkeypatch.setattr(q.shutil, "which", lambda _x: "/Users/hsin/.local/bin/claude")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    # 這個測試原本沒固定環境：在 CLAUDE_EFFORT=max 的 shell 裡跑就會失敗
-    # （2026-10-06，Claude Code 工作階段把自己的 effort 傳給子行程）。
-    monkeypatch.delenv("CLAUDE_EFFORT", raising=False)
-    assert q.run_claude_cli("p", 30) == "ok"
+    monkeypatch.delenv("CLAUDE_MODEL", raising=False)
+    monkeypatch.setenv("CLAUDE_EFFORT", "")
+    assert q.run_claude_cli("工單內容", 30) == "ok"
     args = seen["args"]
-    assert args[args.index("--effort") + 1] == "high"
-    monkeypatch.setenv("CLAUDE_EFFORT", "max")
-    q.run_claude_cli("p", 30)
-    args = seen["args"]
-    assert args[args.index("--effort") + 1] == "max"
+    assert args[args.index("--model") + 1] == "haiku"
+    assert "--effort" not in args
+    assert seen["input"] == "工單內容"              # 提示走 stdin，不放在參數裡
 
 
 def test_claude_cli_error_is_not_silently_treated_as_pass(monkeypatch):

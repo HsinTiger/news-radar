@@ -743,13 +743,14 @@ def _write(prompt: str) -> tuple[Piece, str]:
         print(f"[FBFollow] ⚠️ 寫手 {model} 不可用：{str(last)[:100]}")
         if agy_is_dead():
             break
-    from substack_radar.quality_loop import run_claude_cli
+    from substack_radar.quality_loop import run_fallback_text
 
-    piece = _extract(run_claude_cli(prompt, AGY_TIMEOUT_S))
+    text, label = run_fallback_text(prompt, AGY_TIMEOUT_S)
+    piece = _extract(text)
     if piece:
-        print("[FBFollow] ℹ️ agy 全鏈不可用，改用 claude CLI 寫 FB 版（付費）")
-        return piece, "claude CLI"
-    raise RuntimeError(f"寫手鏈全部失敗（含 claude CLI）：{last}")
+        print(f"[FBFollow] ℹ️ agy 不可用，改由 {label} 寫 FB 版")
+        return piece, label
+    raise RuntimeError(f"寫手鏈全部失敗（{label} 沒照格式輸出）：{last}")
 
 
 def _audit(prompt: str, writer: str) -> tuple[str, str]:
@@ -762,9 +763,9 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
     )
 
     if agy_is_dead():
-        from substack_radar.quality_loop import run_claude_cli
+        from substack_radar.quality_loop import run_fallback_text
 
-        return run_claude_cli(prompt, AGY_TIMEOUT_S), "claude CLI"
+        return run_fallback_text(prompt, AGY_TIMEOUT_S)
     pool = [auditor_for(writer), "Claude Sonnet 4.6 (Thinking)", *AUDIT_MODEL_CHAIN]
     order = []
     for model in pool:
@@ -786,10 +787,11 @@ def _audit(prompt: str, writer: str) -> tuple[str, str]:
             print(f"[FBFollow] ⚠️ 稽核 {model} 不可用：{str(exc)[:100]}")
             if agy_is_dead():
                 break
-    from substack_radar.quality_loop import run_claude_cli
+    from substack_radar.quality_loop import run_fallback_text
 
-    print("[FBFollow] ℹ️ agy 全鏈不可用，改用 claude CLI 稽核（付費）")
-    return run_claude_cli(prompt, AGY_TIMEOUT_S), "claude CLI"
+    text, label = run_fallback_text(prompt, AGY_TIMEOUT_S)
+    print(f"[FBFollow] ℹ️ agy 不可用，改由 {label} 稽核")
+    return text, label
 
 
 @dataclass
