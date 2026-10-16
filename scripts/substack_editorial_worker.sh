@@ -150,8 +150,19 @@ else
   # 週日 09:00 失敗就整週沒有賺錢有道（2026-09-20：agy 全模型 429、claude 不在 PATH
   # 且登入過期、gemini 503 → 三個後備同時倒下，一篇都沒產出）。改成當天可以重試，
   # 這個 guard 保證已經產出過就不會再寫第二篇。
-  if ls -d "$LOCAL_REPO/data/substack_drafts/$(date +%F)"/company_* >/dev/null 2>&1; then
-    echo "[editorial] 今天已經有賺錢有道草稿，略過。"
+  # 只算「通過事實稽核」的那篇：帶著未解違規的草稿不能發（07:30 也會跳過它），不該擋住重寫。
+  # 2026-10-17 凌晨一篇 PepsiCo 帶 1 項違規出稿，舊規則會讓 06:00 直接略過、整個週六沒有公司分析可發。
+  if "$PY" - "$LOCAL_REPO/data/substack_drafts/$(date +%F)" <<'PYCHECK'
+import json, sys, pathlib
+day = pathlib.Path(sys.argv[1])
+ok = any(
+    not any(str(w).startswith("[品質迴圈未通過]") for w in json.loads(m.read_text()).get("audit_warnings") or [])
+    for m in day.glob("company_*/metadata.json")
+)
+sys.exit(0 if ok else 1)
+PYCHECK
+  then
+    echo "[editorial] 今天已經有通過稽核的賺錢有道草稿，略過。"
     exit 0
   fi
   "$PY" scripts/pick_company_candidate.py
