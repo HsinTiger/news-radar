@@ -66,7 +66,8 @@ def _substack_auth_blocked() -> bool:
 def _is_morning(t) -> bool:
     from datetime import time as dtime
 
-    return dtime(5, 40) <= t < dtime(7, 50)
+    # 05:00 起就不開新的一篇：單篇（轉逐字稿＋寫稿）可能跑 40 分鐘以上，要在 06:00 前收手。
+    return dtime(5, 0) <= t < dtime(7, 50)
 
 
 def _in_morning_window(now=None) -> bool:
@@ -235,7 +236,7 @@ def main():
     if not args.dry_run and not args.mark and _in_morning_window():
         # 05:40～07:50 留給早上的寫稿（06:00／06:30）與 07:30 自動發文。投稿單篇轉逐字稿就可能
         # 半小時以上，「做完手上這篇再讓位」不夠——2026-10-16 06:30 那篇等鎖 45 分鐘後放棄。
-        print("[drain] ⏸️ 早上 05:40～07:50 保留給每日排程，投稿稍後再寫")
+        print("[drain] ⏸️ 早上 05:00～07:50 保留給每日排程，投稿稍後再寫")
         return 0
 
     if not args.dry_run and not args.mark and _substack_auth_blocked():
@@ -310,6 +311,10 @@ def main():
     evidence_pending = 0
     editorial_want = REPO / ".runtime-state-editorial-want"
     for rid, title, wc, url, body, tags in pending:
+        if _in_morning_window():
+            # 凌晨就開始的一輪也要停：2026-10-17 一輪從 23:04 跑到隔天，差點又擋到 06:00。
+            print("[drain] ⏸️ 已到早上保留時段，剩下的投稿稍後再寫")
+            break
         if editorial_want.exists():
             # 早上 06:00／06:30 的排程正在等本機鎖（07:30 要發文）。投稿積很多時，一輪
             # 可能寫好幾個小時；做完手上這篇就讓位，剩下的下一輪再寫。
