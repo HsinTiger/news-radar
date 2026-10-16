@@ -91,3 +91,25 @@ def test_claude_cli_gets_the_same_json_field_contract_as_agy():
     block = _json_contract_block(EditorialResearchBrief)
     assert "article_form" in block and "source_digest" in block
     assert "raw JSON" in block
+
+
+def test_second_call_after_agy_is_known_dead_falls_through_instead_of_crashing(monkeypatch):
+    """2026-10-16 06:00：研究簡報那次已確認 agy 各家沒額度，寫正文那次一個都不試，
+    result 是 None → AttributeError，整篇沒寫成。"""
+    import asyncio
+    from pydantic import BaseModel
+    from src import llm_brain
+
+    class Tiny(BaseModel):
+        answer: str
+
+    monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", {"gemini", "claude"})
+    monkeypatch.setattr(llm_brain, "_agy_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "_agy_model_chain", lambda: ["Gemini 3.8 Flash (High)", "Claude Opus 4.6 (Thinking)"])
+    async def haiku(**_k):
+        return llm_brain.LLMResult(data=Tiny(answer="ok"), provider="claude_cli", model="haiku")
+    monkeypatch.setattr(llm_brain, "_try_claude_cli", haiku)
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: True)
+    r = asyncio.run(llm_brain.call_for_json(system="s", prompt="p", response_model=Tiny,
+                                            backends=("antigravity_cli", "oss_deepseek", "claude_cli")))
+    assert r.data.answer == "ok" and r.provider == "claude_cli"

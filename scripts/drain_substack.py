@@ -63,6 +63,18 @@ def _substack_auth_blocked() -> bool:
     return substack_auth_blocked()
 
 
+def _is_morning(t) -> bool:
+    from datetime import time as dtime
+
+    return dtime(5, 40) <= t < dtime(7, 50)
+
+
+def _in_morning_window(now=None) -> bool:
+    from datetime import datetime
+
+    return _is_morning((now or datetime.now()).time())
+
+
 def _substack_login_ok() -> bool:
     """直接用目前的 cookie 試一次 Substack（只讀一筆草稿清單，不花 AI 額度）。
 
@@ -219,6 +231,12 @@ def main():
         ),
     )
     args = ap.parse_args()
+
+    if not args.dry_run and not args.mark and _in_morning_window():
+        # 05:40～07:50 留給早上的寫稿（06:00／06:30）與 07:30 自動發文。投稿單篇轉逐字稿就可能
+        # 半小時以上，「做完手上這篇再讓位」不夠——2026-10-16 06:30 那篇等鎖 45 分鐘後放棄。
+        print("[drain] ⏸️ 早上 05:40～07:50 保留給每日排程，投稿稍後再寫")
+        return 0
 
     if not args.dry_run and not args.mark and _substack_auth_blocked():
         # 一定要在建素材包（Whisper、agy／Gemini 讀字幕）之前就停：只在 compose 裡檢查太晚，

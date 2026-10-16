@@ -1736,6 +1736,13 @@ async def call_for_json(
                 if _remaining:
                     print(f"[llm_brain] ⟳ agy「{_agy_model}」未產出"
                           f"（{str(result.raw_error)[:70]}），改試「{_remaining[0]}」。")
+            if result is None:
+                # 本行程早就知道 agy 每一家都沒額度，迴圈一個都沒試。原本 result 留在 None，
+                # 下面取 result.data 直接當掉——2026-10-16 06:00 那篇研究做完、寫正文時就死在這。
+                result = LLMResult(
+                    data=None, provider="antigravity_cli", model=None,
+                    raw_error="agy 各家額度都已用完（本行程先前已確認），跳過",
+                )
 
         elif name == "gemini_cli":
             if not _gemini_cli_available():

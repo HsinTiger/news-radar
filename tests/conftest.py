@@ -93,5 +93,6 @@ def _isolate_live_runtime_markers(tmp_path_factory, monkeypatch):
         from scripts import drain_substack
         monkeypatch.setattr(drain_substack, "ATTEMPTS_FILE", sandbox / ".substack_attempts.json")
         monkeypatch.setattr(drain_substack, "_substack_login_ok", lambda: True)
+        monkeypatch.setattr(drain_substack, "_in_morning_window", lambda now=None: False)
     except Exception:
         pass

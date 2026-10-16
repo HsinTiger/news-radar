@@ -90,3 +90,10 @@ def test_test_suite_cannot_touch_the_real_marker():
     from pathlib import Path
     assert "runtime-markers" in str(compose.SUBSTACK_AUTH_MARKER)
     assert Path(compose.SUBSTACK_AUTH_MARKER).parent != Path(compose._REPO_ROOT) / "data" / "substack_drafts"
+
+
+def test_drain_stays_out_of_the_morning_window():
+    from datetime import time
+    w = drain_substack._is_morning
+    assert w(time(6, 0)) and w(time(7, 30))
+    assert not w(time(5, 30)) and not w(time(8, 0))
