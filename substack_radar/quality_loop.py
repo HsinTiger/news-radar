@@ -203,13 +203,20 @@ _AGY_DEAD_FAMILIES: set = set()
 
 
 def agy_family_dead(model: str) -> bool:
-    from src.llm_brain import _agy_family
+    from src.llm_brain import _agy_family, _dead_families_snapshot
 
-    return _agy_family(model) in _AGY_DEAD_FAMILIES
+    return _agy_family(model) in (_AGY_DEAD_FAMILIES | _dead_families_snapshot())
 
 
 def agy_is_dead() -> bool:
-    return {"claude", "gemini"} <= _AGY_DEAD_FAMILIES
+    # 跟寫稿那段（src.llm_brain）共用判斷：同一個行程裡，寫稿時已確認 agy 各家沒額度，
+    # 稽核就不必再試一輪，也要讓 Haiku 頂第一位（2026-10-17 兩份紀錄分開，稽核改用了開源模型）。
+    try:
+        from src.llm_brain import _dead_families_snapshot
+        known = _AGY_DEAD_FAMILIES | _dead_families_snapshot()
+    except Exception:
+        known = _AGY_DEAD_FAMILIES
+    return {"claude", "gemini"} <= known
 
 
 def note_agy_failure(error, model: str = "") -> None:
@@ -278,7 +285,8 @@ def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
         raise RuntimeError("沒有開源模型閘道的金鑰")
     resp = httpx.post(f"{base}/chat/completions", timeout=timeout_s,
                       headers={"Authorization": f"Bearer {key}"},
-                      json={"model": model, "temperature": 0.2,
+                      # 修訂要回傳整篇文章；不指定上限時閘道預設很短，全文會被截斷（2026-10-17）。
+                      json={"model": model, "temperature": 0.2, "max_tokens": 16000,
                             "messages": [{"role": "user", "content": prompt}]})
     if resp.status_code != 200:
         raise RuntimeError(f"閘道 {model} HTTP {resp.status_code}: {resp.text[:120]}")
@@ -310,6 +318,15 @@ def run_fallback_text(prompt: str, timeout_s: int) -> tuple[str, str]:
 def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
     """依鏈逐個試。第一個成功就回；agy 全掛才退到 claude CLI（付費）。"""
     chain = [m for m in [model] + [m for m in AUDIT_MODEL_CHAIN if m != model] if not agy_family_dead(m)]
+    try:
+        # agy 會下架舊模型（2026-10-17：Gemini 3.1 Pro、3.7 Flash 回 invalid model selection）。
+        # 清單查得到時只試還在架上的；查不到就照原清單試。
+        from src.agy_models import available_models
+        listed = set(available_models())
+        if listed:
+            chain = [m for m in chain if m in listed]
+    except Exception:
+        pass
     last = "agy 本輪已判定不可用" if not chain else None
     for index, candidate in enumerate(chain):
         if agy_family_dead(candidate):

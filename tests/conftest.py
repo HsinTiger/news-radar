@@ -96,3 +96,21 @@ def _isolate_live_runtime_markers(tmp_path_factory, monkeypatch):
         monkeypatch.setattr(drain_substack, "_in_morning_window", lambda now=None: False)
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model_calls(monkeypatch):
+    """測試不准真的叫模型或查 agy 上架清單（2026-10-17：加了「只試架上模型」後，兩個測試
+    真的打到本機閘道、拿到模型的隨機回覆）。要測這些的測試自己再 monkeypatch。"""
+    try:
+        from substack_radar import quality_loop
+        def _blocked(*_a, **_k):
+            raise RuntimeError("測試中不准呼叫開源模型閘道")
+        monkeypatch.setattr(quality_loop, "_oss_chat", _blocked)
+    except Exception:
+        pass
+    try:
+        from src import agy_models
+        monkeypatch.setattr(agy_models, "available_models", lambda **_k: [])
+    except Exception:
+        pass
