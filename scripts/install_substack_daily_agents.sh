@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 安裝 Substack 編輯排程（2026-10-15 起）：
-#   早上 06:00／06:30 各寫一篇（平日 Podcast×2，週末 公司分析＋Podcast），
+#   每天 06:00 只寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），寫不好當天再重試一次，
 #   07:30 由 daily-publish 從當天的稿子挑一篇發布並寄信，其餘留草稿。
 
 set -euo pipefail
@@ -11,12 +11,13 @@ BIN_DIR="$HOME/bin"
 MODE="${1:-install}"
 AGENTS=(
   "com.hsin.news-radar.substack-podcast-noon"
-  "com.hsin.news-radar.substack-podcast-second"
+  "com.hsin.news-radar.substack-ai"
   "com.hsin.news-radar.company-compose"
   "com.hsin.news-radar.daily-publish"
   "com.hsin.news-radar.fb-scheduled"
 )
 LEGACY_AGENTS=(
+  "com.hsin.news-radar.substack-podcast-second"   # 2026-10-18 起一天只寫一篇
   "com.hsin.news-radar.substack-podcast-noon-1"
   "com.hsin.news-radar.substack-podcast-noon-2"
   "com.hsin.news-radar.company-pick"
@@ -74,5 +75,5 @@ for label in "${AGENTS[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$label.plist"
 done
 
-echo "installed: 平日 06:00/06:30 Podcast、週末 06:00 公司分析＋06:30 Podcast、每天 07:30 自動發布一篇、FB 12:30／20:30"
+echo "installed: 每天 06:00 寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），當天重試一次；07:30 自動發布；FB 12:30／20:30"
 echo "owner submission immediate/hourly workers are unchanged"

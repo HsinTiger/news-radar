@@ -416,20 +416,22 @@ def test_company_title_must_name_the_subject():
     """21 篇 company 稿有 10 篇標題沒點名。Substack 沒有獨立的 email 主旨欄位，
     主旨就是標題——「49% 毛利背後的獲利漏斗」在收件匣看不出在講哪家公司。"""
     assert any("沒點名主體" in w for w in _title_warnings("49% 毛利背後的獲利漏斗", ("瑞昱", "Realtek")))
-    assert _title_warnings("瑞昱：49% 毛利背後的獲利漏斗", ("瑞昱", "Realtek")) == []
+    assert _title_warnings("瑞昱 49% 毛利背後的獲利漏斗", ("瑞昱", "Realtek")) == []
 
 
-def test_company_titles_get_a_longer_cap_and_may_use_a_colon():
+def test_company_titles_get_a_longer_cap_but_no_colon():
     """15 字要同時塞鉤子與公司名，寫手只會留鉤子。對標的曼報自己也是 19–25 字，
     結構是「系列名＋冒號＋角度」。"""
-    assert _title_warnings("瑞昱：49% 毛利背後的獲利漏斗", ("瑞昱",)) == []          # 16 字含冒號
+    assert _title_warnings("瑞昱毛利 49% 背後的獲利漏斗", ("瑞昱",)) == []          # 公司稿上限 20 字
+    # 2026-10-17 信哥：冒號標題很 AI 感，公司稿也不例外
+    assert any("冒號" in w for w in _title_warnings("瑞昱：49% 毛利背後的獲利漏斗", ("瑞昱",)))
     assert any("標題過長" in w for w in
                _title_warnings("瑞昱：這是一個非常非常長的標題會超過二十個字元限制", ("瑞昱",)))
 
 
 def test_non_company_titles_keep_the_old_rules():
     assert _title_warnings("當用戶不再打開 Canva") == []
-    assert any("雙焦點" in w for w in _title_warnings("情緒：可能不是一種感覺"))
+    assert any("冒號" in w for w in _title_warnings("情緒：可能不是一種感覺"))
 
 import pytest
 
@@ -458,7 +460,7 @@ def test_audit_raises_when_agy_and_every_fallback_are_down(monkeypatch):
 
 
 def test_fallback_order_follows_the_owner_rule(monkeypatch):
-    """信哥 2026-10-08／09：② 開源模型 → ③ Haiku；agy 各家額度都用完時 Haiku 頂到第一位。"""
+    """信哥 2026-10-08／17：② 閘道 → ③ Haiku；設 LLM_HAIKU_STANDIN=1 時 agy 全掛 Haiku 頂到第一位。"""
     from substack_radar import quality_loop as q
 
     tried = []
@@ -466,11 +468,16 @@ def test_fallback_order_follows_the_owner_rule(monkeypatch):
     monkeypatch.setattr(q, "run_claude_cli", lambda p, t: tried.append("haiku") or "ok")
     monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", set())
     assert q.run_fallback_text("p", 10) == ("ok", "Claude Haiku")
-    assert tried == ["oss:deepseek-v4-flash-free", "oss:qwen3.6-plus-free", "haiku"]
+    assert tried == ["oss:audit", "haiku"]
     tried.clear()
     monkeypatch.setattr(q, "_AGY_DEAD_FAMILIES", {"claude", "gemini"})
+    monkeypatch.delenv("LLM_HAIKU_STANDIN", raising=False)
+    q.run_fallback_text("p", 10)
+    assert tried == ["oss:audit", "haiku"]   # 預設：agy 全掛也是閘道先頂
+    tried.clear()
+    monkeypatch.setenv("LLM_HAIKU_STANDIN", "1")
     assert q.run_fallback_text("p", 10)[1] == "Claude Haiku"
-    assert tried == ["haiku"]                       # agy 全掛：Haiku 暫代第一順位
+    assert tried == ["haiku"]                       # 開關打開：Haiku 暫代第一順位
 
 
 def test_claude_fallback_is_haiku_not_paid_opus(monkeypatch):

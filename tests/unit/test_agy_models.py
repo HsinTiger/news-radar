@@ -103,6 +103,7 @@ def test_second_call_after_agy_is_known_dead_falls_through_instead_of_crashing(m
     class Tiny(BaseModel):
         answer: str
 
+    monkeypatch.setenv("LLM_HAIKU_STANDIN", "1")
     monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", {"gemini", "claude"})
     monkeypatch.setattr(llm_brain, "_agy_available", lambda: True)
     monkeypatch.setattr(llm_brain, "_agy_model_chain", lambda: ["Gemini 3.8 Flash (High)", "Claude Opus 4.6 (Thinking)"])
@@ -111,5 +112,55 @@ def test_second_call_after_agy_is_known_dead_falls_through_instead_of_crashing(m
     monkeypatch.setattr(llm_brain, "_try_claude_cli", haiku)
     monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: True)
     r = asyncio.run(llm_brain.call_for_json(system="s", prompt="p", response_model=Tiny,
-                                            backends=("antigravity_cli", "oss_deepseek", "claude_cli")))
+                                            backends=("antigravity_cli", "gateway", "claude_cli")))
     assert r.data.answer == "ok" and r.provider == "claude_cli"
+
+
+def test_gateway_stands_in_for_dead_agy_before_haiku(monkeypatch):
+    """信哥 2026-10-17：「agy 沒額度可以用 ccr 去頂替」→ 預設閘道排在 Haiku 前面。"""
+    import asyncio
+    from pydantic import BaseModel
+    from src import llm_brain
+
+    class Tiny(BaseModel):
+        answer: str
+
+    monkeypatch.delenv("LLM_HAIKU_STANDIN", raising=False)
+    monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", {"gemini", "claude"})
+    monkeypatch.setattr(llm_brain, "_agy_available", lambda: True)
+    monkeypatch.setattr(llm_brain, "_agy_model_chain", lambda: ["Gemini 3.8 Flash (High)", "Claude Opus 4.6 (Thinking)"])
+    monkeypatch.setenv("OSS_GATEWAY_KEY", "k")
+    tried = []
+    async def gateway(**kw):
+        tried.append(kw["provider"].name)
+        return llm_brain.LLMResult(data=Tiny(answer="gw"), provider="gateway", model="gemini-2.5-flash")
+    async def haiku(**_k):
+        tried.append("claude_cli")
+        return llm_brain.LLMResult(data=Tiny(answer="ok"), provider="claude_cli", model="haiku")
+    monkeypatch.setattr(llm_brain, "_try_openai_compatible", gateway)
+    monkeypatch.setattr(llm_brain, "_try_claude_cli", haiku)
+    monkeypatch.setattr(llm_brain, "_claude_cli_available", lambda: True)
+    r = asyncio.run(llm_brain.call_for_json(system="s", prompt="p", response_model=Tiny,
+                                            backends=("antigravity_cli", "gateway", "claude_cli")))
+    assert r.provider == "gateway" and tried == ["gateway"]
+
+
+def test_agy_dead_marker_lets_the_next_process_skip_agy(monkeypatch, tmp_path):
+    """2026-10-17：每個排程是新行程，原本都要重撞一輪 agy；記號讓下一個排程直接跳過。"""
+    import time
+    from src import llm_brain
+
+    monkeypatch.setattr(llm_brain, "AGY_DEAD_MARKER", tmp_path / ".agy_dead.json")
+    monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", {"claude", "gemini"})
+    llm_brain._set_agy_exhausted()
+    monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", set())       # 模擬新行程
+    assert llm_brain._dead_families_snapshot() == {"claude", "gemini"}
+    monkeypatch.setattr(llm_brain.time, "time", lambda: 10**12)        # 過期 → 再試 agy
+    assert llm_brain._dead_families_snapshot() == set()
+
+
+def test_agy_outer_timeout_matches_print_timeout_cap():
+    import inspect
+    from src import llm_brain
+    src = inspect.getsource(llm_brain._try_agy)
+    assert "timeout=timeout_s + 20" not in src and "AGY_PRINT_TIMEOUT_MAX_S) + 30" in src

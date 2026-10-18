@@ -233,7 +233,9 @@ class EditorialResearchBrief(BaseModel):
         ...,
         min_length=3,
         max_length=5,
-        description="從證據缺口導出的 3–5 個不同研究角度查詢，不得只是同義改寫。",
+        description=("從證據缺口導出的 3–5 個不同研究角度的『搜尋引擎關鍵字』，不得只是同義改寫。"
+                     "每條是給 Google 用的關鍵字串（主體英文名＋關鍵詞，≤12 個詞），不是寫給人的指令句；"
+                     "不要加「官方/第一手：」之類的標籤。"),
     )
     terms_to_explain: list[str] = Field(default_factory=list, max_length=8)
     generated_by: SkipJsonSchema[Optional[str]] = Field(default=None)
@@ -325,6 +327,8 @@ def strip_generated_footer(markdown: str) -> str:
         "每天兩篇思想延伸",
         "每天一篇思想延伸",   # 2026-08-17 起的對外節奏；模型有時會自己補上
         "每天早上一篇",       # 2026-10-15 起的對外節奏
+        "替你濾掉雜訊",       # 2026-10-17 起的對外節奏（信哥：頁尾要有「幫你過濾出有意義資訊」的意涵）
+        "二四AI實戰",       # 2026-10-18 加入 AI 專欄
         "覺得我哪個判斷站不住，直接回信",
         "有想法？留言區聊聊",
         "✉️ 你可以直接回信，告訴我哪個判斷值得再追",
@@ -367,6 +371,7 @@ DAILY_EDITORIAL_PATH = CONFIG_DIR / "editorial_daily.md"
 WEEKLY_EDITORIAL_PATH = CONFIG_DIR / "editorial_weekly.md"
 PODCAST_EDITORIAL_PATH = CONFIG_DIR / "editorial_podcast.md"
 COMPANY_EDITORIAL_PATH = CONFIG_DIR / "editorial_company.md"
+AI_EDITORIAL_PATH = CONFIG_DIR / "editorial_ai.md"
 
 
 @dataclass(frozen=True)
@@ -385,11 +390,19 @@ DAILY_PROFILE = EditorialProfile(
 WEEKLY_PROFILE = EditorialProfile(
     "weekly", 3400, 5500, "14–20", WEEKLY_EDITORIAL_PATH, "weekly"
 )
+# 2026-10-17 信哥拍板（依後台 117 篇數據＋閱讀速度／發信頻率研究）：
+# 平日 podcast 是早上收信、通勤讀完的長度；週末公司拆解要裝得下上下游／市場／生產／優缺點四塊。
+# 這兩個專欄不再吃 .env 的 SUBSTACK_WORD_CAP（見 word_range_for）。
 PODCAST_PROFILE = EditorialProfile(
-    "weekly", 4200, 6500, "17–25", PODCAST_EDITORIAL_PATH, "podcast"
+    "weekly", 1800, 2500, "6–8", PODCAST_EDITORIAL_PATH, "podcast"
 )
 COMPANY_PROFILE = EditorialProfile(
-    "weekly", 3800, 6000, "15–23", COMPANY_EDITORIAL_PATH, "company"
+    "weekly", 3000, 4500, "10–15", COMPANY_EDITORIAL_PATH, "company"
+)
+# 週二、四的 AI 專欄（2026-10-18）：寫稿流程跟 podcast 一樣（一集訪談＋延伸研究），
+# 只換寫作框架。article_kind 維持 "podcast"，所有 podcast 的提示與閘門照用。
+AI_PROFILE = EditorialProfile(
+    "weekly", 1800, 2500, "6–8", AI_EDITORIAL_PATH, "podcast"
 )
 
 
@@ -406,7 +419,8 @@ def resolve_editorial_profile(
         if override == "daily":
             return DAILY_PROFILE
     if mode == "podcast":
-        return PODCAST_PROFILE
+        # 週二、四的 AI 專欄：compose.py --column ai 會設 SUBSTACK_COLUMN=ai（研究簡報與寫稿兩處都會重新解析）
+        return AI_PROFILE if os.getenv("SUBSTACK_COLUMN") == "ai" else PODCAST_PROFILE
     if mode == "company":
         return COMPANY_PROFILE
     if has_deep_bundle or override == "weekly":
@@ -774,6 +788,10 @@ def word_range_for(profile: EditorialProfile) -> tuple[int, int]:
     SUBSTACK_DAILY_WORD_CAP / SUBSTACK_WEEKLY_WORD_CAP are preferred. The old
     SUBSTACK_WORD_CAP remains a compatibility fallback for installed workers.
     """
+    # podcast／公司稿有各自定案的字數（2026-10-17）；全域緊急上限只管一般稿（主編精選等）。
+    # 之前 .env 的 SUBSTACK_WORD_CAP=3500 把兩個專欄都壓成 2275–3500，profile 寫的數字形同虛設。
+    if profile.article_kind in {"podcast", "company"}:
+        return profile.word_floor, profile.word_cap
     raw_cap = os.getenv(f"SUBSTACK_{profile.name.upper()}_WORD_CAP") or os.getenv(
         "SUBSTACK_WORD_CAP"
     )
@@ -821,12 +839,14 @@ def audit_substack_draft(
     title = draft.title
     named = [a for a in subject_aliases if a and a.lower() in title.lower()]
     cap = 20 if subject_aliases else 15
+    if re.search(r"[（(][上下][）)]$", title):      # 週末系列的（上）（下）不吃標題字數
+        cap += 3
     if len(title) > cap:
         warnings.append(f"[標題過長] {len(title)} 字 > {cap}；請只留一個閱讀承諾。")
     if subject_aliases and not named:
         warnings.append(
             f"[標題沒點名主體] 標題沒有出現 {'／'.join(subject_aliases[:3])}；"
-            "讀者在收件匣看不出這篇在講哪家公司。建議「公司名：鉤子」。"
+            "讀者在收件匣看不出這篇在講哪家公司。把公司名寫進句子裡，例如「嬌生賺的錢比本業還多」。"
         )
     # 「瑞昱：49% 毛利背後的獲利漏斗」是刻意的格式，冒號前是主體不是第二個焦點。
     _colon_is_subject = bool(named) and any(
@@ -834,8 +854,11 @@ def audit_substack_draft(
         any(a.lower() in title.split(mark, 1)[0].lower() for a in named)
         for mark in ("：", ":") if mark in title
     )
-    if any(mark in title for mark in ("：", ":")) and not _colon_is_subject:
-        warnings.append("[標題雙焦點] 標題含冒號；除人物訪談外，通常代表塞了兩件事。")
+    # 2026-10-17：後台 117 篇裡含冒號的標題開信率 41%、不含的 29%；公司稿「公司名：反差」是定案格式，
+    # 冒號前就算寫的是中文名或簡稱也不算雙焦點。
+    # 2026-10-17 信哥：冒號標題（「嬌生：淨利比本業賺的還多？」）很 AI 感，一律改成一句自然的話。
+    if any(mark in title for mark in ("：", ":")):
+        warnings.append("[標題用了冒號] 冒號標題很 AI 感；改成一句自然的話，主體（公司名）直接寫進句子裡。")
     if draft.title.strip("？?。！! ") in draft.subtitle:
         warnings.append("[副標重複] 副標應補具體反差或 payoff，不要重述主標。")
 
@@ -881,6 +904,7 @@ def audit_substack_draft(
         )
 
     _colon_headings = [h for h in _headings if any(m in h for m in ("：", ":"))]
+    # 2026-10-17 信哥：冒號格式很 AI 感，子標題也一樣，有就提醒。
     if _colon_headings:
         warnings.append(
             f"[子標題雙焦點] {len(_colon_headings)}/{len(_headings)} 個子標題含冒號"
@@ -1250,8 +1274,7 @@ SUBSTACK_BACKEND = os.getenv(
 
 
 _KNOWN_BACKENDS = {
-    "oss_deepseek",
-    "oss_qwen",
+    "gateway",
     "codex_cli",
     "antigravity_cli",
     "claude_cli",

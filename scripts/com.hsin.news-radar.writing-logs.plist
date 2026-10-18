@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.hsin.news-radar.writing-logs</string>
+	<!-- 每晚 23:40 把寫稿紀錄推上 GitHub（2026-10-18） -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>HOME_DIR/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>HOME_DIR/news_radar/scripts/sync_writing_logs.sh</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>23</integer>
+		<key>Minute</key>
+		<integer>40</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/tmp/news-radar-writing-logs.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/news-radar-writing-logs.err.log</string>
+</dict>
+</plist>

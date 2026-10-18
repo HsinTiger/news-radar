@@ -85,6 +85,17 @@ def _isolate_live_runtime_markers(tmp_path_factory, monkeypatch):
     就被拿掉了。所有這類路徑一律導向暫存目錄。"""
     sandbox = tmp_path_factory.mktemp("runtime-markers")
     try:
+        from src import run_log
+        monkeypatch.setattr(run_log, "LOG_DIR", sandbox / "writing-logs")   # 測試不准寫進正式寫稿紀錄
+    except Exception:
+        pass
+    try:
+        from src import llm_brain
+        monkeypatch.setattr(llm_brain, "AGY_DEAD_MARKER", sandbox / ".agy_dead.json")
+        monkeypatch.setattr(llm_brain, "_AGY_DEAD_SNAPSHOT", set())   # 行程內狀態也不准跨測試殘留
+    except Exception:
+        pass
+    try:
         from substack_radar import compose
         monkeypatch.setattr(compose, "SUBSTACK_AUTH_MARKER", sandbox / ".substack_auth_failed")
     except Exception:

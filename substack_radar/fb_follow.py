@@ -53,10 +53,13 @@ MAX_ATTEMPTS = int(os.getenv("FB_MAX_ATTEMPTS", "2"))
 MAX_ROUNDS = int(os.getenv("FB_AUDIT_ROUNDS", "3"))
 AGY_TIMEOUT_S = int(os.getenv("FB_AGY_TIMEOUT_S", "420"))
 
+# 專欄自述（2026-10-17 改：每一句都要講出「替讀者濾掉了什麼、留下了什麼」）
 COLUMN_DESC = {
-    "賺錢有道": "每週六、日的公司拆解，看一家公司怎麼賺錢",
-    "吹牛免稅": "每天一篇，從一集長篇 podcast 延伸出來的思考",
-    "主編精選": "主編親自挑的題目",
+    "智取未來": "把 AI 真的用進工作的方法、導入與工程實戰",
+    "賺錢有道": "一個週末拆解一家公司的商業模式，看它靠什麼賺、被誰卡住、弱點在哪",
+    "吹牛免稅": "替你挑出 3 小時頂尖對談裡最值得想的 5 分鐘，查證過、附上延伸觀點",
+    "Hsin選觀點": "主編有感而發的題材，最有個人立場的一篇",
+    "主編精選": "主編有感而發的題材，最有個人立場的一篇",   # 舊名，舊稿還認得
 }
 
 # 閘門「沒過」的標記。其他 audit_warnings（標題過長、段落過長…）是文風，
@@ -489,7 +492,9 @@ def compose_brief(source: dict, mode: str) -> str:
     """給 Substack 寫手的 FB 區塊。任何錯誤都回空字串——FB 不能擋 Substack。"""
     try:
         column = {"company": "賺錢有道", "podcast": "吹牛免稅",
-                  "morning": "主編精選", "evening": "主編精選"}.get(mode, "")
+                  "morning": "Hsin選觀點", "evening": "Hsin選觀點"}.get(mode, "")
+        if (source or {}).get("column") == "ai":
+            column = "智取未來"
         if not column:
             return ""
         info = source_info_for(source or {})
@@ -898,7 +903,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
     if not column:
         print("[FBFollow] ⏭️ 不是三個專欄之一，不發 FB。")
         return "skipped"
-    if column == MANUAL_COLUMN:
+    if column in (MANUAL_COLUMN, "主編精選"):
         # 信哥 2026-10-16：FB 發每天排程產出的每一篇，但不發他自己投稿的（主編精選）。
         print("[FBFollow] ⏭️ 主編精選（手動投稿）不發 FB。")
         return record("skipped", reason="主編精選不發 FB")
@@ -972,7 +977,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
 #   20:30 下班：當天另一篇排程草稿（連結到訂閱頁）
 #   主編精選不發。一個時段只貼一則，避免同一時間洗版吃掉觸及。
 
-MANUAL_COLUMN = "主編精選"
+MANUAL_COLUMN = "Hsin選觀點"   # 2026-10-18 由「主編精選」改名；舊名仍視為手動投稿
 DAILY_PUBLISHED_PATH = DRAFTS_DIR / ".daily_published.json"
 
 

@@ -63,6 +63,12 @@ def _sections(article_md: str) -> list[tuple[str, str]]:
     return out
 
 
+_LEAD_LABEL = re.compile(
+    r"我的(判斷|結論|看法)是[：:]|(本文|這篇(文章)?)(要|將|想)(查|談|回答|討論|探討|拆解|分析)(的)?(是)?|"
+    r"接下來(我們)?(來看|要看|會看)|讓我們(來)?(看看|一起)"
+)
+
+
 def check(article_md: str, *, lead_max_sentences: int = 4) -> list[AeoIssue]:
     issues: list[AeoIssue] = []
     text = article_md or ""
@@ -79,6 +85,17 @@ def check(article_md: str, *, lead_max_sentences: int = 4) -> list[AeoIssue]:
             detail=f"第一個小標之前有 {len(lead_sentences)} 句才進入正文；"
                    f"AI 擷取的是單一片段，鋪陳太長會擷取不到結論。"
                    f"請在開頭 2–{lead_max_sentences} 句內直接給出本文的判斷。",
+            sample=lead.strip()[:70],
+        ))
+
+    # A1b 開場不准貼標籤（2026-10-17 嬌生：「我的判斷是：」「這篇文章要查的是：」）。
+    # 「答案先行」被模型讀成「先寫一句『我的判斷是』」；那是 AI 腔，不是答案。
+    label = _LEAD_LABEL.search(lead)
+    if label:
+        issues.append(AeoIssue(
+            rule="A1b 開場用了標籤句",
+            detail=f"開場出現「{label.group(0)}」。答案先行是把結論本身寫在最前面，"
+                   "不是先貼「我的判斷是／這篇要查的是」的標籤。從那個反差或數字直接寫起，判斷放進句子裡。",
             sample=lead.strip()[:70],
         ))
 

@@ -24,7 +24,7 @@ from src.cover_renderer import FONT_TITLE_PATH, FONT_SUBTITLE_PATH, FONT_BRAND_P
 W, H = 1456, 816
 PAD = 92
 KICKER = "主力爸爸我錯了"
-SLOGAN = "每天早上一篇 · 平日 Podcast 精選 · 週末公司拆解"
+SLOGAN = "替你濾掉雜訊 · 一三五思想激盪 · 二四AI實戰 · 週末公司拆解"
 
 # 2026-06-21 · Cover System D4: palette is now driven by config/cover_ip/cover_tokens.json
 # — paper-cream ground ALWAYS, ink title ALWAYS, exactly ONE accent (single_sienna by

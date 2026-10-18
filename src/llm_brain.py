@@ -45,6 +45,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Optional, Type, TypeVar
@@ -360,13 +361,39 @@ _AGY_DEAD_SNAPSHOT: set = set()
 _LAST_AGY_EXHAUSTED = False
 
 
+# 跨行程記住「agy 各家都沒額度」（2026-10-17）：每個排程都是新行程，原本每次都要重新
+# 撞一輪 agy（掛住的那家最多等 10 分鐘）才輪到閘道。記 3 小時，過了自動再試 agy。
+AGY_DEAD_MARKER = Path(os.getenv("AGY_DEAD_MARKER", str(Path(__file__).resolve().parent.parent / "data" / ".agy_dead.json")))
+AGY_DEAD_TTL_S = int(os.getenv("AGY_DEAD_TTL_S", str(3 * 3600)))
+
+
+def _load_agy_dead_marker() -> set:
+    try:
+        data = json.loads(AGY_DEAD_MARKER.read_text(encoding="utf-8"))
+        if float(data.get("until", 0)) > time.time():
+            return set(data.get("families") or [])
+    except Exception:
+        pass
+    return set()
+
+
 def _dead_families_snapshot() -> set:
-    return set(_AGY_DEAD_SNAPSHOT)
+    return set(_AGY_DEAD_SNAPSHOT) | _load_agy_dead_marker()
 
 
 def _set_agy_exhausted() -> None:
     global _LAST_AGY_EXHAUSTED
     _LAST_AGY_EXHAUSTED = True
+    try:
+        AGY_DEAD_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        AGY_DEAD_MARKER.write_text(json.dumps({
+            "families": sorted(_AGY_DEAD_SNAPSHOT | _load_agy_dead_marker()),
+            "until": time.time() + AGY_DEAD_TTL_S,
+            "since": time.strftime("%Y-%m-%d %H:%M"),
+        }, ensure_ascii=False), encoding="utf-8")
+        print(f"[llm_brain] ℹ️ 記下 agy 全部沒額度，{AGY_DEAD_TTL_S // 3600} 小時內的排程直接跳過 agy")
+    except OSError:
+        pass
 
 
 def _agy_family(model: str) -> str:
@@ -533,11 +560,15 @@ async def _try_agy(
                 env=env,
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + 20)
+                # 外層保險絲要跟 --print-timeout 同一個上限：agy 掛住時不一定會自己停。
+                # 2026-10-17 06:30 這裡還用 timeout_s+20（1820s），整整等了 30 分鐘才換閘道，
+                # 寫完已 08:25，07:30 的發文等不到。
+                hard_s = min(int(timeout_s), AGY_PRINT_TIMEOUT_MAX_S) + 30
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=hard_s)
             except asyncio.TimeoutError:
                 proc.kill()
                 return LLMResult(data=None, provider="antigravity_cli", model=model_name,
-                                 raw_error=f"Timeout ({timeout_s}s)")
+                                 raw_error=f"Timeout ({hard_s}s)")
             out = stdout.decode("utf-8", errors="replace")
             err = stderr.decode("utf-8", errors="replace")
             # 未登入 / 配額用盡 → 換下一組帳號
@@ -578,6 +609,15 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "opus")
 # claude CLI 的推理強度（low/medium/high/xhigh/max）。長文寫作預設拉到 high。
 # 空字串＝不傳 --effort，交給 CLI 自己的預設。
 CLAUDE_EFFORT = os.getenv("CLAUDE_EFFORT", "high")
+
+
+def claude_cli_env() -> dict:
+    """Haiku 寫稿關掉思考（2026-10-17 信哥同意）。同一份改寫實測：思考開著 $0.055／70 秒，
+    其中 86% 輸出是思考；關掉 $0.011／15 秒，品質相當。--effort low 對 Haiku 沒效（思考量不變）。
+    要恢復就在 .env 設 CLAUDE_MAX_THINKING_TOKENS（例如 8000）。"""
+    env = os.environ.copy()
+    env["MAX_THINKING_TOKENS"] = os.getenv("CLAUDE_MAX_THINKING_TOKENS", "0")
+    return env
 
 
 # --------------------------------------------------------------------------
@@ -1074,6 +1114,7 @@ async def _try_claude_cli_once(
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=claude_cli_env(),
         )
     except Exception as e:
         return LLMResult(
@@ -1195,8 +1236,9 @@ class _OpenAICompatProvider:
 def _load_oss_gateway_env() -> None:
     """本機 LiteLLM 閘道（127.0.0.1:4000，免費開源模型）。
 
-    信哥 2026-10-08 定的排程模型順序：① agy → ② 開源模型（走 LiteLLM 閘道）→ ③ Claude
-    Haiku；agy 額度用完時 Haiku 暫代第一順位（2026-10-09）。閘道設定與套利王共用同一份
+    信哥 2026-10-08 定的排程模型順序：① agy → ② LiteLLM 閘道（ccr 同一個）→ ③ Claude
+    Haiku。2026-10-17 信哥：「agy 沒額度可以用 ccr 去頂替」→ 閘道修好後 Haiku 不再插隊；
+    要恢復 10-09 的「Haiku 暫代第一順位」設 LLM_HAIKU_STANDIN=1。閘道設定與套利王共用同一份
     ~/.config/savings-radar/llm.env（LLM_BASE_URL／LLM_API_KEY），這裡只讀不寫。"""
     if os.getenv("OSS_GATEWAY_KEY"):
         return
@@ -1213,22 +1255,17 @@ def _load_oss_gateway_env() -> None:
 _load_oss_gateway_env()
 
 _OPENAI_COMPAT: dict[str, _OpenAICompatProvider] = {
-    # ② 開源模型（本機 LiteLLM 閘道）。寫長文的提示一萬多字，選上下文夠長的兩個。
-    "oss_deepseek": _OpenAICompatProvider(
-        name="oss_deepseek",
+    # ② 本機 LiteLLM 閘道（ccr 也走同一個）。2026-10-17 實測：原本的 OpenCode 免費開源模型
+    # 全數 403/400/410，閘道只剩 Gemini（2.5 最穩，3.5/3.6 偶爾 503）跟 Groq（只適合短文）。
+    # 2026-10-17 改叫「角色」writer：閘道（~/litellm-gateway/models.json）決定實際用哪個模型、
+    # 怎麼備援（目前 NIM 的 DeepSeek V4.1 → Step-5 → GLM-5.3-Flash → Gemini → GLM-4.5）。
+    "gateway": _OpenAICompatProvider(
+        name="gateway",
         key_env="OSS_GATEWAY_KEY",
         base_url_env="OSS_GATEWAY_BASE_URL",
         base_url_default="http://127.0.0.1:4000/v1",
-        model_env="OSS_DEEPSEEK_MODEL",
-        model_default="deepseek-v4-flash-free",
-    ),
-    "oss_qwen": _OpenAICompatProvider(
-        name="oss_qwen",
-        key_env="OSS_GATEWAY_KEY",
-        base_url_env="OSS_GATEWAY_BASE_URL",
-        base_url_default="http://127.0.0.1:4000/v1",
-        model_env="OSS_QWEN_MODEL",
-        model_default="qwen3.6-plus-free",
+        model_env="GATEWAY_MODEL",
+        model_default="writer",
     ),
     # GitHub Actions can mint a short-lived GITHUB_TOKEN with ``models: read``.
     # This gives the cloud pipeline a governed fallback without another
@@ -1304,6 +1341,10 @@ async def _try_openai_compatible(
             data=None, provider=provider.name,
             raw_error=f"{provider.key_env} not set",
         )
+    if provider.name == "gateway":
+        # 信哥 2026-10-17：NIM 模型照能力排、不管速度，最後成功就好。閘道內部一個模型最多等
+        # 20 分鐘、還會往下備援，所以這裡至少等 GATEWAY_TIMEOUT_S（預設 1 小時）。
+        timeout_s = max(int(timeout_s), int(os.getenv("GATEWAY_TIMEOUT_S", "3600")))
     base_url = os.getenv(provider.base_url_env, provider.base_url_default).rstrip("/")
     model = os.getenv(provider.model_env, provider.model_default)
 
@@ -1312,6 +1353,11 @@ async def _try_openai_compatible(
     user_prompt = prompt.strip()
     if "json" not in (system + prompt).lower():
         user_prompt += "\n\nReturn only a single valid JSON object."
+    # 2026-10-17：閘道（NIM）也要拿到欄位表。少了它，研究簡報第一次輪到閘道就自己編了
+    # {'stage': ...} 的結構，12 個必填欄位全缺（跟 2026-09-20 claude 那次一模一樣）。
+    # NIM 又不能用 response_format，欄位只能靠提示詞講清楚。
+    if provider.name == "gateway":
+        user_prompt = f"{user_prompt}\n\n{_json_contract_block(response_model)}"
 
     payload = {
         "model": model,
@@ -1324,37 +1370,55 @@ async def _try_openai_compatible(
         "stream": False,
     }
 
+    if provider.name == "gateway":
+        # NIM 對不串流的請求約 300 秒就回 504；串流才撐得住慢而強的模型（2026-10-17）。
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        payload["max_tokens"] = int(os.getenv("GATEWAY_MAX_TOKENS", "32000"))
+
     try:
         import httpx  # 延遲 import：與 google-genai 一樣不拖累無此需求的 caller
 
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            resp = await client.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_s, connect=30)) as client:
+            if payload.get("stream"):
+                from src.gateway_stream import collect_sse
+                async with client.stream("POST", f"{base_url}/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status_code != 200:
+                        err = (await resp.aread()).decode("utf-8", "replace")[:300]
+                        return LLMResult(data=None, provider=provider.name, model=model,
+                                         raw_error=f"http {resp.status_code}: {err}")
+                    lines = [line async for line in resp.aiter_lines()]
+                text, usage = collect_sse(lines)
+                body = {"choices": [{"message": {"content": text}}], "usage": usage}
+            else:
+                resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                body = None
     except Exception as e:
         return LLMResult(
             data=None, provider=provider.name, model=model,
             raw_error=f"{type(e).__name__}: {e}",
         )
 
-    if resp.status_code != 200:
-        return LLMResult(
-            data=None, provider=provider.name, model=model,
-            raw_error=f"http {resp.status_code}: {resp.text[:300]}",
-        )
+    if body is None:
+        if resp.status_code != 200:
+            return LLMResult(
+                data=None, provider=provider.name, model=model,
+                raw_error=f"http {resp.status_code}: {resp.text[:300]}",
+            )
+        try:
+            body = resp.json()
+        except Exception as e:
+            return LLMResult(
+                data=None, provider=provider.name, model=model,
+                raw_error=f"non-JSON body: {type(e).__name__}: {resp.text[:200]}",
+            )
 
-    try:
-        body = resp.json()
-    except Exception as e:
-        return LLMResult(
-            data=None, provider=provider.name, model=model,
-            raw_error=f"non-JSON body: {type(e).__name__}: {resp.text[:200]}",
-        )
+    # 閘道角色（writer/audit…）實際派給哪個模型，閘道放在 x-litellm-model-id（"writer:deepseek-v4.1-flash"）。
+    # 草稿要記真正寫稿的模型，不是角色名。
+    served = (resp.headers.get("x-litellm-model-id") or "").split(":")[-1]
+    if served and served != model:
+        model = f"{model}→{served}"
 
     choices = body.get("choices") or []
     if not choices:
@@ -1629,8 +1693,10 @@ async def call_for_json(
     # 依 `allowed` 內的順序逐一嘗試（= 能力 / 可靠度排序），第一個成功就回。
     # 預設鏈：claude_cli(Max 主腦) → gemini(SDK structured) → groq → cerebras。
     queue = list(allowed)
+    from src import run_log as _run_log
     while queue:
         name = queue.pop(0)
+        _t_backend = _run_log.Timer()
         if use_quota_circuit and name in _QUOTA_EXHAUSTED_BACKENDS:
             print(
                 f"[llm_brain] ℹ️ quota circuit 已開啟，略過本 process 已耗盡的 {name}。"
@@ -1705,7 +1771,7 @@ async def call_for_json(
             # 額度是「一家一份」：2026-10-15 實測 agy 的 Gemini 回 credits 不足，同一時間
             # agy 的 Claude Opus 4.6 照常可用。原本看到一家沒額度就整條 agy 跳過，直接
             # 掉到付費的 claude CLI；改成只跳過同家族，其他家族照試。
-            _dead_families: set = set(_AGY_DEAD_SNAPSHOT)   # 本行程已知沒額度的家族直接跳過
+            _dead_families: set = _dead_families_snapshot()   # 本行程或近 3 小時其他排程已知沒額度的家族直接跳過
             global _LAST_AGY_EXHAUSTED
             _LAST_AGY_EXHAUSTED = False
             for _idx, _agy_model in enumerate(_agy_model_chain()):
@@ -1773,6 +1839,12 @@ async def call_for_json(
             print(f"[llm_brain] ⚠️ 未知 backend `{name}`，略過。")
             continue
 
+        _run_log.log_call(
+            provider=name, model=result.model, ok=result.data is not None, seconds=_t_backend.seconds,
+            input_tokens=getattr(result, "input_tokens", None), output_tokens=getattr(result, "output_tokens", None),
+            note="" if result.data is not None else (result.raw_error or ""),
+            stage_name=_run_log._stage.get() or getattr(response_model, "__name__", ""),
+        )
         if result.data is not None:
             if name != primary:
                 print(f"[llm_brain] ℹ️ 交付來自 fallback：{name}/{result.model or ''}")
@@ -1784,8 +1856,8 @@ async def call_for_json(
             families = {_agy_family(m) for m in _agy_model_chain()}
             if families and families <= _dead_families_snapshot():
                 _set_agy_exhausted()
-                # 信哥 2026-10-09：agy 額度用完時，Haiku 暫代 agy 的第一順位（排在開源模型前）。
-                if os.getenv("LLM_HAIKU_STANDIN", "1") != "0" and "claude_cli" in queue:
+                # 2026-10-17 起預設由閘道（②）頂替 agy；LLM_HAIKU_STANDIN=1 才讓 Haiku 插到最前面。
+                if os.getenv("LLM_HAIKU_STANDIN", "0") == "1" and "claude_cli" in queue:
                     queue.remove("claude_cli")
                     queue.insert(0, "claude_cli")
                     print("[llm_brain] ℹ️ agy 各家額度都用完，Haiku 暫代第一順位（排在開源模型前）")

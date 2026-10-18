@@ -24,13 +24,13 @@
 	<key>StandardOutPath</key>
 	<string>HOME_DIR/Library/Logs/news-radar/daily-publish.log</string>
 	<key>StartCalendarInterval</key>
+	<!-- 早上組：07:30 正式發，09:30、14:30 補發；傍晚組（10/19 起四週的雙數週）：17:00 正式發，18:30 補發。一天最多一篇。組別由 daily_publish.send_arm 決定 -->
 	<array>
-		<dict>
-			<key>Hour</key>
-			<integer>7</integer>
-			<key>Minute</key>
-			<integer>30</integer>
-		</dict>
+		<dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+		<dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
 	</array>
 </dict>
 </plist>

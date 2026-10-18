@@ -100,7 +100,7 @@ def test_weekly_prompt_requires_synthesis_countercase_and_watch_signal() -> None
     )
     combined = system + prompt
 
-    assert "3800–6000" in combined
+    assert "3000–4500" in combined   # 2026-10-17 起公司拆解 3000–4500 字
     assert "最強反方" in combined
     assert "後續訊號" in combined
     assert "財報事實" in combined
@@ -253,17 +253,22 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     # 2026-10-15 起（信哥）：寫稿改到早上，07:30 由 daily-publish 發一篇並寄信。
     #   平日 06:00 Podcast 第一篇（含抓素材）＋06:30 第二篇；週末 06:00 公司分析＋06:30 Podcast。
     #   標籤沿用 substack-podcast-noon（儀表板與同步程式靠它），內容已是早上第一篇。
-    weekdays, weekend = (1, 2, 3, 4, 5), (6, 0)
+    # 2026-10-18 起一天只寫一篇（信哥）：一三五 吹牛免稅、二四 智取未來，06:00 寫、10:00 重試；
+    # 六日 賺錢有道 06:00、13:00 重試。不再寫第二篇備案稿。
+    weekend = (6, 0)
     assert noon["StartCalendarInterval"] == (
-        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in weekdays]
-        + [{"Weekday": d, "Hour": 6, "Minute": 30} for d in weekend]
+        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in (1, 3, 5)]
+        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (1, 3, 5)]
     )
     assert noon["ProgramArguments"][-1] == "podcast-first"
-    second = plistlib.loads(
-        (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-second.plist").read_bytes()
+    assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-second.plist").exists() or \
+        "substack-podcast-second" not in installer.split("LEGACY_AGENTS")[0]
+    ai = plistlib.loads((REPO / "scripts" / "com.hsin.news-radar.substack-ai.plist").read_bytes())
+    assert ai["StartCalendarInterval"] == (
+        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in (2, 4)]
+        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (2, 4)]
     )
-    assert second["StartCalendarInterval"] == [{"Weekday": d, "Hour": 6, "Minute": 30} for d in weekdays]
-    assert second["ProgramArguments"][-1] == "podcast-second"
+    assert ai["ProgramArguments"][-1] == "ai-first"
     assert company["StartCalendarInterval"] == (
         [{"Weekday": d, "Hour": 6, "Minute": 0} for d in weekend]
         + [{"Weekday": d, "Hour": 13, "Minute": 0} for d in weekend]
@@ -272,9 +277,13 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     publish = plistlib.loads(
         (REPO / "scripts" / "com.hsin.news-radar.daily-publish.plist").read_bytes()
     )
-    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}]
+    # 07:30 正式發；09:30、14:30 補發（2026-10-17：寫稿拖到 08:25，07:30 那輪等不到就整天沒發）
+    # 10/19 起四週做發文時間實驗：雙數週改 17:00 發、18:30 補發（組別由 daily_publish.send_arm 決定）
+    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}, {"Hour": 9, "Minute": 30},
+                                                {"Hour": 14, "Minute": 30}, {"Hour": 17, "Minute": 0},
+                                                {"Hour": 18, "Minute": 30}]
     assert "substack_radar.daily_publish" in publish["ProgramArguments"][-1]
-    for plist in (noon, second, company, publish):
+    for plist in (noon, ai, company, publish):
         assert "HOME_DIR/.local/bin" in plist["EnvironmentVariables"]["PATH"]  # claude／agy 在這裡
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-daily.plist").exists()
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-noon-1.plist").exists()
@@ -284,7 +293,7 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     active_agents = installer.split("AGENTS=(", 1)[1].split(")", 1)[0]
     legacy_agents = installer.split("LEGACY_AGENTS=(", 1)[1].split(")", 1)[0]
     assert "substack-podcast-noon" in active_agents
-    assert "substack-podcast-second" in active_agents
+    assert "substack-podcast-second" not in active_agents and "substack-ai" in active_agents   # 2026-10-18 一天一篇
     assert "company-compose" in active_agents
     assert "daily-publish" in active_agents
     assert "company-pick" not in active_agents
@@ -314,7 +323,7 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     assert "--require-substack-draft" in worker
     assert "podcast-batch" in worker
     # podcast-batch（相容保留）兩次＋早上 podcast-first、podcast-second 各一次
-    assert worker.count("substack_radar/compose.py podcast") == 4
+    assert worker.count("substack_radar/compose.py podcast") == 5   # 2026-10-18 多了 ai-first（podcast --column ai）
     assert "podcast-first" in worker and "podcast-second" in worker
     assert "substack_radar/compose.py podcast --harvest --editorial-profile weekly" in worker
     assert "substack_radar/compose.py podcast --editorial-profile weekly" in worker
@@ -336,7 +345,8 @@ def test_public_cadence_copy_matches_the_reader_facing_promise() -> None:
     """對外承諾：每天早上發一篇（2026-10-15 起平日 Podcast 精選、週末公司拆解）。
     每天產好幾篇草稿是我們自己的排程（緩衝），不是給讀者看的數字——2026-08-17 owner
     明確區分了這兩件事。"""
-    expected = "每天早上一篇 · 平日 Podcast 精選 · 週末公司拆解"
+    # 2026-10-17 信哥：頁尾要帶「替讀者過濾出有意義資訊」的意涵；平日 Podcast、週末兩天各一篇公司拆解。
+    expected = "替你濾掉雜訊 · 一三五思想激盪 · 二四AI實戰 · 週末公司拆解"
 
     assert expected in compose.build_footer_block()
     assert promise_cover.SLOGAN == expected

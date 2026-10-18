@@ -1,0 +1,102 @@
+# News Radar · AI 專欄（週二、四）的 YouTube 來源（2026-10-18 建立）
+# ===========================================================================
+# 定位：AI 方法論、系統導入、工程實務；兼顧晶片硬體、系統設計、治理與社會。
+# 收進 news_items 的 feed_name='YouTube AI'，跟吹牛免稅的 'YouTube Podcast' 分開，
+# 兩個專欄不會搶同一集。下面每個頻道都在 2026-10-17／18 用 yt-dlp 實測過：
+# 近 30 天有更新、以長片為主、最新長片有英文字幕（沒字幕的流程抓不到）。
+# 淘汰紀錄：OpenAI／Anthropic／NVIDIA／DeepMind 官方（幾乎都是短宣傳片）、
+# Palantir（講企業落地但沒字幕）、Karpathy／Changelog／Nathan Lambert（停更）、
+# Redpoint（一個月 1 集）、CSIS（多談國際局勢）。
+#
+# Schema 同 substack_podcast_sources.yaml：url（@handle/videos）、topic_category、max_videos
+# ===========================================================================
+
+sources:
+
+  # ── AI 導入、落地 ──────────────────────────────────────────────
+  - url: https://www.youtube.com/@AIDailyBrief/videos
+    topic_category: ai_agent
+    max_videos: 2                        # 幾乎天天更新，企業導入角度
+  - url: https://www.youtube.com/@aiDotEngineer/videos
+    topic_category: ai_agent
+    max_videos: 2                        # 第一線工程師大會演講
+  - url: https://www.youtube.com/@LatentSpacePod/videos
+    topic_category: ai_agent
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@a16z/videos
+    topic_category: ai_agent
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@vanishinggradients/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@IBMTechnology/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@EveryInc/videos
+    topic_category: ai_agent
+    max_videos: 1                        # AI & I：人和公司怎麼用 AI 工作
+
+  # ── 工程實務、系統設計 ────────────────────────────────────────
+  - url: https://www.youtube.com/@InfoQ/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@devinterrupted/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@janestreet/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@oxidecomputercompany/videos
+    topic_category: ai_agent
+    max_videos: 1                        # 軟硬體一體的系統設計
+  - url: https://www.youtube.com/@GOTO-/videos
+    topic_category: ai_agent
+    max_videos: 1
+  - url: https://www.youtube.com/@pragmaticengineer/videos
+    topic_category: ai_agent
+    max_videos: 1
+
+  # ── 半導體、硬體 × AI ──────────────────────────────────────────
+  - url: https://www.youtube.com/@semidoped/videos
+    topic_category: ai_model
+    max_videos: 1                        # 最貼近 IC 設計背景
+  - url: https://www.youtube.com/@TechTechPotato/videos
+    topic_category: ai_model
+    max_videos: 1
+  - url: https://www.youtube.com/@Asianometry/videos
+    topic_category: ai_model
+    max_videos: 1
+
+  # ── 模型與研究 ────────────────────────────────────────────────
+  - url: https://www.youtube.com/@CognitiveRevolutionPodcast/videos
+    topic_category: ai_model
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@NoPriorsPodcast/videos
+    topic_category: ai_model
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@machinelearningstreettalk/videos
+    topic_category: ai_model
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@twimlai/videos
+    topic_category: ai_model
+    max_videos: 1                        # 原吹牛免稅來源，移過來
+  - url: https://www.youtube.com/@DwarkeshPatel/videos
+    topic_category: ai_model
+    max_videos: 1                        # 原吹牛免稅來源，移過來（更新慢但品質高）
+  - url: https://www.youtube.com/@aiexplained-official/videos
+    topic_category: ai_model
+    max_videos: 1
+  - url: https://www.youtube.com/@ycombinator/videos
+    topic_category: ai_model
+    max_videos: 1
+
+  # ── 人文、社會、職涯 ──────────────────────────────────────────
+  - url: https://www.youtube.com/@StanfordHAI/videos
+    topic_category: ai_model
+    max_videos: 1
+  - url: https://www.youtube.com/@eightythousandhours/videos
+    topic_category: ai_model
+    max_videos: 1
+  - url: https://www.youtube.com/@CalNewportMedia/videos
+    topic_category: ai_model
+    max_videos: 1

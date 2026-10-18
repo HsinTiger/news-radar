@@ -76,7 +76,9 @@ data/01_harvest/*
 !data/01_harvest/views.sql
 !data/01_harvest/migrations
 !data/01_harvest/migrations/*.sql
-logs/
+logs/*
+# 寫稿紀錄要進 GitHub（信哥 2026-10-18：工作回放）
+!logs/writing/
 archive/
 scratch/
 state/last_harvest.txt
@@ -139,3 +141,7 @@ reels_html/node_modules/
 
 # wrangler 本機快取
 cloudflare-worker/.wrangler/
+
+# 手動備份檔不進版控
+*.bak-*
+*.before-live-sync

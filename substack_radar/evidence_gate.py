@@ -258,6 +258,10 @@ def check(article_md: str, *, sources: list[dict] | None = None,
             continue
         named = (m.group(2) or m.group(3) or "").strip()
         # E1：具名的來源要真的在清單裡（用寬鬆包含比對，容得下「MIC 等研究機構」）
+        # 公司稿引用公司自己的財報（「根據公司公布的 2025 全年數據」）不是外部來源——
+        # 財報事實本來就在主來源裡。2026-10-18 嬌生（下）因此被誤判、整篇不能發。
+        if named and fact_block and re.search(r"公司公布|該公司|公司財報|財報|年報|法說|10-K|10-Q|官方", named):
+            named = ""
         if named and _looks_like_named_entity(named):
             named_norm = _norm(named)
             if named_norm and not _names_overlap(named_norm, known):

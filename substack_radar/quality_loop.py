@@ -227,9 +227,14 @@ def note_agy_failure(error, model: str = "") -> None:
             _AGY_DEAD_FAMILIES.add(_agy_family(model))
         else:
             _AGY_DEAD_FAMILIES.update({"claude", "gemini"})
+        if {"claude", "gemini"} <= _AGY_DEAD_FAMILIES:
+            # 跟寫稿那段共用跨行程記號，下一個排程直接跳過 agy
+            from src import llm_brain
+            llm_brain._AGY_DEAD_SNAPSHOT.update(_AGY_DEAD_FAMILIES)
+            llm_brain._set_agy_exhausted()
 
 
-def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
+def _run_agy_once_impl(prompt: str, model: str, timeout_s: int) -> str:
     """一次呼叫＝一個新的 subprocess（cwd=/tmp）＝獨立 session、乾淨 context。"""
     if not os.path.exists(AGY_BIN):
         raise FileNotFoundError(f"agy not found at {AGY_BIN}")
@@ -245,7 +250,38 @@ def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
     return out
 
 
+# --- 寫稿紀錄：每次叫模型都記一筆（logs/writing/llm_calls.csv，2026-10-18） -----------
+_LAST_USAGE: dict = {}
+
+
+def _logged(provider: str, impl, model_label: str, *args):
+    from src import run_log
+    _LAST_USAGE.clear()
+    t = run_log.Timer()
+    try:
+        out = impl(*args)
+    except Exception as exc:
+        run_log.log_call(provider=provider, model=_LAST_USAGE.get("model") or model_label, ok=False,
+                         seconds=t.seconds, note=str(exc))
+        raise
+    run_log.log_call(provider=provider, model=_LAST_USAGE.get("model") or model_label, ok=True, seconds=t.seconds,
+                     input_tokens=_LAST_USAGE.get("input"), output_tokens=_LAST_USAGE.get("output"))
+    return out
+
+
+def _run_agy_once(prompt: str, model: str, timeout_s: int) -> str:
+    return _logged("antigravity_cli", _run_agy_once_impl, model, prompt, model, timeout_s)
+
+
 def run_claude_cli(prompt: str, timeout_s: int) -> str:
+    return _logged("claude_cli", _run_claude_cli_impl, "haiku", prompt, timeout_s)
+
+
+def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
+    return _logged("gateway", _oss_chat_impl, model, model, prompt, timeout_s)
+
+
+def _run_claude_cli_impl(prompt: str, timeout_s: int) -> str:
     """agy 全掛時的稽核後備（信哥 2026-09-20 指定）。
 
     走的是付費 API，所以只在 agy 整條鏈都不可用時才會到這裡——2026-09-20 週報
@@ -262,19 +298,23 @@ def run_claude_cli(prompt: str, timeout_s: int) -> str:
     effort = os.getenv("CLAUDE_EFFORT", "")
     if effort:
         args += ["--effort", effort]
+    from src.llm_brain import claude_cli_env   # Haiku 關掉思考：便宜 5 倍、快 4 倍（2026-10-17）
     proc = subprocess.run(args, input=prompt, capture_output=True, text=True,
-                          cwd="/tmp", timeout=timeout_s + 60)
+                          cwd="/tmp", timeout=timeout_s + 60, env=claude_cli_env())
     try:
         data = json.loads(proc.stdout or "{}")
     except Exception as exc:
         raise RuntimeError(f"claude 輸出不是 JSON：{str(proc.stdout)[:120]}") from exc
+    usage = data.get("usage") or {}
+    _LAST_USAGE.update(input=usage.get("input_tokens"), output=usage.get("output_tokens"),
+                       model=next(iter(data.get("modelUsage") or {}), "haiku"))
     if data.get("is_error") or not data.get("result"):
         raise RuntimeError(f"claude 失敗：{str(data.get('result'))[:160]}")
     return str(data["result"])
 
 
-def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
-    """本機 LiteLLM 閘道上的免費開源模型（設定由 src.llm_brain 載入）。"""
+def _oss_chat_impl(model: str, prompt: str, timeout_s: int) -> str:
+    """本機 LiteLLM 閘道（設定由 src.llm_brain 載入）。"""
     import httpx
 
     import src.llm_brain  # noqa: F401  載入閘道環境變數
@@ -283,28 +323,43 @@ def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
     key = os.getenv("OSS_GATEWAY_KEY", "")
     if not key:
         raise RuntimeError("沒有開源模型閘道的金鑰")
-    resp = httpx.post(f"{base}/chat/completions", timeout=timeout_s,
+    # 能力優先、不管速度（2026-10-17）：閘道內部會一路備援，用戶端至少等 1 小時；
+    # 用串流，NIM 才不會在 300 秒時回 504。
+    timeout_s = max(int(timeout_s), int(os.getenv("GATEWAY_TIMEOUT_S", "3600")))
+    from src.gateway_stream import collect_sse
+
+    with httpx.stream("POST", f"{base}/chat/completions", timeout=httpx.Timeout(timeout_s, connect=30),
                       headers={"Authorization": f"Bearer {key}"},
                       # 修訂要回傳整篇文章；不指定上限時閘道預設很短，全文會被截斷（2026-10-17）。
-                      json={"model": model, "temperature": 0.2, "max_tokens": 16000,
-                            "messages": [{"role": "user", "content": prompt}]})
-    if resp.status_code != 200:
-        raise RuntimeError(f"閘道 {model} HTTP {resp.status_code}: {resp.text[:120]}")
-    text = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                      json={"model": model, "temperature": 0.2,
+                            "max_tokens": int(os.getenv("GATEWAY_MAX_TOKENS", "32000")),
+                            "stream": True, "stream_options": {"include_usage": True},
+                            "messages": [{"role": "user", "content": prompt}]}) as resp:
+        if resp.status_code != 200:
+            raise RuntimeError(f"閘道 {model} HTTP {resp.status_code}: {resp.read()[:120]!r}")
+        text, _usage = collect_sse(resp.iter_lines())
+        _LAST_USAGE.update(input=(_usage or {}).get("prompt_tokens"), output=(_usage or {}).get("completion_tokens"))
     if not text.strip():
         raise RuntimeError(f"閘道 {model} 回空字串")
+    served = (resp.headers.get("x-litellm-model-id") or "").split(":")[-1]
+    _LAST_USAGE["model"] = f"{model}→{served}" if served and served != model else model
+    if served and served != model:
+        print(f"[QualityLoop] ℹ️ 閘道 {model} 實際由 {served} 回答")
     return text
 
 
-OSS_FALLBACK_MODELS = ("deepseek-v4-flash-free", "qwen3.6-plus-free")
+# 閘道角色 audit：刻意排成跟 writer 不同家先上（Step-5 → GLM-5.3-Flash → DeepSeek …），
+# 避免自己審自己。實際模型清單在 ~/litellm-gateway/models.json。
+OSS_FALLBACK_MODELS = ("audit",)
 
 
 def run_fallback_text(prompt: str, timeout_s: int) -> tuple[str, str]:
-    """agy 不能用之後的順序（信哥 2026-10-08／09 定的排程規則）：
-    平常 ② 開源模型 → ③ Haiku；agy 各家額度都用完時 Haiku 暫代第一順位。"""
-    oss = [(f"開源模型 {m}", lambda m=m: _oss_chat(m, prompt, timeout_s)) for m in OSS_FALLBACK_MODELS]
+    """agy 不能用之後的順序（信哥 2026-10-08 定、10-17 確認）：② LiteLLM 閘道 → ③ Haiku。
+    LLM_HAIKU_STANDIN=1 時恢復 10-09 的規則：agy 全掛就讓 Haiku 排第一。"""
+    oss = [(f"閘道 {m}", lambda m=m: _oss_chat(m, prompt, timeout_s)) for m in OSS_FALLBACK_MODELS]
     haiku = [("Claude Haiku", lambda: run_claude_cli(prompt, timeout_s))]
-    order = haiku + oss if agy_is_dead() else oss + haiku
+    standin = os.getenv("LLM_HAIKU_STANDIN", "0") == "1"
+    order = haiku + oss if (standin and agy_is_dead()) else oss + haiku
     last = None
     for label, call in order:
         try:
@@ -321,10 +376,15 @@ def _run_agy(prompt: str, model: str, timeout_s: int) -> str:
     try:
         # agy 會下架舊模型（2026-10-17：Gemini 3.1 Pro、3.7 Flash 回 invalid model selection）。
         # 清單查得到時只試還在架上的；查不到就照原清單試。
-        from src.agy_models import available_models
+        from src.agy_models import available_models, newest_gemini
         listed = set(available_models())
         if listed:
             chain = [m for m in chain if m in listed]
+            # 舊的 Gemini 下架後，稽核鏈只剩 Claude Opus 一個（2026-10-17）。補上架上最新的 Gemini 當第二順位，
+            # 排在 Claude 後面：稽核要跟寫手（多半是 Gemini）不同家先上。
+            latest = newest_gemini(sorted(listed))
+            if latest and latest not in chain and not agy_family_dead(latest):
+                chain.append(latest)
     except Exception:
         pass
     last = "agy 本輪已判定不可用" if not chain else None
@@ -504,3 +564,161 @@ def open_domain_audit(article_md: str, fact_block: str, *,
         print(f"[QualityLoop] ✏️ 領域稽核第 {round_index + 1}/{max_rounds} 輪提出修訂並已套用")
     print(f"[QualityLoop] ⚠️ 領域稽核跑滿 {max_rounds} 輪仍在改，不再繼續（保留最後版本）")
     return current, changed_any
+
+
+# --- 審稿 → 退稿 → 寫手重寫（信哥 2026-10-18） ----------------------------------
+# 舊流程是稽核模型「自己動手改」，寫手從來沒拿到「哪裡錯、怎麼改」；專業查證改完之後
+# 只複驗不修，嬌生（下）就是這樣帶著 1 條違規被擋下、當天改發 podcast。
+# 新流程：每一輪先跑確定性閘門，再請稽核模型逐條寫出「問題／原句／建議改法」，
+# 退回給寫手照著改。最多退稿 REVIEW_ATTEMPTS 次；還有閘門違規才算失敗，
+# 由 07:30 的發文程式依規則換下一個專欄。
+
+REVIEW_ATTEMPTS = int(os.getenv("SUBSTACK_REVIEW_ATTEMPTS", "3"))
+
+_CRITIQUE_PROMPT = """你是審稿編輯，這一輪只負責「指出問題、給改法」，不要自己改稿。
+
+給你：作者的草稿、管線抓到的原始事實表、程式對帳後確認的違規清單。請做兩件事：
+1. 程式抓到的每一條違規，都給一個作者照做就能過關的具體改法：指出要改哪一句、改成什麼方向。
+   若你判斷是程式誤報，「建議改法」寫「誤報：理由」，並告訴作者怎麼換個寫法讓程式不再誤判。
+2. 另外找出程式抓不到的事實錯誤：比率分母算錯、產業常識過時、專有名詞用錯、
+   把一般公司當成資料來源、前後文數字矛盾、把一次性項目當成本業趨勢。風格與觀點不要評論。
+
+=== 程式確認的違規 ===
+{violations}
+
+=== 原始事實表（唯一可信的數字來源）===
+{facts}
+
+=== 作者草稿 ===
+{article}
+
+=== 輸出格式（最高優先）===
+只輸出一個 JSON 物件：{{"items": [{{"問題": "…", "原句": "…", "建議改法": "…"}}]}}
+完全沒有問題就輸出 {{"items": []}}。不要輸出 JSON 以外的文字。
+"""
+
+_REWRITE_PROMPT = """你是這篇文章的作者。審稿編輯把稿子退回來了，附上逐條意見。
+
+請照意見修改你的稿子：
+- 每一條意見都要處理；意見寫「誤報」的，照它建議的方式換個寫法。
+- 只改有問題的句子與它連帶影響的敘述，其餘保留原文的語氣與結構。
+- 不要新增事實表或原文以外的數字、來源；查不到出處的說法寧可刪掉。
+- 不要動標題，不要加任何說明文字。
+
+=== 審稿意見（第 {attempt} 次退稿）===
+{feedback}
+
+=== 原始事實表 ===
+{facts}
+
+=== 你的草稿 ===
+{article}
+
+=== 輸出格式（最高優先）===
+只輸出修改後的完整 Markdown 全文，用下面兩行包起來：
+<<<ARTICLE>>>
+（修改後全文）
+<<<END>>>
+"""
+
+
+def _parse_items(raw: str) -> list[dict] | None:
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0), strict=False)
+    except ValueError:
+        return None
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None
+    return [i for i in items if isinstance(i, dict) and (i.get("問題") or i.get("建議改法"))]
+
+
+def critique(article_md: str, violations: list[Violation], fact_block: str, auditor: str) -> list[dict] | None:
+    """稽核模型逐條列出問題與改法。稽核跑不成回 None（跟「跑了沒問題」的 [] 分開）。"""
+    listed = "\n".join(f"{i}. {v}" for i, v in enumerate(violations, 1)) or "（無）"
+    prompt = _CRITIQUE_PROMPT.format(violations=listed, facts=fact_block[:6000], article=article_md)
+    from src import run_log
+    try:
+        with run_log.stage("審稿"):
+            raw = _run_agy(prompt, auditor, AUDIT_TIMEOUT_S)
+    except Exception as exc:
+        print(f"[Review] ⚠️ 審稿模型無法執行（{str(exc)[:120]}）；這一輪只用程式檢查的結果退稿")
+        return None
+    items = _parse_items(raw)
+    if items is None:
+        print("[Review] ⚠️ 審稿意見不是合法 JSON；這一輪只用程式檢查的結果退稿")
+    return items
+
+
+def run_writer_text(prompt: str, timeout_s: int) -> tuple[str, str]:
+    """寫手重寫：跟寫稿同一套順序 ① agy 寫稿鏈 → ② 閘道 writer → ③ Haiku。"""
+    try:
+        from src.llm_brain import _agy_model_chain
+        chain = [m for m in _agy_model_chain() if not agy_family_dead(m)]
+    except Exception:
+        chain = []
+    for model in chain:
+        try:
+            return _run_agy_once(prompt, model, timeout_s), f"agy {model}"
+        except Exception as exc:
+            note_agy_failure(exc, model)
+    try:
+        return _oss_chat("writer", prompt, timeout_s), "閘道 writer"
+    except Exception as exc:
+        print(f"[Review] ⚠️ 閘道寫手不可用：{str(exc)[:110]}")
+    return run_claude_cli(prompt, timeout_s), "Claude Haiku"
+
+
+def _feedback(violations: list[Violation], items: list[dict] | None) -> str:
+    lines = [f"- [程式檢查] {v.kind}：{v.detail}（{v.fix_hint}）" for v in violations]
+    for it in items or []:
+        lines.append(f"- [審稿] {it.get('問題', '')}｜原句：{str(it.get('原句', ''))[:120]}"
+                     f"｜建議改法：{it.get('建議改法', '')}")
+    return "\n".join(lines)
+
+
+def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
+                    max_attempts: int = REVIEW_ATTEMPTS) -> tuple[str, LoopReport, int]:
+    """回傳 (最終稿, 報告, 退稿次數)。報告的 passed／remaining 只看確定性閘門。"""
+    report = LoopReport()
+    current = article_md
+    rewrites = 0
+    for attempt in range(max_attempts + 1):
+        violations = evaluate(current, **eval_kwargs)
+        report.history.append(violations)
+        report.rounds = attempt + 1
+        items = critique(current, violations, fact_block, auditor)
+        if not violations and not items:
+            report.passed = True
+            print(f"[Review] ✅ 第 {attempt + 1} 次審稿：程式檢查與審稿編輯都沒有意見，通過")
+            return current, report, rewrites
+        print(f"[Review] 第 {attempt + 1} 次審稿：程式檢查 {len(violations)} 項、審稿意見 {len(items or [])} 項")
+        for line in _feedback(violations, items).splitlines():
+            print(f"[Review]   {line[:200]}")
+        if attempt == max_attempts:
+            break
+        prompt = _REWRITE_PROMPT.format(attempt=attempt + 1, feedback=_feedback(violations, items),
+                                        facts=fact_block[:6000], article=current)
+        try:
+            from src import run_log
+            with run_log.stage(f"退稿重寫#{attempt + 1}"):
+                raw, who = run_writer_text(prompt, AUDIT_TIMEOUT_S)
+        except Exception as exc:
+            print(f"[Review] ⚠️ 寫手重寫失敗（{str(exc)[:120]}）；保留目前版本")
+            break
+        revised = _extract_article(raw)
+        if not revised or revised.strip() == current.strip():
+            print(f"[Review] ⚠️ 寫手（{who}）沒有交出可用的修改稿；保留目前版本")
+            break
+        current = revised
+        rewrites += 1
+        print(f"[Review] ✏️ 第 {rewrites} 次退稿，已由 {who} 依意見重寫")
+    report.passed = not report.remaining
+    if report.passed:
+        print("[Review] ✅ 程式檢查已全部通過（審稿編輯仍有建議，但已用完退稿次數）")
+    else:
+        print(f"[Review] ❌ 退稿 {rewrites} 次後仍有 {len(report.remaining)} 項程式檢查違規（不靜默放行）")
+    return current, report, rewrites

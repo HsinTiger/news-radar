@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Canonical scheduled Substack editorial worker.
 # Draft-only, never publish（發布由 substack_radar/daily_publish.py 在 07:30 負責）。
-#   podcast-first   早上第一篇 Podcast（含抓新素材）：週一～五 06:00、週六日 06:30
-#   podcast-second  早上第二篇 Podcast：週一～五 06:30
-#   weekly          公司分析：週六、日 06:00（13:00 重試，同一天只寫一篇）
+#   2026-10-18 起一天只寫一篇（信哥：不再多寫備案稿），寫不好靠審稿退稿重寫＋當天重試：
+#   podcast-first   吹牛免稅（含抓新素材）：週一三五 06:00，10:00 重試
+#   ai-first        智取未來（含抓 AI 來源池）：週二、四 06:00，10:00 重試
+#   weekly          賺錢有道：週六、日 06:00，13:00 重試
+#   podcast-second  舊的第二篇（排程已停用，保留相容）
 #   podcast-batch   舊的一次兩篇（保留相容，排程已不用）
 
 set -uo pipefail
 
 PROFILE="${1:-}"
 case "$PROFILE" in
-  podcast-batch|podcast-first|podcast-second|weekly) ;;
-  *) echo "usage: $0 podcast-first|podcast-second|weekly|podcast-batch"; exit 2 ;;
+  podcast-batch|podcast-first|podcast-second|ai-first|weekly) ;;
+  *) echo "usage: $0 podcast-first|podcast-second|ai-first|weekly|podcast-batch"; exit 2 ;;
 esac
 
 REPO="${REPO:-HsinTiger/news-radar}"
@@ -20,7 +22,7 @@ PY="$LOCAL_REPO/.venv/bin/python"
 LOCAL_LOCK="$LOCAL_REPO/.runtime-state-local.lock.d"
 WANT_FILE="$LOCAL_REPO/.runtime-state-editorial-want"
 LEASE_FILE="$LOCAL_REPO/.runtime-state-editorial-lease.json"
-LOCK_WAIT_SECONDS="${LOCK_WAIT_SECONDS:-2700}"   # 45 分鐘
+LOCK_WAIT_SECONDS="${LOCK_WAIT_SECONDS:-10800}"   # 3 小時（2026-10-17：NIM 改能力優先、不管速度，一篇可能寫 2 小時以上）
 LEASED=0
 LOCAL_LOCKED=0
 WANTED=0
@@ -63,6 +65,20 @@ lock_acquire() {
     return 0
   fi
   return 1
+}
+
+# 今天這個專欄是否已有「通過事實稽核」的稿（一天一篇制的重試保護，2026-10-18）
+clean_column_draft_today() {
+  "$PY" - "$LOCAL_REPO/data/substack_drafts/$(date +%F)" "$1" <<'PYCHECK2'
+import json, sys, pathlib
+day, column = pathlib.Path(sys.argv[1]), sys.argv[2]
+for meta in day.glob("*/metadata.json"):
+    m = json.loads(meta.read_text())
+    if str(m.get("title", "")).endswith(f"｜{column}") and not any(
+            str(w).startswith("[品質迴圈未通過]") for w in m.get("audit_warnings") or []):
+        sys.exit(0)
+sys.exit(1)
+PYCHECK2
 }
 
 cd "$LOCAL_REPO" 2>/dev/null || { echo "[editorial] repo missing: $LOCAL_REPO"; exit 3; }
@@ -126,7 +142,7 @@ fi
 
 "$PY" scripts/state_store.py lock --repo "$REPO" \
   --producer "mac:$(hostname -s):substack-editorial-$PROFILE" \
-  --lease-file "$LEASE_FILE" --lease-seconds 7200 --wait-seconds 1800 || exit 5
+  --lease-file "$LEASE_FILE" --lease-seconds 14400 --wait-seconds 1800 || exit 5
 LEASED=1
 "$PY" scripts/state_store.py pull --repo "$REPO" --root . || exit 6
 
@@ -141,8 +157,22 @@ if [ "$PROFILE" = "podcast-batch" ]; then
     COMPOSE_EXIT=0
   fi
 elif [ "$PROFILE" = "podcast-first" ]; then
-  "$PY" -u substack_radar/compose.py podcast --harvest --editorial-profile weekly --require-substack-draft
-  COMPOSE_EXIT=$?
+  # 2026-10-18 起一天只寫一篇；10:00 是重試，今天已經有通過稽核的吹牛免稅就不再寫。
+  if clean_column_draft_today "吹牛免稅"; then
+    echo "[editorial] 今天已經有通過稽核的吹牛免稅，略過。"
+    COMPOSE_EXIT=0
+  else
+    "$PY" -u substack_radar/compose.py podcast --harvest --editorial-profile weekly --require-substack-draft
+    COMPOSE_EXIT=$?
+  fi
+elif [ "$PROFILE" = "ai-first" ]; then
+  if clean_column_draft_today "智取未來"; then
+    echo "[editorial] 今天已經有通過稽核的智取未來，略過。"
+    COMPOSE_EXIT=0
+  else
+    "$PY" -u substack_radar/compose.py podcast --column ai --harvest --editorial-profile weekly --require-substack-draft
+    COMPOSE_EXIT=$?
+  fi
 elif [ "$PROFILE" = "podcast-second" ]; then
   "$PY" -u substack_radar/compose.py podcast --editorial-profile weekly --require-substack-draft
   COMPOSE_EXIT=$?

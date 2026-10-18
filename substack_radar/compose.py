@@ -60,7 +60,7 @@ import sqlite3
 import sys
 import time
 import unicodedata
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -139,6 +139,7 @@ _TECH_BOOST = 1.2
 
 # company mode（每週日 09:00 公司營運分析）
 COMPANY_NEXT_PATH = _REPO_ROOT / "data" / "substack_drafts" / ".company_next"
+AI_SOURCES_PATH = _REPO_ROOT / "substack_radar" / "config" / "substack_ai_sources.yaml"
 COMPANY_WATCHLIST_PATH = _REPO_ROOT / "substack_radar" / "config" / "company_watchlist.yaml"
 # Tracks news_items already used as a Substack source — SHARED by morning+evening
 # so the two daily slots never pick the same item. Legacy .evening_used.json is
@@ -600,7 +601,18 @@ def flush_stale_podcast_candidates(window_days: int = 7) -> int:
         conn.close()
 
 
-def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str, str]]:
+# AI 專欄挑題偏好（信哥 2026-10-18）：導入實戰／FDE、工程與系統設計、晶片硬體、治理社會。
+AI_TOPIC_BOOST = re.compile(
+    r"forward.deployed|\bFDE\b|deploy|production|enterprise|adoption|in the wild|lessons|"
+    r"infrastructure|inference|latency|eval|system design|architecture|agent|"
+    r"chip|silicon|semiconductor|hardware|GPU|data ?center|"
+    r"government|public sector|policy|regulat|safety|ethic|jobs|workforce",
+    re.I,
+)
+
+
+def pick_podcast_interview(window_days: int = 7, feed_name: str = "YouTube Podcast",
+                           prefer: Optional["re.Pattern"] = None) -> Optional[Tuple[str, str, str, str]]:
     """Podcast source for the daily noon batch. Draws ONLY from the dedicated podcast
     pool (feed_name='YouTube Podcast'), preferring the longest fresh, unused
     interview — length is the best proxy for a substantive Q&A episode (vs. a clip).
@@ -621,14 +633,15 @@ def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str
             f"""
             SELECT id, title, clean_markdown, topic_category, word_count, published_at
             FROM news_items
-            WHERE feed_name = 'YouTube Podcast'
+            WHERE feed_name = ?
               AND source_type = 'video'
               AND published_at >= datetime('now', '-{int(window_days)} days')
               AND status NOT IN ('dropped', 'filtered')
               AND clean_markdown IS NOT NULL AND LENGTH(clean_markdown) > 3000
             ORDER BY published_at DESC
             LIMIT 200
-            """
+            """,
+            (feed_name,),
         ).fetchall()
     except Exception as exc:
         print(f"[PodcastPick] ⚠️ query failed: {exc}")
@@ -644,6 +657,10 @@ def pick_podcast_interview(window_days: int = 7) -> Optional[Tuple[str, str, str
         if nid in used:
             continue
         score = min((wc or len(body or "")) / 40000.0, 2.5)  # longer interview = better, capped
+        if prefer is not None:                                # AI 專欄：偏好的題材加分
+            if prefer.search(title or ""):
+                score += 1.0
+            score += min(len(prefer.findall((body or "")[:20000])) / 40.0, 0.5)
         try:                                                  # mild freshness nudge (~7-day scale)
             pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
             hours = max((now - pub_dt).total_seconds() / 3600.0, 0.0)
@@ -798,6 +815,97 @@ def _parse_yaml_topics(text: str) -> List[Dict[str, str]]:
     return topics
 
 
+def _upload_local_images(body_md: str, api) -> str:
+    """把 Markdown 裡的本機圖檔先上傳到 Substack，換成網址（2026-10-17）。
+
+    python-substack 的 from_markdown 不會上傳絕對路徑的圖：它把開頭的「/」吃掉、
+    原樣塞進草稿，讀者看到的是破圖。上傳失敗就整張圖連同圖說拿掉，不留破圖。"""
+    pattern = re.compile(r"!\[([^\]]*)\]\((?:<(/[^>]+\.(?:png|jpe?g|gif|webp))>|(/[^)\s]+\.(?:png|jpe?g|gif|webp)))\)"
+                         r"\n*(\*[^*\n]+\*\n*)?", re.I)
+
+    def _swap(m: re.Match) -> str:
+        path = Path(m.group(2) or m.group(3))
+        try:
+            url = (api.get_image(str(path)) or {}).get("url") if path.exists() else None
+        except Exception as exc:
+            print(f"[Substack] ⚠️ 圖片上傳失敗（{path.name}）：{exc}")
+            url = None
+        if not url:
+            return ""
+        return f"![{m.group(1)}]({url})\n\n{m.group(4) or ''}"
+
+    return pattern.sub(_swap, body_md)
+
+
+def company_series_part(today: date | None = None, next_text: str | None = None) -> int:
+    """週末兩篇系列：1＝週六上篇（商業模式地圖）、2＝週日下篇（財務與評價）、0＝單篇。
+    下篇由選股程式在 .company_next 寫 part=2；週六一律是上篇。"""
+    today = today or date.today()
+    if next_text is None:
+        try:
+            next_text = COMPANY_NEXT_PATH.read_text(encoding="utf-8")
+        except OSError:
+            next_text = ""
+    if "part=2" in next_text:
+        return 2
+    return 1 if today.weekday() == 5 else 0
+
+
+def company_series_brief(part: int, today: date | None = None) -> str:
+    """附在公司財報事實後面的系列說明。下篇會帶上篇的標題、副標、開場與網址。"""
+    if part == 1:
+        return (
+            "\n\n## 本篇定位：週末兩篇系列的上篇（商業模式地圖）\n"
+            "- 只寫這門生意怎麼運作：價值鏈（從拿到需求或原料到交付收錢）、上下游與議價力、市場與競爭、"
+            "生產方式與成本結構、商業模式的可取之處與弱點。\n"
+            "- 財務品質、資本報酬、估值與五級評價留給明天的下篇；本篇只用到說明商業模式所需的數字。\n"
+            "- 標題是一句自然的話、公司名寫進句子裡，不用冒號；不用自己寫（上），系統會在標題結尾加。"
+            "結尾最後一句預告明天下篇要回答的問題。\n"
+        )
+    if part != 2:
+        return ""
+    today = today or date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    prev = {}
+    for meta in sorted((_REPO_ROOT / "data" / "substack_drafts" / yesterday).glob("company_*/metadata.json")):
+        try:
+            m = json.loads(meta.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if any(str(w).startswith("[品質迴圈未通過]") for w in m.get("audit_warnings") or []):
+            continue
+        lead = ""
+        art = meta.parent / "Article_Substack.md"
+        if art.exists():
+            body = [ln for ln in art.read_text(encoding="utf-8").split("\n\n")
+                    if ln.strip() and not ln.startswith(("#", ">", "*", "!"))]
+            lead = "".join(body[:2])[:500]
+        prev = {"title": m.get("title"), "subtitle": m.get("subtitle"), "lead": lead, "folder": meta.parent.name,
+                "focus": (m.get("source") or {}).get("series_next_focus")}
+    url = ""
+    try:
+        ledger = json.loads((_REPO_ROOT / "data" / "substack_drafts" / ".daily_published.json").read_text(encoding="utf-8"))
+        entry = ledger.get(yesterday) or {}
+        if prev and entry.get("folder", "").endswith(prev.get("folder", "\0")):
+            url = entry.get("post_url") or ""
+    except Exception:
+        pass
+    recap = ""
+    if prev:
+        recap = (f"- 上篇〈{prev.get('title')}〉{('（' + url + '）') if url else ''}："
+                 f"{prev.get('subtitle') or ''}\n- 上篇開場：{prev.get('lead')}\n")
+    focus = (prev.get("focus") if prev else None) or (
+        "上篇已經講完價值鏈，不要重講；專注獲利品質（一次性項目先查清楚）、資本報酬與再投資機會、"
+        "五級評價與三個理由、風險分等級、目前估值隱含的市場預期。")
+    return (
+        "\n\n## 本篇定位：週末兩篇系列的下篇\n"
+        + recap +
+        f"- 開頭 2–3 句接住上篇的結論，讓沒讀過上篇的人也跟得上。{focus}\n"
+        "- 標題是一句自然的話、公司名寫進句子裡，不用冒號；不用自己寫（下），系統會在標題結尾加。"
+        "上篇有網址就在開頭附上連結讓讀者回看。\n"
+    )
+
+
 def _resolve_company_ticker(args) -> str:
     """company mode ticker：--ticker > .company_next（信哥從候選挑的）> watchlist top（永不卡稿）。"""
     if getattr(args, "ticker", None):
@@ -821,10 +929,53 @@ def _resolve_company_ticker(args) -> str:
 # Cover rendering — reuse cover_renderer with new "substack" spec
 # ---------------------------------------------------------------------------
 
+def substack_section_id_for(title: str) -> int | None:
+    """依標題結尾的專欄名，找出 Substack 分區 id（2026-10-17）。
+
+    分區讓讀者只訂想看的專欄，而不是嫌信太多就整個退訂（後台數據：發文越密，開信率越低）。
+    分區要在 Substack 後台手動建立，id 寫在 .env 的 SUBSTACK_SECTION_IDS（JSON，例如
+    {"吹牛免稅": 123, "賺錢有道": 456, "主編精選": 789}）。沒設就照舊不分區。"""
+    raw = os.getenv("SUBSTACK_SECTION_IDS", "").strip()
+    if not raw:
+        return None
+    try:
+        mapping = json.loads(raw)
+    except ValueError:
+        print("[Substack] ⚠️ SUBSTACK_SECTION_IDS 不是合法 JSON，略過分區")
+        return None
+    t = str(title or "")
+    for column, sid in mapping.items():
+        if t.endswith(f"｜{column}") or t.startswith(f"{column}｜"):
+            try:
+                return int(sid)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def company_research_queries(mode: str, company: str) -> list[str]:
+    """公司拆解固定要查的面向（信哥 2026-10-17：不只看股價跟財報，也看上下游、
+    市場、生產關係，檢視商業模式的優點與缺點）。研究簡報自己想的問句常漏掉這幾塊，
+    所以用確定性的英文關鍵字補上——英文財經來源比中文多一個量級。"""
+    if mode != "company" or not str(company or "").strip():
+        return []
+    name = str(company).strip()
+    return [
+        f"{name} 10-K annual report segment revenue operating income",
+        f"{name} suppliers supply chain key customers",
+        f"{name} competitors market share industry",
+        f"{name} manufacturing plants production capacity outsourcing",
+        f"{name} business model competitive advantage weaknesses risks",
+        # 一手資料（2026-10-17 對標曼報：他們引用的幾乎都是年報頁碼、10-K、法說逐字稿、監管文件）
+        f"{name} earnings call transcript",
+        f"site:sec.gov {name} 10-K",
+    ]
+
+
 # Footer is deterministic and intentionally outside the writer prompt.
 BRAND_TAGLINE = "「把複雜世界寫成人話，保留真正值得你判斷的部分。」"
 # 交付節奏文案。與封面圖共用同一份（promise_cover.SLOGAN），改動須兩處同步。
-PUBLIC_CADENCE = "每天早上一篇 · 平日 Podcast 精選 · 週末公司拆解"
+PUBLIC_CADENCE = "替你濾掉雜訊 · 一三五思想激盪 · 二四AI實戰 · 週末公司拆解"
 
 # 專欄識別前綴（2026-08-12 owner）：讀者在列表頁／email 標題列一眼分辨這是哪一路。
 # 刻意在 SubstackDraft 驗證「≤15 字」之後才貼上——prefix 是欄目標籤，不該吃掉
@@ -837,16 +988,17 @@ PUBLIC_CADENCE = "每天早上一篇 · 平日 Podcast 精選 · 週末公司拆
 COLUMN_PREFIX = {
     "company": "賺錢有道",   # 每週公司拆解／財報
     "podcast": "吹牛免稅",   # 每日 podcast 思想延伸
+    "ai": "智取未來",       # 週二、四 AI 專欄（2026-10-18）：podcast 模式＋--column ai
     # 儀表板手動投稿走 morning／evening 兩個 slot，先前不在這張表裡，於是這條路
     # 產出的草稿一律沒有欄目標籤（2026-08-16 從草稿匣比對發現）。它們不屬於前兩
     # 個定期專欄，但仍是 owner 親自挑的題目，自成一欄。
-    "morning": "主編精選",
-    "evening": "主編精選",
+    "morning": "Hsin選觀點",     # 2026-10-18 原「主編精選」改名
+    "evening": "Hsin選觀點",
 }
 COLUMN_PREFIX_SEP = "｜"
 
 # 歷史標籤也要能剝除，否則改名後重跑會疊成「吹牛免稅｜主題分享｜…」。
-_RETIRED_PREFIXES = ("商業分析", "主題分享", "科技前沿")
+_RETIRED_PREFIXES = ("商業分析", "主題分享", "科技前沿", "主編精選")
 _ALL_PREFIXES = tuple(COLUMN_PREFIX.values()) + _RETIRED_PREFIXES
 
 
@@ -901,6 +1053,34 @@ def strip_column_label(title: str) -> str:
         if text.endswith(tail):
             return text[: -len(tail)].strip()
     return text
+
+
+SERIES_MARK = {1: "（上）", 2: "（下）"}
+
+
+def decolon_title(title: str, aliases=()) -> str:
+    """標題不准用冒號（信哥 2026-10-17：很 AI 感）。寫手偶爾還是會寫，最後一道由程式改掉：
+    冒號前是公司名 →「嬌生：本業穩得像塊石頭」改成「嬌生的本業穩得像塊石頭」；
+    其他情況把冒號換成逗號。"""
+    t = (title or "").strip()
+    m = re.match(r"^(.{1,8}?)\s*[：:]\s*(.+)$", t)
+    if not m:
+        return t
+    head, tail = m.group(1).strip(), m.group(2).strip()
+    if any(a and a.lower() == head.lower() for a in aliases) and not tail.startswith(("的", "為什麼", "怎麼", "如何")):
+        return f"{head}的{tail}"
+    return f"{head}，{tail}"
+
+
+def with_series_mark(title: str, series_part) -> str:
+    """週末系列在主標題結尾標「（上）」「（下）」（信哥 2026-10-17）。由程式加，不靠模型記得；
+    Idempotent：模型自己已經寫了上下篇標記就不重複加。"""
+    mark = SERIES_MARK.get(series_part)
+    t = (title or "").strip()
+    if not mark:
+        return t
+    t = re.sub(r"[（(](上|下)(篇)?[）)]\s*$", "", t).strip()
+    return f"{t}{mark}"
 
 
 def apply_column_prefix(title: str, mode: str, topic_category: str = "") -> str:
@@ -1363,11 +1543,15 @@ def push_to_substack_draft(
             except Exception as exc:
                 print(f"[Substack] ⚠️ Cover upload failed (continuing without): {exc}")
 
+        body_md = _upload_local_images(body_md, api)
         post.from_markdown(body_md, api=api)
 
         # python-substack 的 Post.get_draft() 不含 SEO 欄位，但 Substack 草稿本身有。
         # 直接補進 payload：留空的話搜尋引擎只會看到那個 15 字的鉤子標題。
         payload = post.get_draft()
+        section_id = substack_section_id_for(title)
+        if section_id:
+            payload["draft_section_id"] = section_id
         if seo_title:
             payload["search_engine_title"] = seo_title
         if seo_description:
@@ -1378,6 +1562,20 @@ def push_to_substack_draft(
         if draft_id is None:
             print("[Substack] ❌ post_draft returned no draft id; remote creation is unproven")
             return None
+        if section_id:
+            # 建立草稿時帶的 draft_section_id 會被 Substack 忽略（2026-10-17 實測），
+            # 要建好後再 PUT 一次才會掛上分區。失敗不擋草稿。
+            # Substack 的 429 很淺（剛建完草稿馬上再打一次就可能撞到），隔幾秒重試。
+            for wait_s in (3, 15, 45):
+                time.sleep(wait_s)
+                try:
+                    api.put_draft(draft_id, draft_section_id=section_id)
+                    print(f"[Substack] 🗂️ 已歸入分區 {section_id}")
+                    break
+                except Exception as exc:
+                    last_exc = exc
+            else:
+                print(f"[Substack] ⚠️ 分區設定失敗（草稿照常保留）：{last_exc}")
         if source_id:
             try:
                 store_remote_receipt(source_id, draft_id)
@@ -1683,7 +1881,8 @@ def _strip_title_subtitle_lines(md: str, *, title: str, subtitle: str) -> str:
 # File writers
 # ---------------------------------------------------------------------------
 
-def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block: str = "") -> Path:
+def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block: str = "",
+                              column_header: str = "") -> Path:
     """Write the reader-ready version that goes straight into Substack.
 
     Public source links and the actual provider/model remain reader-facing.
@@ -1699,6 +1898,7 @@ def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block
         f"{provenance_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
+        f"{column_header}"
         f"{body}\n\n"
         f"{sources_block}"
     )
@@ -1862,6 +2062,46 @@ def _citable_source(url: str, title: str) -> bool:
     return True
 
 
+# 專欄自述（與 fb_follow.COLUMN_DESC 同一套文案，test 守著兩邊一致）。
+COLUMN_INTRO = {
+    "智取未來": "把 AI 真的用進工作的方法、導入與工程實戰",
+    "賺錢有道": "一個週末拆解一家公司的商業模式，看它靠什麼賺、被誰卡住、弱點在哪",
+    "吹牛免稅": "替你挑出 3 小時頂尖對談裡最值得想的 5 分鐘，查證過、附上延伸觀點",
+    "Hsin選觀點": "主編有感而發的題材，最有個人立場的一篇",
+}
+
+
+def _column_header(title: str, *, source_title=None, source_url=None, series_part=None) -> str:
+    """文章最上方一行：專欄是什麼＋這篇根據什麼（2026-10-17，對標曼報 Pro 每篇開頭的
+    專欄說明與「重點參考資料」）。讀者第一眼就知道這篇替他濾了什麼、可信度從哪來；
+    完整來源清單仍放文末，不把開頭塞滿。"""
+    column = next((c for c in COLUMN_INTRO if str(title or "").endswith(f"｜{c}")), None)
+    if not column:
+        return ""
+    label = {1: f"{column}｜週末拆解上篇", 2: f"{column}｜週末拆解下篇"}.get(series_part, column)
+    line = f"> **{label}**｜{COLUMN_INTRO[column]}。" if label == column else f"> **{label}**　{COLUMN_INTRO[column]}。"
+    if source_url and source_title:
+        line += f"本篇根據：[{str(source_title)[:60]}]({source_url})"
+    out = line + "\n\n"
+    if series_part == 2:
+        prev_title, prev_url = _series_prev_post()
+        if prev_url:
+            # 寫手常忘了附上篇連結（2026-10-18 嬌生下篇），由程式固定加在第一行下面
+            out += f"**👈 還沒看上篇？**[{strip_column_label(prev_title)}]({prev_url})\n\n"
+    return out
+
+
+def _series_prev_post(today: date | None = None) -> tuple[str, str]:
+    """昨天發布的那篇（週末系列上篇）的標題與網址；沒有就回空字串。"""
+    yesterday = ((today or date.today()) - timedelta(days=1)).isoformat()
+    try:
+        entry = json.loads((_REPO_ROOT / "data" / "substack_drafts" / ".daily_published.json")
+                           .read_text(encoding="utf-8")).get(yesterday) or {}
+    except Exception:
+        return "", ""
+    return str(entry.get("title") or ""), str(entry.get("post_url") or "")
+
+
 def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
     """Reader-facing source ledger, placed after the article to reduce front-load."""
     reports = reports or []
@@ -1916,6 +2156,16 @@ async def run(args: argparse.Namespace) -> int:
 
 async def _run_inner(args: argparse.Namespace) -> int:
     today = date.today().isoformat()
+    if getattr(args, "column", None) == "ai":
+        os.environ["SUBSTACK_COLUMN"] = "ai"     # composer 據此換 AI 寫作框架
+    else:
+        os.environ.pop("SUBSTACK_COLUMN", None)
+    # 寫稿紀錄用：這一輪所有模型呼叫都記在同一個 run 底下（logs/writing/，2026-10-18）
+    from src import run_log as _run_log
+    _article_timer = _run_log.Timer()
+    os.environ["NEWS_RADAR_RUN"] = (f"{datetime.now():%Y-%m-%d %H:%M} {args.mode}"
+                                    f"{'/ai' if getattr(args, 'column', None) == 'ai' else ''}")
+    source_fin_data = None   # company 模式的財報事實，最後畫趨勢圖用
     mode: str = args.mode
 
     if not args.no_draft and substack_auth_blocked():
@@ -1960,16 +2210,18 @@ async def _run_inner(args: argparse.Namespace) -> int:
             if mode == "podcast":
                 # podcast slot harvests its OWN pool (long-form interview channels)
                 # into feed_name='YouTube Podcast'; no RSS / general-YT needed here.
+                # AI 專欄（--column ai）收自己的來源池 'YouTube AI'，兩個專欄不搶同一集。
                 from substack_radar.youtube_transcripts import (
                     harvest_youtube_transcripts,
                     PODCAST_SOURCES_PATH,
                 )
 
+                _is_ai = getattr(args, "column", None) == "ai"
                 await asyncio.to_thread(
                     harvest_youtube_transcripts,
-                    sources_path=PODCAST_SOURCES_PATH,
-                    feed_name="YouTube Podcast",
-                    tags=["youtube", "video", "podcast"],
+                    sources_path=AI_SOURCES_PATH if _is_ai else PODCAST_SOURCES_PATH,
+                    feed_name="YouTube AI" if _is_ai else "YouTube Podcast",
+                    tags=["youtube", "video", "podcast"] + (["ai"] if _is_ai else []),
                     min_chars=3000,        # an interview, not a clip
                     global_budget_s=510,   # 2026-09-19：來源 34→40，按比例放寬（新來源排在最後，最先被截掉）
                 )
@@ -2031,7 +2283,10 @@ async def _run_inner(args: argparse.Namespace) -> int:
         }
     elif mode == "podcast":
         # podcast: longest fresh, unused interview from the dedicated pool.
-        pick = pick_podcast_interview()
+        # --column ai：從 AI 來源池挑，偏好導入實戰／工程／晶片／治理題材。
+        _is_ai = getattr(args, "column", None) == "ai"
+        pick = (pick_podcast_interview(feed_name="YouTube AI", prefer=AI_TOPIC_BOOST)
+                if _is_ai else pick_podcast_interview())
         if pick is None:
             print("[ERROR] No suitable podcast interview in the harvested pool (last 7 days).")
             notify_substack_failure(
@@ -2048,7 +2303,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "id": news_id,
             "title": raw_title,
             "topic_category": topic_category,
-            "via": "podcast_pool",
+            "via": "ai_pool" if _is_ai else "podcast_pool",
+            **({"column": "ai"} if _is_ai else {}),
         }
     elif mode == "company":
         # 每週公司營運分析（週日 09:00）。第一階段只讀 yfinance
@@ -2070,17 +2326,22 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"[Company] {ticker} → 先抓 yfinance 財報事實…")
             fin_data, fin_md = fetch_financials(ticker)
         raw_title = fin_data.get("name") or fin_data.get("symbol") or ticker
+        source_fin_data = fin_data          # 畫財報趨勢圖用（2026-10-17）
         if fin_data.get("symbol") in ("BTC", "ETH"):
             topic_category = "crypto"
         else:
             topic_category = "tw_stocks" if ".TW" in ticker.upper() else "us_stocks"
-        raw_content = fin_md
+        series_part = company_series_part()
+        raw_content = fin_md + company_series_brief(series_part)
+        if series_part:
+            print(f"[Company] 週末系列{'上' if series_part == 1 else '下'}篇")
         source = {
             "id": None,
             "title": raw_title,
             "topic_category": topic_category,
             "via": f"company:{ticker}",
             "ticker": ticker,
+            "series_part": series_part,
         }
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
@@ -2198,10 +2459,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
         try:
             research_bundle = await asyncio.to_thread(
                 build_research_bundle,
-                research_brief.research_queries,
+                [*research_brief.research_queries, *company_research_queries(mode, raw_title)],
                 primary_url=source_url,
                 seed_sources=used_reports,
                 subject=raw_title,
+                # 公司稿的主來源標題就是公司名 → 用名字判斷相關性（podcast 標題不行）
+                subject_is_name=(mode == "company"),
             )
             research_sources = research_bundle.evidence_sources
             social_reach = research_bundle.social_reach
@@ -2270,7 +2533,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
             },
         )
         return 3
-    draft.title = apply_column_prefix(draft.title, mode, topic_category)
+    _aliases = ()
+    if mode == "company" and source.get("ticker"):
+        from substack_radar.company_financials import title_aliases
+        _aliases = title_aliases(source.get("ticker"), source.get("title") or "")
+    draft.title = apply_column_prefix(
+        with_series_mark(decolon_title(draft.title, _aliases), source.get("series_part") if mode == "company" else None),
+        "ai" if source.get("column") == "ai" else mode, topic_category)
     # 專欄 tag 在這裡就併進 draft.tags，不要等到推送時才加：metadata.json 是從
     # draft.tags 寫的，晚加會讓本機紀錄跟 Substack 上實際掛的 tag 對不起來
     # （2026-08-16 三欄驗收就是這樣抓到的）。push 端仍會再併一次當保險，
@@ -2349,41 +2618,42 @@ async def _run_inner(args: argparse.Namespace) -> int:
             auditor = auditor_for(getattr(draft, "generated_by", None))
             print(f"[QualityLoop] 稽核模型 = {auditor}（寫手 = "
                   f"{getattr(draft, 'generated_by', None) or 'unknown'}）")
-            body, report = run_quality_loop(
-                draft.body_markdown,
+            _eval_kwargs = dict(
                 fact_values=fact_values,
-                fact_block=fact_block,
                 has_management_guidance=False,
                 # 證據法則要對照抓回來的全文摘錄，才知道數字出自哪一段
                 sources=[item.model_dump() for item in (research_sources or [])],
+                fact_block=fact_block,
                 base_currency=(_fd or {}).get("currency") or "TWD",
-                model=auditor,
             )
-            body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
-            draft.body_markdown = body
-            remaining = list(report.remaining)
-            if domain_changed:
-                # 領域稽核是最後一個動文字的環節，它改完就直接送印了。
-                # 它可能引進新的問題（改寫時補上查不到出處的歸屬、動到數字），
-                # 所以確定性閘門要在它之後再跑一次——否則整條線的最後一哩沒人看。
-                from substack_radar.quality_loop import evaluate as _evaluate
+            if os.getenv("SUBSTACK_REVIEW_LOOP", "1") == "1":
+                # 信哥 2026-10-18：審稿模型逐條給意見 → 退回寫手重寫，最多退稿 3 次；
+                # 專業查證也在同一個迴圈裡，改完一定再驗、再退，不會「查證改完沒人修」。
+                from substack_radar.quality_loop import run_review_loop
 
-                remaining = _evaluate(
-                    body, fact_values=fact_values,
-                    has_management_guidance=False,
-                    sources=[item.model_dump() for item in (research_sources or [])],
-                    fact_block=fact_block,
-                    base_currency=(_fd or {}).get("currency") or "TWD",
-                )
-                print(f"[QualityLoop] 領域稽核後複驗：{len(remaining)} 項違規")
+                body, report, _rewrites = run_review_loop(
+                    draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs)
+                domain_changed = _rewrites > 0
+                remaining = list(report.remaining)
+            else:
+                body, report = run_quality_loop(draft.body_markdown, model=auditor, **_eval_kwargs)
+                body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
+                remaining = list(report.remaining)
+                if domain_changed:
+                    # 領域稽核是最後一個動文字的環節；它改完要再跑一次確定性閘門。
+                    from substack_radar.quality_loop import evaluate as _evaluate
+
+                    remaining = _evaluate(body, **_eval_kwargs)
+                    print(f"[QualityLoop] 領域稽核後複驗：{len(remaining)} 項違規")
+            draft.body_markdown = body
             for v in remaining:
                 warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
             # 產文路線要同時記寫手與稽核。稿子經過第二個模型改寫之後，
             # 只標寫手就不再是真話——讀者看到的句子有一部分是稽核模型寫的。
             writer = (getattr(draft, "generated_by", None) or "unknown").strip()
             draft.generated_by = (
-                f"{writer}｜稽核 {auditor} · 對帳 {report.rounds} 輪"
-                f"{'／領域查核有修訂' if domain_changed else '／領域查核無修訂'}"
+                f"{writer}｜稽核 {auditor} · 審稿 {report.rounds} 次"
+                f"{'／有退稿重寫' if domain_changed else '／一次通過'}"
                 f"{'' if report.passed else '（仍有未解違規）'}"
             )
         except Exception as exc:
@@ -2391,7 +2661,21 @@ async def _run_inner(args: argparse.Namespace) -> int:
                   "保留原文繼續，不因為稽核工具壞掉就掉一篇稿")
 
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
-    article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md)
+    header_md = _column_header(draft.title, source_title=source.get("title"), source_url=source_url,
+                               series_part=source.get("series_part"))
+    article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md, column_header=header_md)
+    # 公司稿附一張財報趨勢圖（2026-10-17，對標曼報 Pro：每篇都有附來源的圖）。畫不出來就照常發。
+    _fin = source_fin_data
+    if mode == "company" and isinstance(_fin, dict):
+        try:
+            from substack_radar.company_chart import insert_chart, render_financial_chart
+            label = re.split(r"[：:｜]", draft.title, 1)[0].strip() or str(source.get("title") or "")
+            chart = render_financial_chart(_fin, local_dir / "chart_financials.png", label)
+            if chart:
+                article_md.write_text(insert_chart(article_md.read_text(encoding="utf-8"), *chart), encoding="utf-8")
+                print(f"[Chart] ✅ 財報趨勢圖已插入：{chart[1][:40]}")
+        except Exception as exc:
+            print(f"[Chart] ⚠️ 趨勢圖略過（{type(exc).__name__}: {exc}）")
     write_article_full_md(
         local_dir,
         draft,
@@ -2530,6 +2814,20 @@ async def _run_inner(args: argparse.Namespace) -> int:
         onedrive_path=str(mirror_dir),
     )
 
+    try:
+        _col = next((c for c in COLUMN_INTRO if str(draft.title).endswith(f"｜{c}")), "")
+        _gen = str(getattr(draft, "generated_by", "") or "")
+        _run_log.log_article(
+            column=_col, title=draft.title, minutes=round(_article_timer.seconds / 60, 1),
+            writer=_gen.split("｜稽核")[0], auditor=(_gen.split("｜稽核")[1].split("·")[0].strip() if "｜稽核" in _gen else ""),
+            review_rounds=(locals().get("report").rounds if locals().get("report") is not None else ""),
+            rewrites=locals().get("_rewrites", ""),
+            passed="N" if any(str(w).startswith("[品質迴圈未通過]") for w in warnings) else "Y",
+            draft_id=draft_id or "",
+            remaining_issues=sum(1 for w in warnings if str(w).startswith("[品質迴圈未通過]")),
+        )
+    except Exception as exc:
+        print(f"[RunLog] ⚠️ 寫稿紀錄失敗（不影響草稿）：{exc}")
     print(f"\n✨ Draft ready:")
     print(f"    Local:    {local_dir}")
     print(f"    OneDrive: {mirror_dir}")
@@ -2542,6 +2840,8 @@ def parse_args() -> argparse.Namespace:
         description="Generate one Daily or Weekly Substack draft."
     )
     p.add_argument("mode", choices=["morning", "evening", "podcast", "company"], help="Which slot to compose")
+    p.add_argument("--column", choices=["ai"], default=None,
+                   help="(podcast) 寫成週二、四的 AI 專欄：用 AI 來源池、AI 寫作框架與專欄名")
     p.add_argument("--news-id", default=None, help="(morning) override: specific news_items.id")
     p.add_argument("--ticker", default=None, help="(company) 股票代號，如 NVDA / 2330.TW；不給則讀 .company_next 或 watchlist top")
     p.add_argument(

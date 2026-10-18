@@ -231,7 +231,28 @@ _LOW_SIGNAL_DOMAINS = (
     "pinterest.",
     "facebook.com",
     "x.com",
+    # 影音站：抓回來只有播放頁殼，2026-10-17 嬌生那篇收進了 vkvideo.ru、rutube.ru
+    "vkvideo.ru", "vk.com", "rutube.ru", "dailymotion.com", "bilibili.com", "tiktok.com",
+    # 學生報告／文件分享站：不是可查證的一手或專業分析
+    "prezi.com", "scribd.com", "coursehero.com", "studocu.com", "slideshare.net", "ukessays.com",
 )
+
+
+def _search_query(query: str) -> str:
+    """把研究問句整理成搜尋引擎吃得下的關鍵字。
+
+    2026-10-17：研究簡報的 research_queries 常是一整句中文指令
+    （「官方/第一手：調閱 JNJ 2024 年 10-K 與 2025 年 10-K 中『非經常性項目』…」），
+    DuckDuckGo 對這種長句直接回「沒有結果」→ 整輪搜尋被跳過。
+    拿掉「官方/第一手：」這類標籤、引號與動詞指令，長度壓到 90 字以內。
+    """
+    q = re.sub(r"\s+", " ", str(query or "")).strip()
+    q = re.sub(r"^[^：:]{1,14}[：:]\s*", "", q)                 # 「最強反方：」「官方/第一手：」
+    q = re.sub(r"[「」『』“”\"（）()【】]", " ", q)
+    q = re.sub(r"(請|去|先)?(調閱|尋找|搜尋|檢索|查詢|確認|比對|評估|整理|找出)", " ", q)
+    q = re.sub(r"[，。；、]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q[:90].strip()
 
 
 def _social_platform(url: str) -> Literal["reddit", "x"] | None:
@@ -488,6 +509,16 @@ def _subject_terms(*texts: object) -> set[str]:
     return {t for t in terms if t not in _TERM_STOPWORDS}
 
 
+def _names_subject(subject: str, text: str, min_count: int = 3) -> bool:
+    """英文主題名（例如 Johnson & Johnson）在全文出現夠多次 → 這篇在講它。"""
+    name = re.sub(r"[^a-z0-9 ]+", " ", str(subject or "").lower())
+    name = re.sub(r"\s+", " ", name).strip()
+    if len(name) < 4 or not name.isascii():
+        return False
+    body = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower()))
+    return body.count(name) >= min_count
+
+
 def _relevance_hits(text: str, subject_terms: set[str]) -> int:
     """How many of the article's own key terms this candidate actually mentions.
 
@@ -540,7 +571,7 @@ def _search_candidates(
     candidates: list[dict] = []
     seen: set[str] = set()
     for query_index, query in enumerate(queries):
-        query = (query or "").strip()
+        query = _search_query(query)
         if not query:
             continue
         try:
@@ -611,6 +642,7 @@ def build_research_pack(
     primary_url: str | None = None,
     seed_sources: Sequence[dict] | None = None,
     subject: str = "",
+    subject_is_name: bool = False,
 ) -> list[ResearchSource]:
     """Search, read, and validate five to ten sources for one deep article.
 
@@ -704,6 +736,16 @@ def build_research_pack(
             # seed 來源是上游明確指定的素材，不受此門檻限制。
             if not item.get("seed"):
                 hits = _relevance_hits(f"{item.get('title', '')} {excerpt}", subject_terms)
+                # 主題本身是英文名（公司分析的主來源標題就是公司名）時，全文反覆出現
+                # 這個名字就算相關。2026-10-17：嬌生自己的 2025 年報被判離題（命中 1 < 3），
+                # 因為比對詞多半是研究問句裡的中文詞，英文年報當然對不上。
+                page = f"{item.get('title', '')} {excerpt}"
+                if subject_is_name and hits < MIN_PAGE_RELEVANCE_HITS and _names_subject(subject, page):
+                    hits = MIN_PAGE_RELEVANCE_HITS
+                # 反過來：英文主題名在全文一次都沒出現 → 不管湊到幾個通用詞都算離題
+                # （公司固定問句帶進 manufacturing/suppliers 這類通用詞，泛論產能的文章會混進來）。
+                if subject_is_name and _names_subject(subject, subject, min_count=1) and not _names_subject(subject, page, min_count=1):
+                    hits = 0
                 if hits < MIN_PAGE_RELEVANCE_HITS:
                     rejected_offtopic += 1
                     print(f"[EditorialResearch] 淘汰離題來源（全文命中 {hits}"
@@ -760,6 +802,7 @@ def build_research_bundle(
     primary_url: str | None = None,
     seed_sources: Sequence[dict] | None = None,
     subject: str = "",
+    subject_is_name: bool = False,
 ) -> EditorialResearchBundle:
     """Follow social leads, then build the independent durable evidence pack."""
     social_reach = collect_social_reach(queries)
@@ -773,6 +816,7 @@ def build_research_bundle(
         primary_url=primary_url,
         seed_sources=seed_sources,
         subject=subject,
+        subject_is_name=subject_is_name,
     )
     return EditorialResearchBundle(
         evidence_sources=evidence_sources,
