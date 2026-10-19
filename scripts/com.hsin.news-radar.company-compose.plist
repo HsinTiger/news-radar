@@ -24,10 +24,11 @@
 	<key>StandardOutPath</key>
 	<string>/tmp/news-radar-company-compose.out.log</string>
 	<key>StartCalendarInterval</key>
+	<!-- 賺錢有道：六日 04:00 寫，10:00 重試 -->
 	<array>
 		<dict>
 			<key>Hour</key>
-			<integer>6</integer>
+			<integer>4</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>
@@ -35,7 +36,7 @@
 		</dict>
 		<dict>
 			<key>Hour</key>
-			<integer>6</integer>
+			<integer>4</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>
@@ -43,7 +44,7 @@
 		</dict>
 		<dict>
 			<key>Hour</key>
-			<integer>13</integer>
+			<integer>10</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>
@@ -51,7 +52,7 @@
 		</dict>
 		<dict>
 			<key>Hour</key>
-			<integer>13</integer>
+			<integer>10</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>

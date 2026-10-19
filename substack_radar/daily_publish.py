@@ -396,6 +396,15 @@ def run(day: date, *, dry_run: bool = False) -> int:
         print("[DailyPublish] 🛑 今天沒有可以發的稿子")
         if not dry_run:
             notify("今天沒有自動發文", "排程沒有產出可發的稿子，請看一下草稿匣")
+            try:
+                from src.notify import notify_substack_failure
+                notify_substack_failure(
+                    mode="daily_publish",
+                    error_msg=f"{day.isoformat()} 沒有通過審稿的稿子，今天不自動發文（不硬發）",
+                    extra_context={"今天的專欄": plan_for(day)[0][1], "草稿匣": "沒過的稿子還在草稿匣，可以手動看"},
+                )
+            except Exception:
+                pass
         return 0
 
     _, column, pool = chosen_plan

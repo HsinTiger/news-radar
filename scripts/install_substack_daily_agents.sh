@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 安裝 Substack 編輯排程（2026-10-15 起）：
-#   每天 06:00 只寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），寫不好當天再重試一次，
+#   每天 04:00 只寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），寫不好當天再重試一次，
 #   07:30 由 daily-publish 從當天的稿子挑一篇發布並寄信，其餘留草稿。
 
 set -euo pipefail
@@ -75,5 +75,5 @@ for label in "${AGENTS[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$label.plist"
 done
 
-echo "installed: 每天 06:00 寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），當天重試一次；07:30 自動發布；FB 12:30／20:30"
+echo "installed: 每天 04:00 寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），10:00 重試；07:30 自動發布；FB 12:30／20:30"
 echo "owner submission immediate/hourly workers are unchanged"

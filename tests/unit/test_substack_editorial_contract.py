@@ -257,7 +257,7 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     # 六日 賺錢有道 06:00、13:00 重試。不再寫第二篇備案稿。
     weekend = (6, 0)
     assert noon["StartCalendarInterval"] == (
-        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in (1, 3, 5)]
+        [{"Weekday": d, "Hour": 4, "Minute": 0} for d in (1, 3, 5)]      # 2026-10-19 提前到 04:00
         + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (1, 3, 5)]
     )
     assert noon["ProgramArguments"][-1] == "podcast-first"
@@ -265,13 +265,13 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
         "substack-podcast-second" not in installer.split("LEGACY_AGENTS")[0]
     ai = plistlib.loads((REPO / "scripts" / "com.hsin.news-radar.substack-ai.plist").read_bytes())
     assert ai["StartCalendarInterval"] == (
-        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in (2, 4)]
+        [{"Weekday": d, "Hour": 4, "Minute": 0} for d in (2, 4)]
         + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (2, 4)]
     )
     assert ai["ProgramArguments"][-1] == "ai-first"
     assert company["StartCalendarInterval"] == (
-        [{"Weekday": d, "Hour": 6, "Minute": 0} for d in weekend]
-        + [{"Weekday": d, "Hour": 13, "Minute": 0} for d in weekend]
+        [{"Weekday": d, "Hour": 4, "Minute": 0} for d in weekend]
+        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in weekend]
     )
     assert company["ProgramArguments"][-1] == "weekly"
     publish = plistlib.loads(

@@ -66,8 +66,9 @@ def _substack_auth_blocked() -> bool:
 def _is_morning(t) -> bool:
     from datetime import time as dtime
 
-    # 05:00 起就不開新的一篇：單篇（轉逐字稿＋寫稿）可能跑 40 分鐘以上，要在 06:00 前收手。
-    return dtime(5, 0) <= t < dtime(7, 50)
+    # 03:00 起就不開新的一篇：單篇（轉逐字稿＋寫稿）可能跑 40 分鐘以上，要在 04:00 的排程寫稿前收手
+    # （2026-10-19 文章加長，排程寫稿從 06:00 提前到 04:00）。
+    return dtime(3, 0) <= t < dtime(7, 50)
 
 
 def _in_morning_window(now=None) -> bool:

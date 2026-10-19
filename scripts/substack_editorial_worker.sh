@@ -2,9 +2,10 @@
 # Canonical scheduled Substack editorial worker.
 # Draft-only, never publish（發布由 substack_radar/daily_publish.py 在 07:30 負責）。
 #   2026-10-18 起一天只寫一篇（信哥：不再多寫備案稿），寫不好靠審稿退稿重寫＋當天重試：
-#   podcast-first   吹牛免稅（含抓新素材）：週一三五 06:00，10:00 重試
-#   ai-first        智取未來（含抓 AI 來源池）：週二、四 06:00，10:00 重試
-#   weekly          賺錢有道：週六、日 06:00，13:00 重試
+#   （2026-10-19 文章加長，寫稿提前到 04:00；07:30 照常發。審稿退稿 3 次不過就寄信通知，不硬發）
+#   podcast-first   吹牛免稅（含抓新素材）：週一三五 04:00，10:00 重試
+#   ai-first        智取未來（含抓 AI 來源池）：週二、四 04:00，10:00 重試
+#   weekly          賺錢有道：週六、日 04:00，10:00 重試
 #   podcast-second  舊的第二篇（排程已停用，保留相容）
 #   podcast-batch   舊的一次兩篇（保留相容，排程已不用）
 

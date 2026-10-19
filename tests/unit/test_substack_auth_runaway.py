@@ -96,5 +96,5 @@ def test_drain_stays_out_of_the_morning_window():
     from datetime import time
     w = drain_substack._is_morning
     assert w(time(6, 0)) and w(time(7, 30))
-    assert w(time(5, 30))                      # 05:00 起就不開新的一篇
-    assert not w(time(4, 50)) and not w(time(8, 0))
+    assert w(time(3, 30)) and w(time(5, 30))   # 03:00 起就不開新的一篇（2026-10-19 排程寫稿提前到 04:00）
+    assert not w(time(2, 50)) and not w(time(8, 0))
