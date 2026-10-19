@@ -2632,7 +2632,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 from substack_radar.quality_loop import run_review_loop
 
                 body, report, _rewrites = run_review_loop(
-                    draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs)
+                    draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs,
+                    word_range=(word_floor, word_cap))
                 domain_changed = _rewrites > 0
                 remaining = list(report.remaining)
             else:

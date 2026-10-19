@@ -1,0 +1,24 @@
+﻿time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
+2026-10-19T00:19:05,2026-10-19 00:18 morning,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,20.6,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-10-19T00:23:27,2026-10-19 00:18 morning,SubstackDraft,gateway,writer→glm-5.3,Y,262.0,15430,2711,
+2026-10-19T00:29:30,2026-10-19 00:18 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,363.3,2218,13108,
+2026-10-19T00:33:48,2026-10-19 00:18 morning,退稿重寫#1,gateway,writer→glm-5.3,Y,258.2,3322,1851,
+2026-10-19T00:40:40,2026-10-19 00:18 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,412.0,2334,14347,
+2026-10-19T00:43:01,2026-10-19 00:18 morning,退稿重寫#2,gateway,writer→glm-5.3,Y,140.8,3673,2004,
+2026-10-19T00:48:37,2026-10-19 00:18 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,336.0,2463,17269,
+2026-10-19T00:50:50,2026-10-19 00:18 morning,退稿重寫#3,gateway,writer→glm-5.3,Y,133.0,3551,2073,
+2026-10-19T00:57:34,2026-10-19 00:18 morning,審稿,gateway,audit,N,404.1,,,閘道 audit 回空字串
+2026-10-19T00:57:34,2026-10-19 00:18 morning,審稿,claude_cli,haiku,N,0.0,,,claude 不在 PATH
+2026-10-19T06:03:10,2026-10-19 06:00 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),N,14.4,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-10-19T06:09:35,2026-10-19 06:00 podcast,EditorialResearchBrief,gateway,writer→glm-5.3,Y,384.7,20356,2705,
+2026-10-19T06:10:38,2026-10-19 06:00 podcast,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
+2026-10-19T06:15:42,2026-10-19 06:00 podcast,SubstackDraft,gateway,writer→glm-5.3,Y,304.1,22829,2739,
+2026-10-19T06:20:40,2026-10-19 06:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,297.8,3172,18541,
+2026-10-19T06:22:21,2026-10-19 06:00 podcast,退稿重寫#1,gateway,writer→glm-5.3,Y,99.6,5395,1673,
+2026-10-19T06:25:53,2026-10-19 06:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,211.6,2868,16373,
+2026-10-19T06:27:41,2026-10-19 06:00 podcast,退稿重寫#2,gateway,writer→glm-5.3,Y,108.1,5354,1479,
+2026-10-19T06:32:08,2026-10-19 06:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,267.1,2694,21970,
+2026-10-19T06:36:42,2026-10-19 06:00 podcast,退稿重寫#3,gateway,writer→glm-5.3,Y,273.5,4802,1990,
+2026-10-19T06:41:28,2026-10-19 06:00 podcast,審稿,gateway,audit,N,286.5,,,閘道 audit 回空字串
+2026-10-19T06:41:31,2026-10-19 06:00 podcast,審稿,claude_cli,haiku,N,2.2,,,claude 失敗：Failed to authenticate: OAuth session expired and could not be refreshed
+2026-10-19T06:42:51,2026-10-19 06:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,68.0,2851,3300,

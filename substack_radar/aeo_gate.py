@@ -69,7 +69,7 @@ _LEAD_LABEL = re.compile(
 )
 
 
-def check(article_md: str, *, lead_max_sentences: int = 4) -> list[AeoIssue]:
+def check(article_md: str, *, lead_max_sentences: int = 10) -> list[AeoIssue]:
     issues: list[AeoIssue] = []
     text = article_md or ""
 
@@ -84,7 +84,7 @@ def check(article_md: str, *, lead_max_sentences: int = 4) -> list[AeoIssue]:
             rule="A1 開場沒有答案先行",
             detail=f"第一個小標之前有 {len(lead_sentences)} 句才進入正文；"
                    f"AI 擷取的是單一片段，鋪陳太長會擷取不到結論。"
-                   f"請在開頭 2–{lead_max_sentences} 句內直接給出本文的判斷。",
+                   f"開場可以先說故事，但 {lead_max_sentences} 句內要讓讀者知道這篇要回答什麼、大方向判斷是什麼。",
             sample=lead.strip()[:70],
         ))
 

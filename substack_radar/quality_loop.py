@@ -604,6 +604,8 @@ _REWRITE_PROMPT = """你是這篇文章的作者。審稿編輯把稿子退回�
 - 只改有問題的句子與它連帶影響的敘述，其餘保留原文的語氣與結構。
 - 不要新增事實表或原文以外的數字、來源；查不到出處的說法寧可刪掉。
 - 不要動標題，不要加任何說明文字。
+- 意見寫「篇幅不足」時，可以新增段落：回到下面的原始素材，把故事與脈絡說完整（起承轉合），
+  不是加條列或重複結論；新增內容一樣不得出現素材以外的數字或來源。
 
 === 審稿意見（第 {attempt} 次退稿）===
 {feedback}
@@ -680,8 +682,27 @@ def _feedback(violations: list[Violation], items: list[dict] | None) -> str:
     return "\n".join(lines)
 
 
+def length_feedback(article_md: str, word_range: tuple[int, int] | None) -> list[dict]:
+    """字數不在範圍內 → 一條退稿意見（信哥 2026-10-19：寫太短只剩結論、沒有故事）。
+    只用來退稿重寫，不算進通過與否（那只看確定性閘門）。"""
+    if not word_range:
+        return []
+    from substack_radar.composer import _count_chinese_chars
+    n, (lo, hi) = _count_chinese_chars(article_md), word_range
+    if n < lo * 0.9:
+        return [{"問題": f"篇幅不足：目前約 {n} 字，要寫到 {lo}–{hi} 字",
+                 "原句": "（全文）",
+                 "建議改法": "回到原始素材，把故事和脈絡說完整：來賓／主角是誰、在什麼處境、事情怎麼一步步發展、"
+                             "他舉的例子與原話、哪裡出現轉折。用段落敘事補，不要加條列、不要重複結論。"}]
+    if n > hi * 1.25:
+        return [{"問題": f"篇幅過長：目前約 {n} 字，上限 {hi} 字", "原句": "（全文）",
+                 "建議改法": "刪掉不影響主線的支線與重複的論證，保留故事主線。"}]
+    return []
+
+
 def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
-                    max_attempts: int = REVIEW_ATTEMPTS) -> tuple[str, LoopReport, int]:
+                    max_attempts: int = REVIEW_ATTEMPTS,
+                    word_range: tuple[int, int] | None = None) -> tuple[str, LoopReport, int]:
     """回傳 (最終稿, 報告, 退稿次數)。報告的 passed／remaining 只看確定性閘門。"""
     report = LoopReport()
     current = article_md
@@ -691,6 +712,9 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
         report.history.append(violations)
         report.rounds = attempt + 1
         items = critique(current, violations, fact_block, auditor)
+        too_short = length_feedback(current, word_range)
+        if too_short:
+            items = (items or []) + too_short
         if not violations and not items:
             report.passed = True
             print(f"[Review] ✅ 第 {attempt + 1} 次審稿：程式檢查與審稿編輯都沒有意見，通過")
@@ -700,8 +724,9 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
             print(f"[Review]   {line[:200]}")
         if attempt == max_attempts:
             break
+        # 要補篇幅時給寫手更多原始素材（podcast 的逐字稿），故事才補得出來
         prompt = _REWRITE_PROMPT.format(attempt=attempt + 1, feedback=_feedback(violations, items),
-                                        facts=fact_block[:6000], article=current)
+                                        facts=fact_block[:24000 if too_short else 6000], article=current)
         try:
             from src import run_log
             with run_log.stage(f"退稿重寫#{attempt + 1}"):

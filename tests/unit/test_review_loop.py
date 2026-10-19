@@ -52,3 +52,15 @@ def test_auditor_down_still_uses_gate_feedback(monkeypatch):
     monkeypatch.setattr(q, "_run_agy", boom)
     out, report, n = q.run_review_loop(ARTICLE, fact_block="", auditor="a", eval_kwargs={})
     assert report.passed and n == 1 and "E1" in calls["rewrite_prompts"][0]
+
+
+def test_too_short_article_is_sent_back_to_expand_with_more_source(monkeypatch):
+    """2026-10-19：今天的吹牛免稅只有約 1100 字，只剩結論沒有故事 → 退稿補篇幅。"""
+    short = "# t\n\n" + "短" * 500
+    long_enough = "# t\n\n" + "故事" * 1600
+    calls = _setup(monkeypatch, gate_seq=[[], []], critiques=['{"items": []}', '{"items": []}'], rewrites=[long_enough])
+    out, report, n = q.run_review_loop(short, fact_block="逐字稿" * 5000, auditor="a", eval_kwargs={},
+                                       word_range=(3000, 4000))
+    assert n == 1 and report.passed and out == long_enough
+    p = calls["rewrite_prompts"][0]
+    assert "篇幅不足" in p and "起承轉合" in p and p.count("逐字稿") > 3000     # 補篇幅時給更多原始素材
