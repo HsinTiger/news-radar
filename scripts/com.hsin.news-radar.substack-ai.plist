@@ -24,7 +24,7 @@
 	<key>StandardOutPath</key>
 	<string>/tmp/news-radar-substack-ai.out.log</string>
 	<key>StartCalendarInterval</key>
-	<!-- 智取未來：二四 04:00 寫，10:00 重試 -->
+	<!-- 智取未來：二四 04:00 寫一次（同上） -->
 	<array>
 		<dict>
 			<key>Hour</key>
@@ -37,22 +37,6 @@
 		<dict>
 			<key>Hour</key>
 			<integer>4</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>4</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>10</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>2</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>10</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>

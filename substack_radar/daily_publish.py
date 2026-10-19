@@ -298,8 +298,8 @@ def production_running() -> bool:
 # ---------------------------------------------------------------------------
 
 # 發文時間實驗（2026-10-17 信哥拍板）：後台數據看起來 10–19 點比早上好，但那跟時期混在一起，
-# 不能當結論。兩組的寫稿完全相同（04:00 寫、10:00 重寫），只差寄出時間：ISO 單數週早上（07:30，14:30 補發第二輪）、
-# 雙數週傍晚（17:00；第二輪早在 10:00 寫完，不需補發）。實驗外一律早上。
+# 不能當結論。兩組的寫稿完全相同（04:00 寫一次），只差寄出時間：ISO 單數週早上 07:30、
+# 雙數週傍晚 17:00。各只有一個時段、沒有補發。實驗外一律早上。
 SEND_EXPERIMENT = (date(2026, 10, 19), date(2026, 11, 15))
 
 
@@ -400,8 +400,8 @@ def run(day: date, *, dry_run: bool = False) -> int:
                 from src.notify import notify_substack_failure
                 notify_substack_failure(
                     mode="daily_publish",
-                    error_msg=f"{day.isoformat()} 沒有通過審稿的稿子，今天不自動發文（不硬發）",
-                    extra_context={"今天的專欄": plan_for(day)[0][1], "草稿匣": "沒過的稿子還在草稿匣，可以手動看"},
+                    error_msg=f"{day.isoformat()} 沒有通過審稿的稿子，今天不自動發文（不硬發），請到 Substack 草稿匣確認",
+                    extra_context={"今天的專欄": plan_for(day)[0][1], "草稿匣": "沒過的稿子還在草稿匣，看過覺得可以就手動發布"},
                 )
             except Exception:
                 pass

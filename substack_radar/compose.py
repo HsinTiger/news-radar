@@ -2650,16 +2650,14 @@ async def _run_inner(args: argparse.Namespace) -> int:
             for v in remaining:
                 warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
             if remaining:
-                # 信哥 2026-10-19：退稿重寫 3 次還是不過就通知，不硬發。
-                _later = datetime.now().hour < 10
+                # 信哥 2026-10-19：只寫一輪；退稿重寫 3 次還是不過就留在草稿匣、寄信請他確認，不重寫也不硬發。
                 notify_substack_failure(
                     mode=mode,
                     error_msg=(f"「{draft.title}」審稿退稿 {locals().get('_rewrites', '?')} 次後仍有 "
-                               f"{len(remaining)} 項沒過，這篇不會發出（留在草稿匣）"),
+                               f"{len(remaining)} 項沒過，今天不會自動發出，請到 Substack 草稿匣確認"),
                     extra_context={
                         "沒過的項目": [f"{v.kind}：{v.detail}"[:160] for v in remaining[:5]],
-                        "接下來": ("10:00 會整篇重寫再試一次；還是不行今天就不發這個專欄"
-                                   if _later else "今天不再重寫，這個專欄今天不發"),
+                        "接下來": "這篇留在草稿匣；你看過覺得可以，可以手動發布，或改天再說",
                     },
                 )
             # 產文路線要同時記寫手與稽核。稿子經過第二個模型改寫之後，

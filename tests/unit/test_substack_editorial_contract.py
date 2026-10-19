@@ -257,8 +257,7 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     # 六日 賺錢有道 06:00、13:00 重試。不再寫第二篇備案稿。
     weekend = (6, 0)
     assert noon["StartCalendarInterval"] == (
-        [{"Weekday": d, "Hour": 4, "Minute": 0} for d in (1, 3, 5)]      # 2026-10-19 提前到 04:00
-        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (1, 3, 5)]
+        [{"Weekday": d, "Hour": 4, "Minute": 0} for d in (1, 3, 5)]      # 2026-10-19：04:00 寫一次，不重寫
     )
     assert noon["ProgramArguments"][-1] == "podcast-first"
     assert not (REPO / "scripts" / "com.hsin.news-radar.substack-podcast-second.plist").exists() or \
@@ -266,12 +265,10 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     ai = plistlib.loads((REPO / "scripts" / "com.hsin.news-radar.substack-ai.plist").read_bytes())
     assert ai["StartCalendarInterval"] == (
         [{"Weekday": d, "Hour": 4, "Minute": 0} for d in (2, 4)]
-        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in (2, 4)]
     )
     assert ai["ProgramArguments"][-1] == "ai-first"
     assert company["StartCalendarInterval"] == (
         [{"Weekday": d, "Hour": 4, "Minute": 0} for d in weekend]
-        + [{"Weekday": d, "Hour": 10, "Minute": 0} for d in weekend]
     )
     assert company["ProgramArguments"][-1] == "weekly"
     publish = plistlib.loads(
@@ -281,8 +278,8 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     # 10/19 起四週做發文時間實驗：雙數週改 17:00 發、18:30 補發（組別由 daily_publish.send_arm 決定）
     # 2026-10-19：寫稿提前到 04:00 後 09:30 用不到，拿掉（07:30 本來就會等到 08:15）
     # 傍晚組 18:30 也拿掉：兩組寫稿時間相同，17:00 時第二輪早已寫完
-    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}, {"Hour": 14, "Minute": 30},
-                                                {"Hour": 17, "Minute": 0}]
+    # 一天一個寄出時段：早上週 07:30、傍晚週 17:00，沒有補發（信哥 2026-10-19）
+    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}, {"Hour": 17, "Minute": 0}]
     assert "substack_radar.daily_publish" in publish["ProgramArguments"][-1]
     for plist in (noon, ai, company, publish):
         assert "HOME_DIR/.local/bin" in plist["EnvironmentVariables"]["PATH"]  # claude／agy 在這裡

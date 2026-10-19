@@ -24,7 +24,7 @@
 	<key>StandardOutPath</key>
 	<string>/tmp/news-radar-substack-podcast-noon.out.log</string>
 	<key>StartCalendarInterval</key>
-	<!-- 吹牛免稅：一三五 04:00 寫（文章加長，提早開工；07:30 照常發），10:00 重試 -->
+	<!-- 吹牛免稅：一三五 04:00 寫一次（審稿退稿最多 3 次；失敗留草稿並寄信，不重寫） -->
 	<array>
 		<dict>
 			<key>Hour</key>
@@ -45,30 +45,6 @@
 		<dict>
 			<key>Hour</key>
 			<integer>4</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>10</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>1</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>10</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-			<key>Weekday</key>
-			<integer>3</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>10</integer>
 			<key>Minute</key>
 			<integer>0</integer>
 			<key>Weekday</key>

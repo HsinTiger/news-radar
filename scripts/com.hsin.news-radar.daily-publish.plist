@@ -24,10 +24,9 @@
 	<key>StandardOutPath</key>
 	<string>HOME_DIR/Library/Logs/news-radar/daily-publish.log</string>
 	<key>StartCalendarInterval</key>
-	<!-- 寫稿兩組一樣（04:00、10:00 重寫）；早上組 07:30 寄、14:30 補發第二輪；傍晚組（10/19–11/15 的雙數週）17:00 寄，第二輪那時早已寫完，不需補發。一天最多一篇 -->
+	<!-- 一天一個寄出時段：早上週 07:30、傍晚週（10/19–11/15 的雙數週）17:00。沒有補發 -->
 	<array>
 		<dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
-		<dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
 		<dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
 	</array>
 </dict>

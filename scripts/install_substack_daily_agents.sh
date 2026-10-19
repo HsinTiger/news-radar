@@ -75,5 +75,5 @@ for label in "${AGENTS[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$label.plist"
 done
 
-echo "installed: 每天 04:00 寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），10:00 重試；07:30 自動發布；FB 12:30／20:30"
+echo "installed: 每天 04:00 寫一篇（一三五 吹牛免稅、二四 智取未來、六日 賺錢有道），失敗留草稿寄信；07:30 自動發布；FB 12:30／20:30"
 echo "owner submission immediate/hourly workers are unchanged"
