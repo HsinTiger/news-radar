@@ -279,9 +279,9 @@ def test_editorial_schedule_is_one_noon_batch_plus_one_combined_weekly_job() -> 
     )
     # 07:30 正式發；09:30、14:30 補發（2026-10-17：寫稿拖到 08:25，07:30 那輪等不到就整天沒發）
     # 10/19 起四週做發文時間實驗：雙數週改 17:00 發、18:30 補發（組別由 daily_publish.send_arm 決定）
-    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}, {"Hour": 9, "Minute": 30},
-                                                {"Hour": 14, "Minute": 30}, {"Hour": 17, "Minute": 0},
-                                                {"Hour": 18, "Minute": 30}]
+    # 2026-10-19：寫稿提前到 04:00 後 09:30 用不到，拿掉（07:30 本來就會等到 08:15）
+    assert publish["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30}, {"Hour": 14, "Minute": 30},
+                                                {"Hour": 17, "Minute": 0}, {"Hour": 18, "Minute": 30}]
     assert "substack_radar.daily_publish" in publish["ProgramArguments"][-1]
     for plist in (noon, ai, company, publish):
         assert "HOME_DIR/.local/bin" in plist["EnvironmentVariables"]["PATH"]  # claude／agy 在這裡
