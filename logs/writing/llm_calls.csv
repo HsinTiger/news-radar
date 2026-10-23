@@ -63,3 +63,16 @@
 2026-10-22T04:35:52,2026-10-22 04:00 podcast/ai,退稿重寫#3,gateway,writer→glm-5.3,Y,142.6,8628,3157,
 2026-10-22T04:42:14,2026-10-22 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,381.9,4034,19430,
 2026-10-22T04:46:44,2026-10-22 04:00 podcast/ai,,gateway,audit→deepseek-v4.1-flash,Y,257.3,4297,10264,
+2026-10-23T04:04:34,2026-10-23 04:00 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,90.7,,,
+2026-10-23T04:26:26,2026-10-23 04:00 podcast,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
+2026-10-23T04:45:06,2026-10-23 04:00 podcast,SubstackDraft,gateway,writer→glm-5.3,Y,1120.1,31417,3575,
+2026-10-23T04:52:04,2026-10-23 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,418.3,4004,18825,
+2026-10-23T04:55:31,2026-10-23 04:00 podcast,退稿重寫#1,gateway,writer→glm-5.3,Y,206.8,11589,3790,
+2026-10-23T05:02:49,2026-10-23 04:00 podcast,審稿,gateway,audit,N,438.5,,,閘道 audit 回空字串
+2026-10-23T05:02:51,2026-10-23 04:00 podcast,審稿,claude_cli,haiku,N,2.0,,,claude 失敗：Failed to authenticate: OAuth session expired and could not be refreshed
+2026-10-23T05:04:22,2026-10-23 04:00 podcast,退稿重寫#2,gateway,writer→glm-5.3,Y,90.3,5003,3181,
+2026-10-23T05:10:58,2026-10-23 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,395.9,4117,21435,
+2026-10-23T05:15:56,2026-10-23 04:00 podcast,退稿重寫#3,gateway,writer→glm-5.3,Y,298.5,8069,2689,
+2026-10-23T05:24:38,2026-10-23 04:00 podcast,審稿,gateway,audit,N,521.6,,,閘道 audit 回空字串
+2026-10-23T05:24:39,2026-10-23 04:00 podcast,審稿,claude_cli,haiku,N,1.5,,,claude 失敗：Failed to authenticate: OAuth session expired and could not be refreshed
+2026-10-23T05:27:05,2026-10-23 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,132.5,3989,4971,
