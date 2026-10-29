@@ -133,3 +133,8 @@
 2026-10-28T05:14:24,2026-10-28 04:00 podcast,退稿重寫#3,gateway,writer→glm-5.3,Y,691.9,7003,3403,
 2026-10-28T05:18:08,2026-10-28 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,224.2,3271,12719,
 2026-10-28T05:22:39,2026-10-28 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,257.1,3400,9827,
+2026-10-29T04:02:51,2026-10-29 04:00 podcast/ai,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),N,17.8,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-10-29T04:05:56,2026-10-29 04:00 podcast/ai,EditorialResearchBrief,gateway,writer→glm-5.3-flash,Y,184.5,24444,8004,
+2026-10-29T04:07:17,2026-10-29 04:00 podcast/ai,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
+2026-10-29T04:19:09,2026-10-29 04:00 podcast/ai,SubstackDraft,gateway,writer→glm-5.3-flash,N,711.3,,,no JSON blob in output; first 300 chars: ''
+2026-10-29T04:19:10,2026-10-29 04:00 podcast/ai,SubstackDraft,claude_cli,claude,N,1.5,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""c22a2c7e-8eec-4420-bffd-290be6bb459f"",""total_cost_usd"":0,"
