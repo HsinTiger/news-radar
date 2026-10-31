@@ -142,3 +142,7 @@
 2026-10-30T04:26:45,2026-10-30 04:00 podcast,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
 2026-10-30T04:36:15,2026-10-30 04:00 podcast,SubstackDraft,gateway,writer→glm-5.3-flash,N,569.3,,,no JSON blob in output; first 300 chars: ''
 2026-10-30T04:36:16,2026-10-30 04:00 podcast,SubstackDraft,claude_cli,claude,N,1.6,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""587eda31-d805-494f-bfb4-ec7e2eeefccd"",""total_cost_usd"":0,"
+2026-10-31T04:01:56,2026-10-31 04:00 company,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,90.4,,,
+2026-10-31T04:24:20,2026-10-31 04:00 company,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
+2026-10-31T04:38:55,2026-10-31 04:00 company,SubstackDraft,gateway,writer→glm-5.3-flash,N,875.6,,,no JSON blob in output; first 300 chars: ''
+2026-10-31T04:38:57,2026-10-31 04:00 company,SubstackDraft,claude_cli,claude,N,1.4,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""5df96bed-0e63-4df4-aa45-75384c7d5970"",""total_cost_usd"":0,"
