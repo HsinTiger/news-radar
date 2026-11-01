@@ -146,3 +146,4 @@
 2026-10-31T04:24:20,2026-10-31 04:00 company,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
 2026-10-31T04:38:55,2026-10-31 04:00 company,SubstackDraft,gateway,writer→glm-5.3-flash,N,875.6,,,no JSON blob in output; first 300 chars: ''
 2026-10-31T04:38:57,2026-10-31 04:00 company,SubstackDraft,claude_cli,claude,N,1.4,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""5df96bed-0e63-4df4-aa45-75384c7d5970"",""total_cost_usd"":0,"
+2026-11-01T04:02:40,2026-11-01 04:01 company,EditorialResearchBrief,antigravity_cli,Gemini 3.8 Flash (High),Y,57.8,,,
