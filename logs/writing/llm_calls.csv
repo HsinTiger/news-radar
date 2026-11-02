@@ -152,3 +152,7 @@
 2026-11-02T04:32:43,2026-11-02 04:00 podcast,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
 2026-11-02T04:48:43,2026-11-02 04:00 podcast,SubstackDraft,gateway,writer→glm-5.3-flash,N,959.8,,,no JSON blob in output; first 300 chars: ''
 2026-11-02T04:48:45,2026-11-02 04:00 podcast,SubstackDraft,claude_cli,claude,N,1.6,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""934c2289-61b0-48df-adaf-4c7a5b6c2ae9"",""total_cost_usd"":0,"
+2026-11-03T04:04:01,2026-11-03 04:00 podcast/ai,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,94.7,,,
+2026-11-03T04:26:02,2026-11-03 04:00 podcast/ai,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
+2026-11-03T04:39:15,2026-11-03 04:00 podcast/ai,SubstackDraft,gateway,writer→glm-5.3-flash,N,793.0,,,no JSON blob in output; first 300 chars: ''
+2026-11-03T04:39:16,2026-11-03 04:00 podcast/ai,SubstackDraft,claude_cli,claude,N,1.6,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""bce588b8-ee43-4e9e-aeee-7ee40651e9e9"",""total_cost_usd"":0,"

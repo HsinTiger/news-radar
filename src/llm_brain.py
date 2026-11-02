@@ -1329,6 +1329,7 @@ async def _try_openai_compatible(
     response_model: Type[T],
     temperature: float,
     timeout_s: int,
+    model_override: Optional[str] = None,
 ) -> LLMResult[T]:
     """試呼叫任一 OpenAI-compatible /chat/completions 端點。
 
@@ -1346,7 +1347,7 @@ async def _try_openai_compatible(
         # 20 分鐘、還會往下備援，所以這裡至少等 GATEWAY_TIMEOUT_S（預設 1 小時）。
         timeout_s = max(int(timeout_s), int(os.getenv("GATEWAY_TIMEOUT_S", "3600")))
     base_url = os.getenv(provider.base_url_env, provider.base_url_default).rstrip("/")
-    model = os.getenv(provider.model_env, provider.model_default)
+    model = model_override or os.getenv(provider.model_env, provider.model_default)
 
     # OpenAI 的 json_object response_format 要求 prompt 內出現 "json" 字樣，否則某些
     # 端點(含 Groq)會 400。caller 的 prompt 多半已含，但保險補一句。
@@ -1834,6 +1835,18 @@ async def call_for_json(
                 temperature=temperature,
                 timeout_s=timeout_s,
             )
+            # 閘道回 200 但正文空白（推理型模型把 token 全花在思考），LiteLLM 不會當成失敗、不會往下備援。
+            # 2026-10-28～11-03 一週沒稿就是這樣：寫手鏈第一名一直交白卷。改由這裡指名換下一個模型再試。
+            if name == "gateway" and result.data is None:
+                for fallback_model in [m.strip() for m in os.getenv(
+                        "GATEWAY_EMPTY_FALLBACKS", "deepseek-v4.1-flash,step-5-preview,gemini-2.5-flash").split(",") if m.strip()]:
+                    print(f"[llm_brain] ↻ 閘道沒交出可用內容（{(result.raw_error or '')[:60]}），改指名 {fallback_model} 再試")
+                    result = await _try_openai_compatible(
+                        provider=provider, system=system, prompt=prompt, response_model=response_model,
+                        temperature=temperature, timeout_s=timeout_s, model_override=fallback_model,
+                    )
+                    if result.data is not None:
+                        break
 
         else:
             print(f"[llm_brain] ⚠️ 未知 backend `{name}`，略過。")

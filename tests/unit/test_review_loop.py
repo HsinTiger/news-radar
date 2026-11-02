@@ -64,3 +64,18 @@ def test_too_short_article_is_sent_back_to_expand_with_more_source(monkeypatch):
     assert n == 1 and report.passed and out == long_enough
     p = calls["rewrite_prompts"][0]
     assert "篇幅不足" in p and "起承轉合" in p and p.count("逐字稿") > 3000     # 補篇幅時給更多原始素材
+
+
+def test_gateway_empty_answer_falls_back_to_named_models(monkeypatch):
+    """2026-11-03：寫手鏈第一名一直回空白（思考吃光 token），LiteLLM 不備援 → 一週沒稿。"""
+    tried = []
+
+    def impl(model, prompt, t):
+        tried.append(model)
+        if model in ("writer", "deepseek-v4.1-flash"):
+            raise RuntimeError(f"閘道 {model} 回空字串")
+        return "有內容"
+
+    monkeypatch.setattr(q, "_oss_chat_impl", impl)
+    assert q._oss_chat_with_fallback("writer", "p", 10) == "有內容"
+    assert tried == ["writer", "deepseek-v4.1-flash", "step-5-preview"]

@@ -278,7 +278,26 @@ def run_claude_cli(prompt: str, timeout_s: int) -> str:
 
 
 def _oss_chat(model: str, prompt: str, timeout_s: int) -> str:
-    return _logged("gateway", _oss_chat_impl, model, model, prompt, timeout_s)
+    """閘道回空白時改指名其他模型重試（LiteLLM 把「200＋空白」當成功，不會備援；2026-11-03）。"""
+    try:
+        return _logged("gateway", _oss_chat_impl, model, model, prompt, timeout_s)
+    except RuntimeError as exc:
+        if "回空字串" not in str(exc):
+            raise
+        last = exc
+    for fb in [m.strip() for m in os.getenv("GATEWAY_EMPTY_FALLBACKS",
+                                            "deepseek-v4.1-flash,step-5-preview,gemini-2.5-flash").split(",") if m.strip()]:
+        if fb == model:
+            continue
+        print(f"[QualityLoop] ↻ 閘道 {model} 回空白，改指名 {fb} 再試")
+        try:
+            return _logged("gateway", _oss_chat_impl, fb, fb, prompt, timeout_s)
+        except RuntimeError as exc:
+            last = exc
+    raise last
+
+
+_oss_chat_with_fallback = _oss_chat   # 測試用的固定別名（conftest 會把 _oss_chat 換成擋網路的假函式）
 
 
 def _run_claude_cli_impl(prompt: str, timeout_s: int) -> str:
