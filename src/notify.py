@@ -112,7 +112,8 @@ def notify_substack_failure(
     if not _notify_enabled():
         return
 
-    subject = f"[Substack ❌] {mode} 失敗 — {error_msg[:60]}"
+    subject = (f"[FB ❌] {error_msg[:60]}" if mode == "fb"
+               else f"[Substack ❌] {mode} 失敗 — {error_msg[:60]}")
     body_html, body_plain = _failure_body(
         mode=mode,
         error_msg=error_msg,

@@ -945,6 +945,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
             print(f"[FBFollow] ⚠️ 重寫失敗：{str(exc)[:140]}")
     if issues:
         print("[FBFollow] 🛑 FB 版沒過檢查，不發：" + "；".join(issues))
+        _notify_fb(f"FB 版沒過檢查、今天不發（{headline}）：" + "；".join(i[:60] for i in issues[:3]))
         return record("held", issues=issues)
     tells = ai_tells(piece.post)
     if tells:
@@ -965,6 +966,7 @@ def post_with_draft(out_dir: Path, draft) -> str:
     res = _publish_cards(cards, text)
     if not res.get("success"):
         print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
+        _notify_fb(f"FB 發文失敗（{headline}）：{str(res.get('error'))[:120]}")
         return record("failed", error=str(res.get("error"))[:300])
     print(f"[FBFollow] ✅ 已同步發 FB：{res.get('id')}　{headline}")
     return record("posted", fb_id=res.get("id"), route="compose-sync", ai_tells=tells)
@@ -985,6 +987,15 @@ def _queued_for(day, ledger: dict) -> list:
     prefix = day.isoformat() + "/"
     return [rel for rel, e in sorted(ledger.items())
             if e.get("status") == "queued" and rel.startswith(prefix)]
+
+
+def _notify_fb(error_msg: str) -> None:
+    """FB 沒發成時寄信通知（2026-11-03：之前只寫 log，沒人會發現）。"""
+    try:
+        from src.notify import notify_substack_failure
+        notify_substack_failure(mode="fb", error_msg=error_msg)
+    except Exception as exc:
+        print(f"[notify] ❌ {exc}")
 
 
 def post_scheduled(slot: str, today=None) -> str:
@@ -1047,6 +1058,7 @@ def post_scheduled(slot: str, today=None) -> str:
     res = _publish_cards([str(folder / "fb_card1.png"), str(folder / "fb_card2.png")], text)
     if not res.get("success"):
         print(f"[FBFollow] ❌ FB 發文失敗：{str(res.get('error'))[:200]}")
+        _notify_fb(f"FB {slot} 時段發文失敗（{headline}）：{str(res.get('error'))[:120]}")
         ledger[rel] = {**entry, "status": "failed", "error": str(res.get("error"))[:300],
                        "at": datetime.now().isoformat(timespec="seconds")}
         _save_ledger(ledger)
