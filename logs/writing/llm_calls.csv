@@ -156,3 +156,15 @@
 2026-11-03T04:26:02,2026-11-03 04:00 podcast/ai,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
 2026-11-03T04:39:15,2026-11-03 04:00 podcast/ai,SubstackDraft,gateway,writer→glm-5.3-flash,N,793.0,,,no JSON blob in output; first 300 chars: ''
 2026-11-03T04:39:16,2026-11-03 04:00 podcast/ai,SubstackDraft,claude_cli,claude,N,1.6,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""bce588b8-ee43-4e9e-aeee-7ee40651e9e9"",""total_cost_usd"":0,"
+2026-11-03T08:46:09,2026-11-03 08:42 podcast/ai,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,88.6,,,
+2026-11-03T09:08:37,2026-11-03 08:42 podcast/ai,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
+2026-11-03T09:10:03,2026-11-03 08:42 podcast/ai,SubstackDraft,gateway,writer→glm-5.3-flash,Y,86.1,28422,3688,
+2026-11-03T09:26:41,2026-11-03 08:42 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,998.5,3621,18600,
+2026-11-03T09:28:18,2026-11-03 08:42 podcast/ai,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,97.0,9618,3931,
+2026-11-03T09:42:54,2026-11-03 08:42 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,875.3,4025,18075,
+2026-11-03T09:43:48,2026-11-03 08:42 podcast/ai,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,54.2,5761,3129,
+2026-11-03T10:05:06,2026-11-03 08:42 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,1277.9,3949,19199,
+2026-11-03T10:05:59,2026-11-03 08:42 podcast/ai,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,50.0,5586,3113,
+2026-11-03T10:31:16,2026-11-03 08:42 podcast/ai,審稿,gateway,audit,N,1517.0,,,閘道 audit 回空字串
+2026-11-03T10:50:24,2026-11-03 08:42 podcast/ai,審稿,gateway,deepseek-v4.1-flash,Y,1148.8,3960,21013,
+2026-11-03T10:57:14,2026-11-03 08:42 podcast/ai,,gateway,audit→deepseek-v4.1-flash,Y,396.0,4241,10495,
