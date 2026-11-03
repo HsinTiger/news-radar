@@ -1795,6 +1795,10 @@ async def call_for_json(
                     break
                 if _agy_quota_or_hang(result.raw_error):
                     _dead_families.add(_agy_family(_agy_model))
+                    if "credits balance is too low" in str(result.raw_error):
+                        # AI credits 是整個帳號共用：Gemini 說餘額不足時，Claude 系列也不會回，
+                        # 只會卡到 630 秒逾時（2026-10-28 起每天白等 10 分鐘）。直接整個 agy 跳過。
+                        _dead_families.update(_agy_family(m) for m in _agy_model_chain())
                     _AGY_DEAD_SNAPSHOT.update(_dead_families)
                     print(f"[llm_brain] ⛔ agy 的 {_agy_family(_agy_model)} 系列額度不可用"
                           f"（{str(result.raw_error)[:50]}），跳過同家族，改試其他家族。")
