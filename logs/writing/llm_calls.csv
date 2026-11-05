@@ -182,3 +182,15 @@
 2026-11-04T05:59:53,2026-11-04 04:00 podcast,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,99.6,8774,3225,
 2026-11-04T06:17:52,2026-11-04 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,1079.5,4347,19865,
 2026-11-04T06:24:46,2026-11-04 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,402.3,4269,9768,
+2026-11-05T04:02:52,2026-11-05 04:00 podcast/ai,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),N,15.0,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-05T04:04:56,2026-11-05 04:00 podcast/ai,EditorialResearchBrief,gateway,writer→glm-5.3-flash,Y,124.1,14261,2573,
+2026-11-05T04:05:53,2026-11-05 04:00 podcast/ai,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
+2026-11-05T04:07:44,2026-11-05 04:00 podcast/ai,SubstackDraft,gateway,writer→glm-5.3-flash,Y,111.6,27961,3670,
+2026-11-05T04:15:01,2026-11-05 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,436.6,3824,16302,
+2026-11-05T04:16:55,2026-11-05 04:00 podcast/ai,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,114.4,11143,4253,
+2026-11-05T04:30:55,2026-11-05 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,839.4,4088,23468,
+2026-11-05T04:31:35,2026-11-05 04:00 podcast/ai,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,40.2,6914,2826,
+2026-11-05T04:47:56,2026-11-05 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,981.4,3920,20514,
+2026-11-05T04:48:57,2026-11-05 04:00 podcast/ai,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,60.1,5113,3047,
+2026-11-05T05:05:17,2026-11-05 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,980.1,3901,18346,
+2026-11-05T05:11:33,2026-11-05 04:00 podcast/ai,,gateway,audit→deepseek-v4.1-flash,Y,362.6,4095,6961,
