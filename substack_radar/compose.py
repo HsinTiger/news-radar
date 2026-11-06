@@ -611,6 +611,80 @@ AI_TOPIC_BOOST = re.compile(
 )
 
 
+RECENT_SHOWS_PATH = _REPO_ROOT / "data" / ".recent_podcast_shows.json"
+
+
+def _show_key(title: str) -> str:
+    """節目名：「Joe Rogan Experience #2577 - Gregory Forth」→「joe rogan experience」。"""
+    head = re.split(r"\s*(?:#\d|\||｜| - | — |: |EP\.?\s*\d|Ep\.?\s*\d|\bE\d+\b)", str(title or ""), maxsplit=1)[0]
+    return head.strip().lower()[:40]
+
+
+def _recent_shows(days: int = 3) -> set:
+    try:
+        data = json.loads(RECENT_SHOWS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    return {k for k, d in data.items() if d >= cutoff}
+
+
+def _remember_show(title: str) -> None:
+    try:
+        data = json.loads(RECENT_SHOWS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data[_show_key(title)] = date.today().isoformat()
+    try:
+        RECENT_SHOWS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as exc:
+        print(f"[PodcastPick] ⚠️ 記不下節目名：{exc}")
+
+
+_EDITOR_PICK_PROMPT = """你是一份中文電子報的總編輯。讀者是台灣的知識工作者、工程師、投資人：
+他們訂閱是為了「讀完能做更好的判斷」——投資、職涯、工作方法、科技與商業趨勢。
+{column_rule}
+
+下面是候選的節目（標題＋開頭逐字稿）。替每一集打 0–10 分：讀者讀完一篇根據它寫的文章，
+能不能帶走一個跟自己工作、錢或判斷有關的東西？純娛樂、名人八卦、宣傳新書新片、
+跟讀者生活無關的冷知識，給 3 分以下。
+
+{items}
+
+只輸出 JSON：{{"scores": [{{"n": 1, "score": 0, "reader_takeaway": "一句話：讀者能帶走什麼"}}]}}"""
+
+
+def _editor_pick(rows: list, *, ai: bool = False):
+    """前幾名候選交給模型評「讀者讀完能帶走什麼」，挑最高分；全部不到 6 分或模型掛了就回 None，
+    讓呼叫端照原本的分數挑（選題把關不能害整天沒稿）。"""
+    if len(rows) < 2 or os.getenv("SUBSTACK_EDITOR_PICK", "1") != "1":
+        return None
+    items = "\n\n".join(f"[{i}] {r[1]}\n" + re.sub(r"\s+", " ", (r[2] or "")[:1200])
+                        for i, r in enumerate(rows, 1))
+    column_rule = ("這是 AI 專欄：只談 AI 的方法論、系統導入、工程實務，讀完要能動手。純哲學、純新聞、跑分給低分。"
+                   if ai else "這是思想專欄：一場對談帶出值得想的觀點，但觀點要能連回讀者的工作、錢或判斷。")
+    try:
+        from src.llm_brain import _extract_json_blob
+        from substack_radar.quality_loop import _oss_chat
+        raw = _oss_chat("audit", _EDITOR_PICK_PROMPT.format(column_rule=column_rule, items=items), 600)
+        scores = {int(x["n"]): (float(x["score"]), str(x.get("reader_takeaway", "")))
+                  for x in json.loads(_extract_json_blob(raw) or "{}").get("scores", [])}
+    except Exception as exc:
+        print(f"[EditorPick] ⚠️ 選題評分失敗，照原排序：{str(exc)[:100]}")
+        return None
+    if not scores:
+        return None
+    n, (score, why) = max(scores.items(), key=lambda kv: kv[1][0])
+    for i, r in enumerate(rows, 1):
+        sc, wy = scores.get(i, (None, ""))
+        print(f"[EditorPick] {sc}分 {str(r[1])[:50]}｜{wy[:40]}")
+    if score < 6 or not (1 <= n <= len(rows)):
+        print("[EditorPick] ⚠️ 沒有一集到 6 分，照原排序")
+        return None
+    print(f"[EditorPick] ✅ 選 [{n}] {score}分：{why[:60]}")
+    return rows[n - 1]
+
+
 def pick_podcast_interview(window_days: int = 7, feed_name: str = "YouTube Podcast",
                            prefer: Optional["re.Pattern"] = None) -> Optional[Tuple[str, str, str, str]]:
     """Podcast source for the daily noon batch. Draws ONLY from the dedicated podcast
@@ -651,12 +725,18 @@ def pick_podcast_interview(window_days: int = 7, feed_name: str = "YouTube Podca
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    best, best_score = None, -1.0
+    best, best_score = None, -9.0
+    scored: list = []
+    recent_shows = _recent_shows()
     for r in rows:
         nid, title, body, topic, wc, pub = r
         if nid in used:
             continue
-        score = min((wc or len(body or "")) / 40000.0, 2.5)  # longer interview = better, capped
+        # 長度只當「是不是完整訪談」的門檻，不再越長越好（2026-11-06：Joe Rogan 3 小時一集，
+        # 幾乎每次都贏，吹牛免稅變成 Rogan 摘要）。題材好不好交給下面的選題把關。
+        score = min((wc or len(body or "")) / 40000.0, 1.0)
+        if _show_key(title) in recent_shows:
+            score -= 1.5                                      # 同一個節目 3 天內不重複
         if prefer is not None:                                # AI 專欄：偏好的題材加分
             if prefer.search(title or ""):
                 score += 1.0
@@ -667,13 +747,17 @@ def pick_podcast_interview(window_days: int = 7, feed_name: str = "YouTube Podca
             score += pow(2.718, -hours / 168.0)
         except Exception:
             pass
+        scored.append((score, r))
         if score > best_score:
             best_score, best = score, r
     if best is None:
         print("[PodcastPick] ⚠️ no unused podcast interview in pool "
               f"(last {window_days}d). Has the noon harvest run?")
         return None
+    scored.sort(key=lambda x: -x[0])
+    best = _editor_pick([r for _, r in scored[:8]], ai=prefer is not None) or best
     nid, title, body, topic, *_ = best
+    _remember_show(title)
     _mark_used(nid)
     print(f"[PodcastPick] ✅ id={nid[:10]} score={best_score:.2f} "
           f"len={len(body or '')} title={title[:48]!r}")
@@ -2716,10 +2800,26 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"[QualityLoop] ⚠️ 迴圈本身失敗（{type(exc).__name__}: {exc}）；"
                   "保留原文繼續，不因為稽核工具壞掉就掉一篇稿")
 
+    # 標題台＋30 秒看重點（2026-11-06）：正文定稿後才做，標題跟重點都依最終版本。
+    # 週末系列的標題由程式標（上）（下），不換。
+    key_points: list = []
+    if os.getenv("SUBSTACK_HEADLINE_DESK", "1") == "1":
+        from substack_radar.headline_desk import polish
+        _col, _head = split_column_prefix(draft.title)
+        desk = polish(title=_head, subtitle=getattr(draft, "subtitle", "") or "",
+                      body=draft.body_markdown, column=_col)
+        if desk["title"] and not source.get("series_part") and desk["title"] != _head:
+            print(f"[HeadlineDesk] 標題：{_head} → {desk['title']}")
+            draft.title = apply_column_prefix(desk["title"], "ai" if source.get("column") == "ai" else mode,
+                                              topic_category)
+        key_points = desk["key_points"]
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports,
                                 article=draft.body_markdown)
     header_md = _column_header(draft.title, source_title=source.get("title"), source_url=source_url,
                                series_part=source.get("series_part"))
+    if key_points:
+        from substack_radar.headline_desk import key_points_block
+        header_md += key_points_block(key_points)
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md, column_header=header_md)
     # 公司稿附一張財報趨勢圖（2026-10-17，對標曼報 Pro：每篇都有附來源的圖）。畫不出來就照常發。
     _fin = source_fin_data

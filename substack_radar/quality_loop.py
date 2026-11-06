@@ -734,6 +734,11 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
         too_short = length_feedback(current, word_range)
         if too_short:
             items = (items or []) + too_short
+        # 文風（套話、沒翻譯的英文、重複、標籤小標）：當退稿意見給寫手，不影響通過與否
+        # 只在第一輪或本來就要退稿時附上，免得每篇都為了用詞把 3 次重寫用完、拖過發文時間
+        if attempt == 0 or violations or items:
+            from substack_radar.style_gate import style_feedback
+            items = (items or []) + style_feedback(current)
         if not violations and not items:
             report.passed = True
             print(f"[Review] ✅ 第 {attempt + 1} 次審稿：程式檢查與審稿編輯都沒有意見，通過")

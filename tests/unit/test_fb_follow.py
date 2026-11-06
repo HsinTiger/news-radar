@@ -110,7 +110,14 @@ def test_em_dash_replaced_and_tells_detected():
 
 
 def test_rules_ban_ai_openers():
-    assert "故事是這樣的" in fb_follow.FB_RULES and "300 到 700 字" in fb_follow.FB_RULES
+    assert "故事是這樣的" in fb_follow.FB_RULES and "200 到 450 字" in fb_follow.FB_RULES
+    # 2026-11-06：FB 是預告不是摘要——要停在懸念、不准用「欸」開頭
+    assert "停在轉折前" in fb_follow.FB_RULES and "不要用「欸」開頭" in fb_follow.FB_RULES
+
+
+def test_fb_post_opening_with_ei_is_sent_back():
+    issues = fb_follow.deterministic_issues("欸，" + "內容很多。" * 40, "內容很多。")
+    assert any("欸" in i for i in issues)
 
 
 def test_separator_line_kept_but_inline_dash_replaced():
