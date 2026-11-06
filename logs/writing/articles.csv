@@ -1,4 +1,4 @@
-﻿date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,draft_id,remaining_issues
+date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,draft_id,remaining_issues
 2026-10-19,00:57,2026-10-19 00:18 morning,Hsin選觀點,穩定幣這齣戲，美國演過了｜Hsin選觀點,39.1,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221019801,0
 2026-10-19,06:42,2026-10-19 06:00 podcast,吹牛免稅,被市場討厭的那一年他對了嗎｜吹牛免稅,42.7,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221060293,0
 2026-10-21,04:50,2026-10-21 04:00 podcast,吹牛免稅,肌肉男真的能遊超長距離嗎｜吹牛免稅,49.9,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221386020,0
@@ -14,3 +14,5 @@
 2026-11-03,10:57,2026-11-03 08:42 podcast/ai,智取未來,意識也許沒那麼難｜智取未來,134.8,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,223266489,0
 2026-11-04,06:24,2026-11-04 04:00 podcast,吹牛免稅,誰在乎巴黎評論？｜吹牛免稅,144.6,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,223396460,0
 2026-11-05,05:11,2026-11-05 04:00 podcast/ai,智取未來,只有 2% 的人會用 agen｜智取未來,71.5,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,223536452,0
+2026-11-06,07:07,2026-11-06 04:00 podcast,吹牛免稅,弗洛勒斯島還住著哈比人嗎｜吹牛免稅,187.6,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,223697725,0
+2026-11-06,17:19,2026-11-06 13:47 podcast,吹牛免稅,Anthropic｜吹牛免稅,211.4,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,,0

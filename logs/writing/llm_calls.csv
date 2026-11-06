@@ -1,4 +1,4 @@
-﻿time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
+time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-10-19T00:19:05,2026-10-19 00:18 morning,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,20.6,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
 2026-10-19T00:23:27,2026-10-19 00:18 morning,SubstackDraft,gateway,writer→glm-5.3,Y,262.0,15430,2711,
 2026-10-19T00:29:30,2026-10-19 00:18 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,363.3,2218,13108,
@@ -194,3 +194,46 @@
 2026-11-05T04:48:57,2026-11-05 04:00 podcast/ai,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,60.1,5113,3047,
 2026-11-05T05:05:17,2026-11-05 04:00 podcast/ai,審稿,gateway,audit→deepseek-v4.1-flash,Y,980.1,3901,18346,
 2026-11-05T05:11:33,2026-11-05 04:00 podcast/ai,,gateway,audit→deepseek-v4.1-flash,Y,362.6,4095,6961,
+2026-11-06T04:04:12,2026-11-06 04:00 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,82.3,,,
+2026-11-06T04:26:22,2026-11-06 04:00 podcast,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.1,,,Timeout (630s)
+2026-11-06T04:28:49,2026-11-06 04:00 podcast,SubstackDraft,gateway,writer→glm-5.3-flash,Y,146.5,31062,3604,
+2026-11-06T04:41:02,2026-11-06 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,733.4,3680,21957,
+2026-11-06T04:42:30,2026-11-06 04:00 podcast,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,87.6,9732,4317,
+2026-11-06T05:04:16,2026-11-06 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,1305.7,4760,2312,
+2026-11-06T05:05:17,2026-11-06 04:00 podcast,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,61.0,5279,2969,
+2026-11-06T05:24:40,2026-11-06 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,1163.1,4093,20146,
+2026-11-06T05:25:31,2026-11-06 04:00 podcast,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,51.5,6055,2998,
+2026-11-06T05:56:07,2026-11-06 04:00 podcast,審稿,gateway,audit,N,1836.0,,,閘道 audit 回空字串
+2026-11-06T06:14:14,2026-11-06 04:00 podcast,審稿,gateway,deepseek-v4.1-flash,N,1086.8,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-06T07:06:03,2026-11-06 04:00 podcast,審稿,gateway,step-5-preview,Y,3109.5,4135,28095,
+2026-11-06T07:07:39,2026-11-06 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,84.2,4342,2992,
+2026-11-06T09:55:08,,,gateway,audit→deepseek-v4.1-flash,Y,328.8,2625,2403,
+2026-11-06T10:01:25,,,gateway,audit→deepseek-v4.1-flash,Y,304.4,2579,6623,
+2026-11-06T10:05:30,,,gateway,audit→deepseek-v4.1-flash,Y,245.0,2825,4560,
+2026-11-06T13:51:59,2026-11-06 13:47 podcast,,gateway,audit→deepseek-v4.1-flash,Y,248.1,2625,2552,
+2026-11-06T13:53:32,2026-11-06 13:47 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,91.0,,,
+2026-11-06T14:15:29,2026-11-06 13:47 podcast,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1260.0,,,Timeout (630s)
+2026-11-06T14:17:23,2026-11-06 13:47 podcast,SubstackDraft,gateway,writer→glm-5.3-flash,Y,113.5,33472,3856,
+2026-11-06T14:40:48,2026-11-06 13:47 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,1405.2,20018,24720,
+2026-11-06T14:42:45,2026-11-06 13:47 podcast,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,117.2,23070,4296,
+2026-11-06T15:16:15,2026-11-06 13:47 podcast,審稿,gateway,audit,N,2009.9,,,閘道 audit 回空字串
+2026-11-06T15:33:32,2026-11-06 13:47 podcast,審稿,gateway,deepseek-v4.1-flash,N,1036.7,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-06T15:37:08,2026-11-06 13:47 podcast,審稿,gateway,step-5-preview,Y,216.2,20989,15772,
+2026-11-06T15:38:43,2026-11-06 13:47 podcast,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,95.3,23120,3768,
+2026-11-06T16:04:28,2026-11-06 13:47 podcast,審稿,gateway,audit,N,1544.6,,,閘道 audit 回空字串
+2026-11-06T16:20:11,2026-11-06 13:47 podcast,審稿,gateway,deepseek-v4.1-flash,N,943.5,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-06T16:22:26,2026-11-06 13:47 podcast,審稿,gateway,step-5-preview,Y,134.6,21006,8283,
+2026-11-06T16:24:05,2026-11-06 13:47 podcast,退稿重寫#3,gateway,writer→glm-5.3-flash,Y,93.8,23961,4218,
+2026-11-06T16:41:29,2026-11-06 13:47 podcast,審稿,gateway,audit,N,1043.2,,,閘道 audit 回空字串
+2026-11-06T16:56:11,2026-11-06 13:47 podcast,審稿,gateway,deepseek-v4.1-flash,N,882.9,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-06T17:01:20,2026-11-06 13:47 podcast,審稿,gateway,step-5-preview,Y,308.5,21171,24549,
+2026-11-06T17:11:52,2026-11-06 13:47 podcast,,gateway,audit,N,632.1,,,閘道 audit 回空字串
+2026-11-06T17:19:13,2026-11-06 13:47 podcast,,gateway,deepseek-v4.1-flash,Y,440.8,3521,11092,
+2026-11-06T21:52:08,2026-11-06 21:31 morning,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1214.9,,,agy exit 3: [agy] print timeout after 10m0s with turn in progress; returning partial output error: print timeout after 10m0s with the turn still in progress; th
+2026-11-06T21:53:16,2026-11-06 21:31 morning,SubstackDraft,gateway,writer→glm-5.3-flash,Y,68.2,15898,2794,
+2026-11-06T21:57:01,2026-11-06 21:31 morning,審稿,gateway,audit,N,224.6,,,閘道 audit 回空字串
+2026-11-06T22:19:15,2026-11-06 21:31 morning,審稿,gateway,deepseek-v4.1-flash,Y,1334.6,2396,12966,
+2026-11-06T22:20:03,2026-11-06 21:31 morning,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,47.9,3519,2453,
+2026-11-06T22:38:09,2026-11-06 21:31 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,1085.7,2605,20974,
+2026-11-06T22:40:09,2026-11-06 21:31 morning,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,117.2,3280,3079,
+2026-11-06T23:18:06,2026-11-06 21:31 morning,審稿,gateway,audit,N,2277.5,,,閘道 audit 回空字串
