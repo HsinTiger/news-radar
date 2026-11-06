@@ -183,6 +183,20 @@ class SubstackDraft(BaseModel):
                 # 中間硬切（信哥 2026-06-28：要合理的標題、不要語意一半就斷）。找不到夠
                 # 靠後的邊界才退回硬切上限（保底）。
                 window = v[:cap]
+                # 不切斷英文單字（2026-11-05「只有 2% 的人會用 agen」）：差幾個字母就補完，
+                # 差太多就整個字退掉。
+                if v[cap - 1:cap].isascii() and v[cap - 1].isalnum() and v[cap:cap + 1].isascii() and v[cap].isalnum():
+                    end = cap
+                    while end < len(v) and v[end].isascii() and v[end].isalnum():
+                        end += 1
+                    if end - cap <= 6:
+                        window = v[:end]
+                    else:
+                        start = cap - 1
+                        while start > 0 and v[start - 1].isascii() and v[start - 1].isalnum():
+                            start -= 1
+                        window = v[:start]
+                    cap = len(window)
                 cut = max((window.rfind(ch) for ch in "。！？!?，,、；;：:"), default=-1)
                 if cut >= cap // 2:        # 邊界要夠靠後，免得砍到只剩半句
                     window = window[:cut + 1]

@@ -2031,6 +2031,7 @@ def _load_bundle_curated(path: str) -> str:
 _SOURCE_DENY_SUBSTRINGS = (
     "nsfw", "porn", "xxx", "adult", "onlyfans", "escort",
     "reddtastic", "snapwc", "bang.com",
+    "cloudfront.net", "鸡巴", "雞巴", "网红", "成人", "色情", "av女優", "约炮", "約炮",
 )
 # 工具首頁與內容農場：搜尋引擎常把它們當結果回傳，但它們不是可引用的來源。
 _SOURCE_DENY_HOSTS = (
@@ -2102,7 +2103,42 @@ def _series_prev_post(today: date | None = None) -> tuple[str, str]:
     return str(entry.get("title") or ""), str(entry.get("post_url") or "")
 
 
-def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
+# 2026-11-06：黑名單又漏了——〈弗洛勒斯島哈比人〉寄出時延伸研究 9 條全是無關結果，
+# 含一個掛在 cloudfront 的色情站、搬家公司、BuzzFeed。黑名單永遠追不上新垃圾站，
+# 改成「跟文章有關才列」：來源標題裡至少要有一個關鍵詞真的出現在文章裡。
+_STOP_TOKENS = {
+    "the", "and", "for", "with", "that", "this", "from", "what", "your", "about", "news",
+    "today", "learned", "blog", "article", "video", "comments", "official",
+    "我們", "你的", "什麼", "怎麼", "如何", "一個", "這個", "可以", "哪些", "方向",
+}
+
+
+def _key_tokens(text: str) -> set:
+    """英文取 ≥5 字母的詞（含數字的專有名詞 ≥3），中文取兩字詞片段。"""
+    import re as _re
+    low = str(text or "").lower()
+    words = {w for w in _re.findall(r"[a-z][a-z0-9\-]{4,}|[a-z0-9]*\d[a-z0-9]*[a-z][a-z0-9]*", low)}
+    # 短的專有名詞（Musk、Elon、AMD、TSMC）：標題裡大寫開頭 ≥4 字母，或全大寫 ≥3 字母
+    words |= {w.lower() for w in _re.findall(r"\b(?:[A-Z][a-z]{3,}|[A-Z]{3,})\b", str(text or ""))}
+    cjk = set()
+    for run in _re.findall(r"[\u4e00-\u9fff]{2,}", low):
+        cjk.update(run[i:i + 2] for i in range(len(run) - 1))
+    return {t for t in words | cjk if t not in _STOP_TOKENS}
+
+
+def _relevant_source(title: str, url: str, article: str) -> bool:
+    if not article:
+        return True
+    if any("\u0400" <= ch <= "\u04ff" for ch in title):   # 讀者看不懂的俄文／烏克蘭文站
+        return False
+    probe = _key_tokens(title) or _key_tokens(url.rsplit("/", 1)[-1].replace("-", " "))
+    art = str(article).lower()
+    hits = [t for t in probe if t in art]
+    # 要兩個關鍵詞對上（單一常見詞像「技術」「人類」太容易撞到）；或一個 ≥5 字母的英文詞
+    return len(hits) >= 2 or any(len(t) >= 5 and t.isascii() for t in hits)
+
+
+def _sources_block(*, source_title=None, source_url=None, reports=None, article: str = "") -> str:
     """Reader-facing source ledger, placed after the article to reduce front-load."""
     reports = reports or []
     rep_links, seen = [], set()
@@ -2111,6 +2147,9 @@ def _sources_block(*, source_title=None, source_url=None, reports=None) -> str:
         if not u or u in seen:
             continue
         if not _citable_source(u, r.get("title") or ""):
+            continue
+        if not _relevant_source(r.get("title") or "", u, article):
+            print(f"[Sources] ⏭️ 跟文章無關，不列：{(r.get('title') or u)[:50]}")
             continue
         seen.add(u)
         rep_links.append(f"[{(r.get('title') or u)[:80]}]({u})")
@@ -2672,7 +2711,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
             print(f"[QualityLoop] ⚠️ 迴圈本身失敗（{type(exc).__name__}: {exc}）；"
                   "保留原文繼續，不因為稽核工具壞掉就掉一篇稿")
 
-    sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports)
+    sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports,
+                                article=draft.body_markdown)
     header_md = _column_header(draft.title, source_title=source.get("title"), source_url=source_url,
                                series_part=source.get("series_part"))
     article_md = write_article_substack_md(local_dir, draft, sources_block=sources_md, column_header=header_md)

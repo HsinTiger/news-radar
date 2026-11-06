@@ -383,3 +383,22 @@ def test_legacy_runtime_prompt_fragments_are_removed() -> None:
         "scripts/launchd/com.newsradar.substack_company.plist",
     ):
         assert not (REPO / relative).exists(), relative
+
+
+def test_sources_block_drops_results_unrelated_to_article():
+    """2026-11-06 哈比人那篇：延伸研究 9 條全無關，含 cloudfront 上的色情站。只列跟文章有關的。"""
+    from substack_radar.compose import _sources_block
+
+    article = "Gregory Forth 在弗洛勒斯島訪談島民，談 Homo floresiensis 與 Liang Bua 洞穴的化石定年。"
+    reports = [
+        {"title": "Homo floresiensis - Wikipedia", "url": "https://en.wikipedia.org/wiki/Homo_floresiensis"},
+        {"title": "日本顶级Ins网红 输球后", "url": "https://d30jiv114od60v.cloudfront.net/archives/224706.html"},
+        {"title": "搬家的車有哪些?3個方向教您怎麼搬最省錢", "url": "https://www.ifu-move.com/article/x"},
+        {"title": "16 Of The Funniest Reddit Comments", "url": "https://www.buzzfeed.com/a/funny-reddit-comments"},
+        {"title": "Homo luzonensis | BFOmetr", "url": "https://bfometr.ru/blog/homo-luzonensis"},
+    ]
+    out = _sources_block(source_title="JRE", source_url="https://youtube.com/watch?v=1", reports=reports,
+                         article=article)
+    assert "wikipedia.org/wiki/Homo_floresiensis" in out
+    for bad in ("cloudfront", "ifu-move", "buzzfeed", "bfometr"):
+        assert bad not in out
