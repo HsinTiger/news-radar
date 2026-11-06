@@ -40,11 +40,23 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
 
 def title_ok(title: str) -> bool:
     t = (title or "").strip()
-    return bool(t) and len(t) <= TITLE_MAX and not re.search(r"[：:｜|]", t)
+    # 字數不算空格：「上半年營收 163 億」的空格是排版，手機收件匣也不會因此多佔一個字
+    return bool(t) and len(re.sub(r"\s", "", t)) <= TITLE_MAX and not re.search(r"[：:｜|]", t)
+
+
+def _to_traditional(text: str) -> str:
+    """閘道模型有時吐簡體（2026-11-06 試跑：「营收」「亿」）。用 s2tw 只換字形，
+    不用 s2twp——那個會改詞（項目→專案，2026-10 吃過虧）。"""
+    try:
+        import opencc
+        return opencc.OpenCC("s2tw").convert(text or "")
+    except Exception:
+        return text or ""
 
 
 def pangu(text: str) -> str:
-    """中英文之間加空格（「AI代理」→「AI 代理」），跟正文寫法一致。"""
+    """簡轉繁，中英文之間加空格（「AI代理」→「AI 代理」），跟正文寫法一致。"""
+    text = _to_traditional(text)
     text = re.sub(r"([\u4e00-\u9fff])([A-Za-z0-9%$])", r"\1 \2", text or "")
     return re.sub(r"([A-Za-z0-9%])([\u4e00-\u9fff])", r"\1 \2", text)
 

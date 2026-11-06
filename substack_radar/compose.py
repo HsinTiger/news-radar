@@ -1974,12 +1974,9 @@ def write_article_substack_md(out_dir: Path, draft: SubstackDraft, sources_block
     """
     path = out_dir / "Article_Substack.md"
     body = strip_generated_footer(strip_production_instructions(draft.body_markdown))
-    provenance = (getattr(draft, "generated_by", None) or "").strip()
-    provenance_block = (
-        f"> 🧠 **產文路線**：{provenance}\n\n" if provenance else ""
-    )
+    # 產文路線（哪個模型寫、誰稽核）不進文章：信哥 2026-11-07——不管哪個專欄，正文都不該出現，
+    # 手動發布的 Hsin選觀點會原封不動帶出去。改寫在通知信的 metadata（metadata.json 也有）。
     md = (
-        f"{provenance_block}"
         f"# {draft.title}\n\n"
         f"*{draft.subtitle}*\n\n"
         f"{column_header}"

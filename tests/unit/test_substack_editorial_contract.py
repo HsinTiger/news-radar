@@ -167,8 +167,8 @@ def test_reader_ready_article_removes_every_production_instruction(tmp_path) -> 
 
     assert "第一段是讀者需要的內容" in text
     assert "第二段仍然是讀者需要的內容" in text
-    assert "> 🧠 **產文路線**：Codex CLI · 模型 gpt-latest" in text
-    assert text.count("產文路線") == 1
+    # 2026-11-07：產文路線只寫在通知信，不進文章（手動發布會原封不動帶出去）
+    assert "產文路線" not in text and "gpt-latest" not in text
     assert "發布前刪此行" not in text
     assert "本文取材" in text and "https://example.com/interview" in text
     assert text.index("第二段仍然是讀者需要的內容") < text.index("本文取材")

@@ -178,6 +178,12 @@ class SubstackDraft(BaseModel):
                 "seo_title": 60,
                 "seo_description": 160,
             }.get(info.field_name)
+            if cap and info.field_name == "title" and len(v) > cap:
+                # 「Anthropic：營收漲 14 倍的代價」在冒號切會只剩公司名（2026-11-06 試跑），
+                # 冒號後面才是鉤子：放得下就留後半段。
+                head, sep, tail = v.partition("：") if "：" in v else v.partition(":")
+                if sep and 4 <= len(tail.strip()) <= cap:
+                    return tail.strip()
             if cap and len(v) > cap:
                 # 在字數上限內收在「最後一個標點邊界」＝留一個語意完整的標題，而非從字
                 # 中間硬切（信哥 2026-06-28：要合理的標題、不要語意一半就斷）。找不到夠

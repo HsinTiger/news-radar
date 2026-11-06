@@ -160,12 +160,18 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
     if unit in ("%", "％"):
         unit_variants |= {"%", "％"}
     needles = [_norm(f"{value}{u}") for u in unit_variants]
+    # 英文素材裡的同一個數字（2026-11-06 Anthropic 試跑：節目說「$80 billion」，稿子寫「800 億」，
+    # 程式拿「800億」去比，判成無出處，寫手連改三輪都過不了）。
+    en_needles = _english_variants(value, unit)
     topic_terms = _topic_words(topic) if topic else set()
     best: tuple[int, str] | None = None   # (重疊詞數, 定位字串)
     for index, src in enumerate(sources, 1):
         excerpt = str(src.get("excerpt") or "")
         folded = _norm(excerpt)
         pos = next((folded.find(n) for n in needles if folded.find(n) >= 0), -1)
+        if pos < 0 and en_needles:
+            low = folded.lower()
+            pos = next((low.find(n) for n in en_needles if low.find(n) >= 0), -1)
         if pos < 0:
             continue
         raw_pos = next((excerpt.find(f"{value}{u}") for u in unit_variants
@@ -193,9 +199,33 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
     if best:
         return best[1]
     folded_facts = _norm(fact_block)
-    if any(n and n in folded_facts for n in needles):
+    if any(n and n in folded_facts for n in needles) or any(n in folded_facts.lower() for n in en_needles):
         return "管線事實表"
     return None
+
+
+def _english_variants(value: str, unit: str) -> list[str]:
+    """「800 億」→ 80billion／$80b；「6.93 億」→ 693million；「2 兆」→ 2trillion。已去空白、小寫。"""
+    try:
+        v = float(value)
+    except ValueError:
+        return []
+    g = lambda x: f"{x:g}"
+    if unit == "億":
+        return [f"{g(v / 10)}billion", f"${g(v / 10)}b", f"{g(v * 100)}million", f"${g(v * 100)}m"]
+    if unit == "兆":
+        return [f"{g(v)}trillion", f"${g(v)}t"]
+    return []
+
+
+_PRIMARY_SOURCE_WORDS = r"節目|這集|該集|本集|對談|訪談|專訪|podcast|來賓|主持人|逐字稿|影片|演講"
+
+
+def _names_in_facts(named: str, fact_block: str) -> bool:
+    """歸屬對象裡的英文名字（Aaron、Hard Fork、Anthropic）出現在事實表＝出自主來源。"""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9.\-]{2,}(?:\s+[A-Z][A-Za-z0-9.\-]+)*", named)
+    facts = (fact_block or "").lower()
+    return bool(words) and all(w.lower() in facts for w in words)
 
 
 _MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -261,6 +291,11 @@ def check(article_md: str, *, sources: list[dict] | None = None,
         # 公司稿引用公司自己的財報（「根據公司公布的 2025 全年數據」）不是外部來源——
         # 財報事實本來就在主來源裡。2026-10-18 嬌生（下）因此被誤判、整篇不能發。
         if named and fact_block and re.search(r"公司公布|該公司|公司財報|財報|年報|法說|10-K|10-Q|官方", named):
+            named = ""
+        # 引用主來源本身（「這集節目」「Hard Fork 的對談」「來賓 Aaron 的說法」）是對的——
+        # 逐字稿就是事實表。2026-11-06 試跑：寫手三輪換了三種講法標出處，全被判「不在清單」。
+        if named and fact_block and (re.search(_PRIMARY_SOURCE_WORDS, named, re.I)
+                                     or _names_in_facts(named, fact_block)):
             named = ""
         if named and _looks_like_named_entity(named):
             named_norm = _norm(named)

@@ -594,6 +594,19 @@ def open_domain_audit(article_md: str, fact_block: str, *,
 
 REVIEW_ATTEMPTS = int(os.getenv("SUBSTACK_REVIEW_ATTEMPTS", "3"))
 
+def evidence_pack(fact_block: str, sources: list[dict] | None, *, limit: int = 40000) -> str:
+    """給稽核與寫手的完整取材（2026-11-06）：原本只給事實表前 6,000 字，一集 6 萬字的逐字稿
+    後段、寫手查到的第一手資料全看不到，稽核就把真的數字判成「不在事實表」叫寫手刪。"""
+    parts = [f"【原始素材】\n{(fact_block or '')[:limit]}"]
+    for i, src in enumerate(sources or [], 1):
+        if i > 10:
+            break
+        head = " ｜ ".join(x for x in (str(src.get("publisher") or ""), str(src.get("title") or ""),
+                                       str(src.get("url") or "")) if x)
+        parts.append(f"【研究來源 #{i}】{head}\n{str(src.get('excerpt') or '')[:1500]}")
+    return "\n\n".join(parts)
+
+
 _CRITIQUE_PROMPT = """你是審稿編輯，這一輪只負責「指出問題、給改法」，不要自己改稿。
 
 給你：作者的草稿、管線抓到的原始事實表、程式對帳後確認的違規清單。請做兩件事：
@@ -605,7 +618,14 @@ _CRITIQUE_PROMPT = """你是審稿編輯，這一輪只負責「指出問題、�
 === 程式確認的違規 ===
 {violations}
 
-=== 原始事實表（唯一可信的數字來源）===
+出處的判斷方式（2026-11-06 信哥：查第一手資料是加分，要引導作者標出處，不是叫他刪）：
+- 下面的「原始素材」和「研究來源」都是合法出處。作者自己查到的第一手資料（公司申報文件、財報、
+  官方統計、原始論文）是加分，不要因為原始素材裡沒有就要求刪掉。
+- 英文素材的數字換成中文單位算同一個數字（$80 billion＝800 億美元）。
+- 只有兩邊都找不到的數字或說法才算無出處。這時「建議改法」要具體：如果其實在某個研究來源裡，
+  告訴作者用 [來源名](網址) 標上；真的哪裡都沒有，才請作者刪掉或改成不帶數字的判斷。
+
+=== 取材（原始素材＋研究來源）===
 {facts}
 
 === 作者草稿 ===
@@ -621,7 +641,8 @@ _REWRITE_PROMPT = """你是這篇文章的作者。審稿編輯把稿子退回�
 請照意見修改你的稿子：
 - 每一條意見都要處理；意見寫「誤報」的，照它建議的方式換個寫法。
 - 只改有問題的句子與它連帶影響的敘述，其餘保留原文的語氣與結構。
-- 不要新增事實表或原文以外的數字、來源；查不到出處的說法寧可刪掉。
+- 讓讀者知道每個數字從哪來：節目內容寫「在〈節目名〉裡，某某說」；研究來源的內容用行內連結
+  [來源名](網址) 標上（網址照下面取材裡的抄，不要自己編）。兩邊都找不到的數字才刪掉。
 - 不要動標題，不要加任何說明文字。
 - 意見寫「篇幅不足」時，可以新增段落：回到下面的原始素材，把故事與脈絡說完整（起承轉合），
   不是加條列或重複結論；新增內容一樣不得出現素材以外的數字或來源。
@@ -629,7 +650,7 @@ _REWRITE_PROMPT = """你是這篇文章的作者。審稿編輯把稿子退回�
 === 審稿意見（第 {attempt} 次退稿）===
 {feedback}
 
-=== 原始事實表 ===
+=== 取材（原始素材＋研究來源）===
 {facts}
 
 === 你的草稿 ===
@@ -660,7 +681,7 @@ def _parse_items(raw: str) -> list[dict] | None:
 def critique(article_md: str, violations: list[Violation], fact_block: str, auditor: str) -> list[dict] | None:
     """稽核模型逐條列出問題與改法。稽核跑不成回 None（跟「跑了沒問題」的 [] 分開）。"""
     listed = "\n".join(f"{i}. {v}" for i, v in enumerate(violations, 1)) or "（無）"
-    prompt = _CRITIQUE_PROMPT.format(violations=listed, facts=fact_block[:6000], article=article_md)
+    prompt = _CRITIQUE_PROMPT.format(violations=listed, facts=fact_block, article=article_md)
     from src import run_log
     try:
         with run_log.stage("審稿"):
@@ -730,7 +751,8 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
         violations = evaluate(current, **eval_kwargs)
         report.history.append(violations)
         report.rounds = attempt + 1
-        items = critique(current, violations, fact_block, auditor)
+        pack = evidence_pack(fact_block, eval_kwargs.get("sources"))
+        items = critique(current, violations, pack, auditor)
         too_short = length_feedback(current, word_range)
         if too_short:
             items = (items or []) + too_short
@@ -750,7 +772,7 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
             break
         # 要補篇幅時給寫手更多原始素材（podcast 的逐字稿），故事才補得出來
         prompt = _REWRITE_PROMPT.format(attempt=attempt + 1, feedback=_feedback(violations, items),
-                                        facts=fact_block[:24000 if too_short else 6000], article=current)
+                                        facts=pack, article=current)
         try:
             from src import run_log
             with run_log.stage(f"退稿重寫#{attempt + 1}"):

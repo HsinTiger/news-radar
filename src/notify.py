@@ -256,6 +256,7 @@ def _success_body(
 
   字數: {metadata.get('chinese_chars', '?')} (target {metadata.get('word_floor','?')}-{metadata.get('word_cap','?')})
   Profile: {metadata.get('editorial_profile', '?')}
+  產文路線: {metadata.get('generated_by') or '?'}
 
 🔗 連結
   Substack draft: {url_line}
@@ -286,6 +287,7 @@ def _success_body(
         f"<li>Audit: <b>{len(warnings)} warning(s)</b></li>"
         f"<li>字數: {metadata.get('chinese_chars','?')} (target {metadata.get('word_floor','?')}-{metadata.get('word_cap','?')})</li>"
         f"<li>Profile: <code>{metadata.get('editorial_profile','?')}</code></li>"
+        f"<li>產文路線: {metadata.get('generated_by') or '?'}</li>"
         f"</ul>"
         f"<h3>🔗 連結</h3>"
         f"<p>Substack: <a href='{url or '#'}'>{url or 'n/a'}</a></p>"
