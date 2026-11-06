@@ -2132,10 +2132,15 @@ def _relevant_source(title: str, url: str, article: str) -> bool:
     if any("\u0400" <= ch <= "\u04ff" for ch in title):   # 讀者看不懂的俄文／烏克蘭文站
         return False
     probe = _key_tokens(title) or _key_tokens(url.rsplit("/", 1)[-1].replace("-", " "))
-    art = str(article).lower()
+    art = str(article)
+    for intro in COLUMN_INTRO.values():   # 專欄自述（「頂尖對談」）不算文章內容
+        art = art.replace(intro, "")
+    art = art.lower()
     hits = [t for t in probe if t in art]
-    # 要兩個關鍵詞對上（單一常見詞像「技術」「人類」太容易撞到）；或一個 ≥5 字母的英文詞
-    return len(hits) >= 2 or any(len(t) >= 5 and t.isascii() for t in hits)
+    en = [t for t in hits if t.isascii()]
+    zh = len(hits) - len(en)
+    # 英文：一個 ≥5 字母的詞或兩個詞；中文兩字片段容易撞到（「頂尖對決」撞「頂尖對談」），要 3 個
+    return any(len(t) >= 5 for t in en) or len(en) >= 2 or zh >= 3 or (en and zh >= 2)
 
 
 def _sources_block(*, source_title=None, source_url=None, reports=None, article: str = "") -> str:
