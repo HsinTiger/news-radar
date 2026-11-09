@@ -238,3 +238,11 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-07T06:50:23,2026-11-07 04:00 company,審稿,gateway,step-5-preview,Y,336.5,9410,13185,
 2026-11-07T07:01:56,2026-11-07 04:00 company,,gateway,audit→deepseek-v4.1-flash,Y,692.5,3988,11998,
 2026-11-07T07:12:22,2026-11-07 04:00 company,,gateway,audit→deepseek-v4.1-flash,Y,612.7,5522,14286,
+2026-11-09T04:04:54,2026-11-09 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,98.9,2757,2266,
+2026-11-09T04:05:58,2026-11-09 04:00 podcast,EditorialResearchBrief,antigravity_cli,Gemini 3.8 Flash (High),Y,61.7,,,
+2026-11-09T04:20:08,2026-11-09 04:00 podcast,SubstackDraft,antigravity_cli,Gemini 3.8 Flash (High),Y,806.5,,,
+2026-11-09T04:22:44,2026-11-09 04:00 podcast,審稿,antigravity_cli,Claude Opus 4.6 (Thinking),Y,155.5,,,
+2026-11-09T04:26:32,2026-11-09 04:00 podcast,退稿重寫#1,antigravity_cli,Gemini 3.8 Flash (High),Y,227.9,,,
+2026-11-09T04:26:36,2026-11-09 04:00 podcast,審稿,antigravity_cli,Claude Opus 4.6 (Thinking),N,4.0,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-09T04:30:28,2026-11-09 04:00 podcast,審稿,antigravity_cli,Gemini 3.8 Flash (High),Y,232.0,,,
+2026-11-09T04:33:35,2026-11-09 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,187.7,3424,5440,
