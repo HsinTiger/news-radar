@@ -18,3 +18,7 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-07,00:06,2026-11-06 21:31 morning,Hsin選觀點,你的年資可能只是複印｜Hsin選觀點,154.4,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),3,2,Y,223788341,0
 2026-11-07,07:12,2026-11-07 04:00 company,賺錢有道,營收翻倍、卻虧 69 億（上）｜賺錢有道,192.2,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,223837401,0
 2026-11-09,04:33,2026-11-09 04:00 podcast,吹牛免稅,醒來就欠世界八小時｜吹牛免稅,33.7,antigravity_cli · 模型 Gemini 3.8 Flash (High),Claude Opus 4.6 (Thinking),2,1,Y,224060870,0
+2026-11-11,03:55,2026-11-11 01:10 morning,Hsin選觀點,父母銀行比學歷更早決定人生｜Hsin選觀點,165.6,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,224355244,0
+2026-11-11,05:53,2026-11-11 04:00 podcast,吹牛免稅,資安執行長收購 35 家卻多數失敗｜吹牛免稅,113.0,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),4,3,Y,224369188,0
+2026-11-11,12:34,2026-11-11 11:55 morning,Hsin選觀點,沒失業沒分手也會在低谷｜Hsin選觀點,38.6,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),3,2,Y,224403893,0
+2026-11-11,14:31,2026-11-11 13:24 morning,Hsin選觀點,民主黨大勝 你的投資更不可預測｜Hsin選觀點,67.0,gateway · 模型 writer→glm-5.3-flash,Claude Opus 4.6 (Thinking),2,1,Y,224411954,0
