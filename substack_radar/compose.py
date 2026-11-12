@@ -2855,6 +2855,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
             draft.title = apply_column_prefix(desk["title"], "ai" if source.get("column") == "ai" else mode,
                                               topic_category)
         key_points = desk["key_points"]
+        if desk.get("note"):
+            # Substack Notes 草稿（2026-11-13）：站內是唯一有帶進訂閱的來源，每篇備一則讓主編貼
+            (local_dir / "substack_note.txt").write_text(desk["note"] + "\n", encoding="utf-8")
     sources_md = _sources_block(source_title=source.get("title"), source_url=source_url, reports=used_reports,
                                 article=draft.body_markdown)
     header_md = _column_header(draft.title, source_title=source.get("title"), source_url=source_url,
@@ -3008,6 +3011,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "word_floor": word_floor,
             "word_cap": word_cap,
             "editorial_profile": profile.name,
+            "generated_by": getattr(draft, "generated_by", None),
+            "substack_note": ((local_dir / "substack_note.txt").read_text(encoding="utf-8").strip()
+                              if (local_dir / "substack_note.txt").exists() else ""),
         },
         audit_warnings=warnings,
         onedrive_path=str(mirror_dir),

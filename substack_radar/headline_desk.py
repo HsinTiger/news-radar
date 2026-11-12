@@ -32,7 +32,12 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
 - 只滑到這裡就離開的讀者，也能帶走這篇最重要的三件事。
 - 寫結論本身（誰、做了什麼、代表什麼），不寫「本文將…」。數字必須跟文章完全一致。
 
-只輸出 JSON：{{"titles": ["", "", "", "", ""], "best": 1, "key_points": ["", "", ""]}}
+【三】寫一則 Substack Notes（站內動態，給還沒訂閱的人看），120–220 字：
+- 像作者本人隨手發的一段話，不是廣告：先丟出文章裡最讓人意外的一個事實或一個問題，
+  再用一兩句說為什麼值得想，最後一句留懸念。不要「歡迎訂閱」「點擊閱讀」，不要 hashtag、不要網址。
+- 只能用文章裡有的事實與數字。
+
+只輸出 JSON：{{"titles": ["", "", "", "", ""], "best": 1, "key_points": ["", "", ""], "note": ""}}
 
 【文章】
 {body}"""
@@ -62,7 +67,8 @@ def pangu(text: str) -> str:
 
 
 def _numbers(text: str) -> set:
-    return set(re.findall(r"\d+(?:[.,]\d+)?", text or ""))
+    # 千分位逗號不算差異：「2650 億」和正文的「2,650 億」是同一個數字
+    return set(re.findall(r"\d+(?:\.\d+)?", re.sub(r"(?<=\d),(?=\d{3})", "", text or "")))
 
 
 def grounded_points(points: list, body: str) -> list:
@@ -94,7 +100,7 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
         data = json.loads(_extract_json_blob(raw) or "{}")
     except Exception as exc:
         print(f"[HeadlineDesk] ⚠️ 標題台失敗，保留原標題、不放重點：{str(exc)[:100]}")
-        return {"title": None, "key_points": []}
+        return {"title": None, "key_points": [], "note": ""}
 
     titles = [pangu(str(t).strip()) for t in data.get("titles") or [] if str(t).strip()]
     try:
@@ -108,7 +114,12 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
     points = grounded_points(data.get("key_points") or [], body)
     if len(points) < 2:
         points = []
-    return {"title": chosen, "key_points": points}
+    note = pangu(str(data.get("note") or "").strip())
+    if not (60 <= len(note) <= 400) or not _numbers(note) <= _numbers(body) or re.search(r"https?://|#\S", note):
+        if note:
+            print("[HeadlineDesk] ⏭️ Notes 草稿不合格（長度、數字或含網址），這篇不附")
+        note = ""
+    return {"title": chosen, "key_points": points, "note": note}
 
 
 def key_points_block(points: list) -> str:

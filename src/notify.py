@@ -248,6 +248,9 @@ def _success_body(
     url_line = url or "(--no-draft mode, 沒推 Substack)"
     onedrive_line = onedrive_path or "(沒 mirror 到 OneDrive)"
 
+    _note = (metadata.get("substack_note") or "").strip()
+    note_block = (f"🗒️ Substack Notes 草稿（發布後貼到 Notes，文章連結貼在最後）\n\n{_note}\n\n"
+                  if _note else "")
     plain = f"""【 {mode} draft 完成 】
 
 📊 metadata
@@ -262,7 +265,7 @@ def _success_body(
   Substack draft: {url_line}
   OneDrive folder: {onedrive_line}
 
-📝 全文（手機 Mail 直接讀）
+{note_block}📝 全文（手機 Mail 直接讀）
 
 # {title}
 
@@ -358,3 +361,17 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     notify_test()
+
+
+def notify_note_ready(*, title: str, url: str, note: str) -> None:
+    """文章發布後，把備好的 Substack Notes 連同文章網址寄給主編，貼上就能發。Never raises."""
+    if not _notify_enabled() or not (note or "").strip():
+        return
+    body = (f"今天的文章發出去了：{title}\n{url}\n\n"
+            "下面這段可以直接貼到 Substack Notes（App 或網站首頁的「New note」）：\n\n"
+            f"{note.strip()}\n\n{url}\n")
+    try:
+        _dispatch(subject=f"[Substack 🗒️] Notes 可以貼了 — {title[:40]}", body_html=None,
+                  body_plain=body, macos_subtitle="Notes 草稿已寄到信箱")
+    except Exception as exc:
+        print(f"[notify] ❌ {exc}")

@@ -426,6 +426,13 @@ def run(day: date, *, dry_run: bool = False) -> int:
         print(f"[DailyPublish] ⚠️ 回補上篇連結失敗（不影響今天的發文）：{exc}")
     update_fb_link(cand, url)
     notify("今天的文章發出去了", cand.headline)
+    try:
+        note_path = cand.folder / "substack_note.txt"
+        if note_path.exists():
+            from src.notify import notify_note_ready
+            notify_note_ready(title=cand.headline, url=url, note=note_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[DailyPublish] ⚠️ Notes 草稿通知失敗（不影響發文）：{exc}")
     return 0
 
 
