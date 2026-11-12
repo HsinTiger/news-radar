@@ -363,15 +363,20 @@ if __name__ == "__main__":
     notify_test()
 
 
-def notify_note_ready(*, title: str, url: str, note: str) -> None:
-    """文章發布後，把備好的 Substack Notes 連同文章網址寄給主編，貼上就能發。Never raises."""
+def notify_note_ready(*, title: str, url: str, note: str, posted_url: str | None = None, news: str = "") -> None:
+    """文章發布後的 Substack Notes：已自動貼出就告知，否則把文字連同網址寄給主編貼。Never raises."""
     if not _notify_enabled() or not (note or "").strip():
         return
-    body = (f"今天的文章發出去了：{title}\n{url}\n\n"
-            "下面這段可以直接貼到 Substack Notes（App 或網站首頁的「New note」）：\n\n"
-            f"{note.strip()}\n\n{url}\n")
+    tie = f"（接上今天的新聞：{news[:60]}）\n" if news else ""
+    if posted_url:
+        subject = f"[Substack 🗒️] Notes 已貼出 — {title[:40]}"
+        head = f"今天的文章：{title}\n{url}\n\nNotes 已自動貼出：{posted_url}\n{tie}\n內容：\n\n"
+    else:
+        subject = f"[Substack 🗒️] Notes 可以貼了 — {title[:40]}"
+        head = (f"今天的文章發出去了：{title}\n{url}\n{tie}\n"
+                "下面這段可以直接貼到 Substack Notes（App 或網站首頁的「New note」）：\n\n")
     try:
-        _dispatch(subject=f"[Substack 🗒️] Notes 可以貼了 — {title[:40]}", body_html=None,
-                  body_plain=body, macos_subtitle="Notes 草稿已寄到信箱")
+        _dispatch(subject=subject, body_html=None, body_plain=f"{head}{note.strip()}\n\n{url}\n",
+                  macos_subtitle="Substack Notes")
     except Exception as exc:
         print(f"[notify] ❌ {exc}")

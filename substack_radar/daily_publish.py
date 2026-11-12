@@ -282,6 +282,27 @@ def notify(title: str, message: str) -> None:
         pass
 
 
+def publish_note(cand, url: str) -> None:
+    """文章發布後配一則 Substack Notes：能接上今天的時事就接；開了自動貼就貼，否則寄信請主編貼。"""
+    from src.notify import notify_note_ready
+    from substack_radar import notes_desk
+
+    note_path = cand.folder / "substack_note.txt"
+    base = note_path.read_text(encoding="utf-8").strip() if note_path.exists() else ""
+    article_path = cand.folder / "Article_Substack.md"
+    article = article_path.read_text(encoding="utf-8").split("### 📚 本文取材")[0] if article_path.exists() else ""
+    built = notes_desk.build(article=article, base_note=base)
+    if not built["note"]:
+        print("[Notes] 這篇沒有備好的 Notes，略過")
+        return
+    note_url = None
+    if os.getenv("SUBSTACK_NOTES_AUTOPOST") == "1":
+        note_url = notes_desk.post_note(built["note"], url)
+        if note_url:
+            print(f"[Notes] ✅ 已貼出：{note_url}")
+    notify_note_ready(title=cand.headline, url=url, note=built["note"], posted_url=note_url, news=built["news"])
+
+
 def production_running() -> bool:
     if EDITORIAL_WANT.exists():
         return True
@@ -427,12 +448,9 @@ def run(day: date, *, dry_run: bool = False) -> int:
     update_fb_link(cand, url)
     notify("今天的文章發出去了", cand.headline)
     try:
-        note_path = cand.folder / "substack_note.txt"
-        if note_path.exists():
-            from src.notify import notify_note_ready
-            notify_note_ready(title=cand.headline, url=url, note=note_path.read_text(encoding="utf-8"))
+        publish_note(cand, url)
     except Exception as exc:
-        print(f"[DailyPublish] ⚠️ Notes 草稿通知失敗（不影響發文）：{exc}")
+        print(f"[DailyPublish] ⚠️ Notes 失敗（不影響發文）：{exc}")
     return 0
 
 
