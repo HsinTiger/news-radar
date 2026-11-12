@@ -392,6 +392,7 @@ WEEKLY_EDITORIAL_PATH = CONFIG_DIR / "editorial_weekly.md"
 PODCAST_EDITORIAL_PATH = CONFIG_DIR / "editorial_podcast.md"
 COMPANY_EDITORIAL_PATH = CONFIG_DIR / "editorial_company.md"
 AI_EDITORIAL_PATH = CONFIG_DIR / "editorial_ai.md"
+HSIN_EDITORIAL_PATH = CONFIG_DIR / "editorial_hsin.md"
 
 
 @dataclass(frozen=True)
@@ -425,6 +426,10 @@ COMPANY_PROFILE = EditorialProfile(
 AI_PROFILE = EditorialProfile(
     "weekly", 3000, 4000, "10–13", AI_EDITORIAL_PATH, "podcast"
 )
+# Hsin選觀點（主編親自投稿，2026-11-13）：素材只是引子，寫成原創的提問，不是翻譯或摘要。
+HSIN_PROFILE = EditorialProfile(
+    "weekly", 3000, 4000, "10–13", HSIN_EDITORIAL_PATH, "weekly"
+)
 
 
 def resolve_editorial_profile(
@@ -439,6 +444,8 @@ def resolve_editorial_profile(
             raise ValueError(f"unknown editorial profile: {override}")
         if override == "daily":
             return DAILY_PROFILE
+    if os.getenv("SUBSTACK_COLUMN") == "hsin" and mode in ("morning", "evening"):
+        return HSIN_PROFILE          # compose 認出是主編投稿時設定
     if mode == "podcast":
         # 週二、四的 AI 專欄：compose.py --column ai 會設 SUBSTACK_COLUMN=ai（研究簡報與寫稿兩處都會重新解析）
         return AI_PROFILE if os.getenv("SUBSTACK_COLUMN") == "ai" else PODCAST_PROFILE

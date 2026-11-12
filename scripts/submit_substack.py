@@ -31,6 +31,7 @@ sys.path.insert(0, str(_HERE))
 
 from src import db as dbmod
 from src.schema import NewsItem
+from substack_radar.hsin_brief import brief_block
 
 # Reuse the proven fetch/transcript helpers from the Meta submit script —
 # single source of truth, no duplication of the scraping logic.
@@ -146,6 +147,27 @@ def _save_substack_item(news_id: str, *, url: str | None, title: str,
             "word_count": item.word_count, "target": "substack"}
 
 
+def _page_title(text: str) -> str:
+    """素材的第一行當標題（給來源連結顯示用）。主編的投稿說明永遠不當標題（2026-11-13）。"""
+    for line in (text or "").splitlines():
+        line = line.strip().lstrip("#").strip()
+        if len(line) >= 4:
+            return line[:80]
+    return ""
+
+
+def _youtube_title(url: str) -> str:
+    """抓不到字幕時，至少用 oEmbed 拿到影片真正的標題。失敗回空字串。"""
+    try:
+        import urllib.parse
+        import urllib.request
+        api = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url, safe="")
+        with urllib.request.urlopen(api, timeout=10) as resp:
+            return str(json.loads(resp.read().decode("utf-8")).get("title") or "")[:100]
+    except Exception:
+        return ""
+
+
 def process_url(url: str, note: str = "", immediate: bool = False,
                 publish_now: bool = False,
                 submission_id: str = "", variant: bool = False) -> dict:
@@ -156,7 +178,8 @@ def process_url(url: str, note: str = "", immediate: bool = False,
             "status": "error",
             "error": "URL yielded insufficient readable text; paste the full text instead",
         }
-    title = note or (url.split("/")[-1][:80] or "Substack submission")
+    title = _page_title(body) or url.split("/")[-1][:80] or "網路文章"
+    body = brief_block(note) + body
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="article", extra_tags=[], immediate=immediate,
                                publish_now=publish_now,
@@ -168,12 +191,13 @@ def process_text(text: str, note: str = "", immediate: bool = False,
                  submission_id: str = "", variant: bool = False) -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
-    title = note or (text[:60] + ("..." if len(text) > 60 else ""))
+    title = _page_title(text) or "主編手記"
+    text_body = brief_block(note) + text
     # news_items.url 是 UNIQUE NOT NULL：全文投稿沒有來源網址，但不能用空字串——
     # 第二篇 url='' 會撞 UNIQUE constraint 整個 submit 崩掉（2026-07-05 修）。
     # 改用每篇唯一的合成 url（非 http scheme，下游不會去抓）＝內容雜湊，天然去重。
     synthetic_url = f"manual-text://{h}"
-    return _save_substack_item(news_id, url=synthetic_url, title=title, body=text,
+    return _save_substack_item(news_id, url=synthetic_url, title=title, body=text_body,
                                source_type="text", extra_tags=["user_text"], immediate=immediate,
                                publish_now=publish_now,
                                submission_id=submission_id, variant=variant)
@@ -187,15 +211,18 @@ def process_youtube(url: str, note: str = "", immediate: bool = False,
         # No transcript — fall back to treating it as a URL source.
         # 仍標 youtube + enrich_yt：Mac 端 drain 會用 Whisper 把無字幕影片轉出來。
         news_id = _make_news_id("substack_yt_nocap_" + _make_news_id(url))
-        body = f"# {note or 'YouTube'}\n\n（無字幕，Mac 端會用 Whisper 轉逐字稿）\n\n## 種子來源\n{url}\n"
-        return _save_substack_item(news_id, url=url, title=note or "YouTube (no transcript)",
+        yt_title = _youtube_title(url) or "YouTube 影片"
+        body = (brief_block(note)
+                + f"# {yt_title}\n\n（無字幕，Mac 端會用 Whisper 轉逐字稿）\n\n## 種子來源\n{url}\n")
+        return _save_substack_item(news_id, url=url, title=yt_title,
                                    body=body, source_type="youtube",
                                    extra_tags=["youtube", "video", "enrich_yt", "no_caption"],
                                    immediate=immediate, publish_now=publish_now,
                                    submission_id=submission_id, variant=variant)
     news_id = _make_news_id("substack_yt_" + info["video_id"])
-    title = note or info["title"]
-    body = f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}"
+    title = info["title"]
+    body = (brief_block(note)
+            + f"# {info['title']}\n\n(YouTube transcript, lang={info['language']})\n\n{info['transcript']}")
     return _save_substack_item(news_id, url=url, title=title, body=body,
                                source_type="youtube", extra_tags=["youtube", "video", "enrich_yt"],
                                immediate=immediate, publish_now=publish_now,
@@ -218,8 +245,8 @@ def process_youtube_multi(urls: list[str], note: str = "", immediate: bool = Fal
     key = hashlib.md5("|".join(sorted(urls)).encode()).hexdigest()
     news_id = _make_news_id("substack_ytmulti_" + key)
     seeds = "\n".join(urls)
-    title = note or "巨人之聲 · 多源 YouTube"
-    body = (f"# {title}\n\n（{len(urls)} 支 YouTube 種子；Mac 端會自動建深度素材包："
+    title = _youtube_title(urls[0]) or "多支 YouTube 影片"
+    body = (brief_block(note) + f"# {title}\n\n（{len(urls)} 支 YouTube 種子；Mac 端會自動建深度素材包："
             f"全逐字稿（無字幕走 Whisper）＋自動搜尋對應書面深度報告）\n\n## 種子來源\n{seeds}\n")
     return _save_substack_item(news_id, url=urls[0], title=title, body=body,
                                source_type="youtube",
@@ -249,8 +276,8 @@ def process_images(paths: list[str], note: str = "", immediate: bool = False,
     key = "|".join(sorted(paths))
     news_id = _make_news_id("substack_img_" + hashlib.md5(key.encode()).hexdigest())
     refs = "\n".join(f"![screenshot]({_RAW_BASE}{p})" for p in paths)
-    body = f"# {note}\n\n（使用者上傳 {len(paths)} 張截圖作為素材，主題：{note}）\n\n{refs}"
-    return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=note, body=body,
+    body = brief_block(note) + f"# 截圖素材（{len(paths)} 張）\n\n（使用者上傳 {len(paths)} 張截圖作為素材）\n\n{refs}"
+    return _save_substack_item(news_id, url=_RAW_BASE + paths[0], title=f"截圖素材（{len(paths)} 張）", body=body,
                                source_type="image", extra_tags=["user_image", f"images:{len(paths)}"],
                                immediate=immediate, publish_now=publish_now,
                                submission_id=submission_id, variant=variant)

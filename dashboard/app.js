@@ -727,6 +727,8 @@ function updateSubmissionUi() {
   const source = selected("source") || "url";
   const meta = target === "meta";
   $("substack-options").hidden = meta;
+  $("submission-view-field").hidden = meta;
+  $("submission-hint").hidden = meta;
   $("meta-options").hidden = !meta;
   $("source-line-field").hidden = source === "text";
   $("source-text-field").hidden = source !== "text";
@@ -849,9 +851,14 @@ async function submitMaterial(event) {
   event.preventDefault();
   if (!state.dashboard || !currentToken()) return formMessage("請先解鎖營運資料。", "bad");
   const target = selected("target");
-  const sourceType = selected("source");
+  let sourceType = selected("source");
   const content = (sourceType === "text" ? $("source-text").value : $("source-line").value).trim();
-  const note = $("submission-note").value.trim();
+  // 貼 YouTube 連結卻沒切到 YouTube：自動辨識（選錯會被當一般網頁抓，拿不到逐字稿）
+  if (sourceType === "url" && /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(content)) sourceType = "youtube";
+  const angle = $("submission-note").value.trim();
+  const view = target === "substack" ? $("submission-view").value.trim() : "";
+  // 兩欄合成一段送出（後端 substack_radar/hsin_brief.py 會拆開）；兩者都只給寫手看，不當標題
+  const note = view ? `【角度】${angle}\n【我的想法】${view}` : angle;
   const platforms = [...document.querySelectorAll('input[name="platform"]:checked')].map((input) => input.value);
   const metaMode = selected("meta-mode") || "queue";
   const substackMode = selected("substack-mode") || "draft_priority";
@@ -877,6 +884,7 @@ async function submitMaterial(event) {
     $("source-line").value = "";
     $("source-text").value = "";
     $("submission-note").value = "";
+    $("submission-view").value = "";
     await loadPrivateData(currentToken(), {quiet: true});
   } catch (error) {
     if (error.status === 401) showAuthNotice(error.message);

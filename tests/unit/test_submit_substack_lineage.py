@@ -261,7 +261,9 @@ def test_variant_of_same_source_becomes_a_separate_draft_candidate(monkeypatch, 
     assert original["id"] != variant["id"]
     candidates = {row[0]: row for row in drain_substack._candidates(only_current_control=True)}
     assert set(candidates) == {original["id"], variant["id"]}
-    assert candidates[variant["id"]][1] == "新的提示：更白話"        # 新提示就是寫手看到的標題
+    # 2026-11-13：提示不再當標題（會被印成文章的來源連結）；改放在給寫手的說明區塊
+    assert "新的提示：更白話" not in candidates[variant["id"]][1]
+    assert "新的提示：更白話" in candidates[variant["id"]][4]
     assert "regenerated" in candidates[variant["id"]][5]
 
 

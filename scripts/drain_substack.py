@@ -43,6 +43,7 @@ SUBSTACK_PUBLISH_UNPROVEN = 7
 REMOTE_PUBLICATION_EVIDENCE_PENDING = 8
 # compose 偵測到 Substack 登入失效（401）時回這個碼：整輪停下，下一篇也不必試。
 SUBSTACK_AUTH_BLOCKED = 9
+NO_MATERIAL = 10   # compose：投稿素材沒抓到內容，已通知主編，不重試
 # 同一篇「寫完了但推不上去」的次數上限。每次重試都要重新叫 AI 寫整篇；2026-10-07～09
 # 沒有上限，同三篇被重寫了 300 多次、把所有 AI 額度燒光。超過就擱置，等人處理。
 ATTEMPTS_FILE = REPO / "data" / "substack_drafts" / ".substack_attempts.json"
@@ -364,6 +365,10 @@ def main():
                     f"[drain] ⚠️ remote Substack evidence exists for {rid[:12]}; "
                     "receipt will reconcile canonical state next run"
                 )
+        elif r.returncode == NO_MATERIAL:
+            done.add(rid)
+            _save_done(done)
+            print(f"[drain] 🛑 {rid[:12]} 素材沒抓到內容，已通知主編；不重試")
         else:
             print(f"[drain] ⚠️ compose failed for {rid[:12]} (rc={r.returncode}); will retry next run")
     print(

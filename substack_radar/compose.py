@@ -474,6 +474,19 @@ def _pick_top_from_pool(window_days: int, label: str) -> Optional[Tuple[str, str
     return (nid, title, body or "", topic or "other")
 
 
+def _is_user_submission(news_id: str) -> bool:
+    """這筆素材是不是主編從投稿頁送進來的（tags 帶 user_submission_substack）。"""
+    try:
+        conn = sqlite3.connect(str(NEWS_DB_PATH))
+        try:
+            row = conn.execute("SELECT COALESCE(tags,'') FROM news_items WHERE id=?", (news_id,)).fetchone()
+        finally:
+            conn.close()
+        return bool(row) and "user_submission_substack" in row[0]
+    except Exception:
+        return False
+
+
 def pick_morning_news(news_id: Optional[str] = None) -> Optional[Tuple[str, str, str, str]]:
     """Type-A morning source. 2026-05-30: now uses the SAME deterministic scorer as
     evening (`_pick_top_from_pool`) — no more dependency on the news_radar LLM
@@ -1469,6 +1482,7 @@ def render_substack_cover(
 # 或推送成功就自動解除。更新 cookie：scripts/update_substack_cookie.sh
 SUBSTACK_AUTH_MARKER = _REPO_ROOT / "data" / "substack_drafts" / ".substack_auth_failed"
 EXIT_SUBSTACK_AUTH_BLOCKED = 9
+EXIT_NO_MATERIAL = 10   # 主編投稿但素材沒抓到：已通知，drain 不要重試（重試只會重寄通知）
 
 
 def _cookie_fingerprint() -> str:
@@ -2153,6 +2167,10 @@ COLUMN_INTRO = {
 }
 
 
+def _link_text(text, limit: int) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).replace("[", "（").replace("]", "）").strip()[:limit]
+
+
 def _column_header(title: str, *, source_title=None, source_url=None, series_part=None) -> str:
     """文章最上方一行：專欄是什麼＋這篇根據什麼（2026-10-17，對標曼報 Pro 每篇開頭的
     專欄說明與「重點參考資料」）。讀者第一眼就知道這篇替他濾了什麼、可信度從哪來；
@@ -2163,7 +2181,8 @@ def _column_header(title: str, *, source_title=None, source_url=None, series_par
     label = {1: f"{column}｜週末拆解上篇", 2: f"{column}｜週末拆解下篇"}.get(series_part, column)
     line = f"> **{label}**｜{COLUMN_INTRO[column]}。" if label == column else f"> **{label}**　{COLUMN_INTRO[column]}。"
     if source_url and source_title:
-        line += f"本篇根據：[{str(source_title)[:60]}]({source_url})"
+        # 標題裡的換行、方括號會把連結弄壞（2026-11-11 投稿說明被當標題、含換行就跑版）
+        line += f"本篇根據：[{_link_text(source_title, 60)}]({source_url})"
     out = line + "\n\n"
     if series_part == 2:
         prev_title, prev_url = _series_prev_post()
@@ -2243,7 +2262,7 @@ def _sources_block(*, source_title=None, source_url=None, reports=None, article:
         return ""
     block = ["---", "", "### 📚 本文取材", "", "公開來源，可點擊查證。"]
     if source_url:
-        block.append(f"- **主來源**：[{(source_title or '原始來源')[:80]}]({source_url})")
+        block.append(f"- **主來源**：[{_link_text(source_title or '原始來源', 80)}]({source_url})")
     if rep_links:
         block.extend(("", f"**延伸研究**（{len(rep_links)} 源）"))
         block.extend(f"{index}. {link}" for index, link in enumerate(rep_links, 1))
@@ -2401,6 +2420,15 @@ async def _run_inner(args: argparse.Namespace) -> int:
             )
             return 2
         news_id, raw_title, raw_content, topic_category = pick
+        # 主編親自投稿（Hsin選觀點，2026-11-13）：投稿說明只給寫手看，從素材裡拿掉；
+        # 換成 Hsin 的寫作框架（素材當引子、原創延伸，不是翻譯或摘要）。
+        from substack_radar.hsin_brief import extract as _extract_brief, writer_mandate as _mandate
+        _brief, raw_content = _extract_brief(raw_content)
+        if _is_user_submission(news_id):
+            os.environ["SUBSTACK_COLUMN"] = "hsin"
+            args.editorial_note = "\n".join(x for x in ((args.editorial_note or "").strip(), _mandate(_brief)) if x)
+            print(f"[Hsin] 主編投稿：角度={(_brief.get('angle') or '（未填）')[:40]!r} "
+                  f"想法={len(_brief.get('view') or '')} 字")
         source = {
             "id": news_id,
             "title": raw_title,
@@ -2541,6 +2569,19 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 pass
         else:
             print(f"[Bundle] ⚠️ 找不到或讀不到素材包：{args.bundle}")
+
+    # 1b-2) 主編投稿但素材沒抓到（2026-11-12：三支 YouTube 都沒逐字稿，寫手只看得到一句投稿說明，
+    # 其中一篇寫成「7,307 字逐字稿沒送到我停筆」還過了稽核）。沒有素材就不寫，通知主編。
+    if os.getenv("SUBSTACK_COLUMN") == "hsin":
+        _material = re.sub(r"（無字幕[^）]*）|## 種子來源\n\S+|^#.*$", "", raw_content or "", flags=re.M).strip()
+        _own = len((locals().get("_brief") or {}).get("view") or "")
+        if len(_material) < 1200 and _own < 200:
+            msg = (f"投稿素材沒抓到內容（只有 {len(_material)} 字），這篇沒有寫。"
+                   "多半是影片沒有字幕、也轉錄失敗，或網頁擋爬蟲。請改貼文字，或在「我的想法」多寫一點。")
+            print(f"[Hsin] 🛑 {msg}")
+            notify_substack_failure(mode="Hsin選觀點", error_msg=msg,
+                                    extra_context={"來源": raw_title, "網址": source_url or ""})
+            return EXIT_NO_MATERIAL
 
     # 1c) Deep modes are deliberately two-pass.  First digest only the primary
     # source; then use its evidence gaps to collect 5–10 readable external sources.
