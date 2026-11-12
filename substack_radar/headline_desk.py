@@ -54,7 +54,14 @@ def _to_traditional(text: str) -> str:
     不用 s2twp——那個會改詞（項目→專案，2026-10 吃過虧）。"""
     try:
         import opencc
-        return opencc.OpenCC("s2tw").convert(text or "")
+        text = text or ""
+        # 只有真的是簡體才轉：對繁體跑 s2tw 會把「只買」改成「隻買」、「簽」改成「籤」
+        # （2026-11-11 那篇的 30 秒重點就這樣被改壞）。判斷方式：繁轉簡後幾乎沒變＝本來就是簡體。
+        simplified = opencc.OpenCC("t2s").convert(text)
+        changed = sum(a != b for a, b in zip(text, simplified))
+        if changed > max(1, len(text) * 0.03):
+            return text
+        return opencc.OpenCC("s2tw").convert(text)
     except Exception:
         return text or ""
 
