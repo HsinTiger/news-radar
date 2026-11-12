@@ -674,7 +674,9 @@ def _editor_pick(rows: list, *, ai: bool = False):
         return None
     items = "\n\n".join(f"[{i}] {r[1]}\n" + re.sub(r"\s+", " ", (r[2] or "")[:1200])
                         for i, r in enumerate(rows, 1))
-    column_rule = ("這是 AI 專欄：只談 AI 的方法論、系統導入、工程實務，讀完要能動手。純哲學、純新聞、跑分給低分。"
+    column_rule = ("這是 AI 專欄：談怎麼把 AI 用進工作。評分看「不寫程式的知識工作者也用得上嗎」："
+                   "導入經驗、工作方法、組織怎麼調整給高分；純基礎建設（Kubernetes、推論排程、編譯器）、"
+                   "純哲學、純新聞、跑分給 4 分以下（2026-11-13 信哥：題目太技術，讀者跟不上）。"
                    if ai else "這是思想專欄：一場對談帶出值得想的觀點，但觀點要能連回讀者的工作、錢或判斷。")
     try:
         from src.llm_brain import _extract_json_blob
