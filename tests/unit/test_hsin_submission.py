@@ -45,3 +45,21 @@ def test_submission_title_is_never_the_note(monkeypatch):
     sub.process_text("一段很有意思的素材\n第二行", note="寫一篇感性抒發")
     assert saved["title"] == "一段很有意思的素材" and "寫一篇感性抒發" not in saved["title"]
     assert extract(saved["body"])[0]["angle"] == "寫一篇感性抒發"
+
+
+def test_screenshot_marker_becomes_recognised_text():
+    from substack_radar.screenshots import resolve
+    body = "[[SCREENSHOTS:abcd1234-ef:2]]\n\n我補充的一句話"
+    out, n = resolve(body, fetch=lambda sid: [{"data_b64": "aGk="}, {"data_b64": "aGk="}],
+                     ocr=lambda paths: "圖上的字" * 10)
+    assert "[[SCREENSHOTS" not in out and "圖上的字" in out and "我補充的一句話" in out and n == 40
+    assert resolve("沒有截圖的素材") == ("沒有截圖的素材", -1)
+
+
+def test_screenshot_failure_drops_marker_and_reports_zero():
+    from substack_radar.screenshots import resolve
+
+    def boom(sid):
+        raise RuntimeError("worker down")
+    out, n = resolve("[[SCREENSHOTS:abcd1234-ef:1]]\n\n", fetch=boom)
+    assert out.strip() == "" and n == 0

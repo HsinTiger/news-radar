@@ -105,6 +105,10 @@ jobs:
         id: process
         env:
           PYTHONUNBUFFERED: "1"
+          # 內容與投稿說明走環境變數，不直接插進 shell：說明現在可以寫到幾千字，
+          # 裡面只要有引號或 $ 就會把指令弄壞（2026-11-13）。
+          SUBMISSION_CONTENT: ${{ inputs.content }}
+          SUBMISSION_NOTE: ${{ inputs.note }}
         run: |
           case "${{ inputs.source_type }}" in
             url)     FLAG=--url ;;
@@ -120,8 +124,8 @@ jobs:
           VAR=""
           [ "${{ inputs.variant }}" = "true" ] && VAR="--variant"
           python scripts/submit_substack.py \
-            "$FLAG" "${{ inputs.content }}" \
-            --note "${{ inputs.note }}" \
+            "$FLAG" "$SUBMISSION_CONTENT" \
+            --note "$SUBMISSION_NOTE" \
             --submission-id "${{ inputs.submission_id }}" $IMM $PUB $VAR 2>&1
 
       - name: Persist verified runtime state

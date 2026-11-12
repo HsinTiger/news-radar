@@ -2424,6 +2424,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
         # 換成 Hsin 的寫作框架（素材當引子、原創延伸，不是翻譯或摘要）。
         from substack_radar.hsin_brief import extract as _extract_brief, writer_mandate as _mandate
         _brief, raw_content = _extract_brief(raw_content)
+        from substack_radar.screenshots import resolve as _resolve_shots
+        raw_content, _shot_chars = _resolve_shots(raw_content)      # 截圖投稿：圖 → 文字
         if _is_user_submission(news_id):
             os.environ["SUBSTACK_COLUMN"] = "hsin"
             args.editorial_note = "\n".join(x for x in ((args.editorial_note or "").strip(), _mandate(_brief)) if x)
@@ -2575,7 +2577,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
     if os.getenv("SUBSTACK_COLUMN") == "hsin":
         _material = re.sub(r"（無字幕[^）]*）|## 種子來源\n\S+|^#.*$", "", raw_content or "", flags=re.M).strip()
         _own = len((locals().get("_brief") or {}).get("view") or "")
-        if len(_material) < 1200 and _own < 200:
+        # 截圖的字本來就少（幾張圖幾百字），門檻放低；連結類要有真正的內文
+        _need = 250 if locals().get("_shot_chars", -1) >= 0 else 1200
+        if len(_material) < _need and _own < 200:
             msg = (f"投稿素材沒抓到內容（只有 {len(_material)} 字），這篇沒有寫。"
                    "多半是影片沒有字幕、也轉錄失敗，或網頁擋爬蟲。請改貼文字，或在「我的想法」多寫一點。")
             print(f"[Hsin] 🛑 {msg}")

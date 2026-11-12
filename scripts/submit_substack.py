@@ -151,6 +151,8 @@ def _page_title(text: str) -> str:
     """素材的第一行當標題（給來源連結顯示用）。主編的投稿說明永遠不當標題（2026-11-13）。"""
     for line in (text or "").splitlines():
         line = line.strip().lstrip("#").strip()
+        if line.startswith("[[SCREENSHOTS:"):
+            continue
         if len(line) >= 4:
             return line[:80]
     return ""
@@ -191,7 +193,7 @@ def process_text(text: str, note: str = "", immediate: bool = False,
                  submission_id: str = "", variant: bool = False) -> dict:
     h = hashlib.md5(text.encode()).hexdigest()
     news_id = _make_news_id(f"substack_text_{h}")
-    title = _page_title(text) or "主編手記"
+    title = _page_title(text) or ("截圖素材" if "[[SCREENSHOTS:" in text else "主編手記")
     text_body = brief_block(note) + text
     # news_items.url 是 UNIQUE NOT NULL：全文投稿沒有來源網址，但不能用空字串——
     # 第二篇 url='' 會撞 UNIQUE constraint 整個 submit 崩掉（2026-07-05 修）。

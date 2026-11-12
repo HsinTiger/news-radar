@@ -10,6 +10,11 @@ const API_VERSION = "2026-08-06.substack-publish-now-v1";
 const OWNER_RATE_LIMIT_PER_MINUTE = 10;
 const TARGETS = new Set(["meta", "substack"]);
 const SOURCE_TYPES = new Set(["url", "text", "youtube"]);
+// 2026-11-13：投稿說明分成「角度」「我的想法」兩欄，500 字不夠寫自己的觀點段落。
+const NOTE_MAX = 4000;
+const IMAGE_MAX_COUNT = 6;
+const IMAGE_MAX_B64 = 900_000; // 前端已縮到長邊 1600px 的 JPEG，一張通常 200–400KB
+const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const META_MODES = new Set(["publish_now", "queue"]);
 const PLATFORMS = new Set(["facebook", "instagram", "threads"]);
 const WATCHDOG_REPOSITORY = "HsinTiger/news-radar";
@@ -115,6 +120,11 @@ export default {
       if (request.method === "GET" && url.pathname === "/api/submissions") {
         await requireToken(request, env.OWNER_TOKEN, "owner");
         return await listSubmissions(url, env, cors);
+      }
+      const imagesMatch = url.pathname.match(/^\/api\/submissions\/([A-Za-z0-9_-]{8,80})\/images$/);
+      if (request.method === "GET" && imagesMatch) {
+        await requireToken(request, env.OWNER_TOKEN, "owner");
+        return await submissionImages(env, imagesMatch[1], cors);
       }
       const regenerateMatch = url.pathname.match(
         /^\/api\/submissions\/([A-Za-z0-9_-]{8,80})\/regenerate$/,
@@ -422,6 +432,34 @@ function cleanString(value, name, max, required = false) {
   return text;
 }
 
+function cleanImages(value, target) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new HTTPError(400, "images must be an array", "invalid_input");
+  if (value.length === 0) return [];
+  if (target !== "substack") throw new HTTPError(400, "images are only supported for Substack", "invalid_input");
+  if (value.length > IMAGE_MAX_COUNT) {
+    throw new HTTPError(400, `at most ${IMAGE_MAX_COUNT} images`, "invalid_input");
+  }
+  return value.map((item) => {
+    const mime = cleanString(item?.mime, "image.mime", 20, true);
+    const data = typeof item?.data === "string" ? item.data : "";
+    if (!IMAGE_MIMES.has(mime)) throw new HTTPError(400, "image must be jpeg, png, or webp", "invalid_input");
+    if (!data || data.length > IMAGE_MAX_B64 || !/^[A-Za-z0-9+/=]+$/.test(data)) {
+      throw new HTTPError(400, "image is empty, too large, or not base64", "invalid_input");
+    }
+    return { mime, data };
+  });
+}
+
+async function submissionImages(env, submissionId, cors) {
+  const { results } = await env.DB.prepare(
+    "SELECT idx,mime,data_b64 FROM submission_images WHERE submission_id=? ORDER BY idx",
+  )
+    .bind(submissionId)
+    .all();
+  return reply({ ok: true, images: results }, 200, cors);
+}
+
 async function enforceOwnerRateLimit(env) {
   const row = await env.DB.prepare(
     "SELECT COUNT(*) AS count FROM audit_events WHERE actor='owner' AND action IN ('create_submission','regenerate_submission') AND datetime(created_at) >= datetime('now','-1 minute')",
@@ -481,15 +519,17 @@ async function listLearningDecisions(env, cors) {
 }
 
 async function createSubmission(request, env, cors) {
-  const body = await bodyJson(request);
+  const body = await bodyJson(request, 6_000_000);
   const target = cleanString(body.target, "target", 20, true);
   const sourceType = cleanString(body.source_type, "source_type", 20, true);
   if (!TARGETS.has(target)) throw new HTTPError(400, "target must be meta or substack", "invalid_input");
   if (!SOURCE_TYPES.has(sourceType)) {
     throw new HTTPError(400, "source_type must be url, text, or youtube", "invalid_input");
   }
-  const content = cleanString(body.content, "content", 50_000, true);
-  const note = cleanString(body.note, "note", 500);
+  const images = cleanImages(body.images, target);
+  // 截圖投稿可以不附文字：素材就是圖。內容開頭放一個標記，Mac 端寫稿前換成辨識出來的文字。
+  const content = cleanString(body.content, "content", 50_000, images.length === 0);
+  const note = cleanString(body.note, "note", NOTE_MAX);
   let mode = cleanString(body.mode, "mode", 20) || (target === "substack" ? "draft" : "queue");
   if (target === "substack" && !new Set(["draft", "draft_priority", "publish_now"]).has(mode)) {
     throw new HTTPError(400, "Substack mode must be draft, draft_priority, or publish_now", "invalid_input");
@@ -570,14 +610,19 @@ async function createSubmission(request, env, cors) {
         id,
         idempotencyKey,
         target,
-        sourceType,
-        content,
+        images.length ? "text" : sourceType,
+        images.length ? `[[SCREENSHOTS:${id}:${images.length}]]\n\n${content}` : content,
         note,
         JSON.stringify(platforms),
         mode,
         "queued",
         now,
         now,
+      ),
+      ...images.map((image, idx) =>
+        env.DB.prepare(
+          "INSERT INTO submission_images(submission_id,idx,mime,data_b64,created_at) VALUES(?,?,?,?,?)",
+        ).bind(id, idx, image.mime, image.data, now),
       ),
       env.DB.prepare(
         "INSERT INTO audit_events(actor,action,subject_id,status,metadata_json,created_at) VALUES('owner','create_submission',?,'accepted',?,?)",
@@ -624,7 +669,7 @@ async function regenerateSubmission(request, env, sourceId, cors) {
     throw new HTTPError(400, "只有 Substack 投稿可以重產新版本", "unsupported_target");
   }
   const noteProvided = Object.prototype.hasOwnProperty.call(body, "note");
-  const note = noteProvided ? cleanString(body.note, "note", 500) : original.note;
+  const note = noteProvided ? cleanString(body.note, "note", NOTE_MAX) : original.note;
   const idempotencyKey = cleanString(
     request.headers.get("Idempotency-Key") || body.idempotency_key,
     "idempotency_key",

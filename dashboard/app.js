@@ -730,8 +730,10 @@ function updateSubmissionUi() {
   $("submission-view-field").hidden = meta;
   $("submission-hint").hidden = meta;
   $("meta-options").hidden = !meta;
-  $("source-line-field").hidden = source === "text";
-  $("source-text-field").hidden = source !== "text";
+  $("source-line-field").hidden = source === "text" || source === "image";
+  $("source-text-field").hidden = source !== "text" && source !== "image";
+  $("source-image-field").hidden = source !== "image";
+  $("source-image-option").hidden = meta;
   $("source-line-label").textContent = source === "youtube" ? "YouTube 網址" : "來源網址";
   $("source-line").placeholder = source === "youtube" ? "https://youtube.com/watch?v=…" : "https://…";
   const ready = (state.dashboard?.automation || state.publicHealth?.automation || {}).meta_publish_now_ready === true;
@@ -847,12 +849,43 @@ async function submitRegen(event) {
   else $("regen-status").textContent = $("history-message").textContent;
 }
 
+// 截圖先在瀏覽器縮到長邊 1600px 的 JPEG（一張約 200–400KB），再用 base64 送出。
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const data = canvas.toDataURL("image/jpeg", 0.82).split(",")[1] || "";
+      if (!data || data.length > 900000) return reject(new Error(`${file.name} 太大，請裁切後再試`));
+      resolve({mime: "image/jpeg", data});
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`${file.name} 不是可讀取的圖片`)); };
+    img.src = url;
+  });
+}
+
 async function submitMaterial(event) {
   event.preventDefault();
   if (!state.dashboard || !currentToken()) return formMessage("請先解鎖營運資料。", "bad");
   const target = selected("target");
   let sourceType = selected("source");
-  const content = (sourceType === "text" ? $("source-text").value : $("source-line").value).trim();
+  let images = [];
+  if (sourceType === "image") {
+    if (target !== "substack") return formMessage("截圖目前只支援送到 Substack。", "bad");
+    const files = [...$("source-images").files].slice(0, 6);
+    if (!files.length) return formMessage("請選擇至少一張截圖。", "bad");
+    formMessage("正在縮小截圖…", "");
+    try { images = await Promise.all(files.map(shrinkImage)); }
+    catch (error) { return formMessage(`截圖讀取失敗：${error.message || error}`, "bad"); }
+  }
+  // 截圖可以另外補一段文字（選填）；其餘形式照原本的欄位
+  const content = (sourceType === "url" || sourceType === "youtube" ? $("source-line").value : $("source-text").value).trim();
   // 貼 YouTube 連結卻沒切到 YouTube：自動辨識（選錯會被當一般網頁抓，拿不到逐字稿）
   if (sourceType === "url" && /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(content)) sourceType = "youtube";
   const angle = $("submission-note").value.trim();
@@ -862,7 +895,7 @@ async function submitMaterial(event) {
   const platforms = [...document.querySelectorAll('input[name="platform"]:checked')].map((input) => input.value);
   const metaMode = selected("meta-mode") || "queue";
   const substackMode = selected("substack-mode") || "draft_priority";
-  if (!content) return formMessage("請提供網址、YouTube 或原始文字。", "bad");
+  if (!content && !images.length) return formMessage("請提供網址、YouTube、原始文字或截圖。", "bad");
   if (target === "meta" && !platforms.length) return formMessage("Meta 至少要選一個平台。", "bad");
   if (target === "meta" && metaMode === "publish_now" && sourceType === "text" && !note) return formMessage("立即發布純文字時，處理說明會作為編輯標題，不能留白。", "bad");
   if (target === "meta" && metaMode === "publish_now" && sourceType === "text" && content.length < 80) return formMessage("立即發布純文字至少需要 80 字素材。", "bad");
@@ -872,7 +905,8 @@ async function submitMaterial(event) {
   button.textContent = "正在送出…";
   formMessage("正在建立可追蹤的投稿紀錄。", "");
   try {
-    const payload = buildSubmissionPayload({target, sourceType, content, note, platforms, metaMode, substackMode});
+    const payload = buildSubmissionPayload({target, sourceType: images.length ? "text" : sourceType, content, note, platforms, metaMode, substackMode});
+    if (images.length) payload.images = images;
     const idempotency = window.crypto?.randomUUID?.().replaceAll("-", "") || `owner${Date.now()}${Math.random().toString(16).slice(2)}`;
     const result = await request("/api/submissions", {
       method: "POST",
@@ -885,6 +919,7 @@ async function submitMaterial(event) {
     $("source-text").value = "";
     $("submission-note").value = "";
     $("submission-view").value = "";
+    $("source-images").value = "";
     await loadPrivateData(currentToken(), {quiet: true});
   } catch (error) {
     if (error.status === 401) showAuthNotice(error.message);

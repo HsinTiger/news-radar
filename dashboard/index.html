@@ -273,13 +273,15 @@
                 <label><input type="radio" name="source" value="url" checked><span>網址</span></label>
                 <label><input type="radio" name="source" value="youtube"><span>YouTube</span></label>
                 <label><input type="radio" name="source" value="text"><span>貼上文字</span></label>
+                <label id="source-image-option"><input type="radio" name="source" value="image"><span>截圖</span></label>
               </div>
             </fieldset>
 
             <label class="field" id="source-line-field"><span id="source-line-label">來源網址</span><input id="source-line" type="url" inputmode="url" placeholder="https://…" autocomplete="off"></label>
             <label class="field" id="source-text-field" hidden><span>原始素材</span><textarea id="source-text" rows="8" placeholder="貼上值得延伸的內容，不必先整理。"></textarea></label>
-            <label class="field"><span id="submission-note-label">想從哪個角度切？ <small>選填・只給寫手看，不會出現在文章裡</small></span><textarea id="submission-note" rows="2" maxlength="160" placeholder="例如：不要被影片帶偏，借這個題材談資本主義後期的出路。"></textarea></label>
-            <label class="field" id="submission-view-field"><span>我自己的想法或經歷 <small>選填・文章會以這段為主幹；個人經歷只會用你寫在這裡的</small></span><textarea id="submission-view" rows="4" maxlength="320" placeholder="例如：我自己前幾年也在槓桿上吃過虧，後來才想通…"></textarea></label>
+            <label class="field" id="source-image-field" hidden><span>截圖 <small>最多 6 張・會自動縮小後上傳，系統辨識圖上的文字當素材</small></span><input id="source-images" type="file" accept="image/*" multiple></label>
+            <label class="field"><span id="submission-note-label">想從哪個角度切？ <small>選填・只給寫手看，不會出現在文章裡</small></span><textarea id="submission-note" rows="2" maxlength="600" placeholder="例如：不要被影片帶偏，借這個題材談資本主義後期的出路。"></textarea></label>
+            <label class="field" id="submission-view-field"><span>我自己的想法或經歷 <small>選填・文章會以這段為主幹；個人經歷只會用你寫在這裡的</small></span><textarea id="submission-view" rows="6" maxlength="3200" placeholder="例如：我自己前幾年也在槓桿上吃過虧，後來才想通…"></textarea></label>
             <p class="field-help" id="submission-hint">素材只當引子：系統會自己找資料延伸，寫成原創的 Hsin選觀點，不是翻譯或摘要。貼 YouTube 連結會自動辨識。</p>
 
             <fieldset id="substack-options">
