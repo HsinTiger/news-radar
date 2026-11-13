@@ -2121,6 +2121,24 @@ def _load_bundle_curated(path: str) -> str:
         return ""
 
 
+def _load_bundle_transcript(path: str, limit: int = 60000) -> str:
+    """素材包裡「完整逐字稿素材」那一段。Hsin選觀點要靠它寫：2026-11-13 硅谷101 那支
+    抓到 31,411 字字幕，卻因為只疊精華（1,108 字的連結與人名）被判成「沒抓到內容」。
+    抓取失敗的佔位字（以「(」開頭）不算逐字稿。"""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    marker = "## 完整逐字稿素材"
+    if marker not in text:
+        return ""
+    body = text.split(marker, 1)[1].strip()
+    real = re.sub(r"^#{2,4} .*$|^\s*[(（][^\n]{0,200}$", "", body, flags=re.M).strip()
+    if len(real) < 500:
+        return ""
+    return body[:limit]
+
+
 # 2026-08-09：延伸研究區塊原本原封不動印出搜尋結果，實測一篇亞當·斯密的文章
 # 十個「來源」裡混進兩個 NSFW subreddit 聚合站、一個俄文影片下載站、
 # 兩個工具首頁（bolt.new、elicit.com）與一篇無關的 n8n 教學——只有一個真的相關。
@@ -2553,6 +2571,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     + bundle_extra
                 )
                 print(f"[Bundle] 疊入深度素材包 {Path(args.bundle).name}（+{len(bundle_extra):,} 字元）")
+                if os.getenv("SUBSTACK_COLUMN") == "hsin":
+                    _tx = _load_bundle_transcript(args.bundle)
+                    if _tx:
+                        # 有逐字稿了，「無字幕」的佔位說明拿掉，免得稽核看到兩種說法
+                        raw_content = re.sub(r"[（(]無字幕[^）)]*[）)]", "", raw_content)
+                        raw_content += "\n\n===== 影片逐字稿（素材，不是要你轉述）=====\n" + _tx
+                        print(f"[Bundle] 疊入逐字稿（+{len(_tx):,} 字元）")
             else:
                 print(
                     f"[Bundle] {Path(args.bundle).name} 僅當延伸來源種子；"

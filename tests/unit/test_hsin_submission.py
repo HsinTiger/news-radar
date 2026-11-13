@@ -63,3 +63,19 @@ def test_screenshot_failure_drops_marker_and_reports_zero():
         raise RuntimeError("worker down")
     out, n = resolve("[[SCREENSHOTS:abcd1234-ef:1]]\n\n", fetch=boom)
     assert out.strip() == "" and n == 0
+
+
+def test_bundle_transcript_is_loaded_for_writer(tmp_path):
+    """2026-11-13：字幕抓到 31,411 字卻只疊 1,108 字精華，被判成沒素材。"""
+    from substack_radar.compose import _load_bundle_transcript
+
+    ok = tmp_path / "a.md"
+    ok.write_text("# 包\n\n## 重點參考資料\n- x\n\n---\n## 完整逐字稿素材\n\n### 影片 — 頻道\n\n" + "逐字稿內容。" * 200,
+                  encoding="utf-8")
+    assert "逐字稿內容" in _load_bundle_transcript(str(ok))
+    assert len(_load_bundle_transcript(str(ok), limit=300)) == 300
+
+    failed = tmp_path / "b.md"
+    failed.write_text("## 完整逐字稿素材\n\n### 影片 — 頻道\n\n(逐字稿抓取失敗: no captions)\n", encoding="utf-8")
+    assert _load_bundle_transcript(str(failed)) == ""
+    assert _load_bundle_transcript(str(tmp_path / "missing.md")) == ""
