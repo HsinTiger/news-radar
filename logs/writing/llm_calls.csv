@@ -351,3 +351,21 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-12T22:13:54,2026-11-12 20:01 morning,審稿,gateway,deepseek-v4.1-flash,N,2497.8,,,閘道 deepseek-v4.1-flash 回空字串
 2026-11-12T22:28:29,2026-11-12 20:01 morning,審稿,gateway,step-5-preview,Y,875.0,3474,4467,
 2026-11-12T22:40:47,2026-11-12 20:01 morning,,gateway,audit→deepseek-v4.1-flash,Y,737.3,2959,6412,
+2026-11-13T03:11:18,,,gateway,audit→deepseek-v4.1-flash,Y,395.4,3729,8497,
+2026-11-13T03:21:54,,,gateway,audit→deepseek-v4.1-flash,Y,82.3,4234,763,
+2026-11-13T04:06:05,2026-11-13 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,147.5,2735,2126,
+2026-11-13T04:06:10,2026-11-13 04:00 podcast,EditorialResearchBrief,claude_cli,claude,N,2.3,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""7a0c0b25-4f3b-4190-8cfe-d1ec16e6f93c"",""total_cost_usd"":0,"
+2026-11-13T04:07:54,2026-11-13 04:00 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),Y,104.1,,,
+2026-11-13T04:08:52,2026-11-13 04:00 podcast,SubstackDraft,claude_cli,claude,N,2.3,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""86df85b0-ed81-4ffd-8e37-2f0604afa1b0"",""total_cost_usd"":0,"
+2026-11-13T04:29:08,2026-11-13 04:00 podcast,SubstackDraft,antigravity_cli,Claude Opus 4.6 (Thinking),N,1215.8,,,agy exit 3: [agy] print timeout after 10m0s with turn in progress; returning partial output error: print timeout after 10m0s with the turn still in progress; th
+2026-11-13T04:30:55,2026-11-13 04:00 podcast,SubstackDraft,gateway,writer→glm-5.3-flash,Y,107.6,32143,2900,
+2026-11-13T04:34:30,2026-11-13 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,214.5,21281,2315,
+2026-11-13T04:36:03,2026-11-13 04:00 podcast,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,93.1,22327,3710,
+2026-11-13T04:59:00,2026-11-13 04:00 podcast,審稿,gateway,audit,N,1377.2,,,閘道 audit 回空字串
+2026-11-13T05:17:55,2026-11-13 04:00 podcast,審稿,gateway,deepseek-v4.1-flash,N,1134.7,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-13T05:33:49,2026-11-13 04:00 podcast,審稿,gateway,step-5-preview,Y,953.9,20420,25171,
+2026-11-13T05:36:11,2026-11-13 04:00 podcast,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,142.5,23259,4235,
+2026-11-13T06:10:21,2026-11-13 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,2049.9,22508,6928,
+2026-11-13T06:17:56,2026-11-13 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,454.5,3439,11620,
+2026-11-13T06:22:50,2026-11-13 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,282.6,5000,8611,
+2026-11-13T17:02:39,,,gateway,audit→deepseek-v4.1-flash,Y,147.3,3986,1447,
