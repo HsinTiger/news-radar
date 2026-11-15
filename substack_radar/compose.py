@@ -2246,12 +2246,28 @@ def _key_tokens(text: str) -> set:
     return {t for t in words | cjk if t not in _STOP_TOKENS}
 
 
-def _relevant_source(title: str, url: str, article: str) -> bool:
+def _echo_tokens(source_title: str) -> set:
+    """主來源標題的詞（簡繁兩種寫法）。延伸研究是拿主來源標題去搜的，結果標題裡跟它重複的詞
+    一定也在文章裡，不代表相關——2026-11-14「大阪通天閣・新世界商店街」就是靠「新世界」混進來。"""
+    if not source_title:
+        return set()
+    toks = _key_tokens(source_title)
+    try:
+        import opencc
+        toks |= _key_tokens(opencc.OpenCC("s2tw").convert(source_title))
+        toks |= _key_tokens(opencc.OpenCC("t2s").convert(source_title))
+    except Exception:
+        pass
+    return toks
+
+
+def _relevant_source(title: str, url: str, article: str, source_title: str = "") -> bool:
     if not article:
         return True
     if any("\u0400" <= ch <= "\u04ff" for ch in title):   # 讀者看不懂的俄文／烏克蘭文站
         return False
     probe = _key_tokens(title) or _key_tokens(url.rsplit("/", 1)[-1].replace("-", " "))
+    probe -= _echo_tokens(source_title)
     art = str(article)
     for intro in COLUMN_INTRO.values():   # 專欄自述（「頂尖對談」）不算文章內容
         art = art.replace(intro, "")
@@ -2260,7 +2276,7 @@ def _relevant_source(title: str, url: str, article: str) -> bool:
     en = [t for t in hits if t.isascii()]
     zh = len(hits) - len(en)
     # 英文：一個 ≥5 字母的詞或兩個詞；中文兩字片段容易撞到（「頂尖對決」撞「頂尖對談」），要 3 個
-    return any(len(t) >= 5 for t in en) or len(en) >= 2 or zh >= 3 or (en and zh >= 2)
+    return bool(any(len(t) >= 5 for t in en) or len(en) >= 2 or zh >= 3 or (en and zh >= 2))
 
 
 def _sources_block(*, source_title=None, source_url=None, reports=None, article: str = "") -> str:
@@ -2273,7 +2289,9 @@ def _sources_block(*, source_title=None, source_url=None, reports=None, article:
             continue
         if not _citable_source(u, r.get("title") or ""):
             continue
-        if not _relevant_source(r.get("title") or "", u, article):
+        # 🎥 是主編投稿的影片本身（素材包的一手源），一定相關
+        if not (r.get("title") or "").startswith("🎥") and not _relevant_source(
+                r.get("title") or "", u, article, source_title or ""):
             print(f"[Sources] ⏭️ 跟文章無關，不列：{(r.get('title') or u)[:50]}")
             continue
         seen.add(u)

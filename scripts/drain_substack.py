@@ -17,7 +17,7 @@ Usage:
     python scripts/drain_substack.py --only-current-control  # current website/API submissions
 """
 from __future__ import annotations
-import argparse, json, os, re, sqlite3, subprocess, sys
+import argparse, json, os, re, sqlite3, subprocess, sys, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -126,7 +126,48 @@ def _load_done() -> set:
 
 def _save_done(done: set):
     DONE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    done |= _load_done()      # 另一條排程這段時間寫完的也要留著，不能用舊名單蓋掉
     DONE_FILE.write_text(json.dumps({"done": sorted(done)}, ensure_ascii=False, indent=2))
+
+
+# 同一篇投稿只讓一條排程寫（2026-11-14：快速版 00:14 開始寫，每小時版 01:08 又從頭寫一次，
+# 多花 255 分鐘，Substack 草稿是第一版、通知信講的卻是第二版）。
+# 每小時版不拿本機鎖，所以認領做在這裡，哪一條排程進來都擋得到。
+CLAIM_DIR = REPO / "data" / "substack_drafts" / ".claims"
+CLAIM_STALE_S = 8 * 3600
+
+
+def _claim(rid: str) -> bool:
+    d = CLAIM_DIR / rid
+    CLAIM_DIR.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            d.mkdir()
+            (d / "pid").write_text(str(os.getpid()))
+            return True
+        except FileExistsError:
+            try:
+                os.kill(int((d / "pid").read_text().strip()), 0)   # 還活著嗎
+                alive = True
+            except (OSError, ValueError):
+                alive = False
+            try:
+                age = time.time() - d.stat().st_mtime
+            except OSError:
+                continue
+            if alive and age < CLAIM_STALE_S:
+                return False
+            _release(rid)                            # 殘骸：行程死了或超過 8 小時
+    return False
+
+
+def _release(rid: str) -> None:
+    d = CLAIM_DIR / rid
+    try:
+        (d / "pid").unlink(missing_ok=True)
+        d.rmdir()
+    except OSError:
+        pass
 
 
 def _candidate_tags(raw: str | None) -> set[str]:
@@ -322,25 +363,35 @@ def main():
             # 可能寫好幾個小時；做完手上這篇就讓位，剩下的下一輪再寫。
             print("[drain] ⏸️ 編輯排程在等鎖，這一輪先停，剩下的下一輪再寫")
             break
-        print(f"[drain] composing {rid[:12]} …")
-        cmd = [
-            str(PY),
-            "-u",
-            str(COMPOSE),
-            "morning",
-            "--news-id",
-            rid,
-            "--require-substack-draft",
-        ]
-        if "publish_now" in tags:
-            cmd.append("--publish-now")
-        if not args.no_enrich:
-            seeds = _yt_seeds(url, body)
-            if seeds:
-                bundle = _enrich(rid, title, seeds)
-                if bundle:
-                    cmd += ["--bundle", str(bundle)]
-        r = subprocess.run(cmd, cwd=str(REPO))
+        if rid in _load_done():
+            print(f"[drain] ⏭️ {rid[:12]} 另一條排程剛寫完，跳過")
+            done.add(rid)
+            continue
+        if not _claim(rid):
+            print(f"[drain] ⏭️ {rid[:12]} 另一條排程正在寫，跳過")
+            continue
+        try:
+            print(f"[drain] composing {rid[:12]} …")
+            cmd = [
+                str(PY),
+                "-u",
+                str(COMPOSE),
+                "morning",
+                "--news-id",
+                rid,
+                "--require-substack-draft",
+            ]
+            if "publish_now" in tags:
+                cmd.append("--publish-now")
+            if not args.no_enrich:
+                seeds = _yt_seeds(url, body)
+                if seeds:
+                    bundle = _enrich(rid, title, seeds)
+                    if bundle:
+                        cmd += ["--bundle", str(bundle)]
+            r = subprocess.run(cmd, cwd=str(REPO))
+        finally:
+            _release(rid)
         if r.returncode == SUBSTACK_AUTH_BLOCKED:
             print("[drain] 🛑 Substack 登入失效：整輪停止，不再嘗試其他篇。"
                   "更新 cookie：bash scripts/update_substack_cookie.sh")

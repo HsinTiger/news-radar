@@ -79,3 +79,34 @@ def test_bundle_transcript_is_loaded_for_writer(tmp_path):
     failed.write_text("## 完整逐字稿素材\n\n### 影片 — 頻道\n\n(逐字稿抓取失敗: no captions)\n", encoding="utf-8")
     assert _load_bundle_transcript(str(failed)) == ""
     assert _load_bundle_transcript(str(tmp_path / "missing.md")) == ""
+
+
+def test_search_echo_of_source_title_is_not_relevance():
+    """2026-11-14：「大阪通天閣・新世界商店街」靠主來源標題裡的「新世界」混進延伸研究。"""
+    from substack_radar.compose import _relevant_source, _sources_block
+
+    src = "AI撞上美国“新世界”：暴跌、监管、政治博弈，数据中心何去何从？"
+    art = f"在〈{src}〉裡，主持人談資料中心審批的時間表與電網，居民投票反對新建案。"
+    osaka = "大阪景點【通天閣.新世界商店街】 2025交通資訊、營業時間＆必吃美食"
+    assert not _relevant_source(osaka, "https://x.example/osaka", art, src)
+    assert _relevant_source("資料中心審批與電網時間表", "https://y.example/a", art, src)
+    block = _sources_block(source_title=src, source_url="https://youtu.be/abc", article=art,
+                           reports=[{"title": "🎥 " + src, "url": "https://youtu.be/abc"},
+                                    {"title": osaka, "url": "https://x.example/osaka"}])
+    assert "大阪" not in block
+
+
+def test_drain_claim_blocks_second_writer(tmp_path, monkeypatch):
+    """2026-11-14：快速版與每小時版同時寫同一篇投稿。"""
+    import subprocess
+    import sys
+    sys.path.insert(0, "scripts")
+    import drain_substack as d
+
+    monkeypatch.setattr(d, "CLAIM_DIR", tmp_path / "claims")
+    assert d._claim("rid") and not d._claim("rid")
+    d._release("rid")
+    assert d._claim("rid")
+    p = subprocess.Popen(["true"]); p.wait()
+    (tmp_path / "claims" / "rid" / "pid").write_text(str(p.pid))   # 寫的人已經死了＝殘骸
+    assert d._claim("rid")
