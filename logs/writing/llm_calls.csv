@@ -398,3 +398,16 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-14T04:41:00,2026-11-14 01:08 morning,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,66.7,25721,4742,
 2026-11-14T05:13:13,2026-11-14 01:08 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,1932.8,24716,30675,
 2026-11-14T05:23:38,2026-11-14 01:08 morning,,gateway,audit→deepseek-v4.1-flash,Y,625.2,4252,9920,
+2026-11-15T04:01:16,2026-11-15 04:00 company,EditorialResearchBrief,claude_cli,claude-haiku-5-5,Y,42.8,2,9157,
+2026-11-15T04:05:33,2026-11-15 04:00 company,SubstackDraft,claude_cli,claude-haiku-5-5,Y,188.2,2,40583,
+2026-11-15T04:05:38,2026-11-15 04:00 company,審稿,antigravity_cli,Claude Opus 4.6 (Thinking),N,3.3,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-15T04:12:49,2026-11-15 04:00 company,審稿,antigravity_cli,Gemini 3.8 Flash (High),Y,430.6,,,
+2026-11-15T04:18:15,2026-11-15 04:00 company,退稿重寫#1,antigravity_cli,Gemini 3.8 Flash (High),Y,326.4,,,
+2026-11-15T04:18:19,2026-11-15 04:00 company,審稿,antigravity_cli,Gemini 3.8 Flash (High),N,3.6,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-15T05:00:37,2026-11-15 04:00 company,審稿,gateway,audit,N,2538.4,,,閘道 audit 回空字串
+2026-11-15T05:43:16,2026-11-15 04:00 company,審稿,gateway,deepseek-v4.1-flash,N,2559.1,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-15T06:24:50,2026-11-15 04:00 company,審稿,gateway,step-5-preview,N,2494.1,,,閘道 step-5-preview 回空字串
+2026-11-15T06:25:37,2026-11-15 04:00 company,審稿,gateway,gemini-2.5-flash,Y,46.5,13647,10827,
+2026-11-15T06:28:25,2026-11-15 04:00 company,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,168.7,15941,7187,
+2026-11-15T06:50:26,2026-11-15 04:00 company,審稿,gateway,audit→deepseek-v4.1-flash,Y,1320.3,9661,29776,
+2026-11-15T07:02:15,2026-11-15 04:00 company,,gateway,audit→deepseek-v4.1-flash,Y,705.5,5301,8418,
