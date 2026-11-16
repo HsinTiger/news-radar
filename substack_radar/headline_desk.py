@@ -37,7 +37,16 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
   再用一兩句說為什麼值得想，最後一句留懸念。不要「歡迎訂閱」「點擊閱讀」，不要 hashtag、不要網址。
 - 只能用文章裡有的事實與數字。
 
-只輸出 JSON：{{"titles": ["", "", "", "", ""], "best": 1, "key_points": ["", "", ""], "note": ""}}
+【四】重寫小標。這篇目前的小標依序是：
+{subheads}
+把它們抄下來連著讀，如果像一份報告的章節（「某某這條線，證據最薄」「綜合起來看」「其他線索」），
+就改成一條讀者會想跟下去的思路：每個小標是一句朋友聊天會說的話，或讀者此刻心裡的疑問，
+前一個自然帶出下一個。
+- 數量與順序不變（第 n 個對第 n 段），每個 8–20 個字，不要冒號，不要「這條線」「綜合來看」「其他線索」這種報告用語。
+- 只能用該段已有的事實，不新增數字。原本就自然的可以原樣保留。
+- 文章沒有小標就回空陣列。
+
+只輸出 JSON：{{"titles": ["", "", "", "", ""], "best": 1, "key_points": ["", "", ""], "note": "", "subheads": []}}
 
 【文章】
 {body}"""
@@ -92,22 +101,57 @@ def grounded_points(points: list, body: str) -> list:
     return out[:3]
 
 
+_SUBHEAD = re.compile(r"^(#{2,3})[ \t]+(.+?)[ \t]*$", re.M)
+_REPORT_WORDS = re.compile(r"這條線|綜合(?:起來|來看)|其他線索|小結|總結")
+
+
+def subhead_ok(text: str, body: str) -> bool:
+    t = (text or "").strip()
+    n = len(re.sub(r"\s", "", t))
+    return (5 <= n <= 24 and not re.search(r"[：:｜|#\n]", t) and not _REPORT_WORDS.search(t)
+            and _numbers(t) <= _numbers(body))
+
+
+def apply_subheads(body: str, new_heads: list) -> tuple[str, int]:
+    """把模型改寫的小標換進正文。數量對不上就整批不換；單一個不合格就保留那一個原樣。
+    回 (新正文, 換掉幾個)。只動 ## / ### 那一行，段落內容一個字都不碰。"""
+    heads = _SUBHEAD.findall(body or "")
+    if not heads or not isinstance(new_heads, list) or len(new_heads) != len(heads):
+        return body, 0
+    it = iter(new_heads)
+    changed = 0
+
+    def repl(m):
+        nonlocal changed
+        new = pangu(str(next(it) or "").strip().lstrip("#").strip())
+        if new and new != m.group(2) and subhead_ok(new, body):
+            changed += 1
+            return f"{m.group(1)} {new}"
+        return m.group(0)
+
+    return _SUBHEAD.sub(repl, body), changed
+
+
 def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> dict:
     """回 {"title": 新標題或 None, "key_points": [..]}。chat(prompt)->str 可注入測試。"""
     if chat is None:
-        from substack_radar.quality_loop import _oss_chat
+        # 包裝是寫作的活，跟寫稿同一個順序（Haiku 優先）。原本固定用閘道稽核模型，
+        # 2026-11-16 實測一次要 617 秒；Haiku 不到一分鐘。
+        from substack_radar.quality_loop import run_writer_text
 
         def chat(prompt):
-            return _oss_chat("audit", prompt, 600)
+            return run_writer_text(prompt, 600)[0]
     try:
         from src.llm_brain import _extract_json_blob
 
+        heads = [h for _, h in _SUBHEAD.findall(body or "")]
+        listed = "\n".join(f"{i}. {h}" for i, h in enumerate(heads, 1)) or "（沒有小標）"
         raw = chat(_PROMPT.format(column=column or "—", title=title, subtitle=subtitle or "",
-                                  body=(body or "")[:14000]))
+                                  subheads=listed, body=(body or "")[:14000]))
         data = json.loads(_extract_json_blob(raw) or "{}")
     except Exception as exc:
         print(f"[HeadlineDesk] ⚠️ 標題台失敗，保留原標題、不放重點：{str(exc)[:100]}")
-        return {"title": None, "key_points": [], "note": ""}
+        return {"title": None, "key_points": [], "note": "", "body": body, "subheads_changed": 0}
 
     titles = [pangu(str(t).strip()) for t in data.get("titles") or [] if str(t).strip()]
     try:
@@ -126,7 +170,12 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
         if note:
             print("[HeadlineDesk] ⏭️ Notes 草稿不合格（長度、數字或含網址），這篇不附")
         note = ""
-    return {"title": chosen, "key_points": points, "note": note}
+    new_body, n_heads = apply_subheads(body, data.get("subheads") or [])
+    if n_heads:
+        for (_, a), (_, b) in zip(_SUBHEAD.findall(body), _SUBHEAD.findall(new_body)):
+            if a != b:
+                print(f"[HeadlineDesk] 小標：{a} → {b}")
+    return {"title": chosen, "key_points": points, "note": note, "body": new_body, "subheads_changed": n_heads}
 
 
 def key_points_block(points: list) -> str:

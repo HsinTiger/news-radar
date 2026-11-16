@@ -15,6 +15,16 @@ STOCK_PHRASES = (
     "總的來說", "綜上所述", "不難發現", "我看完這集的第一個念頭",
 )
 
+# 查證過程漏進正文（2026-11-16 黃仁勳那篇）：重寫的模型把審稿意見的話直接抄進文章，
+# 讀者看到「我在提供的來源中沒有查到」「節目逐字稿寫成 ROSA，可能是轉錄誤差」「這裡不採用」。
+# 讀者不知道什麼是「素材」「逐字稿」——那是我們的工作檯，不是文章。
+_PROCESS_LEAK = re.compile(
+    r"提供的(?:來源|材料|素材|資料|研究來源|逐字稿)|本次(?:提供|來源|素材)|(?:原始)?素材[裡中]|"
+    r"逐字稿|轉錄誤差|研究來源|事實表|取材清單|(?:這裡|此處|本文)不採用|無法核對|以(?:後者|前者)為準|"
+    r"以下採\S{0,12}的|沒有對應到")
+# 每句都冠節目名（「在 Moonshots 裡，」出現 9 次）：出處講一次就夠
+_SHOW_PREFIX = re.compile(r"在\s?[〈《]?([A-Za-z][\w ’'&.\-]{1,30}|[\u4e00-\u9fff]{2,10})[〉》]?\s?(?:裡|中|節目裡|這集裡)，")
+
 _LINK = re.compile(r"\[[^\]]*\]\([^)]*\)|https?://\S+|`[^`]*`")
 _EN_RUN = re.compile(r"(?<![A-Za-z（(「“\"'])([a-z][a-z'\-]+(?:\s+[a-z][a-z'\-]+)+)(?![A-Za-z]*[）)」”\"'])")
 # 英文小寫連用但其實是常見技術詞，不算沒翻譯
@@ -39,6 +49,26 @@ def style_feedback(article_md: str) -> list[dict]:
             quote.strip(),
             "刪掉這類評語句，直接寫內容本身。要表達「這段最重要」，就把這段寫得最具體，不用宣告。"
             "結尾不要固定用「留一個問題給你」「接下來值得盯」，每篇換一種收法。"))
+
+    leaks = list(dict.fromkeys(m.group(0) for m in _PROCESS_LEAK.finditer(plain)))
+    if leaks:
+        quote = next((x for x in re.split(r"(?<=[。！？])", plain) if _PROCESS_LEAK.search(x)), "")
+        items.append(_item(
+            f"查證過程寫進了文章：{'、'.join(leaks[:6])}。讀者不知道什麼是素材、逐字稿、研究來源",
+            quote.strip(),
+            "這些是寫稿時的工作檯，不是給讀者看的。查不到的說法整句刪掉；名稱或數字有出入的，"
+            "直接寫對的那個，不用交代原本哪裡錯；真的要提醒還沒被證實，"
+            "用一句人話（「這一點目前只有他自己這樣講」），一篇最多兩處。"))
+
+    shows: dict[str, int] = {}
+    for m in _SHOW_PREFIX.finditer(plain):
+        shows[m.group(0)] = shows.get(m.group(0), 0) + 1
+    worst = max(shows.items(), key=lambda kv: kv[1], default=("", 0))
+    if worst[1] >= 4:
+        items.append(_item(
+            f"「{worst[0]}」出現 {worst[1]} 次，每句都冠節目名讀起來像筆錄",
+            worst[0],
+            "節目名在開頭交代一次，之後直接寫「某某說」「主持人問」，或用敘事帶過（「話題轉到…時」）。"))
 
     phrases = []
     for m in _EN_RUN.finditer(plain):

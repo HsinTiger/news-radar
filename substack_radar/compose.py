@@ -2900,6 +2900,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
             draft.title = apply_column_prefix(desk["title"], "ai" if source.get("column") == "ai" else mode,
                                               topic_category)
         key_points = desk["key_points"]
+        if desk.get("subheads_changed") and os.getenv("SUBSTACK_SUBHEAD_DESK", "1") == "1":
+            draft.body_markdown = desk["body"]      # 只換小標那幾行，內文不動
         if desk.get("note"):
             # Substack Notes 草稿（2026-11-13）：站內是唯一有帶進訂閱的來源，每篇備一則讓主編貼
             (local_dir / "substack_note.txt").write_text(desk["note"] + "\n", encoding="utf-8")

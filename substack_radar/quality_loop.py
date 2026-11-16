@@ -614,6 +614,13 @@ _CRITIQUE_PROMPT = """你是審稿編輯，這一輪只負責「指出問題、�
    若你判斷是程式誤報，「建議改法」寫「誤報：理由」，並告訴作者怎麼換個寫法讓程式不再誤判。
 2. 另外找出程式抓不到的事實錯誤：比率分母算錯、產業常識過時、專有名詞用錯、
    把一般公司當成資料來源、前後文數字矛盾、把一次性項目當成本業趨勢。風格與觀點不要評論。
+   這一類最多列 6 條，只列會讓讀者被誤導的；定義可以更精確、措辭可以更嚴謹這種不列。
+
+「建議改法」是寫給作者看的方向，不是要貼進文章的句子：
+- 讀者看不到你手上的取材。不要要求作者在文章裡交代查證過程（「提供的素材沒有」「逐字稿寫成…」
+  「無法核對」「此處不採用」）。查不到的，請他刪掉或改成不帶細節的說法；寫錯的，請他直接改成對的，
+  不必向讀者解釋原本哪裡錯。
+- 節目裡的人說的話，寫「某某說」就是合格的出處，不必每句都冠上節目名。
 
 === 程式確認的違規 ===
 {violations}
@@ -640,9 +647,14 @@ _REWRITE_PROMPT = """你是這篇文章的作者。審稿編輯把稿子退回�
 
 請照意見修改你的稿子：
 - 每一條意見都要處理；意見寫「誤報」的，照它建議的方式換個寫法。
-- 只改有問題的句子與它連帶影響的敘述，其餘保留原文的語氣與結構。
-- 讓讀者知道每個數字從哪來：節目內容寫「在〈節目名〉裡，某某說」；研究來源的內容用行內連結
-  [來源名](網址) 標上（網址照下面取材裡的抄，不要自己編）。兩邊都找不到的數字才刪掉。
+- 只改有問題的句子與它連帶影響的敘述，其餘保留原文的語氣、節奏與小標；改完要像同一個人從頭寫到尾。
+- 審稿意見是編輯寫給你的內部溝通，讀者看不到。不要把意見裡的句子抄進文章，文章裡也不要出現
+  「素材」「逐字稿」「研究來源」「提供的來源」「無法核對」「不採用」「以…為準」這類查證過程的話。
+  查不到的就刪；寫錯的直接改成對的，不用解釋改了什麼。真的要提醒讀者某個說法還沒被證實，
+  用一句朋友聊天會說的話（例如「這一點目前只有他自己這樣講」）。
+- 讓讀者知道每個數字從哪來：節目名在文章開頭交代一次就夠，之後直接寫「某某說」「主持人問」，
+  不要每句都加「在〈節目名〉裡」；研究來源的內容用行內連結 [來源名](網址) 標上
+  （網址照下面取材裡的抄，不要自己編）。兩邊都找不到的數字才刪掉。
 - 不要動標題，不要加任何說明文字。
 - 意見寫「篇幅不足」時，可以新增段落：回到下面的原始素材，把故事與脈絡說完整（起承轉合），
   不是加條列或重複結論；新增內容一樣不得出現素材以外的數字或來源。
@@ -695,23 +707,39 @@ def critique(article_md: str, violations: list[Violation], fact_block: str, audi
     return items
 
 
+def _writer_order() -> list[str]:
+    """重寫照寫稿的同一個順序（.env 的 SUBSTACK_COMPOSER_BACKEND）。
+    2026-11-16：第一稿是 Haiku 寫的，兩次退稿卻都交給閘道 glm 整篇重寫，
+    定稿等於換了一個寫手，語氣整個變掉。"""
+    known = {"claude_cli": "claude", "antigravity_cli": "agy", "gateway": "gateway"}
+    order = [known[b.strip()] for b in os.getenv("SUBSTACK_COMPOSER_BACKEND", "").split(",")
+             if b.strip() in known]
+    for name in ("agy", "gateway", "claude"):      # 沒設定或漏掉的，照舊順序補在後面
+        if name not in order:
+            order.append(name)
+    return order
+
+
 def run_writer_text(prompt: str, timeout_s: int) -> tuple[str, str]:
-    """寫手重寫：跟寫稿同一套順序 ① agy 寫稿鏈 → ② 閘道 writer → ③ Haiku。"""
-    try:
-        from src.llm_brain import _agy_model_chain
-        chain = [m for m in _agy_model_chain() if not agy_family_dead(m)]
-    except Exception:
-        chain = []
-    for model in chain:
+    """寫手重寫：跟寫稿同一套順序，前一個不可用才換下一個。"""
+    last: Exception | None = None
+    for name in _writer_order():
         try:
-            return _run_agy_once(prompt, model, timeout_s), f"agy {model}"
+            if name == "claude":
+                return run_claude_cli(prompt, timeout_s), "Claude Haiku"
+            if name == "gateway":
+                return _oss_chat("writer", prompt, timeout_s), "閘道 writer"
+            from src.llm_brain import _agy_model_chain
+            for model in [m for m in _agy_model_chain() if not agy_family_dead(m)]:
+                try:
+                    return _run_agy_once(prompt, model, timeout_s), f"agy {model}"
+                except Exception as exc:
+                    note_agy_failure(exc, model)
+                    last = exc
         except Exception as exc:
-            note_agy_failure(exc, model)
-    try:
-        return _oss_chat("writer", prompt, timeout_s), "閘道 writer"
-    except Exception as exc:
-        print(f"[Review] ⚠️ 閘道寫手不可用：{str(exc)[:110]}")
-    return run_claude_cli(prompt, timeout_s), "Claude Haiku"
+            last = exc
+            print(f"[Review] ⚠️ 寫手 {name} 不可用：{str(exc)[:110]}")
+    raise last or RuntimeError("沒有可用的寫手")
 
 
 def _feedback(violations: list[Violation], items: list[dict] | None) -> str:
