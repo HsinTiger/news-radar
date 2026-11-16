@@ -534,7 +534,7 @@ def build_editorial_contract(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "source_strategy": "主來源消化 → 不同研究角度 → 5–10 個已讀取來源 → 主張—證據圖 → 資訊價值閘門",
             "method_sources": "Firecrawl Deep Research + OpenSquilla Citation Planner + MoAI Claim Check（只採方法，不載入第三方 prompt）",
             "article_forms": "依材料選調查型、論證型或自我成長型；自我成長仍要可檢驗",
-            "cognitive_load": "一節一個子問題、一段一件事；必要時加專有名詞註解",
+            "cognitive_load": "一節一個子問題、一段一件事；名詞第一次出現時就地解釋",
             "ending": "以本文特有的具體回信問題收尾",
         },
     }

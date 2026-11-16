@@ -90,7 +90,7 @@ def test_dashboard_editorial_contract_reports_the_two_stage_writer() -> None:
     assert "Firecrawl" in contract["writer"]["method_sources"]
     assert "OpenSquilla" in contract["writer"]["method_sources"]
     assert "MoAI" in contract["writer"]["method_sources"]
-    assert "專有名詞註解" in contract["writer"]["cognitive_load"]
+    assert "就地解釋" in contract["writer"]["cognitive_load"]   # 2026-11-16 主編：不要名詞方塊
 
 
 def test_dashboard_submission_query_does_not_scan_audit_events_per_row() -> None:

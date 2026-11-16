@@ -60,6 +60,12 @@ def style_feedback(article_md: str) -> list[dict]:
             "直接寫對的那個，不用交代原本哪裡錯；真的要提醒還沒被證實，"
             "用一句人話（「這一點目前只有他自己這樣講」），一篇最多兩處。"))
 
+    if re.search(r"^[#>*\s]*專有名詞(?:註解|解釋|小辭典)[*：:\s]*$", body, flags=re.M):
+        items.append(_item(
+            "文章中間插了一塊「專有名詞註解」清單，像課本",
+            "專有名詞註解",
+            "整塊拿掉。每個名詞在它第一次出現的那句話裡順口解釋，例如「GPU（訓練 AI 的主力晶片）」。"))
+
     shows: dict[str, int] = {}
     for m in _SHOW_PREFIX.finditer(plain):
         shows[m.group(0)] = shows.get(m.group(0), 0) + 1

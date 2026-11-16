@@ -124,7 +124,7 @@ def test_final_writer_prompt_has_a_real_argument_shape_and_low_cognitive_load(
     assert "作者假說" in prompt and "最強反方" in prompt
     assert "第一人稱" in prompt and "不得虛構親身經驗" in prompt
     assert "降低認知負擔" in prompt
-    assert "專有名詞註解" in prompt
+    assert "同一句裡順口解釋" in prompt and "不要另外做「專有名詞註解」清單" in prompt
     assert "一節只推進一個子問題" in prompt
     assert {
         "investigation": "證據鏈",
