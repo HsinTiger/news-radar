@@ -224,8 +224,18 @@ def _send_macos(*, title: str, subtitle: str, body: str) -> None:
 # Email body builders
 # ---------------------------------------------------------------------------
 
+# 會讓主編需要動手的警告。其餘（對仗、比較沒基準、段落太長…）是文風備註，照樣列在信裡，
+# 但不掛 ⚠️——2026-11-16 查到 45 篇有 45 篇是 ⚠️，這個記號已經沒有人會看。
+_NEEDS_EDITOR = ("[品質迴圈未通過]", "[跟素材不符", "[字數低於下限]", "[字數超過上限]", "[標題過長]",
+                 "[標題沒點名主體]", "[舊內文視覺標記]")
+
+
+def needs_editor(warnings: List[str]) -> List[str]:
+    return [w for w in warnings or [] if str(w).startswith(_NEEDS_EDITOR)]
+
+
 def _success_subject(mode: str, title: str, warnings: List[str]) -> str:
-    badge = "⚠️" if warnings else "✅"
+    badge = "⚠️" if needs_editor(warnings) else "✅"
     return f"[Substack {badge}] {mode} draft — {title[:50]}"
 
 

@@ -876,8 +876,11 @@ def audit_substack_draft(
     cap = 20 if subject_aliases else 15
     if re.search(r"[（(][上下][）)]$", title):      # 週末系列的（上）（下）不吃標題字數
         cap += 3
-    if len(title) > cap:
-        warnings.append(f"[標題過長] {len(title)} 字 > {cap}；請只留一個閱讀承諾。")
+    # 字數不算專欄名與空格，跟標題台同一把尺。原本連「｜Hsin選觀點」都算進去，
+    # 45 篇有 34 篇被標「標題過長」，其實標題台早就改短了（2026-11-16）。
+    _headline = re.sub(r"\s", "", re.sub(r"[｜|][^｜|]{2,8}$", "", title))
+    if len(_headline) > cap:
+        warnings.append(f"[標題過長] {len(_headline)} 字 > {cap}；請只留一個閱讀承諾。")
     if subject_aliases and not named:
         warnings.append(
             f"[標題沒點名主體] 標題沒有出現 {'／'.join(subject_aliases[:3])}；"
@@ -1014,8 +1017,10 @@ def audit_substack_draft(
         warnings.append(f"[破折號濫用] 內文破折號 {dash_count} 處 (上限 1)。改成句號／逗號／重寫。")
 
     # 6. 「不是 X、是 Y」對仗
-    if re.search(r"不是.{1,15}[、，,]\s*[而是是].{1,15}", body):
-        warnings.append("[對仗濫用] 發現『不是 X、是 Y』對仗句。改寫成『而』+ 具體脈絡。")
+    #    一句是正常中文；原本出現一次就報，45 篇有 37 篇中、從來沒人處理（2026-11-16 改成 3 次起算）。
+    _parallel = re.findall(r"不是.{1,15}[、，,]\s*[而是是].{1,15}", body)
+    if len(_parallel) >= 3:
+        warnings.append(f"[對仗濫用] 『不是 X、是 Y』對仗句出現 {len(_parallel)} 次。留最有力的一句，其餘直接講 Y。")
 
     # 7. 大陸用法檢查（human-readable mapping: substack_reference.md）
     # title + subtitle + body 都掃。命中為 warning (false-positive 可能存在,

@@ -6,6 +6,16 @@
 from substack_radar import quality_loop as q
 from substack_radar.evidence_gate import check
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _legacy_review_mode(monkeypatch):
+    """這個檔案測的是舊版「請模型挑毛病」的迴圈（SUBSTACK_REVIEW_MODE=legacy 仍可切回）。
+    預設的對帳式迴圈在 test_fact_audit.py。"""
+    monkeypatch.setenv("SUBSTACK_REVIEW_MODE", "legacy")
+
+
 
 SRC = [{"publisher": "BBC News", "title": "Huang agrees to appear before Congress",
         "url": "https://www.bbc.com/news/live/c6",

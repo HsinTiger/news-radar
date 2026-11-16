@@ -1,4 +1,4 @@
-date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,draft_id,remaining_issues
+date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,draft_id,remaining_issues,patches
 2026-10-19,00:57,2026-10-19 00:18 morning,Hsin選觀點,穩定幣這齣戲，美國演過了｜Hsin選觀點,39.1,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221019801,0
 2026-10-19,06:42,2026-10-19 06:00 podcast,吹牛免稅,被市場討厭的那一年他對了嗎｜吹牛免稅,42.7,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221060293,0
 2026-10-21,04:50,2026-10-21 04:00 podcast,吹牛免稅,肌肉男真的能遊超長距離嗎｜吹牛免稅,49.9,gateway · 模型 writer→glm-5.3,Claude Opus 4.6 (Thinking),4,3,Y,221386020,0
@@ -30,3 +30,4 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-14,01:58,2026-11-14 00:14 morning,Hsin選觀點,AI 硬體股暴跌 不是因為民主黨｜Hsin選觀點,104.0,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,Gemini 3.1 Pro (High),3,2,N,224786983,1
 2026-11-14,05:23,2026-11-14 01:08 morning,Hsin選觀點,德州變天 AI 股暴跌｜Hsin選觀點,254.9,gateway · 模型 deepseek-v4.1-flash,Claude Opus 4.6 (Thinking),3,2,Y,224786983,0
 2026-11-15,07:02,2026-11-15 04:00 company,賺錢有道,Pfizer 9.8 倍先別買｜賺錢有道,182.1,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,Gemini 3.1 Pro (High),3,2,N,224968938,3
+2026-11-16,06:23,2026-11-16 04:00 podcast,吹牛免稅,黃仁勳辭職 收盤只跌 4%｜吹牛免稅,143.1,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,Gemini 3.1 Pro (High),3,2,Y,225098475,0

@@ -2797,6 +2797,14 @@ async def _run_inner(args: argparse.Namespace) -> int:
         _aliases = title_aliases(str(locals().get("ticker") or ""),
                                  str(_fd_now.get("name") or ""))
     warnings = audit_substack_draft(draft, profile=profile, subject_aliases=_aliases)
+    # 第一稿的文風觀察記進退稿帳本：不退稿，但 lessons 會在下一篇提醒寫手（2026-11-16）
+    try:
+        for _w in warnings:
+            if str(_w).startswith(("[對仗濫用]", "[比較無基準]", "[段落過長]", "[填充詞濫用]",
+                                   "[修辭黑名單]", "[收尾 AI 味]", "[破折號濫用]", "[名詞化]")):
+                _run_log.log_rejection(round_no=1, source="文風", kind=str(_w)[:60])
+    except Exception:
+        pass
     if warnings:
         print(f"[Audit] ⚠️ {len(warnings)} warning(s):")
         for w in warnings:
@@ -2831,8 +2839,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
                            else _company_fact_values(_fd))
             fact_block = locals().get("fin_md") or raw_content or ""
             auditor = auditor_for(getattr(draft, "generated_by", None))
-            print(f"[QualityLoop] 稽核模型 = {auditor}（寫手 = "
-                  f"{getattr(draft, 'generated_by', None) or 'unknown'}）")
+            if os.getenv("SUBSTACK_REVIEW_MODE", "ledger") != "legacy":
+                from substack_radar.fact_audit import default_models as _fact_auditors
+                print(f"[QualityLoop] 對帳模型 = {'＋'.join(_fact_auditors())}（寫手 = "
+                      f"{getattr(draft, 'generated_by', None) or 'unknown'}）")
+            else:
+                print(f"[QualityLoop] 稽核模型 = {auditor}（寫手 = "
+                      f"{getattr(draft, 'generated_by', None) or 'unknown'}）")
             _eval_kwargs = dict(
                 fact_values=fact_values,
                 has_management_guidance=False,
@@ -2849,8 +2862,16 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 body, report, _rewrites = run_review_loop(
                     draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs,
                     word_range=(word_floor, word_cap))
-                domain_changed = _rewrites > 0
+                _patches = getattr(report, "patches", 0)
+                domain_changed = _rewrites > 0 or _patches > 0
                 remaining = list(report.remaining)
+                if getattr(report, "auditors", None):
+                    # 標實際對帳的模型（原本一律印 agy 的名字，就算它根本沒額度、是別人審的）
+                    auditor = "＋".join(report.auditors)
+                elif os.getenv("SUBSTACK_REVIEW_MODE", "ledger") != "legacy":
+                    auditor = "只有程式檢查（查核模型沒回應）"
+                for _u in getattr(report, "unresolved", []) or []:
+                    warnings.append(f"[跟素材不符，還沒修] {_u}")
             else:
                 body, report = run_quality_loop(draft.body_markdown, model=auditor, **_eval_kwargs)
                 body, domain_changed = open_domain_audit(body, fact_block, model=auditor)
@@ -2880,7 +2901,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
             writer = (getattr(draft, "generated_by", None) or "unknown").strip()
             draft.generated_by = (
                 f"{writer}｜稽核 {auditor} · 審稿 {report.rounds} 次"
-                f"{'／有退稿重寫' if domain_changed else '／一次通過'}"
+                + ("／整篇重寫 %d 次" % locals().get("_rewrites", 0) if locals().get("_rewrites", 0)
+                   else ("／小修 %d 句" % locals().get("_patches", 0) if locals().get("_patches", 0)
+                         else ("／有修訂" if domain_changed else "／一次通過"))) +
                 f"{'' if report.passed else '（仍有未解違規）'}"
             )
         except Exception as exc:
@@ -2925,6 +2948,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 print(f"[Chart] ✅ 財報趨勢圖已插入：{chart[1][:40]}")
         except Exception as exc:
             print(f"[Chart] ⚠️ 趨勢圖略過（{type(exc).__name__}: {exc}）")
+    # 體檢重算（2026-11-16）：原本的警告是對「第一稿」算的，之後審稿改了內文、標題台換了標題，
+    # 信裡卻還掛著舊警告——45 篇有 45 篇帶警告，等於沒有警告。這裡對定稿重算一次。
+    try:
+        _carried = [w for w in warnings if str(w).startswith(("[品質迴圈未通過]", "[跟素材不符"))]
+        warnings = _carried + audit_substack_draft(draft, profile=profile, subject_aliases=_aliases)
+    except Exception as exc:
+        print(f"[Audit] ⚠️ 定稿體檢重算失敗，沿用第一稿的結果：{exc}")
     write_article_full_md(
         local_dir,
         draft,
@@ -3074,6 +3104,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             writer=_gen.split("｜稽核")[0], auditor=(_gen.split("｜稽核")[1].split("·")[0].strip() if "｜稽核" in _gen else ""),
             review_rounds=(locals().get("report").rounds if locals().get("report") is not None else ""),
             rewrites=locals().get("_rewrites", ""),
+            patches=locals().get("_patches", ""),
             passed="N" if any(str(w).startswith("[品質迴圈未通過]") for w in warnings) else "Y",
             draft_id=draft_id or "",
             remaining_issues=sum(1 for w in warnings if str(w).startswith("[品質迴圈未通過]")),

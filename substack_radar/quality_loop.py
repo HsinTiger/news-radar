@@ -105,6 +105,9 @@ class LoopReport:
     rounds: int = 0
     passed: bool = False
     history: list[list[Violation]] = field(default_factory=list)
+    patches: int = 0                                   # 小修了幾句（只換那幾句，其他沒動）
+    auditors: list[str] = field(default_factory=list)  # 實際有回應的查核模型
+    unresolved: list[str] = field(default_factory=list)  # 驗證過、但用完次數還沒修掉的矛盾
 
     @property
     def remaining(self) -> list[Violation]:
@@ -922,7 +925,248 @@ def _log_rejections(round_no: int, violations, audit_items, too_short, style_ite
 def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
                     max_attempts: int = REVIEW_ATTEMPTS,
                     word_range: tuple[int, int] | None = None) -> tuple[str, LoopReport, int]:
-    """回傳 (最終稿, 報告, 退稿次數)。報告的 passed／remaining 只看確定性閘門。"""
+    """回傳 (最終稿, 報告, 整篇重寫次數)。報告的 passed／remaining 只看確定性閘門。
+
+    預設走「對帳式」（2026-11-16）；SUBSTACK_REVIEW_MODE=legacy 改回舊的「請模型挑毛病」。"""
+    if os.getenv("SUBSTACK_REVIEW_MODE", "ledger") == "legacy":
+        return _run_review_loop_legacy(article_md, fact_block=fact_block, auditor=auditor,
+                                       eval_kwargs=eval_kwargs, max_attempts=max_attempts, word_range=word_range)
+    return _run_review_loop_ledger(article_md, fact_block=fact_block, eval_kwargs=eval_kwargs,
+                                   max_attempts=max_attempts, word_range=word_range)
+
+
+_PATCH_PROMPT = """你是這篇文章的作者。編輯標出下面幾個地方要修。請只修這幾句，文章其他地方一個字都不要動。
+
+每一處回一個替換：
+- 「原句」從草稿照抄要換掉的那一句（完整的一句，一字不差，程式要靠它找到位置）。
+- 「改成」寫新的句子；整句該刪就留空字串。
+
+規則：
+- 照意見的方向改，語氣跟前後文一致，像同一個人寫的。
+- 意見是編輯寫給你的內部溝通：不要把意見裡的話抄進文章，新句子不要出現「素材」「逐字稿」
+  「研究來源」「無法核對」這類查證過程的話。
+- 新句子不能出現原句和「素材原文」裡都沒有的數字。
+- 出處對不上的：改成下面研究來源裡真的有的出處（寫成 [來源名](網址)），或改成不具名的敘述。
+
+=== 要修的地方 ===
+{issues}
+
+=== 可以引用的研究來源 ===
+{sources}
+
+=== 草稿 ===
+{article}
+
+=== 輸出格式（最高優先）===
+只輸出一個 JSON 物件，不要有其他文字：{{"patches": [{{"原句": "…", "改成": "…"}}]}}
+"""
+
+
+def _plain_numbers(text: str) -> set[str]:
+    flat = re.sub(r"(?<=\d)[,，](?=\d{3})", "", text or "")
+    return {n for n in re.findall(r"\d+(?:\.\d+)?", flat) if len(n) >= 2}
+
+
+def _find_span(article: str, sentence: str) -> tuple[int, int] | None:
+    sentence = (sentence or "").strip()
+    if len(sentence) < 4:
+        return None
+    if article.count(sentence) == 1:
+        i = article.find(sentence)
+        return i, i + len(sentence)
+    # 模型照抄時常把空白抄掉或多抄：逐字比對、空白隨意
+    pat = r"\s*".join(re.escape(ch) for ch in re.sub(r"\s+", "", sentence))
+    hits = list(re.finditer(pat, article))
+    return hits[0].span() if len(hits) == 1 else None
+
+
+def apply_patches(article: str, patches: list[dict], allowed_numbers: set[str]) -> tuple[str, int, list[str]]:
+    """把「原句→改成」逐條換進文章。回 (新文章, 換了幾句, 沒換的原因)。
+
+    只動被點名的句子，所以其他句子不用重審——這是小修能一輪收斂的原因。
+    找不到原句、同一句出現多次、新句子帶進素材沒有的數字或查證用語，那一條就不換。"""
+    from substack_radar.style_gate import _PROCESS_LEAK
+
+    out, applied, skipped = article, 0, []
+    for p in patches or []:
+        old, new = str(p.get("原句") or "").strip(), str(p.get("改成") or "").strip()
+        span = _find_span(out, old)
+        if span is None:
+            skipped.append(f"找不到原句：{old[:30]}")
+            continue
+        original = out[span[0]:span[1]]
+        if new == original:
+            continue
+        extra = _plain_numbers(new) - _plain_numbers(original) - allowed_numbers
+        if extra:
+            skipped.append(f"新句子帶進素材沒有的數字 {sorted(extra)[:3]}：{old[:30]}")
+            continue
+        if _PROCESS_LEAK.search(re.sub(r"\]\([^)]*\)", "]", new)):
+            skipped.append(f"新句子有查證用語：{old[:30]}")
+            continue
+        if len(new) > len(original) * 3 + 120:
+            skipped.append(f"新句子長太多：{old[:30]}")
+            continue
+        out = out[:span[0]] + new + out[span[1]:]
+        applied += 1
+    if applied:
+        out = re.sub(r"[ \t]+\n", "\n", out)
+        out = re.sub(r"\n{3,}", "\n\n", out)
+    return out, applied, skipped
+
+
+def _patch_round(current: str, violations, audit_items, style_items, pack: str,
+                 sources: list[dict] | None) -> tuple[str, int]:
+    issues = [f"- [程式檢查] {v.kind}：{v.detail}（{v.fix_hint}）" for v in violations]
+    issues += [f"- [跟素材不符] {it.get('問題', '')}｜原句：{it.get('原句', '')}"
+               f"｜素材原文：{str(it.get('素材原文', ''))[:300]}｜方向：{it.get('建議改法', '')}" for it in audit_items]
+    issues += [f"- [文風] {it.get('問題', '')}｜原句：{it.get('原句', '')}｜方向：{it.get('建議改法', '')}"
+               for it in style_items]
+    listed = "\n".join(f"- {s.get('publisher') or ''}｜{s.get('title') or ''}｜{s.get('url') or ''}"
+                       for s in (sources or [])[:10]) or "（沒有）"
+    prompt = _PATCH_PROMPT.format(issues="\n".join(issues), sources=listed, article=current)
+    try:
+        from src import run_log
+        with run_log.stage("小修"):
+            raw, who = run_writer_text(prompt, AUDIT_TIMEOUT_S)
+    except Exception as exc:
+        print(f"[Review] ⚠️ 小修沒跑成（{str(exc)[:100]}）")
+        return current, 0
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    try:
+        patches = json.loads(m.group(0), strict=False).get("patches") if m else None
+    except (ValueError, AttributeError):
+        patches = None
+    if not isinstance(patches, list):
+        print(f"[Review] ⚠️ 寫手（{who}）交的小修不是合法格式")
+        return current, 0
+    allowed = _plain_numbers(pack) | _plain_numbers(" ".join(str(it.get("素材原文", "")) for it in audit_items))
+    revised, applied, skipped = apply_patches(current, patches, allowed)
+    for why in skipped:
+        print(f"[Review]   ⏭️ 沒換：{why}")
+    if applied:
+        print(f"[Review] 🩹 {who} 小修了 {applied} 句（其他句子沒動，不用重審）")
+    return revised, applied
+
+
+def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: dict,
+                            max_attempts: int, word_range: tuple[int, int] | None) -> tuple[str, LoopReport, int]:
+    """對帳式審稿（2026-11-16）。目標：品質不降，第一稿盡量一次就過。
+
+    每一關只留真的在保護讀者的東西：
+    1. 程式檢查（出處、數字、開場、篇幅、文風）——看得到全文，結果每次一樣。
+    2. 兩個開源模型同時對帳，只找「草稿跟素材矛盾」的句子，證據由程式驗（見 fact_audit）。只在
+       第一稿做一次；之後除非整篇重寫，不再請模型重看。
+    3. 有問題先「小修」：寫手只交出要換的那幾句，程式換進去，其他句子不動、不用重審。
+       只有結構問題（太短、開場太長、插了名詞清單）才整篇重寫。"""
+    from substack_radar import fact_audit
+    from substack_radar.style_gate import style_feedback
+
+    report = LoopReport()
+    current, rewrites = article_md, 0
+    sources = eval_kwargs.get("sources")
+    pending: list[dict] = []
+    need_audit, prev_norm = True, ""
+    for attempt in range(max_attempts + 1):
+        violations = evaluate(current, **eval_kwargs)
+        report.history.append(violations)
+        report.rounds = attempt + 1
+        pack = evidence_pack(fact_block, sources, article=current)
+        if need_audit:
+            found, summary = fact_audit.run(current, pack)
+            if attempt == 0:
+                report.auditors = list(summary["answered"])
+                if not summary["answered"]:
+                    print("[Review] ⚠️ 查核模型都沒回應：這一篇只有程式檢查，沒有第二雙眼睛對過素材")
+                _shadow_grounding(current, fact_block, sources)
+            else:                                   # 整篇重寫過：只收新寫或改過的句子裡的問題
+                found = [it for it in found if fact_audit.coverage(str(it.get("原句") or ""), prev_norm) < 0.9]
+            pending, need_audit = found, False
+        else:                                       # 小修之後：原句還在＝那一條沒修到
+            art_norm = fact_audit._norm(current)
+            pending = [it for it in pending if fact_audit.coverage(str(it.get("原句") or ""), art_norm) >= 0.9]
+        too_short = length_feedback(current, word_range)
+        # 小標交給標題台重寫（只換那一行），不值得為它退稿
+        style_items = [i for i in style_feedback(current) if not str(i.get("問題", "")).startswith("小標像標籤")]
+        _log_rejections(attempt + 1, violations, pending, too_short, style_items)
+        if not (violations or pending or too_short or style_items):
+            report.passed = True
+            how = "第一稿一次就過" if attempt == 0 else ("小修後通過" if not rewrites else "重寫後通過")
+            print(f"[Review] ✅ 第 {attempt + 1} 次審稿：程式檢查與對帳都沒有問題，{how}")
+            return current, report, rewrites
+        print(f"[Review] 第 {attempt + 1} 次審稿：程式檢查 {len(violations)} 項、跟素材不符 {len(pending)} 項、"
+              f"篇幅 {len(too_short)} 項、文風 {len(style_items)} 項")
+        merged = ([{"問題": f"跟素材不符：{it.get('問題', '')}", "原句": it.get("原句", ""),
+                    "建議改法": f"{it.get('建議改法', '')}（素材原文：{str(it.get('素材原文', ''))[:200]}）"}
+                   for it in pending] + too_short + style_items)
+        for line in _feedback(violations, merged).splitlines():
+            print(f"[Review]   {line[:200]}")
+        if attempt == max_attempts:
+            break
+        structural = (bool(too_short) or any(re.match(r"A1(?!b)", str(v.kind)) for v in violations)
+                      or any("專有名詞註解" in str(i.get("問題", "")) for i in style_items))
+        if not structural:
+            revised, applied = _patch_round(current, violations, pending, style_items, pack, sources)
+            if applied:
+                current = revised
+                report.patches += applied
+                continue
+            print("[Review] ⚠️ 小修沒有換到任何一句，改成整篇重寫")
+        prompt = _REWRITE_PROMPT.format(attempt=rewrites + 1, feedback=_feedback(violations, merged),
+                                        facts=pack, article=current)
+        try:
+            from src import run_log
+            with run_log.stage(f"退稿重寫#{rewrites + 1}"):
+                raw, who = run_writer_text(prompt, AUDIT_TIMEOUT_S)
+        except Exception as exc:
+            print(f"[Review] ⚠️ 寫手重寫失敗（{str(exc)[:120]}）；保留目前版本")
+            break
+        revised = _extract_article(raw)
+        if not revised or revised.strip() == current.strip():
+            print(f"[Review] ⚠️ 寫手（{who}）沒有交出可用的修改稿；保留目前版本")
+            break
+        prev_norm = fact_audit._norm(current)
+        current, need_audit = revised, True
+        rewrites += 1
+        print(f"[Review] ✏️ 整篇重寫第 {rewrites} 次（{who}）：{'篇幅或開場結構要動' if structural else '小修沒成功'}")
+    report.passed = not report.remaining
+    report.unresolved = [f"{it.get('問題', '')}（原句：{str(it.get('原句', ''))[:60]}）" for it in pending]
+    if report.passed and not pending:
+        print("[Review] ✅ 程式檢查已全部通過（還有文風或篇幅建議，但已用完修改次數）")
+    elif report.passed:
+        print(f"[Review] ⚠️ 程式檢查通過，但還有 {len(pending)} 處跟素材不符沒修掉，會列在通知信裡")
+    else:
+        print(f"[Review] ❌ 修改 {rewrites + (1 if report.patches else 0)} 輪後仍有 {len(report.remaining)} 項程式檢查違規（不靜默放行）")
+    return current, report, rewrites
+
+
+def _shadow_grounding(article: str, fact_block: str, sources: list[dict] | None) -> None:
+    """影子檢查（只記帳、不影響結果）：草稿裡的英文專名與數字，全文素材和研究來源裡完全找不到的。
+    先觀察一兩週誤報多不多，再決定要不要升成正式的程式檢查，取代模型「有沒有出處」那一類判斷。"""
+    try:
+        from src import run_log
+        hay = (fact_block or "") + " " + " ".join(
+            f"{s.get('publisher', '')} {s.get('title', '')} {s.get('url', '')} {s.get('excerpt', '')}"
+            for s in sources or [])
+        low = re.sub(r"(?<=\d)[,，](?=\d{3})", "", hay).lower()
+        flat = re.sub(r"\]\([^)]*\)", "]", article or "")
+        names = {w for w in re.findall(r"\b[A-Z][A-Za-z]{3,}(?:\s+[A-Z][A-Za-z]{2,})*\b", flat)}
+        missing_names = sorted(n for n in names if n.lower() not in low)
+        hay_nums = set(re.findall(r"\d+(?:\.\d+)?", low))
+        missing_nums = sorted(n for n in _plain_numbers(flat) if n not in hay_nums and not re.fullmatch(r"(19|20)\d\d", n))
+        for n in missing_names[:12]:
+            run_log.log_rejection(round_no=1, source="影子", kind="專名在素材找不到", quote=n)
+        for n in missing_nums[:12]:
+            run_log.log_rejection(round_no=1, source="影子", kind="數字在素材找不到", quote=n)
+        print(f"[Review] （影子檢查，不影響結果）素材找不到的英文專名 {len(missing_names)} 個、數字 {len(missing_nums)} 個")
+    except Exception:
+        pass
+
+
+def _run_review_loop_legacy(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
+                            max_attempts: int = REVIEW_ATTEMPTS,
+                            word_range: tuple[int, int] | None = None) -> tuple[str, LoopReport, int]:
+    """舊版：請模型挑毛病、整篇重寫。回傳 (最終稿, 報告, 退稿次數)。"""
     report = LoopReport()
     current = article_md
     rewrites = 0

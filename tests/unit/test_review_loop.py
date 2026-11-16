@@ -1,6 +1,16 @@
 """2026-10-18 信哥：審稿模型逐條給意見 → 退回寫手重寫，最多 3 次；還不過才算失敗。"""
 from substack_radar import quality_loop as q
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _legacy_review_mode(monkeypatch):
+    """這個檔案測的是舊版「請模型挑毛病」的迴圈（SUBSTACK_REVIEW_MODE=legacy 仍可切回）。
+    預設的對帳式迴圈在 test_fact_audit.py。"""
+    monkeypatch.setenv("SUBSTACK_REVIEW_MODE", "legacy")
+
+
 V = q.Violation(kind="E1 具名來源不在取材清單", detail="歸屬給「公司公布的數據」", fix_hint="原句：根據公司公布…")
 ARTICLE = "# t\n\n" + "內文" * 300
 

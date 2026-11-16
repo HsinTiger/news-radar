@@ -19,8 +19,10 @@ from pathlib import Path
 
 LOG_DIR = Path(os.getenv("WRITING_LOG_DIR", str(Path(__file__).resolve().parent.parent / "logs" / "writing")))
 CALL_FIELDS = ["time", "run", "stage", "provider", "model", "ok", "seconds", "input_tokens", "output_tokens", "note"]
+# patches（2026-11-16）：小修了幾句。rewrites 從這天起只算「整篇重寫」；
+# 兩個都是 0 ＝第一稿一次就過。舊資料沒有這一欄。
 ARTICLE_FIELDS = ["date", "time", "run", "column", "title", "minutes", "writer", "auditor",
-                  "review_rounds", "rewrites", "passed", "draft_id", "remaining_issues"]
+                  "review_rounds", "rewrites", "passed", "draft_id", "remaining_issues", "patches"]
 
 _stage: contextvars.ContextVar[str] = contextvars.ContextVar("writing_stage", default="")
 

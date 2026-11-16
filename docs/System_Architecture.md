@@ -533,6 +533,34 @@ Threads 的 Substack CTA 早在 Phase 2（`src/cta_pool.py::decide_cta`，走 LL
 Phases 0-5 的 EDITORIAL_MODE 行為（slot 路由、gather、editor_desk、本分發層）尚未做完整
 ground-truth pass 併進 §1–§5。下次動 EDITORIAL_MODE 相關路徑時應補齊。
 
+
+### 6.7 Substack 審稿流程：對帳式（2026-11-16）
+
+目標（信哥 2026-11-16）：維持品質的前提下，讓第一稿盡量一次就過。入口 `substack_radar/quality_loop.py::run_review_loop`，
+預設走 `_run_review_loop_ledger`；`SUBSTACK_REVIEW_MODE=legacy` 切回舊的「請模型挑毛病、整篇重寫」。
+
+| 關卡 | 誰做 | 做什麼 | 位置 |
+|---|---|---|---|
+| 程式檢查 | 程式 | 出處（E1）、數字定位（E3）、過期（E4）、開場（A1/A1b）、段落（A2）、時間錨點（A3）、數字量級、中文數字 | `quality_loop.py::evaluate` → `evidence_gate.py`、`aeo_gate.py` |
+| 篇幅／文風 | 程式 | 太短、AI 套話、沒翻譯的英文、查證用語漏進正文、每句冠節目名、名詞清單 | `quality_loop.py::length_feedback`、`style_gate.py::style_feedback` |
+| 對帳 | 兩個 NIM 開源模型同時跑 | 只找「草稿跟素材矛盾」的句子，每條必附照抄的素材原文 | `fact_audit.py::run`（預設 `glm-5.3-flash,mistral-large-4-1t-a52b`，都沒回才用 `gemini-2.5-flash`） |
+| 驗證對帳意見 | 程式 | 原句真的在草稿、素材原文真的在素材、不是「素材沒有」類的說法，才算數 | `fact_audit.py::verify` |
+| 小修 | 寫手（同第一稿的順序，Haiku 優先） | 只交「原句→改成」，程式換進去；新句子帶進素材沒有的數字或查證用語就不換 | `quality_loop.py::_patch_round`、`apply_patches` |
+| 整篇重寫 | 寫手 | 只在結構問題（太短、開場太長、名詞清單）或小修一句都沒換到時 | `quality_loop.py::_run_review_loop_ledger` |
+
+要點：
+- 對帳只在第一稿做一次；小修後不再請模型重看（沒動的句子已對過，動過的由程式擋）。整篇重寫過才再對一次，而且只收新寫或改過的句子。
+- 給模型的素材上限用 token 算（`SUBSTACK_EVIDENCE_TOKENS`，預設四萬）；英文逐字稿通常整份給。超過才挑段落（`select_evidence`）。
+- 用完次數仍沒修掉的矛盾放在 `LoopReport.unresolved`，compose 轉成 `[跟素材不符，還沒修]` 警告進通知信，不擋稿；程式檢查違規才擋自動發文。
+- 帳本：`logs/writing/rejections.csv` 記每輪每條原因（`source`＝程式／審稿／篇幅／文風／影子）；`articles.csv` 的 `rewrites` 自 2026-11-16 起只算整篇重寫，`patches` 是小修句數，兩者皆 0＝一次就過。
+- `substack_radar/lessons.py` 讀帳本，把同專欄最近第一稿最常被退的原因（≤4 條）放進寫手 prompt 的「交稿前自查」。
+- 影子檢查（只記帳）：草稿裡在素材找不到的英文專名與數字（`_shadow_grounding`）。觀察誤報率後再決定是否升成正式檢查。
+- 通知信主旨的 ⚠️ 只在需要主編動手時出現（`src/notify.py::needs_editor`）；體檢警告改對定稿重算（`compose.py`，寫檔前）。
+
+為什麼改：翻 32 篇記錄，28 篇把重寫次數用到上限——舊審稿每輪重審全文、固定挑出約 7 條，從不收斂；它自己提的 499 條意見約四成是
+「素材裡沒有」（其實是它只看得到素材開頭），約兩成五是背景知識上的挑剔。毒化測試（定稿埋 5 個矛盾）：glm-5.3-flash 123 秒、
+mistral-large-4 754 秒、gemini-2.5-flash 54 秒都 5/5；deepseek-v4.1-flash 與 step-5-preview 超過 16 分鐘沒回。
+
 ---
 
 ## 7. Case studies — failures that forced doc updates
