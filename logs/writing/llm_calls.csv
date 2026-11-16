@@ -411,3 +411,47 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-15T06:28:25,2026-11-15 04:00 company,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,168.7,15941,7187,
 2026-11-15T06:50:26,2026-11-15 04:00 company,審稿,gateway,audit→deepseek-v4.1-flash,Y,1320.3,9661,29776,
 2026-11-15T07:02:15,2026-11-15 04:00 company,,gateway,audit→deepseek-v4.1-flash,Y,705.5,5301,8418,
+2026-11-16T04:04:55,2026-11-16 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,112.1,2750,2057,
+2026-11-16T04:05:34,2026-11-16 04:00 podcast,EditorialResearchBrief,claude_cli,claude-haiku-5-5,Y,35.9,2,6334,
+2026-11-16T04:08:04,2026-11-16 04:00 podcast,SubstackDraft,claude_cli,claude-haiku-5-5,Y,104.4,2,22821,
+2026-11-16T04:08:12,2026-11-16 04:00 podcast,審稿,antigravity_cli,Claude Opus 4.6 (Thinking),N,3.3,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-16T04:08:15,2026-11-16 04:00 podcast,審稿,antigravity_cli,Gemini 3.8 Flash (High),N,3.5,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-16T04:19:45,2026-11-16 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,690.2,15437,15671,
+2026-11-16T04:21:45,2026-11-16 04:00 podcast,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,119.5,17624,4292,
+2026-11-16T04:53:12,2026-11-16 04:00 podcast,審稿,gateway,audit→deepseek-v4.1-flash,Y,1887.5,16850,30802,
+2026-11-16T04:54:56,2026-11-16 04:00 podcast,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,104.0,19061,4973,
+2026-11-16T05:32:57,2026-11-16 04:00 podcast,審稿,gateway,audit,N,2280.8,,,閘道 audit 回空字串
+2026-11-16T06:04:38,2026-11-16 04:00 podcast,審稿,gateway,deepseek-v4.1-flash,Y,1901.2,16610,28695,
+2026-11-16T06:14:09,2026-11-16 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,571.1,3931,5957,
+2026-11-16T06:23:15,2026-11-16 04:00 podcast,,gateway,audit→deepseek-v4.1-flash,Y,534.4,5404,5792,
+2026-11-16T07:33:04,,,gateway,audit→deepseek-v4.1-flash,Y,174.4,4111,2218,
+2026-11-16T12:03:03,,,gateway,audit→deepseek-v4.1-flash,Y,616.7,4180,11993,
+2026-11-16T12:05:03,,,claude_cli,claude-haiku-5-5,Y,97.5,2,22517,
+2026-11-16T12:08:06,,,claude_cli,claude-haiku-5-5,Y,172.6,2,45854,
+2026-11-16T13:31:12,2026-11-16 13:28 morning,SubstackDraft,claude_cli,claude-haiku-5-5,Y,147.1,2,31795,
+2026-11-16T13:31:17,2026-11-16 13:28 morning,審稿,antigravity_cli,Claude Opus 4.6 (Thinking),N,3.4,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-16T13:31:20,2026-11-16 13:28 morning,審稿,antigravity_cli,Gemini 3.8 Flash (High),N,3.1,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-16T14:05:56,2026-11-16 13:28 morning,審稿,gateway,audit,N,2076.3,,,閘道 audit 回空字串
+2026-11-16T14:08:36,2026-11-16 13:28 morning,審稿,gateway,deepseek-v4.1-flash,Y,159.6,9222,2767,
+2026-11-16T14:08:38,2026-11-16 13:28 morning,退稿重寫#1,claude_cli,haiku,N,2.0,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T14:10:43,2026-11-16 13:28 morning,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,125.5,9529,4468,
+2026-11-16T14:12:09,2026-11-16 13:28 morning,審稿,gateway,audit→deepseek-v4.1-flash,Y,85.4,9448,766,
+2026-11-16T14:12:11,2026-11-16 13:28 morning,退稿重寫#2,claude_cli,haiku,N,1.7,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T14:13:40,2026-11-16 13:28 morning,退稿重寫#2,gateway,writer→glm-5.3-flash,Y,90.0,9243,4375,
+2026-11-16T14:30:34,2026-11-16 13:28 morning,審稿,gateway,audit,N,1013.6,,,閘道 audit 回空字串
+2026-11-16T15:03:07,2026-11-16 13:28 morning,審稿,gateway,deepseek-v4.1-flash,N,1952.8,,,閘道 deepseek-v4.1-flash 回空字串
+2026-11-16T15:15:14,2026-11-16 13:28 morning,審稿,gateway,step-5-preview,Y,727.2,8173,4753,
+2026-11-16T15:15:16,2026-11-16 13:28 morning,,claude_cli,haiku,N,2.4,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T15:16:03,2026-11-16 13:28 morning,,gateway,writer→glm-5.3-flash,Y,46.8,5071,556,
+2026-11-16T16:00:37,2026-11-16 16:00 morning,SubstackDraft,claude_cli,/Users/hsin/.local/bin/claude,N,2.1,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""69bda4c1-2839-49a1-9aaa-c845f5bdce93"",""total_cost_usd"":0,"
+2026-11-16T16:00:37,2026-11-16 16:00 morning,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
+2026-11-16T16:03:13,2026-11-16 16:00 morning,SubstackDraft,gateway,writer→glm-5.3-flash,Y,155.4,30500,3630,
+2026-11-16T16:03:52,2026-11-16 16:00 morning,,gateway,glm-5.3-flash,Y,38.9,16806,1666,
+2026-11-16T16:06:54,2026-11-16 16:00 morning,退稿重寫#1,claude_cli,haiku,N,2.2,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T16:08:31,2026-11-16 16:00 morning,,gateway,mistral-large-4-1t-a52b→glm-5.3-flash,Y,317.7,16806,1298,
+2026-11-16T16:09:15,2026-11-16 16:00 morning,退稿重寫#1,gateway,writer→glm-5.3-flash,Y,141.2,16986,3440,
+2026-11-16T16:10:32,2026-11-16 16:00 morning,,gateway,glm-5.3-flash,Y,76.4,17819,2048,
+2026-11-16T16:13:34,2026-11-16 16:00 morning,小修,claude_cli,haiku,N,2.2,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T16:13:41,2026-11-16 16:00 morning,小修,gateway,writer→glm-5.3-flash,Y,6.8,3635,47,
+2026-11-16T16:13:43,2026-11-16 16:00 morning,,claude_cli,haiku,N,1.5,,,claude 失敗：You've hit your 5-hour limit · resets 5:10pm (Asia/Taipei)
+2026-11-16T16:14:32,2026-11-16 16:00 morning,,gateway,writer→glm-5.3-flash,Y,49.6,4107,483,
