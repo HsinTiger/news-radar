@@ -543,7 +543,7 @@ ground-truth pass 併進 §1–§5。下次動 EDITORIAL_MODE 相關路徑時應
 |---|---|---|---|
 | 程式檢查 | 程式 | 出處（E1）、數字定位（E3）、過期（E4）、開場（A1/A1b）、段落（A2）、時間錨點（A3）、數字量級、中文數字 | `quality_loop.py::evaluate` → `evidence_gate.py`、`aeo_gate.py` |
 | 篇幅／文風 | 程式 | 太短、AI 套話、沒翻譯的英文、查證用語漏進正文、每句冠節目名、名詞清單 | `quality_loop.py::length_feedback`、`style_gate.py::style_feedback` |
-| 對帳 | NIM 開源模型（跟寫手不同家） | 只找「草稿跟素材矛盾」的句子，每條必附照抄的素材原文 | `fact_audit.py::run`（預設 `glm-5.3-flash`；它就是寫手或沒回時用 `gemini-2.5-flash`；`SUBSTACK_FACT_AUDITORS` 可放多個同時查） |
+| 對帳 | 兩個不同家的模型同時跑（都跟寫手不同家） | 只找「草稿跟素材矛盾」的句子，每條必附照抄的素材原文 | `fact_audit.py::run`（預設 `glm-5.3-flash,gemini-2.5-flash`，信哥 2026-11-16 同意加 gemini；有人被排除或都沒回時 `gemini-3.5-flash` 補位） |
 | 驗證對帳意見 | 程式 | 原句真的在草稿、素材原文真的在素材、不是「素材沒有」類的說法，才算數 | `fact_audit.py::verify` |
 | 小修 | 寫手（同第一稿的順序，Haiku 優先） | 只交「原句→改成」，程式換進去；新句子帶進素材沒有的數字或查證用語就不換 | `quality_loop.py::_patch_round`、`apply_patches` |
 | 整篇重寫 | 寫手 | 只在結構問題（太短、開場太長、名詞清單）或小修一句都沒換到時 | `quality_loop.py::_run_review_loop_ledger` |
@@ -560,8 +560,9 @@ ground-truth pass 併進 §1–§5。下次動 EDITORIAL_MODE 相關路徑時應
 
 為什麼改：翻 32 篇記錄，28 篇把重寫次數用到上限——舊審稿每輪重審全文、固定挑出約 7 條，從不收斂；它自己提的 499 條意見約四成是
 「素材裡沒有」（其實是它只看得到素材開頭），約兩成五是背景知識上的挑剔。毒化測試（定稿埋 5 個矛盾）：glm-5.3-flash 59–123 秒、
-gemini-2.5-flash 54 秒、mistral-large-4 754 秒、step-5-preview 1,351 秒都 5/5；deepseek-v4.1-flash 1,833 秒後回空白。
-NIM 上來得及用的只有 glm-5.3-flash。實測（2026-11-16）：Haiku 第一稿 3,957 字，整條審稿 233 秒、零整篇重寫；
+gemini-2.5-flash 54 秒、gemini-3.5-flash 20 秒、mistral-large-4 754 秒、step-5-preview 1,351 秒都 5/5；
+deepseek-v4.1-flash 1,833 秒後回空白，mistral 用真的第一稿再測一次也是 1,529 秒後回空白。
+NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）：Haiku 第一稿 3,957 字，整條審稿 233 秒、零整篇重寫；
 同日舊流程兩篇各 108、143 分鐘，新流程第一篇（寫手退到 glm）14 分鐘。
 
 ---

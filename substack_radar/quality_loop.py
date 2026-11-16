@@ -1042,11 +1042,11 @@ def _patch_round(current: str, violations, audit_items, style_items, pack: str,
     except Exception as exc:
         print(f"[Review] ⚠️ 小修沒跑成（{str(exc)[:100]}）")
         return current, 0
-    m = re.search(r"\{.*\}", raw or "", re.S)
-    try:
-        patches = json.loads(m.group(0), strict=False).get("patches") if m else None
-    except (ValueError, AttributeError):
-        patches = None
+    from substack_radar.fact_audit import loads_lenient, salvage
+    data = loads_lenient(raw)
+    patches = data.get("patches") if isinstance(data, dict) else None
+    if not isinstance(patches, list):
+        patches = salvage(raw, "改成") or None      # 少個括號之類的：把完整的替換一條一條撈出來
     if not isinstance(patches, list):
         print(f"[Review] ⚠️ 寫手（{who}）交的小修不是合法格式")
         return current, 0

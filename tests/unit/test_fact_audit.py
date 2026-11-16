@@ -152,11 +152,10 @@ def test_auditors_never_share_a_family_with_the_writer(monkeypatch):
     monkeypatch.delenv("SUBSTACK_FACT_AUDIT_FALLBACK", raising=False)
     haiku = "原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5"
     glm = "gateway · 模型 writer→glm-5.3-flash"
-    assert fa.pick_models([haiku]) == ["glm-5.3-flash"]
-    assert fa.pick_models([glm]) == ["gemini-2.5-flash"]                                # glm 不能審自己，備援補位
-    monkeypatch.setenv("SUBSTACK_FACT_AUDITORS", "glm-5.3-flash,gemini-2.5-flash")       # 設兩個就兩個一起查
-    assert fa.pick_models([haiku]) == ["glm-5.3-flash", "gemini-2.5-flash"]
-    monkeypatch.delenv("SUBSTACK_FACT_AUDITORS")
+    assert fa.pick_models([haiku]) == ["glm-5.3-flash", "gemini-2.5-flash"]            # 兩個不同家一起查
+    assert fa.pick_models([glm]) == ["gemini-2.5-flash", "gemini-3.5-flash"]            # glm 不能審自己，備援補位
+    gemini_writer = "antigravity_cli · 模型 Gemini 3.8 Flash (High)"
+    assert fa.pick_models([gemini_writer]) == ["glm-5.3-flash"]                         # 寫手是 Gemini 時，Gemini 全部迴避
     assert "glm-5.3-flash" not in fa.pick_models([haiku, "閘道 writer→glm-5.3-flash"])  # 重寫的人也算寫手
 
 
@@ -175,3 +174,40 @@ def test_gateway_swapping_in_the_writers_model_does_not_count():
     kept, summary = fa.run(DRAFT, MATERIAL, models=["mistral-large-4-1t-a52b"], chat=chat, deadline_s=5,
                            fallback=[], writers=["claude-haiku-5-5"])
     assert summary["answered"] == ["glm-5.3-flash"] and kept[0]["查核模型"] == "glm-5.3-flash"
+
+
+# ---- 2026-11-16：gemini 三次有一次少最後一個括號，五條發現被當成「沒有問題」 ----
+
+def test_answer_missing_its_last_brace_is_still_read():
+    a = _item("節目裡提到 Polymarket 預測今年底前回任的機率六成以上。", "by the end of next year")
+    b = _item("這家公司去年整體營收成長了 39%。", "雲端營收成長了 39%，整體營收只成長 12%", "部門數字寫成整體")
+    full = json.dumps({"items": [a, b]}, ensure_ascii=False)
+    assert len(fa.parse(full)) == 2
+    assert len(fa.parse(full[:-1])) == 2                       # 少最外層的 }
+    assert len(fa.parse(full[:-2])) == 2                       # 少 ]}
+    assert len(fa.parse("```json\n" + full + "\n```")) == 2    # 包在程式碼區塊裡
+    assert len(fa.parse(full + "\n以上是我的查核結果。")) == 2   # 後面多了一句話
+    cut_mid_item = full[:full.index("部門數字")]                # 第二條寫到「問題」欄一半斷掉
+    got = fa.parse(cut_mid_item)                               # 第一條完整；第二條的原句與證據都在，也救回來
+    assert [i["原句"] for i in got] == [a["原句"], b["原句"]] and got[1]["素材原文"] == b["素材原文"]
+    cut_early = full[:full.index(b["原句"]) + 5]                # 第二條連原句都沒寫完：只留第一條
+    assert [i["原句"] for i in fa.parse(cut_early)][0] == a["原句"]
+    assert fa.parse('{"items": []}') == [] and not fa.unreadable('{"items": []}')
+    assert fa.unreadable('抱歉，我無法完成這個任務 {"items": [壞掉') and not fa.unreadable("")
+
+
+def test_unreadable_answer_is_a_failure_not_a_clean_bill():
+    def chat(model, prompt):
+        return "這是我的分析：{items: 沒有照格式" if model == "壞格式" else json.dumps({"items": []})
+
+    _, summary = fa.run(DRAFT, MATERIAL, models=["壞格式", "正常"], chat=chat, deadline_s=5, fallback=[])
+    assert summary["answered"] == ["正常"] and "格式壞掉" in summary["failed"]["壞格式"]
+
+
+def test_patches_missing_a_brace_are_still_applied(monkeypatch):
+    bad = "節目裡提到 Polymarket 預測今年底前回任的機率六成以上。"
+    fixed = "節目裡提到 Polymarket 預測明年底前回任的機率有 30% 以上。"
+    item = _item(bad, "a 30 plus percent chance that he'll return as CEO by the end of next year")
+    reply = lambda p: json.dumps({"patches": [{"原句": bad, "改成": fixed}]}, ensure_ascii=False)[:-1]   # 少一個 }
+    (final, report, rewrites), _ = _ledger_loop(monkeypatch, [item], reply)
+    assert fixed in final and report.patches == 1 and rewrites == 0

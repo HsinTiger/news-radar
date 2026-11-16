@@ -11,8 +11,9 @@
 - 證據由程式驗：照抄的那段素材原文真的在素材裡、指的那句真的在草稿裡，才算數。
   驗不過的意見直接丟掉，不會送到寫手面前。
 
-SUBSTACK_FACT_AUDITORS 可以放多個模型（逗號分隔），會同時查、取聯集，而且不會讓寫手同一家的模型審自己。
-目前預設只有一個，原因見下面「模型怎麼選」。
+同一份草稿交給兩個不同家的模型同時查、取聯集：一個模型單獨查一次會漏
+（2026-11-14 那篇第一輪只挑出 3 條，第三輪才又看到另外 5 條），兩個一起查不多花時間。
+寫手同一家的模型不會被派去審自己。模型怎麼選見下面。
 """
 from __future__ import annotations
 
@@ -30,17 +31,18 @@ DEADLINE_S = int(os.getenv("SUBSTACK_FACT_AUDIT_DEADLINE_S", "900"))
 GRACE_S = int(os.getenv("SUBSTACK_FACT_AUDIT_GRACE_S", "180"))
 
 # 模型怎麼選（2026-11-16 毒化測試：在定稿裡埋 5 個跟逐字稿矛盾的錯，同一份 3.6 萬 token 的題目）：
-#   glm-5.3-flash（NIM）      5/5，59–123 秒（四個 NIM 請求同時跑時 440 秒）
-#   gemini-2.5-flash          5/5，54 秒（不是開源模型，放備援）
-#   mistral-large-4（NIM）    5/5，754 秒；拿真的第一稿再測一次，超過 600 秒沒回
+#   glm-5.3-flash（NIM）      5/5，31–145 秒（四個 NIM 請求同時跑時 440 秒）
+#   gemini-2.5-flash          5/5，54 秒
+#   gemini-3.5-flash          5/5，20 秒
+#   mistral-large-4（NIM）    5/5，754 秒；拿真的第一稿再測一次，等了 1,529 秒後回空白
 #   step-5-preview（NIM）     5/5，1,351 秒
 #   deepseek-v4.1-flash（NIM）等了 1,833 秒後回空白——原本審稿的第一順位
 #   glm-5.3（NIM）            閘道實際換成 glm-5.3-flash 作答，等於同一個
-# 抓錯能力大家一樣，差在會不會回、多久回。NIM 上來得及用的開源模型只有 glm-5.3-flash 一個，
-# 所以預設只放它；原本另外放了 mistral，結果每篇白等 3 分鐘，閘道還把它的請求轉給 glm 再跑一次。
-# 備援 gemini-2.5-flash 在兩種情況上場：glm 自己就是寫手（不能審自己），或 glm 沒回。
-DEFAULT_AUDITORS = "glm-5.3-flash"
-DEFAULT_FALLBACK = "gemini-2.5-flash"
+# 抓錯能力大家一樣，差在會不會回、多久回。NIM 上來得及用的開源模型只有 glm-5.3-flash 一個。
+# 信哥 2026-11-16 同意加 gemini-2.5-flash 當常態的第二個查核員（不是開源，但免費、不同家、約一分鐘）：
+# 兩個同時查、取聯集。備援 gemini-3.5-flash（配額跟 2.5 分開算）在有人被排除或都沒回時補位。
+DEFAULT_AUDITORS = "glm-5.3-flash,gemini-2.5-flash"
+DEFAULT_FALLBACK = "gemini-3.5-flash"
 
 PROMPT = """你是事實查核員，只做一件事：找出草稿裡「跟素材寫的不一樣」的句子。
 
@@ -77,16 +79,51 @@ def build_prompt(article: str, pack: str) -> str:
     return PROMPT.format(max_items=MAX_ITEMS, pack=pack, article=article)
 
 
-def parse(raw: str) -> list[dict]:
-    m = re.search(r"\{.*\}", raw or "", re.S)
+def loads_lenient(raw: str):
+    """模型交的 JSON 常常少最後一個括號（2026-11-16：gemini-2.5-flash 同一題跑三次，有一次結尾是
+    「…}]」少了最外層的「}」，原本的解析就把五條發現整份當成「沒有問題」）。補得回來就補。"""
+    m = re.search(r"\{.*", raw or "", re.S)
     if not m:
-        return []
-    try:
-        data = json.loads(m.group(0), strict=False)
-    except ValueError:
-        return []
+        return None
+    text = re.sub(r"```\s*$", "", m.group(0).strip()).strip()
+    for tail in ("", "}", "]}", '"}]}'):
+        try:
+            return json.loads(text + tail, strict=False)
+        except ValueError:
+            continue
+    end = text.rfind("}")                      # 尾巴多了別的字：往前找到能解析的地方
+    while end > 0:
+        try:
+            return json.loads(text[:end + 1], strict=False)
+        except ValueError:
+            end = text.rfind("}", 0, end)
+    return None
+
+
+def salvage(raw: str, key: str) -> list[dict]:
+    """整份解析不了時，把裡面一個一個完整的物件撈出來（只要有 key 這個欄位）。"""
+    out = []
+    for m in re.finditer(r"\{[^{}]*\}", raw or "", re.S):
+        try:
+            obj = json.loads(m.group(0), strict=False)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and key in obj:
+            out.append(obj)
+    return out
+
+
+def parse(raw: str) -> list[dict]:
+    data = loads_lenient(raw)
     items = data.get("items") if isinstance(data, dict) else None
-    return [i for i in items or [] if isinstance(i, dict)]
+    if not isinstance(items, list):
+        items = salvage(raw, "原句")
+    return [i for i in items if isinstance(i, dict)]
+
+
+def unreadable(raw: str) -> bool:
+    """有回字、看起來也有發現，卻一條都解析不出來＝格式壞掉。這不能當成「查過沒問題」。"""
+    return bool((raw or "").strip()) and not parse(raw) and loads_lenient(raw) is None
 
 
 _PUNCT = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", "「": '"', "」": '"', "『": '"', "』": '"',
@@ -225,6 +262,10 @@ def run(article: str, pack: str, *, models: list[str] | None = None, chat=None,
             return False
         if served in summary["answered"]:
             summary["failed"][model] = f"閘道換成已經答過的 {served}"
+            return False
+        if unreadable(raw):
+            summary["failed"][model] = "回答的格式壞掉，讀不出來"
+            print(f"[FactAudit] ⚠️ {served} 的回答格式壞掉，讀不出來（不當成沒問題）")
             return False
         items = parse(raw)
         for it in items:
