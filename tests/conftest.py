@@ -118,6 +118,8 @@ def _no_live_model_calls(monkeypatch):
         def _blocked(*_a, **_k):
             raise RuntimeError("測試中不准呼叫開源模型閘道")
         monkeypatch.setattr(quality_loop, "_oss_chat", _blocked)
+        # 2026-11-16：重寫與標題台改成照寫稿順序（Haiku 優先），測試也不准真的叫 Claude CLI
+        monkeypatch.setenv("CLAUDE_CLI_BIN", "claude-blocked-in-tests")   # which() 找不到＝不會真的叫
     except Exception:
         pass
     try:

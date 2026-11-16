@@ -830,6 +830,13 @@ def word_range_for(profile: EditorialProfile) -> tuple[int, int]:
     return floor, cap
 
 
+def _length_brief(word_floor: int, word_cap: int) -> str:
+    """給寫手的字數說明。2026-11-16 翻記錄：16 篇第一稿因為太短被退，平均只寫到下限的 72%——
+    模型把英文、數字、連結都算進去，程式只算中文字。所以把算法講清楚，目標訂在上限。"""
+    return (f"{word_floor}–{word_cap} 個中文字（英文、數字、網址不算）；"
+            f"請以 {word_cap} 個中文字為目標，少於 {word_floor} 會被退回補寫")
+
+
 def _count_chinese_chars(text: str) -> int:
     """數中文字＋全形標點。半形字符／英文不計。"""
     return sum(
@@ -1156,7 +1163,7 @@ def _build_deep_writer_prompt(
     tensions = "\n".join(f"- {item}" for item in research_brief.tensions)
     return (
         "=== 階段二：整合成讀者文章 ===\n"
-        f"Profile：{profile.name}/{profile.article_kind}（{word_floor}–{word_cap} 字）\n"
+        f"Profile：{profile.name}/{profile.article_kind}（{_length_brief(word_floor, word_cap)}）\n"
         f"素材類型：{mode}\n主題分類：{topic_category}\n原始標題：{raw_title}\n"
         f"文型：{research_brief.article_form}\n{form_contract}\n\n"
         f"=== 編輯指令 ===\n{editorial_note or '沒有額外指令；依證據做最佳編輯判斷。'}\n\n"
@@ -1214,7 +1221,24 @@ def _build_deep_writer_prompt(
     )
 
 
-def _build_user_prompt(
+def _build_user_prompt(**kwargs) -> str:
+    """寫手的任務說明＋交稿前自查（最近實際被退的原因，見 substack_radar.lessons）。"""
+    prompt = _build_user_prompt_core(**kwargs)
+    if os.getenv("SUBSTACK_LESSONS", "1") != "1":
+        return prompt
+    try:
+        from substack_radar.lessons import prompt_block
+        mode = kwargs.get("mode") or ""
+        block = prompt_block("podcast/ai" if os.getenv("SUBSTACK_COLUMN") == "ai" and mode == "podcast" else mode)
+    except Exception:
+        block = ""
+    if not block:
+        return prompt
+    marker = "=== 輸出格式"
+    return prompt.replace(marker, block + marker, 1) if marker in prompt else prompt + "\n\n" + block
+
+
+def _build_user_prompt_core(
     *,
     raw_title: str,
     raw_content: str,
@@ -1258,7 +1282,7 @@ def _build_user_prompt(
     }.get(mode, "")
 
     return (
-        f"=== 本次任務 ===\nProfile：{profile.name}（{word_floor}–{word_cap} 字）\n"
+        f"=== 本次任務 ===\nProfile：{profile.name}（{_length_brief(word_floor, word_cap)}）\n"
         f"素材類型：{mode}\n主題分類：{topic_category}\n{mode_hint}\n\n"
         f"=== 編輯指令 ===\n{editorial_note or '沒有額外指令；依本次素材做最佳編輯判斷。'}\n\n"
         f"=== 原始素材 ===\n標題：{raw_title}\n本文：{_material_for_prompt(raw_content, mode, profile)}\n\n"

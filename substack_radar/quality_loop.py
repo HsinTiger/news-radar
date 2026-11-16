@@ -594,10 +594,117 @@ def open_domain_audit(article_md: str, fact_block: str, *,
 
 REVIEW_ATTEMPTS = int(os.getenv("SUBSTACK_REVIEW_ATTEMPTS", "3"))
 
-def evidence_pack(fact_block: str, sources: list[dict] | None, *, limit: int = 40000) -> str:
+_ANCHOR_STOP = {"https", "http", "html", "that", "this", "with", "from", "have", "will", "what",
+                "they", "their", "about", "said", "says", "news", "podcast", "episode"}
+
+
+def _anchors(article: str) -> tuple[set[str], set[str], set[str]]:
+    """草稿裡拿來回素材找出處的錨點：數字、英文專名、常出現的中文詞。"""
+    flat = re.sub(r"\]\([^)]*\)", "]", article or "")
+    flat = re.sub(r"(?<=\d)[,，](?=\d{3})", "", flat)
+    nums = {n for n in re.findall(r"\d+(?:\.\d+)?", flat) if len(n) >= 2}
+    latin = ({w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-']{3,}", flat)}
+             | {w.lower() for w in re.findall(r"\b[A-Z]{3}\b", flat)}) - _ANCHOR_STOP
+    grams: dict[str, int] = {}
+    for run in re.findall(r"[\u4e00-\u9fff]{3,}", flat):
+        for i in range(len(run) - 2):
+            grams[run[i:i + 3]] = grams.get(run[i:i + 3], 0) + 1
+    cjk = {g for g, c in grams.items() if c >= 2}
+    return nums, latin, cjk
+
+
+def _est_tokens(text: str) -> int:
+    """粗估 token：中文一個字約一個 token，英文約 3.6 個字元一個。"""
+    cjk = len(re.findall(r"[\u3000-\u9fff\uff00-\uffef]", text or ""))
+    return int(cjk * 1.1 + (len(text or "") - cjk) / 3.6)
+
+
+EVIDENCE_TOKENS = int(os.getenv("SUBSTACK_EVIDENCE_TOKENS", "40000"))
+
+
+def select_evidence(fact_block: str, article: str, budget: int = EVIDENCE_TOKENS, *,
+                    chunk: int = 1200, head: int = 6000) -> str:
+    """給審稿與重寫的素材（2026-11-16 重做）。
+
+    原本一律只給前 40,000 個「字元」。英文逐字稿 40,000 字元只有約一萬 token：
+    〈黃仁勳辭職〉那集 114,144 字，審稿只看得到前三分之一，就把節目 55,000 字處播的 Hassabis 片段、
+    61,900 字處的討論判成「素材裡沒有」，逼寫手把對的內容改弱。
+    現在上限改用 token 算（預設四萬），英文素材可以給到約 14 萬字元，這種長度整份給。
+    還是超過時：開頭照留，其餘先確保草稿裡每個少見的數字與英文專名都找得到出處段落，
+    再用剩下的額度補相關段落；照原順序排，略過的地方標出來。"""
+    text = fact_block or ""
+    if _est_tokens(text) <= budget or not (article or "").strip():
+        while _est_tokens(text) > budget:              # 沒有草稿可比對時才會走到：只好從頭截
+            text = text[:int(len(text) * 0.9)]
+        return text
+    nums, latin, cjk = _anchors(article)
+    pieces = [(i, text[i:i + chunk]) for i in range(0, len(text), chunk)]
+    lows = {i: re.sub(r"(?<=\d),(?=\d{3})", "", c).lower() for i, c in pieces}
+
+    def hits(anchor: str, is_num: bool) -> list[int]:
+        if is_num:
+            pat = re.compile(rf"(?<![\d.]){re.escape(anchor)}(?![\d])")
+            return [i for i, low in lows.items() if pat.search(low)]
+        return [i for i, low in lows.items() if anchor in low]
+
+    where = {(a, True): hits(a, True) for a in nums}
+    where.update({(a, False): hits(a, False) for a in latin | cjk})
+    where = {k: v for k, v in where.items() if v}
+    keep = {i for i, _ in pieces if i < head}
+    left = budget - sum(_est_tokens(c) for i, c in pieces if i in keep)
+    cost = {i: _est_tokens(c) for i, c in pieces}
+
+    def take(i: int) -> bool:
+        nonlocal left
+        if i in keep:
+            return True
+        if cost[i] > left:
+            return False
+        keep.add(i)
+        left -= cost[i]
+        return True
+
+    # ① 越少見的錨點越先顧：每個至少帶進它出現的頭兩段（Hassabis、Polymarket 這種只出現一兩次的）
+    for (anchor, is_num), idx in sorted(where.items(), key=lambda kv: (len(kv[1]), kv[0][0])):
+        if len(idx) > max(3, len(pieces) // 8):
+            break                                      # 剩下的都是到處出現的詞，交給 ②
+        for i in idx[:2]:
+            take(i)
+    # ② 剩下的額度：錨點越少見權重越高
+    import math
+    weight = {k: math.log(1 + len(pieces) / len(v)) * (2 if k[1] else 1) * (0.3 if k[0] in cjk else 1)
+              for k, v in where.items()}
+    score: dict[int, float] = {}
+    for k, idx in where.items():
+        for i in idx:
+            score[i] = score.get(i, 0.0) + weight[k]
+    for i in sorted(score, key=lambda j: (-score[j], j)):
+        if left <= 0:
+            break
+        take(i)
+
+    out, last_end = [], 0
+    for i, c in pieces:
+        if i not in keep:
+            continue
+        if i > last_end:
+            out.append(f"\n……（中間略過約 {i - last_end:,} 字）……\n")
+        out.append(c)
+        last_end = i + len(c)
+    if last_end < len(text):
+        out.append(f"\n……（後面略過約 {len(text) - last_end:,} 字）……")
+    kept = sum(len(c) for i, c in pieces if i in keep)
+    return (f"（素材全文 {len(text):,} 字，這裡只節錄跟草稿內容相關的 {kept:,} 字。"
+            "節錄裡找不到，不代表素材裡沒有；只有節錄明確寫著不一樣的內容，才算草稿寫錯。）\n"
+            + "".join(out))
+
+
+def evidence_pack(fact_block: str, sources: list[dict] | None, *, limit: int = EVIDENCE_TOKENS,
+                  article: str = "") -> str:
     """給稽核與寫手的完整取材（2026-11-06）：原本只給事實表前 6,000 字，一集 6 萬字的逐字稿
-    後段、寫手查到的第一手資料全看不到，稽核就把真的數字判成「不在事實表」叫寫手刪。"""
-    parts = [f"【原始素材】\n{(fact_block or '')[:limit]}"]
+    後段、寫手查到的第一手資料全看不到，稽核就把真的數字判成「不在事實表」叫寫手刪。
+    2026-11-16：超過上限時改挑跟草稿相關的段落（見 select_evidence）。"""
+    parts = [f"【原始素材】\n{select_evidence(fact_block, article, limit)}"]
     for i, src in enumerate(sources or [], 1):
         if i > 10:
             break
@@ -637,7 +744,7 @@ _CRITIQUE_PROMPT = """你是審稿編輯，這一輪只負責「指出問題、�
 
 === 作者草稿 ===
 {article}
-
+{scope}
 === 輸出格式（最高優先）===
 只輸出一個 JSON 物件：{{"items": [{{"問題": "…", "原句": "…", "建議改法": "…"}}]}}
 完全沒有問題就輸出 {{"items": []}}。不要輸出 JSON 以外的文字。
@@ -690,10 +797,31 @@ def _parse_items(raw: str) -> list[dict] | None:
     return [i for i in items if isinstance(i, dict) and (i.get("問題") or i.get("建議改法"))]
 
 
-def critique(article_md: str, violations: list[Violation], fact_block: str, auditor: str) -> list[dict] | None:
-    """稽核模型逐條列出問題與改法。稽核跑不成回 None（跟「跑了沒問題」的 [] 分開）。"""
+_SCOPE_NOTE = """
+=== 這一輪只審這些句子 ===
+全文你上一輪已經審過。下面是作者退稿後新寫或改過的句子；第 2 項的事實錯誤只從這些句子裡找，
+其他沒動過的地方不要再提新意見（那樣永遠改不完）。
+{sentences}
+"""
+MAX_AUDIT_ITEMS = int(os.getenv("SUBSTACK_AUDIT_MAX_ITEMS", "6"))
+
+
+def _sentences(article_md: str) -> list[str]:
+    body = re.split(r"^-{3,}\s*$", article_md or "", maxsplit=1, flags=re.M)[0]
+    return [x.strip() for x in re.split(r"(?<=[。！？?!])|\n+", body) if len(x.strip()) >= 8]
+
+
+def _skey(sentence: str) -> str:
+    return re.sub(r"\s+", "", re.sub(r"\]\([^)]*\)", "]", sentence))
+
+
+def critique(article_md: str, violations: list[Violation], fact_block: str, auditor: str,
+             focus: list[str] | None = None) -> list[dict] | None:
+    """稽核模型逐條列出問題與改法。稽核跑不成回 None（跟「跑了沒問題」的 [] 分開）。
+    focus：只審這些句子（第二輪起用，見 run_review_loop）。"""
     listed = "\n".join(f"{i}. {v}" for i, v in enumerate(violations, 1)) or "（無）"
-    prompt = _CRITIQUE_PROMPT.format(violations=listed, facts=fact_block, article=article_md)
+    scope = _SCOPE_NOTE.format(sentences="\n".join(f"- {x}" for x in focus[:60])) if focus else ""
+    prompt = _CRITIQUE_PROMPT.format(violations=listed, facts=fact_block, article=article_md, scope=scope)
     from src import run_log
     try:
         with run_log.stage("審稿"):
@@ -704,6 +832,11 @@ def critique(article_md: str, violations: list[Violation], fact_block: str, audi
     items = _parse_items(raw)
     if items is None:
         print("[Review] ⚠️ 審稿意見不是合法 JSON；這一輪只用程式檢查的結果退稿")
+        return None
+    cap = len(violations) + MAX_AUDIT_ITEMS          # 每條程式違規一個改法，另外最多 6 條
+    if len(items) > cap:
+        print(f"[Review] ℹ️ 審稿列了 {len(items)} 條，只取前 {cap} 條（多了寫手改不完，下一輪又挑新的）")
+        items = items[:cap]
     return items
 
 
@@ -768,6 +901,24 @@ def length_feedback(article_md: str, word_range: tuple[int, int] | None) -> list
     return []
 
 
+def _log_rejections(round_no: int, violations, audit_items, too_short, style_items) -> None:
+    """退稿原因記帳（logs/writing/rejections.csv），給 substack_radar.lessons 用。失敗不影響寫稿。"""
+    try:
+        from src import run_log
+        for v in violations:
+            run_log.log_rejection(round_no=round_no, source="程式", kind=str(v.kind), quote=str(v.detail))
+        for it in audit_items:
+            run_log.log_rejection(round_no=round_no, source="審稿", kind=str(it.get("問題", "")),
+                                  quote=str(it.get("原句", "")))
+        for it in too_short:
+            run_log.log_rejection(round_no=round_no, source="篇幅", kind=str(it.get("問題", "")))
+        for it in style_items:
+            run_log.log_rejection(round_no=round_no, source="文風", kind=str(it.get("問題", "")),
+                                  quote=str(it.get("原句", "")))
+    except Exception:
+        pass
+
+
 def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
                     max_attempts: int = REVIEW_ATTEMPTS,
                     word_range: tuple[int, int] | None = None) -> tuple[str, LoopReport, int]:
@@ -775,20 +926,36 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
     report = LoopReport()
     current = article_md
     rewrites = 0
+    # 2026-11-16 翻 32 篇記錄：審稿每一輪都重審全文、固定挑出約 7 條（8.2→7.2→6.7→6.8），
+    # 從不收斂，28 篇把重寫次數用到上限。現在第一輪審全文，之後只審改過的句子；
+    # 沒改過的句子上一輪已經審過，不再重挑。SUBSTACK_REAUDIT_FULL=1 可改回每輪審全文。
+    reaudit_full = os.getenv("SUBSTACK_REAUDIT_FULL", "0") == "1"
+    audited: set[str] = set()
     for attempt in range(max_attempts + 1):
         violations = evaluate(current, **eval_kwargs)
         report.history.append(violations)
         report.rounds = attempt + 1
-        pack = evidence_pack(fact_block, eval_kwargs.get("sources"))
-        items = critique(current, violations, pack, auditor)
+        pack = evidence_pack(fact_block, eval_kwargs.get("sources"), article=current)
+        sentences = _sentences(current)
+        fresh = [x for x in sentences if _skey(x) not in audited]
+        if attempt == 0 or reaudit_full:
+            audit_items = critique(current, violations, pack, auditor)
+        elif fresh or violations:
+            print(f"[Review] 第 {attempt + 1} 次審稿只看改過的 {len(fresh)} 句（全文 {len(sentences)} 句）")
+            audit_items = critique(current, violations, pack, auditor, focus=fresh or None)
+        else:
+            audit_items = []
+        audited |= {_skey(x) for x in sentences}
         too_short = length_feedback(current, word_range)
-        if too_short:
-            items = (items or []) + too_short
+        items = (audit_items or []) + too_short if (audit_items or too_short) else audit_items
         # 文風（套話、沒翻譯的英文、重複、標籤小標）：當退稿意見給寫手，不影響通過與否
         # 只在第一輪或本來就要退稿時附上，免得每篇都為了用詞把 3 次重寫用完、拖過發文時間
+        style_items: list[dict] = []
         if attempt == 0 or violations or items:
             from substack_radar.style_gate import style_feedback
-            items = (items or []) + style_feedback(current)
+            style_items = style_feedback(current)
+            items = (items or []) + style_items
+        _log_rejections(attempt + 1, violations, audit_items or [], too_short, style_items)
         if not violations and not items:
             report.passed = True
             print(f"[Review] ✅ 第 {attempt + 1} 次審稿：程式檢查與審稿編輯都沒有意見，通過")

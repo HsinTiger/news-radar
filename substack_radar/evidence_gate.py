@@ -97,6 +97,8 @@ def _looks_like_named_entity(named: str) -> bool:
     core = re.sub(r"\s+", "", text)
     if not re.fullmatch(r"[一-鿿]{2,10}", core):
         return False
+    if len(core) <= 3 and any(w in core for w in _ADVERB_NOT_SOURCE):
+        return False
     return not any(w in core for w in _PHRASE_MARKERS)
 
 
@@ -177,6 +179,14 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
         raw_pos = next((excerpt.find(f"{value}{u}") for u in unit_variants
                         if excerpt.find(f"{value}{u}") >= 0), -1)
         if raw_pos < 0:
+            # 命中的是去空白後的字串（「$214 billion」→「$214billion」），回原文找真正的位置，
+            # 不然後面取的上下文會偏掉一大段
+            for n in needles + en_needles:
+                hit = re.search(r"[\s,]*".join(re.escape(ch) for ch in n), excerpt, re.I) if n else None
+                if hit:
+                    raw_pos = hit.start()
+                    break
+        if raw_pos < 0:
             raw_pos = pos
         lo, hi = max(0, raw_pos - 24), min(len(excerpt), raw_pos + 40)
         ctx = re.sub(r"\s+", " ", excerpt[lo:hi]).strip()
@@ -187,6 +197,10 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
         if topic_terms:
             window = excerpt[max(0, raw_pos - 90):raw_pos + 90]
             overlap = len(topic_terms & _topic_words(window))
+            if not overlap and not re.search(r"[一-鿿]", window):
+                overlap = _cross_language_overlap(topic, window, value)
+            if not overlap and _sentence_names_known_source(topic, [src]):
+                overlap = 1          # 句子點名的就是這個來源，數字也在它裡面
             if not overlap:
                 continue
         located = (f"來源 #{index}（{src.get('publisher') or src.get('url', '')[:40]}）"
@@ -204,6 +218,21 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
     return None
 
 
+def _cross_language_overlap(sentence: str, window: str, value: str) -> int:
+    """中文句子對英文來源：內容詞對不起來（一邊中文一邊英文），改比英文專名與其他數字。
+    2026-11-16 翻記錄：英文研究來源裡明明有的「47%」「$214 billion」被判成找不到。
+    句子裡完全沒有可比的英文詞或數字時放行——單位已經對上了，再擋只是製造誤報。"""
+    flat = re.sub(r"(?<=\d)[,，](?=\d{3})", "", sentence or "")
+    latin = {w.lower() for w in re.findall(r"[A-Za-z]{3,}", flat)}
+    nums = {n for n in re.findall(r"\d+(?:\.\d+)?", flat) if n != value and len(n) >= 2}
+    win = re.sub(r"(?<=\d),(?=\d{3})", "", window or "")
+    shared = len(latin & {w.lower() for w in re.findall(r"[A-Za-z]{3,}", win)})
+    shared += len(nums & set(re.findall(r"\d+(?:\.\d+)?", win)))
+    if shared:
+        return shared
+    return 0 if (latin or nums) else 1
+
+
 def _english_variants(value: str, unit: str) -> list[str]:
     """「800 億」→ 80billion／$80b；「6.93 億」→ 693million；「2 兆」→ 2trillion。已去空白、小寫。"""
     try:
@@ -218,7 +247,32 @@ def _english_variants(value: str, unit: str) -> list[str]:
     return []
 
 
-_PRIMARY_SOURCE_WORDS = r"節目|這集|該集|本集|對談|訪談|專訪|podcast|來賓|主持人|逐字稿|影片|演講"
+_PRIMARY_SOURCE_WORDS = (r"節目|這集|該集|本集|對談|訪談|專訪|podcast|來賓|嘉賓|與談|受訪|主持人|"
+                         r"逐字稿|影片|演講|片段")
+# 2026-11-16 翻退稿記錄：程式檢查有四分之一被審稿判成誤報，每個誤報都要白白重寫一輪。
+# 「只能指出…」的「只能」是副詞不是來源。
+_ADVERB_NOT_SOURCE = ("只", "能", "才", "卻", "並", "則", "又", "還", "更", "不", "無",
+                      "我", "你", "他", "她", "它")
+
+
+def _sentence_names_known_source(sentence: str, sources: list[dict]) -> bool:
+    """句子裡已經點名一個取材清單裡的媒體（「BBC 則提到，黃仁勳表示…」）＝出處有了。
+    原本只看「表示」前面那個詞，就把被報導的人當成來源。"""
+    low = (sentence or "").lower()
+    for src in sources or []:
+        names = {str(src.get("publisher") or "").lower()}
+        host = re.sub(r"^https?://(?:www\.)?", "", str(src.get("url") or "").lower()).split("/")[0]
+        if host:
+            names.add(host)
+            names.add(host.split(".")[0])            # bbc.com / bbc.co.uk → bbc
+        for name in names:
+            name = name.strip()
+            if re.fullmatch(r"[a-z0-9.\- ]{3,}", name):
+                if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", low):
+                    return True
+            elif len(name) >= 3 and name in low:
+                return True
+    return False
 
 
 def _names_in_facts(named: str, fact_block: str) -> bool:
@@ -294,8 +348,12 @@ def check(article_md: str, *, sources: list[dict] | None = None,
             named = ""
         # 引用主來源本身（「這集節目」「Hard Fork 的對談」「來賓 Aaron 的說法」）是對的——
         # 逐字稿就是事實表。2026-11-06 試跑：寫手三輪換了三種講法標出處，全被判「不在清單」。
-        if named and fact_block and (re.search(_PRIMARY_SOURCE_WORDS, named, re.I)
+        # 整句只要說了是節目／訪談裡的話，出處就是主來源——不只看「表示」前面那幾個字
+        # （「Burkeman 在訪談中引用了誘發需求…」被抓成歸屬給「了交通規劃領域…」）。
+        if named and fact_block and (re.search(_PRIMARY_SOURCE_WORDS, sentence, re.I)
                                      or _names_in_facts(named, fact_block)):
+            named = ""
+        if named and _sentence_names_known_source(sentence, sources):
             named = ""
         if named and _looks_like_named_entity(named):
             named_norm = _norm(named)
@@ -307,7 +365,8 @@ def check(article_md: str, *, sources: list[dict] | None = None,
                            "補上真正的來源連結，或改寫成不具名的敘述。",
                 ))
         # E2/E3：歸屬句裡的量要定位得到
-        for value, unit in _QUANTITY.findall(sentence):
+        # 千分位先拿掉：「2,140 億」原本被讀成「140 億」，當然哪裡都找不到
+        for value, unit in _QUANTITY.findall(re.sub(r"(?<=\d)[,，](?=\d{3})", "", sentence)):
             if _is_derived_ratio(value, unit, fact_values or {}):
                 continue
             where = locate(value, unit, sources, fact_block, topic=sentence)

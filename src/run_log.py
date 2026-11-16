@@ -77,6 +77,18 @@ def log_call(*, provider: str, model: str | None, ok: bool, seconds: float,
     })
 
 
+REJECTION_FIELDS = ["date", "run", "round", "source", "kind", "quote"]
+
+
+def log_rejection(*, round_no: int, source: str, kind: str, quote: str = "") -> None:
+    """每一條退稿原因記一行（2026-11-16）。source：程式／審稿／篇幅／文風。
+    substack_radar.lessons 讀它，把最近最常被退的原因提醒給寫手——讓過去的退稿變成下一篇的自查。"""
+    _append("rejections.csv", REJECTION_FIELDS, {
+        "date": datetime.now().strftime("%Y-%m-%d"), "run": current_run(), "round": round_no,
+        "source": source, "kind": redact(str(kind))[:60], "quote": redact(str(quote))[:120],
+    })
+
+
 def log_article(**row) -> None:
     now = datetime.now()
     _append("articles.csv", ARTICLE_FIELDS,
