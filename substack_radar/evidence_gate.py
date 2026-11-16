@@ -72,7 +72,9 @@ _PHRASE_MARKERS = ("的", "了", "是", "在", "與", "和", "也", "仍", "會"
                    "面對", "一套", "一個", "這", "那", "其", "之", "對於", "如果")
 _GENERIC_HEADS = ("傳統", "當日", "初步", "業界", "市場", "歷史", "上述", "目前",
                   "過去", "近期", "經驗", "估算", "說法", "觀察", "支持", "反方",
-                  "這項", "這些", "有分析", "有人", "部分", "多數", "一般")
+                  "這項", "這些", "有分析", "有人", "部分", "多數", "一般",
+                  # 2026-11-16 Haiku 第一稿實測：「Alex 引用公開報導說…」被當成歸屬給「公開報導說」
+                  "公開", "媒體", "外電", "報導", "新聞", "外界", "相關", "多家", "有報導", "有媒體")
 
 
 def _looks_like_named_entity(named: str) -> bool:
@@ -352,6 +354,9 @@ def check(article_md: str, *, sources: list[dict] | None = None,
         # （「Burkeman 在訪談中引用了誘發需求…」被抓成歸屬給「了交通規劃領域…」）。
         if named and fact_block and (re.search(_PRIMARY_SOURCE_WORDS, sentence, re.I)
                                      or _names_in_facts(named, fact_block)):
+            named = ""
+        # 「Alex 引用某某的說法」：說這句話的人在節目裡，出處就是節目
+        if named and fact_block and m.group(1) and _names_in_facts(sentence[:m.start()], fact_block):
             named = ""
         if named and _sentence_names_known_source(sentence, sources):
             named = ""

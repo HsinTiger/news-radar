@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 
 from substack_radar.fact_reconcile import ScaleIssue, reconcile
@@ -47,14 +48,17 @@ AUDIT_MODEL_CHAIN = [m.strip() for m in os.getenv(
 ).split(",") if m.strip()]
 
 
+def _family(model: str) -> str:
+    """模型屬於哪一家。寫手的標示長得像「gateway · 模型 writer→glm-5.3-flash」，所以用包含比對。"""
+    m = (model or "").lower()
+    for key in ("claude", "gemini", "gpt", "glm", "deepseek", "mistral", "step-", "qwen", "llama", "kimi"):
+        if key in m:
+            return key
+    return m
+
+
 def _same_family(a: str, b: str) -> bool:
-    def fam(m: str) -> str:
-        m = (m or "").lower()
-        for key in ("claude", "gemini", "gpt"):
-            if key in m:
-                return key
-        return m
-    return fam(a) == fam(b)
+    return _family(a) == _family(b)
 
 
 def auditor_for(writer_model: str | None, *, preferred: str = AUDIT_MODEL) -> str:
@@ -335,6 +339,9 @@ def _run_claude_cli_impl(prompt: str, timeout_s: int) -> str:
     return str(data["result"])
 
 
+_SERVED = threading.local()     # 閘道會自己換模型備援；對帳要知道「實際是誰答的」才能判斷有沒有自己審自己
+
+
 def _oss_chat_impl(model: str, prompt: str, timeout_s: int) -> str:
     """本機 LiteLLM 閘道（設定由 src.llm_brain 載入）。"""
     import httpx
@@ -365,6 +372,7 @@ def _oss_chat_impl(model: str, prompt: str, timeout_s: int) -> str:
         raise RuntimeError(f"閘道 {model} 回空字串")
     served = (resp.headers.get("x-litellm-model-id") or "").split(":")[-1]
     _LAST_USAGE["model"] = f"{model}→{served}" if served and served != model else model
+    _SERVED.model = served or model          # 這條執行緒剛剛那次呼叫，實際是誰答的
     if served and served != model:
         print(f"[QualityLoop] ℹ️ 閘道 {model} 實際由 {served} 回答")
     return text
@@ -864,7 +872,8 @@ def run_writer_text(prompt: str, timeout_s: int) -> tuple[str, str]:
             if name == "claude":
                 return run_claude_cli(prompt, timeout_s), "Claude Haiku"
             if name == "gateway":
-                return _oss_chat("writer", prompt, timeout_s), "閘道 writer"
+                text = _oss_chat("writer", prompt, timeout_s)
+                return text, f"閘道 writer→{getattr(_SERVED, 'model', '') or '?'}"
             from src.llm_brain import _agy_model_chain
             for model in [m for m in _agy_model_chain() if not agy_family_dead(m)]:
                 try:
@@ -924,7 +933,8 @@ def _log_rejections(round_no: int, violations, audit_items, too_short, style_ite
 
 def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
                     max_attempts: int = REVIEW_ATTEMPTS,
-                    word_range: tuple[int, int] | None = None) -> tuple[str, LoopReport, int]:
+                    word_range: tuple[int, int] | None = None,
+                    writer: str = "") -> tuple[str, LoopReport, int]:
     """回傳 (最終稿, 報告, 整篇重寫次數)。報告的 passed／remaining 只看確定性閘門。
 
     預設走「對帳式」（2026-11-16）；SUBSTACK_REVIEW_MODE=legacy 改回舊的「請模型挑毛病」。"""
@@ -932,7 +942,7 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
         return _run_review_loop_legacy(article_md, fact_block=fact_block, auditor=auditor,
                                        eval_kwargs=eval_kwargs, max_attempts=max_attempts, word_range=word_range)
     return _run_review_loop_ledger(article_md, fact_block=fact_block, eval_kwargs=eval_kwargs,
-                                   max_attempts=max_attempts, word_range=word_range)
+                                   max_attempts=max_attempts, word_range=word_range, writer=writer)
 
 
 _PATCH_PROMPT = """你是這篇文章的作者。編輯標出下面幾個地方要修。請只修這幾句，文章其他地方一個字都不要動。
@@ -1050,7 +1060,8 @@ def _patch_round(current: str, violations, audit_items, style_items, pack: str,
 
 
 def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: dict,
-                            max_attempts: int, word_range: tuple[int, int] | None) -> tuple[str, LoopReport, int]:
+                            max_attempts: int, word_range: tuple[int, int] | None,
+                            writer: str = "") -> tuple[str, LoopReport, int]:
     """對帳式審稿（2026-11-16）。目標：品質不降，第一稿盡量一次就過。
 
     每一關只留真的在保護讀者的東西：
@@ -1067,27 +1078,38 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
     sources = eval_kwargs.get("sources")
     pending: list[dict] = []
     need_audit, prev_norm = True, ""
+    authors = [writer] if writer else []          # 動過筆的人都不能當查核員
+    audited_once = False
     for attempt in range(max_attempts + 1):
         violations = evaluate(current, **eval_kwargs)
         report.history.append(violations)
         report.rounds = attempt + 1
         pack = evidence_pack(fact_block, sources, article=current)
-        if need_audit:
-            found, summary = fact_audit.run(current, pack)
-            if attempt == 0:
-                report.auditors = list(summary["answered"])
-                if not summary["answered"]:
-                    print("[Review] ⚠️ 查核模型都沒回應：這一篇只有程式檢查，沒有第二雙眼睛對過素材")
-                _shadow_grounding(current, fact_block, sources)
-            else:                                   # 整篇重寫過：只收新寫或改過的句子裡的問題
-                found = [it for it in found if fact_audit.coverage(str(it.get("原句") or ""), prev_norm) < 0.9]
-            pending, need_audit = found, False
-        else:                                       # 小修之後：原句還在＝那一條沒修到
-            art_norm = fact_audit._norm(current)
-            pending = [it for it in pending if fact_audit.coverage(str(it.get("原句") or ""), art_norm) >= 0.9]
         too_short = length_feedback(current, word_range)
         # 小標交給標題台重寫（只換那一行），不值得為它退稿
         style_items = [i for i in style_feedback(current) if not str(i.get("問題", "")).startswith("小標像標籤")]
+        structural = (bool(too_short) or any(re.match(r"A1(?!b)", str(v.kind)) for v in violations)
+                      or any("專有名詞註解" in str(i.get("問題", "")) for i in style_items))
+        if attempt == 0:
+            _shadow_grounding(current, fact_block, sources)
+        # 先結構、後對帳（2026-11-16 新流程第一篇實跑：稿子太短，對完帳才整篇重寫，重寫完又得再對一次）。
+        # 反正要整篇重寫，就等重寫完再對帳，一篇只對一次。
+        defer_audit = need_audit and structural and attempt < max_attempts
+        if defer_audit:
+            print("[Review] 這一稿要先動結構（篇幅或開場），等重寫完再對帳")
+            pending = []
+        elif need_audit:
+            # 動過筆的人（第一稿的寫手、後來重寫的人）都不能當查核員
+            found, summary = fact_audit.run(current, pack, writers=authors)
+            report.auditors = list(dict.fromkeys(report.auditors + summary["answered"]))
+            if not summary["answered"]:
+                print("[Review] ⚠️ 查核模型都沒回應：這一篇只有程式檢查，沒有第二雙眼睛對過素材")
+            if audited_once:                        # 對過帳之後才整篇重寫的：只收新寫或改過的句子裡的問題
+                found = [it for it in found if fact_audit.coverage(str(it.get("原句") or ""), prev_norm) < 0.9]
+            pending, need_audit, audited_once = found, False, True
+        else:                                       # 小修之後：原句還在＝那一條沒修到
+            art_norm = fact_audit._norm(current)
+            pending = [it for it in pending if fact_audit.coverage(str(it.get("原句") or ""), art_norm) >= 0.9]
         _log_rejections(attempt + 1, violations, pending, too_short, style_items)
         if not (violations or pending or too_short or style_items):
             report.passed = True
@@ -1103,8 +1125,6 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
             print(f"[Review]   {line[:200]}")
         if attempt == max_attempts:
             break
-        structural = (bool(too_short) or any(re.match(r"A1(?!b)", str(v.kind)) for v in violations)
-                      or any("專有名詞註解" in str(i.get("問題", "")) for i in style_items))
         if not structural:
             revised, applied = _patch_round(current, violations, pending, style_items, pack, sources)
             if applied:
@@ -1127,8 +1147,14 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
             break
         prev_norm = fact_audit._norm(current)
         current, need_audit = revised, True
+        authors.append(who)
         rewrites += 1
         print(f"[Review] ✏️ 整篇重寫第 {rewrites} 次（{who}）：{'篇幅或開場結構要動' if structural else '小修沒成功'}")
+    if not audited_once:
+        # 等重寫完再對帳，結果重寫沒成功：定稿還是要對一次，不能整篇沒人對過就放出去
+        found, summary = fact_audit.run(current, evidence_pack(fact_block, sources, article=current), writers=authors)
+        report.auditors = list(dict.fromkeys(report.auditors + summary["answered"]))
+        pending = found
     report.passed = not report.remaining
     report.unresolved = [f"{it.get('問題', '')}（原句：{str(it.get('原句', ''))[:60]}）" for it in pending]
     if report.passed and not pending:

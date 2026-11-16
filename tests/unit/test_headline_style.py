@@ -104,6 +104,7 @@ def test_rewrite_uses_same_order_as_first_writer(monkeypatch):
     monkeypatch.setenv("SUBSTACK_COMPOSER_BACKEND", "claude_cli,gateway")
     monkeypatch.setattr(q, "run_claude_cli", lambda p, t: (_ for _ in ()).throw(RuntimeError("額度用完")))
     monkeypatch.setattr(q, "_oss_chat", lambda m, p, t: "閘道稿")
-    assert q.run_writer_text("x", 1) == ("閘道稿", "閘道 writer")     # Haiku 不行才換閘道
+    text, who = q.run_writer_text("x", 1)                           # Haiku 不行才換閘道
+    assert text == "閘道稿" and who.startswith("閘道 writer→")       # 後面帶實際作答的模型，對帳時要避開它
     monkeypatch.setattr(q, "run_claude_cli", lambda p, t: "Haiku 稿")
     assert q.run_writer_text("x", 1) == ("Haiku 稿", "Claude Haiku")

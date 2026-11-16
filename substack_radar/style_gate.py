@@ -11,7 +11,7 @@ import re
 STOCK_PHRASES = (
     "全集最值得", "全集最精彩", "全集最扎實", "全集最有", "整集最值得", "這段我認為是",
     "我的判斷是", "最後留一個問題給你", "留一個問題給你", "接下來值得盯", "值得盯兩個訊號",
-    "值得盯的訊號", "這裡出現了", "這個問題沒有標準答案", "繞了一圈", "值得注意的是",
+    "值得盯的訊號", "這裡出現了", "這個問題沒有標準答案", "值得注意的是",
     "總的來說", "綜上所述", "不難發現", "我看完這集的第一個念頭",
 )
 
@@ -24,6 +24,13 @@ _PROCESS_LEAK = re.compile(
     r"以下採\S{0,12}的|沒有對應到")
 # 每句都冠節目名（「在 Moonshots 裡，」出現 9 次）：出處講一次就夠
 _SHOW_PREFIX = re.compile(r"在\s?[〈《]?([A-Za-z][\w ’'&.\-]{1,30}|[\u4e00-\u9fff]{2,10})[〉》]?\s?(?:裡|中|節目裡|這集裡)，")
+
+# 字面上也會用到的詞，只有當成轉場公式時才算套話（2026-11-16：「錢繞了一圈，又回到 NVIDIA 的營收裡」
+# 是在解釋循環融資，被當成套話退了兩次）
+_STOCK_PATTERNS = (
+    (re.compile(r"繞了一圈[，,]?\s*(?:又|還是|最後|我們)?(?:又)?回到(?:了)?(?:原點|最初|一開始|開頭|開場|同一個問題|那個問題|這個問題)"),
+     "繞了一圈回到原點"),
+)
 
 _LINK = re.compile(r"\[[^\]]*\]\([^)]*\)|https?://\S+|`[^`]*`")
 _EN_RUN = re.compile(r"(?<![A-Za-z（(「“\"'])([a-z][a-z'\-]+(?:\s+[a-z][a-z'\-]+)+)(?![A-Za-z]*[）)」”\"'])")
@@ -41,9 +48,10 @@ def style_feedback(article_md: str) -> list[dict]:
     plain = _LINK.sub(" ", body)
     items: list[dict] = []
 
-    hits = [p for p in STOCK_PHRASES if p in plain]
+    hits = [p for p in STOCK_PHRASES if p in plain] + [name for pat, name in _STOCK_PATTERNS if pat.search(plain)]
     if hits:
-        quote = next((s for s in re.split(r"(?<=[。！？])", plain) if any(p in s for p in hits)), "")
+        quote = next((s for s in re.split(r"(?<=[。！？])", plain)
+                      if any(p in s for p in hits) or any(pat.search(s) for pat, _ in _STOCK_PATTERNS)), "")
         items.append(_item(
             f"AI 套話：{'、'.join(hits[:6])}。這些句子每篇都出現，讀者讀兩篇就認得出來",
             quote.strip(),

@@ -74,6 +74,7 @@ def _ledger_loop(monkeypatch, audit_items, writer_reply, evaluate=lambda a, **k:
 
     def fake_run(article, pack, **kw):
         calls["audit"] += 1
+        calls.setdefault("writers", []).append(list(kw.get("writers") or []))
         return list(audit_items), {"answered": ["甲", "乙"], "failed": {}, "raw": len(audit_items), "dropped": 0}
 
     def fake_writer(prompt, timeout):
@@ -113,7 +114,18 @@ def test_too_short_goes_to_full_rewrite(monkeypatch):
     reply = lambda p: f"<<<ARTICLE>>>\n{DRAFT}\n\n補寫的一段。\n<<<END>>>"
     (final, report, rewrites), calls = _ledger_loop(monkeypatch, [], reply)
     assert rewrites == 1 and report.patches == 0 and "補寫的一段" in final and report.passed
-    assert calls["audit"] == 2                                # 整篇重寫過才再對一次帳
+    assert calls["audit"] == 1                                # 先補篇幅、再對帳：一篇只對一次
+    assert calls["writers"][0] == ["測試寫手"]                  # 重寫的人也列進「不能當查核員」
+
+
+def test_final_draft_is_audited_even_if_the_structural_rewrite_fails(monkeypatch):
+    monkeypatch.setattr(q, "length_feedback",
+                        lambda art, rng: [{"問題": "篇幅不足", "原句": "（全文）", "建議改法": "補"}])
+    bad = "這家公司去年整體營收成長了 39%。"
+    item = _item(bad, "雲端營收成長了 39%，整體營收只成長 12%", "部門數字寫成整體")
+    (final, report, rewrites), calls = _ledger_loop(monkeypatch, [item], lambda p: "寫手沒有交稿")
+    assert rewrites == 0 and final == DRAFT
+    assert calls["audit"] == 1 and report.unresolved          # 重寫沒成功，定稿仍然對過帳、問題有報出來
 
 
 def test_unfixed_contradiction_is_reported_not_hidden(monkeypatch):
@@ -131,3 +143,35 @@ def test_legacy_mode_is_still_available(monkeypatch):
     monkeypatch.setattr(q, "critique", lambda *a, **k: [])
     final, report, rewrites = q.run_review_loop(DRAFT, fact_block="", auditor="x", eval_kwargs={})
     assert report.passed and final == DRAFT
+
+
+# ---- 2026-11-16 新流程第一篇實跑：Haiku 沒額度，寫手退到 glm，對帳的也是 glm ----
+
+def test_auditors_never_share_a_family_with_the_writer(monkeypatch):
+    monkeypatch.delenv("SUBSTACK_FACT_AUDITORS", raising=False)
+    monkeypatch.delenv("SUBSTACK_FACT_AUDIT_FALLBACK", raising=False)
+    haiku = "原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5"
+    glm = "gateway · 模型 writer→glm-5.3-flash"
+    assert fa.pick_models([haiku]) == ["glm-5.3-flash"]
+    assert fa.pick_models([glm]) == ["gemini-2.5-flash"]                                # glm 不能審自己，備援補位
+    monkeypatch.setenv("SUBSTACK_FACT_AUDITORS", "glm-5.3-flash,gemini-2.5-flash")       # 設兩個就兩個一起查
+    assert fa.pick_models([haiku]) == ["glm-5.3-flash", "gemini-2.5-flash"]
+    monkeypatch.delenv("SUBSTACK_FACT_AUDITORS")
+    assert "glm-5.3-flash" not in fa.pick_models([haiku, "閘道 writer→glm-5.3-flash"])  # 重寫的人也算寫手
+
+
+def test_gateway_swapping_in_the_writers_model_does_not_count():
+    a = _item("節目裡提到 Polymarket 預測今年底前回任的機率六成以上。", "by the end of next year")
+
+    def chat(model, prompt):          # 閘道把逾時的 mistral 換成 glm 來答
+        served = "glm-5.3-flash" if model == "mistral-large-4-1t-a52b" else model
+        return json.dumps({"items": [a]}, ensure_ascii=False), served
+
+    kept, summary = fa.run(DRAFT, MATERIAL, models=["mistral-large-4-1t-a52b", "gemini-2.5-flash"], chat=chat,
+                           deadline_s=5, fallback=[], writers=["gateway · 模型 writer→glm-5.3-flash"])
+    assert summary["answered"] == ["gemini-2.5-flash"]
+    assert "同一家" in summary["failed"]["mistral-large-4-1t-a52b"] and len(kept) == 1
+    # 寫手是 Haiku 時，閘道換上的 glm 是獨立的，可以收，而且標實際作答的模型
+    kept, summary = fa.run(DRAFT, MATERIAL, models=["mistral-large-4-1t-a52b"], chat=chat, deadline_s=5,
+                           fallback=[], writers=["claude-haiku-5-5"])
+    assert summary["answered"] == ["glm-5.3-flash"] and kept[0]["查核模型"] == "glm-5.3-flash"

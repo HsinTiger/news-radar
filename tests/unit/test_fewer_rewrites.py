@@ -130,3 +130,19 @@ def test_writer_is_told_how_length_is_counted():
     from substack_radar.composer import _length_brief
     brief = _length_brief(3000, 4000)
     assert "英文、數字、網址不算" in brief and "以 4000 個中文字為目標" in brief
+
+
+# ---- 2026-11-16：真的拿 Haiku 第一稿走新審稿，擋下它的兩條都是誤報 ----
+
+def test_first_draft_false_alarms_found_in_live_test():
+    from substack_radar.style_gate import style_feedback
+    facts = "Alex said NVIDIA used to disclose Singapore sales and then stopped."
+    assert [i.rule[:2] for i in check("Alex 引用公開報導說，NVIDIA 曾經揭露新加坡的銷售數字，後來停止揭露。",
+                                      sources=[], fact_block=facts)] == []
+    assert [i.rule[:2] for i in check("根據媒體報導，這家公司去年已經停止揭露區域銷售。", sources=[], fact_block=facts)] == []
+    assert [i.rule[:2] for i in check("根據高盛證券的報告，這個市場明年會翻倍。", sources=[], fact_block=facts)] == ["E1"]
+
+    literal = "開場。\n\n## 一個完整的小標在這裡\n\nNVIDIA 投錢給一家 AI 公司，那家公司再拿這筆錢去買晶片，錢繞了一圈，又回到 NVIDIA 的營收裡。\n"
+    filler = "開場。\n\n## 一個完整的小標在這裡\n\n討論繞了一圈，又回到原點：到底誰該負責。\n"
+    assert not [i for i in style_feedback(literal) if "套話" in i["問題"]]
+    assert [i for i in style_feedback(filler) if "套話" in i["問題"]]

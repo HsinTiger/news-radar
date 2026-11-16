@@ -2861,7 +2861,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
 
                 body, report, _rewrites = run_review_loop(
                     draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs,
-                    word_range=(word_floor, word_cap))
+                    word_range=(word_floor, word_cap), writer=str(getattr(draft, "generated_by", "") or ""))
                 _patches = getattr(report, "patches", 0)
                 domain_changed = _rewrites > 0 or _patches > 0
                 remaining = list(report.remaining)

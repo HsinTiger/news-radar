@@ -11,8 +11,8 @@
 - 證據由程式驗：照抄的那段素材原文真的在素材裡、指的那句真的在草稿裡，才算數。
   驗不過的意見直接丟掉，不會送到寫手面前。
 
-同一份草稿交給兩個不同家的開源模型同時查、取聯集：一個模型單獨查一次會漏
-（2026-11-14 那篇第一輪只挑出 3 條，第三輪才又看到另外 5 條），兩個一起查不多花時間。
+SUBSTACK_FACT_AUDITORS 可以放多個模型（逗號分隔），會同時查、取聯集，而且不會讓寫手同一家的模型審自己。
+目前預設只有一個，原因見下面「模型怎麼選」。
 """
 from __future__ import annotations
 
@@ -30,12 +30,16 @@ DEADLINE_S = int(os.getenv("SUBSTACK_FACT_AUDIT_DEADLINE_S", "900"))
 GRACE_S = int(os.getenv("SUBSTACK_FACT_AUDIT_GRACE_S", "180"))
 
 # 模型怎麼選（2026-11-16 毒化測試：在定稿裡埋 5 個跟逐字稿矛盾的錯，同一份 3.6 萬 token 的題目）：
-#   glm-5.3-flash（NIM）      5/5，123 秒（跟別人同時跑時 440 秒）
-#   mistral-large-4（NIM）    5/5，754 秒
-#   gemini-2.5-flash          5/5，54 秒（不是開源模型，放備援：兩個開源的都沒回才用）
-#   deepseek-v4.1-flash、step-5-preview（NIM）  超過 16 分鐘沒回——原本的審稿第一、三順位
-# 抓錯能力四個都一樣，差在會不會回、多久回，所以預設用兩個會回的開源模型。
-DEFAULT_AUDITORS = "glm-5.3-flash,mistral-large-4-1t-a52b"
+#   glm-5.3-flash（NIM）      5/5，59–123 秒（四個 NIM 請求同時跑時 440 秒）
+#   gemini-2.5-flash          5/5，54 秒（不是開源模型，放備援）
+#   mistral-large-4（NIM）    5/5，754 秒；拿真的第一稿再測一次，超過 600 秒沒回
+#   step-5-preview（NIM）     5/5，1,351 秒
+#   deepseek-v4.1-flash（NIM）等了 1,833 秒後回空白——原本審稿的第一順位
+#   glm-5.3（NIM）            閘道實際換成 glm-5.3-flash 作答，等於同一個
+# 抓錯能力大家一樣，差在會不會回、多久回。NIM 上來得及用的開源模型只有 glm-5.3-flash 一個，
+# 所以預設只放它；原本另外放了 mistral，結果每篇白等 3 分鐘，閘道還把它的請求轉給 glm 再跑一次。
+# 備援 gemini-2.5-flash 在兩種情況上場：glm 自己就是寫手（不能審自己），或 glm 沒回。
+DEFAULT_AUDITORS = "glm-5.3-flash"
 DEFAULT_FALLBACK = "gemini-2.5-flash"
 
 PROMPT = """你是事實查核員，只做一件事：找出草稿裡「跟素材寫的不一樣」的句子。
@@ -154,76 +158,116 @@ def fallback_models() -> list[str]:
     return [m.strip() for m in os.getenv("SUBSTACK_FACT_AUDIT_FALLBACK", DEFAULT_FALLBACK).split(",") if m.strip()]
 
 
-def _default_chat(model: str, prompt: str) -> str:
-    from substack_radar.quality_loop import _logged, _oss_chat_impl
-    return _logged("gateway", _oss_chat_impl, model, model, prompt, DEADLINE_S)
+def pick_models(writers: list[str]) -> list[str]:
+    """查核員不能跟寫手同一家（2026-11-16 新流程第一篇實跑：Haiku 沒額度、寫手退到 glm，
+    對帳的也是 glm，等於自己審自己）。被排除掉的位子由備援模型補上，一起同時查。"""
+    from substack_radar.quality_loop import _same_family
+
+    def independent(model: str) -> bool:
+        return not any(_same_family(model, w) for w in writers if w)
+
+    base = default_models()
+    keep = [m for m in base if independent(m)]
+    if len(keep) < len(base):
+        keep += [m for m in fallback_models() if independent(m) and m not in keep]
+    return keep or base
+
+
+def _default_chat(model: str, prompt: str) -> tuple[str, str]:
+    """回 (回答, 實際作答的模型)。閘道在模型逾時時會自己換別的模型頂上，名字不一定是我們指定的那個。"""
+    from substack_radar import quality_loop as q
+    text = q._logged("gateway", q._oss_chat_impl, model, model, prompt, DEADLINE_S)
+    return text, getattr(q._SERVED, "model", "") or model
 
 
 def run(article: str, pack: str, *, models: list[str] | None = None, chat=None,
         deadline_s: int | None = None, grace_s: int | None = None,
-        fallback: list[str] | None = None) -> tuple[list[dict], dict]:
+        fallback: list[str] | None = None, writers: list[str] | None = None) -> tuple[list[dict], dict]:
     """兩個模型同時查、取聯集、程式驗證。回 (算數的意見, 摘要)。
 
     摘要 {"answered": [...], "failed": {...}, "raw": n, "dropped": n}；全部模型都沒回應時
     answered 是空的——呼叫端要當成「這一輪沒有第二雙眼睛」，不能當成「查過沒問題」。"""
+    from substack_radar.quality_loop import _same_family
+
+    writers = [w for w in (writers or []) if w]
+
+    def is_author(model: str) -> bool:
+        return any(_same_family(model, w) for w in writers)
+
     if fallback is None:
-        fallback = fallback_models() if models is None else []
-    models = models or default_models()
+        fallback = [m for m in fallback_models() if not is_author(m)] if models is None else []
+    models = models or pick_models(writers)
     chat = chat or _default_chat
     deadline_s = DEADLINE_S if deadline_s is None else deadline_s
     grace_s = GRACE_S if grace_s is None else grace_s
     prompt = build_prompt(article, pack)
     results: queue.Queue = queue.Queue()
+    raw_items: list[dict] = []
+    summary = {"answered": [], "failed": {}, "raw": 0, "dropped": 0}
+
+    def ask(model: str) -> tuple[str, str]:
+        out = chat(model, prompt)
+        return (out[0], out[1] or model) if isinstance(out, tuple) else (out, model)
 
     def work(model: str) -> None:
         t0 = time.time()
         try:
-            results.put((model, chat(model, prompt), None, time.time() - t0))
+            raw, served = ask(model)
+            results.put((model, raw, served, None, time.time() - t0))
         except Exception as exc:                      # 一個模型掛了不影響另一個
-            results.put((model, "", exc, time.time() - t0))
+            results.put((model, "", model, exc, time.time() - t0))
+
+    def accept(model: str, raw: str, served: str, secs: float, label: str = "") -> bool:
+        """收下一個模型的回答。閘道換成寫手同一家、或換成已經答過的模型，都不算獨立的一雙眼睛。"""
+        if served != model and is_author(served):
+            summary["failed"][model] = f"閘道換成跟寫手同一家的 {served}"
+            print(f"[FactAudit] ⏭️ {model} 被閘道換成 {served}（跟寫手同一家），這份不算")
+            return False
+        if served in summary["answered"]:
+            summary["failed"][model] = f"閘道換成已經答過的 {served}"
+            return False
+        items = parse(raw)
+        for it in items:
+            it["查核模型"] = served
+        raw_items.extend(items)
+        summary["answered"].append(served)
+        via = f"（指定 {model}）" if served != model else ""
+        print(f"[FactAudit] {label}{served}{via} 回了 {len(items)} 條（{secs:.0f} 秒）")
+        return True
 
     for model in models:
         threading.Thread(target=work, args=(model,), daemon=True, name=f"fact-audit-{model}").start()
 
-    raw_items: list[dict] = []
-    summary = {"answered": [], "failed": {}, "raw": 0, "dropped": 0}
     end = time.time() + deadline_s
+    done: set[str] = set()
     for _ in models:
         try:
-            model, raw, exc, secs = results.get(timeout=max(1.0, end - time.time()))
+            model, raw, served, exc, secs = results.get(timeout=max(1.0, end - time.time()))
         except queue.Empty:
             break
+        done.add(model)
         if exc is not None:
             summary["failed"][model] = str(exc)[:80]
             print(f"[FactAudit] ⚠️ {model} 沒有回應（{str(exc)[:80]}）")
             continue
-        items = parse(raw)
-        for it in items:
-            it["查核模型"] = model
-        raw_items += items
-        if not summary["answered"]:
+        first = not summary["answered"]
+        if accept(model, raw, served, secs) and first:
             end = min(end, time.time() + grace_s)     # 有人回了：其他人最多再等 grace_s
-        summary["answered"].append(model)
-        print(f"[FactAudit] {model} 回了 {len(items)} 條（{secs:.0f} 秒）")
     for model in models:
-        if model not in summary["answered"] and model not in summary["failed"]:
+        if model not in done:
             summary["failed"][model] = "太慢，沒等它"
             print(f"[FactAudit] ⏱️ {model} 太慢，不等了")
-    # 兩個都沒回：換備援模型查一次，不要讓這篇稿完全沒人對過帳
-    for model in ([] if summary["answered"] else fallback):
+    # 都沒回：換備援模型查一次，不要讓這篇稿完全沒人對過帳
+    for model in ([] if summary["answered"] else [m for m in fallback if m not in models]):
         t0 = time.time()
         try:
-            items = parse(chat(model, prompt))
+            raw, served = ask(model)
         except Exception as exc:
             summary["failed"][model] = str(exc)[:80]
             print(f"[FactAudit] ⚠️ 備援 {model} 也沒有回應（{str(exc)[:80]}）")
             continue
-        for it in items:
-            it["查核模型"] = model
-        raw_items += items
-        summary["answered"].append(model)
-        print(f"[FactAudit] 備援 {model} 回了 {len(items)} 條（{time.time() - t0:.0f} 秒）")
-        break
+        if accept(model, raw, served, time.time() - t0, label="備援 "):
+            break
 
     kept, dropped = verify(raw_items, article, pack)
     for it, why in dropped:
