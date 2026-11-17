@@ -28,7 +28,8 @@ from dataclasses import dataclass
 
 # 「根據…」「依據…」「…指出」「…統計」：這些字眼把數字掛到了外部權威身上。
 _ATTRIBUTION = re.compile(
-    r"(根據|依據|援引|引用|參考)([^，。；\n]{2,40})|"
+    # 「參考價值」「參考一下」的參考不是引用（2026-11-17：「這個數字越有參考價值」被當成歸屬給「價值」）
+    r"(根據|依據|援引|引用|參考(?!價值|意義|一下|看看|用|性|值|點|指標))([^，。；\n]{2,40})|"
     r"([^，。；\n]{2,40}?)(指出|表示|統計|調查顯示|研究顯示|報告顯示|數據顯示)"
 )
 _SENTENCE = re.compile(r"[^。！？\n]+[。！？]?")
@@ -246,6 +247,11 @@ def _english_variants(value: str, unit: str) -> list[str]:
         return [f"{g(v / 10)}billion", f"${g(v / 10)}b", f"{g(v * 100)}million", f"${g(v * 100)}m"]
     if unit == "兆":
         return [f"{g(v)}trillion", f"${g(v)}t"]
+    # 2026-11-17 智取未來：逐字稿寫「20 percent」，稿子寫「20%」，被判找不到出處，寫手只好把對的數字刪掉
+    if unit in ("%", "％"):
+        return [f"{g(v)}percent", f"{g(v)}percentage"]
+    if unit == "倍":
+        return [f"{g(v)}x", f"{g(v)}times", f"{g(v)}-fold", f"{g(v)}fold"]
     return []
 
 

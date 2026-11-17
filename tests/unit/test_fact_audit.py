@@ -211,3 +211,66 @@ def test_patches_missing_a_brace_are_still_applied(monkeypatch):
     reply = lambda p: json.dumps({"patches": [{"原句": bad, "改成": fixed}]}, ensure_ascii=False)[:-1]   # 少一個 }
     (final, report, rewrites), _ = _ledger_loop(monkeypatch, [item], reply)
     assert fixed in final and report.patches == 1 and rewrites == 0
+
+
+
+# ---- 2026-11-17 智取未來：開場太長兩次整篇重寫都沒修掉；逐字稿聽錯的名字被當成正確寫法 ----
+
+def test_asr_misheard_names_are_not_contradictions():
+    mat = ("【素材標題】Pick Problems That Survive When AI Solves Coding - Ara Khan, Cline\n"
+           "Hey guys, this is Era. I'm a founding engineer at Klein. We rent GPU servers by the hour. "
+           "I've never handwritten a GP operator.")
+    art = "來賓是 Cline 的 Ara Khan。他從沒手寫過 GPU 運算子。他是 2025 年加入的。" + PAD
+    items = [_item("來賓是 Cline 的 Ara Khan。", "this is Era. I'm a founding engineer at Klein", "人名與公司名寫錯"),
+             _item("他從沒手寫過 GPU 運算子。", "I've never handwritten a GP operator", "專有名詞寫錯"),
+             _item("他是 2025 年加入的。", "I'm a founding engineer at Klein", "年份寫錯")]
+    kept, dropped = fa.verify(items, art, mat)
+    assert [i["問題"] for i in kept] == ["年份寫錯"]
+    assert all("語音辨識" in why for _, why in dropped)
+
+
+LONG_LEAD = "".join(f"開場第 {n} 句交代一些背景，讓讀者慢慢進入情況。" for n in range(16))
+LEAD_DRAFT = LONG_LEAD + "\n\n## 第一個小標寫成一句完整的話\n\n第一段的內容一個字都不能動。" + PAD
+
+
+def test_long_opening_is_fixed_by_rewriting_only_the_opening(monkeypatch):
+    from substack_radar.aeo_gate import check as aeo_check
+    new_lead = "工程師讓 AI 改自己的工具，跑了一整晚。早上起來，分數漲了，問題是漲的是什麼。我傾向認為，這比看起來難驗證。"
+    calls = []
+
+    def writer(prompt, timeout):
+        calls.append(prompt)
+        return f"<<<OPENING>>>\n{new_lead}\n<<<END>>>", "測試寫手"
+
+    monkeypatch.delenv("SUBSTACK_REVIEW_MODE", raising=False)
+    monkeypatch.setattr(fa, "run", lambda *a, **k: ([], {"answered": ["甲"], "failed": {}, "raw": 0, "dropped": 0}))
+    monkeypatch.setattr(q, "evaluate", lambda art, **kw: [q.Violation(kind=v.rule, detail=v.detail, fix_hint="")
+                                                          for v in aeo_check(art) if v.rule.startswith("A1")])
+    monkeypatch.setattr(q, "run_writer_text", writer)
+    final, report, rewrites = q.run_review_loop(LEAD_DRAFT, fact_block="", auditor="x", eval_kwargs={}, max_attempts=2)
+    assert report.passed and rewrites == 0 and len(calls) == 1 and "只重寫開場" in calls[0]
+    assert final.startswith(new_lead) and final.endswith(LEAD_DRAFT[LEAD_DRAFT.index("## 第一個小標"):])
+
+
+def test_bad_new_opening_is_not_swapped_in(monkeypatch):
+    still_long = LONG_LEAD.replace("背景", "前情")
+    monkeypatch.setattr(q, "run_writer_text", lambda p, t: (f"<<<OPENING>>>\n{still_long}\n<<<END>>>", "測試寫手"))
+    v = [q.Violation(kind="A1 開場沒有答案先行", detail="太長", fix_hint="")]
+    assert q._lead_round(LEAD_DRAFT, v, "") == (LEAD_DRAFT, False)
+    monkeypatch.setattr(q, "run_writer_text", lambda p, t: ("<<<OPENING>>>\n開場只有一句，但多了 37% 這個素材沒有的數字，讀者會被誤導。\n<<<END>>>", "w"))
+    assert q._lead_round(LEAD_DRAFT, v, "")[1] is False
+
+
+def test_misheard_name_without_saying_name_and_plural_in_material():
+    mat = "Era here, founding engineer at Klein. We run on GPUs all day. I've never handwritten a GP operator."
+    art = "他從沒手寫過 GPU 運算子。" + PAD
+    it = _item("他從沒手寫過 GPU 運算子。", "I've never handwritten a GP operator.", "素材原文為「GP operator」，草稿改寫為「GPU 運算子」")
+    assert fa.verify([it], art, mat)[0] == []
+    # 真的張冠李戴不會被當成拼法問題：Amazon 跟 AWS 長得不像
+    mat2 = "AWS grew 39 percent this quarter. Amazon overall grew 12 percent."
+    art2 = "Amazon 本季成長了 39%。" + PAD
+    it2 = _item("Amazon 本季成長了 39%。", "AWS grew 39 percent this quarter.", "部門數字寫成整間公司，應為 AWS")
+    assert fa.verify([it2], art2, mat2)[0] == [it2]
+    # 「僅提及…未提及」也是「素材沒有」那一類
+    it3 = _item("他從沒手寫過 GPU 運算子。", "I've never handwritten a GP operator.", "研究來源僅提及關閉，未提及具體日期")
+    assert fa.verify([it3], art, mat)[0] == []

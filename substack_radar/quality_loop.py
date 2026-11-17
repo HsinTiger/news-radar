@@ -934,7 +934,7 @@ def _log_rejections(round_no: int, violations, audit_items, too_short, style_ite
 def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwargs: dict,
                     max_attempts: int = REVIEW_ATTEMPTS,
                     word_range: tuple[int, int] | None = None,
-                    writer: str = "") -> tuple[str, LoopReport, int]:
+                    writer: str = "", source_title: str = "") -> tuple[str, LoopReport, int]:
     """回傳 (最終稿, 報告, 整篇重寫次數)。報告的 passed／remaining 只看確定性閘門。
 
     預設走「對帳式」（2026-11-16）；SUBSTACK_REVIEW_MODE=legacy 改回舊的「請模型挑毛病」。"""
@@ -942,7 +942,8 @@ def run_review_loop(article_md: str, *, fact_block: str, auditor: str, eval_kwar
         return _run_review_loop_legacy(article_md, fact_block=fact_block, auditor=auditor,
                                        eval_kwargs=eval_kwargs, max_attempts=max_attempts, word_range=word_range)
     return _run_review_loop_ledger(article_md, fact_block=fact_block, eval_kwargs=eval_kwargs,
-                                   max_attempts=max_attempts, word_range=word_range, writer=writer)
+                                   max_attempts=max_attempts, word_range=word_range, writer=writer,
+                                   source_title=source_title)
 
 
 _PATCH_PROMPT = """你是這篇文章的作者。編輯標出下面幾個地方要修。請只修這幾句，文章其他地方一個字都不要動。
@@ -953,6 +954,8 @@ _PATCH_PROMPT = """你是這篇文章的作者。編輯標出下面幾個地方�
 
 規則：
 - 照意見的方向改，語氣跟前後文一致，像同一個人寫的。
+- 「跟素材不符」那類意見是另一個模型查的，也可能查錯（例如把語音辨識聽錯的名字當成正確寫法）。
+  你確定原句是對的，就不要列那一條。
 - 意見是編輯寫給你的內部溝通：不要把意見裡的話抄進文章，新句子不要出現「素材」「逐字稿」
   「研究來源」「無法核對」這類查證過程的話。
 - 新句子不能出現原句和「素材原文」裡都沒有的數字。
@@ -1025,6 +1028,74 @@ def apply_patches(article: str, patches: list[dict], allowed_numbers: set[str]) 
     return out, applied, skipped
 
 
+_LEAD_PROMPT = """你是這篇文章的作者。文章的開場（第一個小標之前）太長了：{detail}
+
+請只重寫開場，第一個小標之後的內容一個字都不會動。
+- 最多 {max_sentences} 句。先用一個具體的場景、數字或反差把讀者帶進來，再讓讀者看出這篇在談哪個問題、你傾向哪邊。
+- 判斷要長在敘事裡，不要寫「這篇要回答的是…」「我的看法是：」「我的判斷是：」這種宣告句。
+- 分成兩到三段，每段不超過 200 字。
+- 多出來的背景直接刪掉或濃縮成一句，不要搬到後面（後面不會動）。但原本開場裡解釋過、後面段落還會用到的名詞，
+  新開場要保留那句解釋（後面不會再解釋一次）。
+- 只能用原本開場和下面素材裡有的事實與數字。不要出現「素材」「逐字稿」「研究來源」這類查證過程的話。
+
+=== 原本的開場 ===
+{lead}
+
+=== 第一個小標之後（只給你看前後文，不要改）===
+{rest}
+
+=== 素材（查數字用）===
+{pack}
+
+=== 輸出格式（最高優先）===
+只輸出新的開場，用下面兩行包起來：
+<<<OPENING>>>
+（新的開場）
+<<<END>>>
+"""
+
+
+def _split_lead(article: str) -> tuple[str, str]:
+    m = re.search(r"^#{2,4}\s+", article or "", flags=re.M)
+    return (article, "") if not m else (article[:m.start()], article[m.start():])
+
+
+def _lead_round(current: str, violations, pack: str) -> tuple[str, bool]:
+    """開場太長或貼了標籤（A1／A1b）：只重寫第一個小標之前那一段（2026-11-17 智取未來：
+    兩次整篇重寫都沒把開場改短，整篇被擋、當天沒發文）。改完程式驗：句數夠短、沒有標籤句、
+    沒帶進素材沒有的數字、沒有查證用語，才換進去。"""
+    from substack_radar.aeo_gate import check as aeo_check
+    from substack_radar.style_gate import _PROCESS_LEAK
+
+    lead, rest = _split_lead(current)
+    if not rest.strip() or len(lead.strip()) < 40:
+        return current, False
+    detail = "；".join(f"{v.kind}：{v.detail}" for v in violations if re.match(r"A1", str(v.kind)))
+    prompt = _LEAD_PROMPT.format(detail=detail[:600], max_sentences=10, lead=lead.strip(),
+                                 rest=rest[:2500], pack=pack[:60000])
+    try:
+        from src import run_log
+        with run_log.stage("改開場"):
+            raw, who = run_writer_text(prompt, AUDIT_TIMEOUT_S)
+    except Exception as exc:
+        print(f"[Review] ⚠️ 改開場沒跑成（{str(exc)[:100]}）")
+        return current, False
+    m = re.search(r"<<<OPENING>>>\s*(.+?)\s*<<<END>>>", raw or "", re.S)
+    new_lead = (m.group(1).strip() if m else "")
+    if len(new_lead) < 30:
+        print(f"[Review] ⚠️ {who} 沒有交出可用的新開場")
+        return current, False
+    candidate = new_lead + "\n\n" + rest.lstrip()
+    left = [v.rule for v in aeo_check(candidate) if v.rule.startswith("A1")]
+    extra = _plain_numbers(new_lead) - _plain_numbers(lead) - _plain_numbers(pack)
+    if left or extra or _PROCESS_LEAK.search(re.sub(r"\]\([^)]*\)", "]", new_lead)):
+        why = left or (f"多了素材沒有的數字 {sorted(extra)[:3]}" if extra else "有查證用語")
+        print(f"[Review] ⚠️ {who} 交的新開場沒過（{why}），不換")
+        return current, False
+    print(f"[Review] 🩹 {who} 重寫了開場（其他段落沒動）")
+    return candidate, True
+
+
 def _patch_round(current: str, violations, audit_items, style_items, pack: str,
                  sources: list[dict] | None) -> tuple[str, int]:
     issues = [f"- [程式檢查] {v.kind}：{v.detail}（{v.fix_hint}）" for v in violations]
@@ -1061,7 +1132,7 @@ def _patch_round(current: str, violations, audit_items, style_items, pack: str,
 
 def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: dict,
                             max_attempts: int, word_range: tuple[int, int] | None,
-                            writer: str = "") -> tuple[str, LoopReport, int]:
+                            writer: str = "", source_title: str = "") -> tuple[str, LoopReport, int]:
     """對帳式審稿（2026-11-16）。目標：品質不降，第一稿盡量一次就過。
 
     每一關只留真的在保護讀者的東西：
@@ -1088,19 +1159,25 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
         too_short = length_feedback(current, word_range)
         # 小標交給標題台重寫（只換那一行），不值得為它退稿
         style_items = [i for i in style_feedback(current) if not str(i.get("問題", "")).startswith("小標像標籤")]
-        structural = (bool(too_short) or any(re.match(r"A1(?!b)", str(v.kind)) for v in violations)
-                      or any("專有名詞註解" in str(i.get("問題", "")) for i in style_items))
+        if os.getenv("SUBSTACK_COLUMN") == "hsin" and len(sources or []) >= 3:
+            from substack_radar.style_gate import retelling_feedback
+            style_items += retelling_feedback(current)      # 有延伸資料卻還在重述來源＝要重寫，不是小修
+        # 整篇重寫只留給「改幾句改不好」的：太短、插了名詞清單、還在轉述原素材。
+        # 開場太長／貼標籤只改開場（_lead_round），其他段落不動。
+        structural = (bool(too_short)
+                      or any(re.search(r"專有名詞註解|還在轉述原素材", str(i.get("問題", ""))) for i in style_items))
+        lead_fix = any(str(v.kind).startswith("A1") for v in violations)
         if attempt == 0:
             _shadow_grounding(current, fact_block, sources)
         # 先結構、後對帳（2026-11-16 新流程第一篇實跑：稿子太短，對完帳才整篇重寫，重寫完又得再對一次）。
         # 反正要整篇重寫，就等重寫完再對帳，一篇只對一次。
-        defer_audit = need_audit and structural and attempt < max_attempts
+        defer_audit = need_audit and (structural or lead_fix) and attempt < max_attempts
         if defer_audit:
-            print("[Review] 這一稿要先動結構（篇幅或開場），等重寫完再對帳")
+            print("[Review] 這一稿要先動" + ("結構（篇幅等），等重寫完" if structural else "開場，等改完") + "再對帳")
             pending = []
         elif need_audit:
             # 動過筆的人（第一稿的寫手、後來重寫的人）都不能當查核員
-            found, summary = fact_audit.run(current, pack, writers=authors)
+            found, summary = fact_audit.run(current, pack, writers=authors, source_title=source_title)
             report.auditors = list(dict.fromkeys(report.auditors + summary["answered"]))
             if not summary["answered"]:
                 print("[Review] ⚠️ 查核模型都沒回應：這一篇只有程式檢查，沒有第二雙眼睛對過素材")
@@ -1126,10 +1203,18 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
         if attempt == max_attempts:
             break
         if not structural:
-            revised, applied = _patch_round(current, violations, pending, style_items, pack, sources)
-            if applied:
-                current = revised
-                report.patches += applied
+            changed = False
+            if lead_fix:
+                current, changed = _lead_round(current, violations, pack)
+                if changed:
+                    report.patches += 1
+            rest_violations = [v for v in violations if not str(v.kind).startswith("A1")]
+            if rest_violations or pending or style_items:
+                revised, applied = _patch_round(current, rest_violations, pending, style_items, pack, sources)
+                if applied:
+                    current, changed = revised, True
+                    report.patches += applied
+            if changed:
                 continue
             print("[Review] ⚠️ 小修沒有換到任何一句，改成整篇重寫")
         prompt = _REWRITE_PROMPT.format(attempt=rewrites + 1, feedback=_feedback(violations, merged),
@@ -1149,10 +1234,11 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
         current, need_audit = revised, True
         authors.append(who)
         rewrites += 1
-        print(f"[Review] ✏️ 整篇重寫第 {rewrites} 次（{who}）：{'篇幅或開場結構要動' if structural else '小修沒成功'}")
+        print(f"[Review] ✏️ 整篇重寫第 {rewrites} 次（{who}）：{'篇幅或結構要動' if structural else '小修沒成功'}")
     if not audited_once:
         # 等重寫完再對帳，結果重寫沒成功：定稿還是要對一次，不能整篇沒人對過就放出去
-        found, summary = fact_audit.run(current, evidence_pack(fact_block, sources, article=current), writers=authors)
+        found, summary = fact_audit.run(current, evidence_pack(fact_block, sources, article=current), writers=authors,
+                                        source_title=source_title)
         report.auditors = list(dict.fromkeys(report.auditors + summary["answered"]))
         pending = found
     report.passed = not report.remaining

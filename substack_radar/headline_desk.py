@@ -26,6 +26,7 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
 - 讓讀者對號入座：寫他的處境、他的錢、他的工作會怎樣，或一個違反直覺的反差、一個具體數字。
 - 不要冒號、不要「｜」、不要節目名、不要問「你知道嗎」這類空問句；英文詞一律完整，不要截斷。
 - 只能用文章裡有的事實，不誇大。
+- 標題要講這篇的主線（寫手原本的標題在講的那件事），不能拿文中一個支線案例或細節當標題。
 然後選出你認為點閱率最高的一個（best 填它的序號 1–5）。
 
 【二】寫「30 秒看重點」三條，每條 ≤40 字：
@@ -105,6 +106,20 @@ _SUBHEAD = re.compile(r"^(#{2,3})[ \t]+(.+?)[ \t]*$", re.M)
 _REPORT_WORDS = re.compile(r"這條線|綜合(?:起來|來看)|其他線索|小結|總結")
 
 
+def _terms(text: str) -> set:
+    t = re.sub(r"\s", "", (text or "").lower())
+    latin = set(re.findall(r"[a-z][a-z0-9]{1,}", t))
+    cjk = {t[i:i + 2] for i in range(len(t) - 1) if re.fullmatch(r"[\u4e00-\u9fff]{2}", t[i:i + 2])}
+    return latin | cjk
+
+
+def on_topic(candidate: str, anchor: str) -> bool:
+    """新標題至少要跟寫手的標題或副標共用一個詞（2026-11-17：一篇講 AI 自己改工具的文章，
+    標題被換成文中支線案例「迪士尼撤回 10 億美元投資」）。寫手沒給標題時不擋。"""
+    a = _terms(anchor)
+    return not a or bool(_terms(candidate) & a)
+
+
 def subhead_ok(text: str, body: str) -> bool:
     t = (text or "").strip()
     n = len(re.sub(r"\s", "", t))
@@ -159,7 +174,8 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
     except (TypeError, ValueError):
         best = 1
     ordered = ([titles[best - 1]] if 1 <= best <= len(titles) else []) + titles
-    chosen = next((t for t in ordered if title_ok(t)), None)
+    anchor = f"{title} {subtitle}"
+    chosen = next((t for t in ordered if title_ok(t) and on_topic(t, anchor)), None)
     for t in titles:
         print(f"[HeadlineDesk] 候選{'✅' if t == chosen else ('  ' if title_ok(t) else '❌')} {t}")
     points = grounded_points(data.get("key_points") or [], body)

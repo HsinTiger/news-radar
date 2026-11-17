@@ -2695,6 +2695,37 @@ async def _run_inner(args: argparse.Namespace) -> int:
             )
             return 6
         used_reports = [source_item.model_dump() for source_item in research_sources]
+    elif os.getenv("SUBSTACK_COLUMN") == "hsin" and os.getenv("SUBSTACK_HSIN_RESEARCH", "1") == "1":
+        # Hsin選觀點的延伸調研（2026-11-16）。跟上面不同的是：失敗不擋稿——主編投了稿就要有草稿，
+        # 查不到足夠資料時退回原本的寫法（只用主編給的素材），並在紀錄裡說清楚。
+        try:
+            print("[EditorialResearch] Hsin選觀點 1/2：依主編的角度定出要查的問題…")
+            research_brief = await plan_editorial_research(
+                title=raw_title, content=raw_content or "", mode="hsin", topic_category=topic_category,
+                editorial_profile=profile.name, has_deep_bundle=bool(getattr(args, "bundle", None)),
+                editor_brief=str(getattr(args, "editorial_note", "") or ""),
+            )
+            if research_brief is None:
+                raise InsufficientResearchError("調研規劃沒有產出")
+            print("[EditorialResearch] Hsin選觀點 2/2：搜尋並讀取延伸資料…")
+            for _q in research_brief.research_queries:
+                print(f"[EditorialResearch]   查：{_q[:70]}")
+            research_bundle = await asyncio.to_thread(
+                build_research_bundle,
+                list(research_brief.research_queries),
+                primary_url=source_url,
+                seed_sources=[],                      # 素材包自動搜到的連結品質不穩（大阪通天閣那種），不當種子
+                subject=research_brief.core_question,
+            )
+            research_sources = research_bundle.evidence_sources
+            social_reach = research_bundle.social_reach
+            _own = [r for r in used_reports if str(r.get("title") or "").startswith("🎥")]   # 主編投的影片本身
+            used_reports = _own + [source_item.model_dump() for source_item in research_sources]
+            print(f"[EditorialResearch] ✅ Hsin選觀點拿到 {len(research_sources)} 份延伸資料")
+        except Exception as exc:
+            print(f"[EditorialResearch] ⚠️ Hsin選觀點這次沒有延伸資料（{type(exc).__name__}: {str(exc)[:120]}）；"
+                  "照舊只用主編給的素材寫")
+            research_brief, research_sources, social_reach = None, [], None
         source["research_brief"] = research_brief.model_dump(
             exclude={"generated_by"}
         )
@@ -2861,7 +2892,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
 
                 body, report, _rewrites = run_review_loop(
                     draft.body_markdown, fact_block=fact_block, auditor=auditor, eval_kwargs=_eval_kwargs,
-                    word_range=(word_floor, word_cap), writer=str(getattr(draft, "generated_by", "") or ""))
+                    word_range=(word_floor, word_cap), writer=str(getattr(draft, "generated_by", "") or ""),
+                    source_title=str(raw_title or ""))
                 _patches = getattr(report, "patches", 0)
                 domain_changed = _rewrites > 0 or _patches > 0
                 remaining = list(report.remaining)

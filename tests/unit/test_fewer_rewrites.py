@@ -146,3 +146,13 @@ def test_first_draft_false_alarms_found_in_live_test():
     filler = "開場。\n\n## 一個完整的小標在這裡\n\n討論繞了一圈，又回到原點：到底誰該負責。\n"
     assert not [i for i in style_feedback(literal) if "套話" in i["問題"]]
     assert [i for i in style_feedback(filler) if "套話" in i["問題"]]
+
+
+
+def test_english_units_in_transcripts_count_as_sources():
+    """2026-11-17：逐字稿寫「20 percent」被判成找不到，寫手只好把對的數字刪掉；「參考價值」被當成引用。"""
+    facts = ("those production kernel improvements remove the end-to-end serving costs by 20 percent. "
+             "It also had 15 percent higher token generation efficiency, roughly 4x faster.")
+    ok = "他說服務的端到端成本降低 20%，文字生成效率提高 15%，速度約快 4 倍。"
+    assert [i.rule for i in check("根據 OpenAI 的文章，" + ok, sources=[], fact_block=facts + " OpenAI")] == []
+    assert [i.rule for i in check("抽查樣本越大，這個數字越有參考價值。", sources=[], fact_block=facts)] == []

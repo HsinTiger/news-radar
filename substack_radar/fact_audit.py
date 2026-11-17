@@ -50,8 +50,8 @@ PROMPT = """你是事實查核員，只做一件事：找出草稿裡「跟素�
 - 數字、日期、期限寫錯（素材說明年底，草稿寫今年底）
 - 張冠李戴（A 說的話寫成 B 說的；部門的數字寫成整間公司的）
 - 因果或方向寫反、程度寫過頭（素材說「可能」，草稿寫成已經發生）
-- 人名、公司名、產品名寫錯。注意：逐字稿是語音辨識轉的，專有名詞常聽錯；拼法以「研究來源」為準，
-  草稿跟研究來源一致、只是跟逐字稿不一樣的，不算錯
+- 人名、公司名、產品名寫錯。注意：逐字稿是語音辨識轉的，專有名詞常聽錯；拼法以「素材標題」和「研究來源」為準，
+  草稿跟標題或研究來源一致、只是跟逐字稿不一樣的，不算錯
 
 每一條都必須附「素材原文」：從下面的素材或研究來源裡**照抄**能證明草稿寫錯的那一段
 （15–200 個字，一個字都不要改、不要翻譯、不要摘要）。抄不出原文的就不要列。
@@ -154,7 +154,37 @@ def coverage(quote: str, haystack_norm: str) -> float:
 
 # 「素材裡沒有」不是這一關的工作（程式查得比較準），模型硬要報，附的證據也只是不相干的原文
 _ABSENCE = re.compile(r"(素材|原文|來源|逐字稿|節目)[^，。｜]{0,12}(沒有|未|並無|無)(提|說|出現|記載|見|引用|包含)|"
+                      r"(未|並未|沒有|沒)(提及|提到|說到|記載)|"
                       r"找不到|無出處|無來源|未經證實|無法(查證|核對|確認)|不在(素材|原文|事實表)")
+
+
+_NAME_ISSUE = re.compile(r"人名|公司名|名稱|專有名詞|拼|寫法|縮寫|講者名|來賓名|名字")
+_LATIN = re.compile(r"[A-Za-z][A-Za-z0-9.\-]{1,}")
+
+
+def _sounds_alike(a: str, b: str) -> bool:
+    from difflib import SequenceMatcher
+    a, b = a.lower(), b.lower()
+    return a.startswith(b) or b.startswith(a) or SequenceMatcher(None, a, b).ratio() >= 0.5
+
+
+def misheard_name(sentence: str, evidence: str) -> bool:
+    """草稿的英文詞跟素材原文裡某個英文詞長得像（GPU／GP、Ara／Era、Cline／Klein）＝在爭拼法。"""
+    ev = [w for w in _LATIN.findall(evidence or "") if len(w) >= 2]
+    disputed = [w for w in _LATIN.findall(sentence or "") if len(w) >= 2 and w.lower() not in (evidence or "").lower()]
+    return any(_sounds_alike(d, e) for d in disputed for e in ev)
+
+
+def _attested_spelling(sentence: str, evidence: str, material: str) -> bool:
+    """草稿裡被說「寫錯」的英文名字，其實在素材別處（影片標題、研究來源、逐字稿其他段落）出現過。
+
+    2026-11-17 智取未來：逐字稿是語音辨識轉的，把 Cline 聽成 Klein、GPU 聽成 GP，兩個查核員都照逐字稿
+    叫寫手改錯——影片標題明明寫「Ara Khan, Cline」。草稿的寫法只要在素材裡有出處，就不算寫錯。"""
+    ev = (evidence or "").lower()
+    mat = (material or "").lower()
+    disputed = [w for w in _LATIN.findall(sentence or "") if len(w) >= 2 and w.lower() not in ev]
+    return bool(disputed) and all(re.search(rf"(?<![a-z0-9]){re.escape(w.lower())}s?(?![a-z0-9])", mat)
+                                  for w in disputed)
 
 
 def verify(items: list[dict], article: str, material: str) -> tuple[list[dict], list[tuple[dict, str]]]:
@@ -164,8 +194,15 @@ def verify(items: list[dict], article: str, material: str) -> tuple[list[dict], 
     for it in items:
         sentence = str(it.get("原句") or "").strip()
         evidence = str(it.get("素材原文") or "").strip()
-        if _ABSENCE.search(str(it.get("問題") or "")):
+        problem = str(it.get("問題") or "")
+        if _ABSENCE.search(problem):
             dropped.append((it, "講的是「素材沒有」，不是矛盾"))
+            continue
+        # 問題講的是名字，或者兩邊的英文詞長得像（模型不一定會說「名字寫錯」，2026-11-17 那條寫的是
+        # 「素材原文為 GP operator，草稿改寫為 GPU 運算子」），而草稿的寫法在素材別處有出處
+        if ((_NAME_ISSUE.search(problem) or misheard_name(sentence, evidence))
+                and _attested_spelling(sentence, evidence, material)):
+            dropped.append((it, "草稿的寫法在素材別處有出處（逐字稿多半是語音辨識聽錯）"))
             continue
         if len(_norm(sentence)) < 6 or coverage(sentence, art) < 0.6:
             dropped.append((it, "指的那句不在草稿裡"))
@@ -219,7 +256,8 @@ def _default_chat(model: str, prompt: str) -> tuple[str, str]:
 
 def run(article: str, pack: str, *, models: list[str] | None = None, chat=None,
         deadline_s: int | None = None, grace_s: int | None = None,
-        fallback: list[str] | None = None, writers: list[str] | None = None) -> tuple[list[dict], dict]:
+        fallback: list[str] | None = None, writers: list[str] | None = None,
+        source_title: str = "") -> tuple[list[dict], dict]:
     """兩個模型同時查、取聯集、程式驗證。回 (算數的意見, 摘要)。
 
     摘要 {"answered": [...], "failed": {...}, "raw": n, "dropped": n}；全部模型都沒回應時
@@ -237,6 +275,8 @@ def run(article: str, pack: str, *, models: list[str] | None = None, chat=None,
     chat = chat or _default_chat
     deadline_s = DEADLINE_S if deadline_s is None else deadline_s
     grace_s = GRACE_S if grace_s is None else grace_s
+    if source_title:
+        pack = f"【素材標題】{source_title}\n\n{pack}"      # 標題常是名字的正確寫法（逐字稿會聽錯）
     prompt = build_prompt(article, pack)
     results: queue.Queue = queue.Queue()
     raw_items: list[dict] = []

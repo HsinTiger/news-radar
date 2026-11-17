@@ -10,7 +10,7 @@ def test_headline_desk_skips_bad_candidates_and_ungrounded_points():
     body = "Dan 說 AI agent 還在 2% 的早期階段。主持人 10% 時間做事、90% 時間調教 agent。"
     reply = json.dumps({"titles": ["AI 代理：還在 2% 階段", "你九成時間在調教代理", "x"], "best": 1,
                         "key_points": ["AI 代理還在 2% 的早期階段", "75% 的人放棄", "主持人 90% 時間在調教"]})
-    out = headline_desk.polish(title="舊標題", subtitle="", body=body, column="智取未來", chat=lambda p: reply)
+    out = headline_desk.polish(title="AI 代理還很早期", subtitle="", body=body, column="智取未來", chat=lambda p: reply)
     assert out["title"] == "你九成時間在調教代理"          # best 有冒號被擋，改用下一個合格的
     assert out["key_points"] == ["AI 代理還在 2% 的早期階段", "主持人 90% 時間在調教"]   # 75% 正文沒有
 
@@ -108,3 +108,13 @@ def test_rewrite_uses_same_order_as_first_writer(monkeypatch):
     assert text == "閘道稿" and who.startswith("閘道 writer→")       # 後面帶實際作答的模型，對帳時要避開它
     monkeypatch.setattr(q, "run_claude_cli", lambda p, t: "Haiku 稿")
     assert q.run_writer_text("x", 1) == ("Haiku 稿", "Claude Haiku")
+
+
+def test_title_must_stay_on_the_articles_main_thread():
+    """2026-11-17：講 AI 自己改工具的文章，標題被換成文中支線案例「迪士尼撤回 10 億美元投資」。"""
+    body = "工程師讓 AI 改自己的工具跑了 17 小時。另外一提，迪士尼撤回 10 億美元投資。"
+    reply = json.dumps({"titles": ["迪士尼撤回 10 億美元投資", "AI 改了自己 17 小時"], "best": 1,
+                        "key_points": [], "note": ""}, ensure_ascii=False)
+    out = headline_desk.polish(title="AI 自己改工具，人還剩什麼？", subtitle="", body=body, column="智取未來",
+                               chat=lambda p: reply)
+    assert out["title"] == "AI 改了自己 17 小時"
