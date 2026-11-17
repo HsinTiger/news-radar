@@ -1097,11 +1097,25 @@ def _build_research_brief_prompt(
     mode: str,
     topic_category: str,
     profile: EditorialProfile,
+    editor_brief: str = "",
 ) -> str:
     """First pass: understand the primary source before asking the web anything."""
-    if mode not in {"podcast", "company"}:
-        raise ValueError("research brief is only required for podcast/company")
-    if mode == "podcast":
+    if mode not in {"podcast", "company", "hsin"}:
+        raise ValueError("research brief is only required for podcast/company/hsin")
+    if mode == "hsin":
+        # 2026-11-16：Hsin選觀點原本沒有調研這一步，寫手手上只有主編給的那支影片，只能轉述
+        # （轉述句比例從 0% 升到 24%）。主編 11-13 要的是「拿素材當引子，自己找資料寫原創」。
+        source_contract = (
+            "這是主編 Hsin 親手投稿的題材。素材只是引子，文章不會轉述它。\n"
+            "用 300–800 字寫出：這份素材讓人想問的那個問題是什麼、它跟讀者的工作、錢或人生選擇有什麼關係。"
+            "不要按素材的順序摘要。\n"
+            "延伸調研查詢是這一步的重點：要查的是「離開這份素材之後，怎麼把這個問題想清楚」。"
+            "不要再查這支影片、這個節目或受訪者本人；去查能檢驗這個問題的統計數據與研究、"
+            "第一手文件、別的產業或別的年代發生過的前例，以及最強的反方說法。"
+            "查詢用一般讀者會搜的關鍵字，中英文都可以。\n"
+            + (f"主編的角度與想法（查詢要順著這個方向）：\n{editor_brief}\n" if editor_brief else "")
+        )
+    elif mode == "podcast":
         source_contract = (
             "先完成 Podcast 理解，再提出網路調研方向。用 300–800 字寫出"
             "引人入勝的摘要：讀者要能看見主持人的追問、來賓的主張、"
@@ -1211,9 +1225,14 @@ def _build_deep_writer_prompt(
         "插在文章中間像課本（主編 2026-11-16）。"
         f"優先注意的詞：{terms}。\n\n"
         "=== 呈現 ===\n"
-        "Podcast 文先讓讀者看見那段值得追的對談與觀點，再進入延伸調研；"
-        "不寫成逐字稿摘要。公司文先交代商業問題，再讓數字檢驗敘事。"
-        "使用 5–7 個內容型小標。副標補具體反差。\n"
+        + ("Hsin選觀點：原素材只是引子。開頭用一兩段交代「前陣子看到…，讓我想到一個問題」，之後不再回頭轉述它；"
+           "主線是那個問題本身，用上面的延伸證據、別的產業或年代的前例、反方說法一層一層問下去。"
+           "全文提到原素材的人說了什麼，不超過五六句；小標是你要問的問題，不是受訪者的論點。"
+           "讀者沒看過原素材，這篇也要完全成立。"
+           if os.getenv("SUBSTACK_COLUMN") == "hsin" else
+           "Podcast 文先讓讀者看見那段值得追的對談與觀點，再進入延伸調研；"
+           "不寫成逐字稿摘要。公司文先交代商業問題，再讓數字檢驗敘事。")
+        + "使用 5–7 個內容型小標。副標補具體反差。\n"
         "=== 財報拆解檢查清單（公司／資產分析必跑）===\n蒸餾自 Anthropic 的 equity-research earnings-analysis skill（2026-08-20 查閱）。只取分析框架，不取它的 8–12 頁賣方報告格式，也不需要它那些付費資料源。\n下面五條，事實表裡**有資料的一律要處理**；沒資料的照「這份表沒有的東西」明說沒有，不要跳過也不要自己補。\n1. **對共識的 beat/miss**：實際 EPS 與分析師共識的落差、方向與幅度。說清楚那是**賣方共識**不是公司財測，也不要據此推論管理層誠信。\n2. **逐季利潤率趨勢**：毛利率、營益率、淨利率至少三個季別的走向。季別可能不連續，算季增率前先確認是相鄰兩季。\n3. **成長的來源與去向**：營收變化是量、價、還是組合？利潤率變化是成本端還是費用端？只寫「衰退」不寫機制等於沒分析。\n4. **本業與非本業分開**：營業利益與淨利若走勢背離，要指出差在哪一層，不可把業外損益寫成本業表現。\n5. **這一季真正的新資訊**：讀者已經知道這家公司是做什麼的，不要重述公司背景；只寫這次財報改變了什麼判斷。\n每個數字都要能對回事實表或取材清單；對不上就改寫成不帶數字的判斷，或整句刪掉。\n\n"
         "標題：公司／資產分析一律用「主體：鉤子」，主體放最前面且 ≤20 字"
         "（例「瑞昱：49% 毛利背後的獲利漏斗」）——Substack 的 email 主旨就是標題，"
@@ -1428,15 +1447,16 @@ async def plan_editorial_research(
     *,
     title: str,
     content: str,
-    mode: Literal["podcast", "company"],
+    mode: Literal["podcast", "company", "hsin"],
     topic_category: str = "other",
     editorial_profile: Literal["auto", "daily", "weekly"] = "auto",
     has_deep_bundle: bool = False,
     temperature: float = 0.2,
+    editor_brief: str = "",
 ) -> Optional[EditorialResearchBrief]:
     """Digest the primary source and identify evidence gaps before web research."""
     profile = resolve_editorial_profile(
-        mode,
+        "morning" if mode == "hsin" else mode,       # Hsin選觀點走 morning 流程，框架由 SUBSTACK_COLUMN 決定
         override=editorial_profile,
         has_deep_bundle=has_deep_bundle,
     )
@@ -1446,6 +1466,7 @@ async def plan_editorial_research(
         mode=mode,
         topic_category=topic_category,
         profile=profile,
+        editor_brief=editor_brief,
     )
     result = await call_for_json(
         system=(

@@ -41,13 +41,24 @@ def _meta(url: str) -> dict:
         return {"id": m.group(1) if m else "", "channel": "", "duration": "", "date": "", "title": "", "url": url}
 
 
-def _transcript(vid: str) -> str:
-    """youtube-transcript-api v1.x（新 API：實例 .fetch）。"""
+def _is_chinese_title(title: str) -> bool:
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", title or ""))
+    return cjk >= 4 and cjk >= len(re.findall(r"[A-Za-z]", title or "")) / 3
+
+
+def _transcript(vid: str, prefer_zh: bool = False) -> str:
+    """youtube-transcript-api v1.x（新 API：實例 .fetch）。
+
+    prefer_zh：中文節目先拿中文字幕（2026-11-17：台灣節目《商談・不廢話》有中文原字幕也有英文字幕，
+    原本固定先拿英文，寫手拿到的是英文翻譯，引用的話等於翻了兩次，還寫出「它是英文字幕翻成中文」）。"""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
         last = None
-        for langs in (["en"], ["en-US", "en-GB"], ["zh-TW", "zh-Hant", "zh"]):
+        order = [["en"], ["en-US", "en-GB"], ["zh-TW", "zh-Hant", "zh"]]
+        if prefer_zh:
+            order = [["zh-TW", "zh-Hant", "zh", "zh-Hans", "zh-CN"]] + order[:2]
+        for langs in order:
             try:
                 f = api.fetch(vid, languages=langs)
                 return " ".join(s.text for s in f)
@@ -305,7 +316,7 @@ def main():
             print(f"  ⚠️ 跳過（解析不到 id）: {url}")
             continue
         print(f"  · 抓取 {m['id']} {m['title'][:40]} …")
-        m["transcript"] = _transcript(m["id"])
+        m["transcript"] = _transcript(m["id"], prefer_zh=_is_chinese_title(m["title"]))
         m["src"] = "字幕"
         if _content_len(m["transcript"]) < 80 or m["transcript"].startswith("("):
             # 後備順序：agy/Gemini 讀字幕軌 → Whisper ASR。

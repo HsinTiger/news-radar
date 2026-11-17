@@ -555,6 +555,10 @@ ground-truth pass 併進 §1–§5。下次動 EDITORIAL_MODE 相關路徑時應
 - 用完次數仍沒修掉的矛盾放在 `LoopReport.unresolved`，compose 轉成 `[跟素材不符，還沒修]` 警告進通知信，不擋稿；程式檢查違規才擋自動發文。
 - 帳本：`logs/writing/rejections.csv` 記每輪每條原因（`source`＝程式／審稿／篇幅／文風／影子）；`articles.csv` 的 `rewrites` 自 2026-11-16 起只算整篇重寫，`patches` 是小修句數，兩者皆 0＝一次就過。
 - `substack_radar/lessons.py` 讀帳本，把同專欄最近第一稿最常被退的原因（≤4 條）放進寫手 prompt 的「交稿前自查」。
+- 開場太長／貼標籤（A1／A1b）只重寫第一個小標之前那一段（`quality_loop.py::_lead_round`），其他段落不動；整篇重寫只留給太短、名詞清單、還在轉述原素材（2026-11-17）。
+- 對帳意見若只是英文名字的拼法之爭、且草稿的寫法在素材別處（含影片標題）有出處，視為語音辨識聽錯，不算矛盾（`fact_audit.py::_attested_spelling`、`misheard_name`）。
+- Hsin選觀點（`SUBSTACK_COLUMN=hsin`）也跑延伸調研：依主編的角度規劃查詢、不查原影片本身（`composer.py::_build_research_brief_prompt` 的 `hsin` 分支、`compose.py` 的 Hsin 調研區塊）；查不到不擋稿，退回只用素材寫。有 3 份以上延伸資料時量「轉述句比例」，超過 15% 整篇重寫（`style_gate.py::retelling_ratio`）。`SUBSTACK_HSIN_RESEARCH=0` 可關。
+- 中文標題的影片先抓中文字幕（`scripts/enrich_youtube_sources.py::_transcript(prefer_zh=)`），不再拿英文翻譯字幕。
 - 影子檢查（只記帳）：草稿裡在素材找不到的英文專名與數字（`_shadow_grounding`）。觀察誤報率後再決定是否升成正式檢查。
 - 通知信主旨的 ⚠️ 只在需要主編動手時出現（`src/notify.py::needs_editor`）；體檢警告改對定稿重算（`compose.py`，寫檔前）。
 

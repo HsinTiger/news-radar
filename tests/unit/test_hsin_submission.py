@@ -110,3 +110,35 @@ def test_drain_claim_blocks_second_writer(tmp_path, monkeypatch):
     p = subprocess.Popen(["true"]); p.wait()
     (tmp_path / "claims" / "rid" / "pid").write_text(str(p.pid))   # 寫的人已經死了＝殘骸
     assert d._claim("rid")
+
+
+# ---- 2026-11-17：Hsin選觀點加延伸調研，並量「轉述句比例」 ----
+
+def test_retelling_ratio_separates_retelling_from_original_writing():
+    from substack_radar.style_gate import retelling_ratio, retelling_feedback
+    retell = "\n\n".join(f"黃日燦說，第 {n} 件事情是這樣的，年輕人要主動。他也提到第 {n} 個例子，講得很具體。"
+                         f"主持人問他為什麼。他認為這很重要。" for n in range(6))
+    original = "\n\n".join(f"第 {n} 個問題是，外派回來的人有多少被重用？主計總處的數字顯示薪資中位數停在 3.8 萬。"
+                           f"我傾向認為，不做的風險被低估了。可是做了之後，代價落在誰身上？" for n in range(6))
+    r1, who = retelling_ratio(retell)
+    r2, _ = retelling_ratio(original)
+    assert r1 > 0.5 and who == "黃日燦" and r2 < 0.1
+    assert retelling_feedback(retell) and not retelling_feedback(original)
+
+
+def test_hsin_research_plan_follows_the_editors_angle_not_the_video():
+    from substack_radar import composer
+    prof = composer.resolve_editorial_profile("morning", override="auto", has_deep_bundle=True)
+    prompt = composer._build_research_brief_prompt(raw_title="某支影片", raw_content="逐字稿" * 50, mode="hsin",
+                                                   topic_category="other", profile=prof,
+                                                   editor_brief="主編希望的角度：前輩的建議該打幾折")
+    assert "不要再查這支影片" in prompt and "前輩的建議該打幾折" in prompt and "前例" in prompt
+
+
+def test_chinese_videos_get_chinese_subtitles_first():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("enrich", "scripts/enrich_youtube_sources.py")
+    enrich = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(enrich)
+    assert enrich._is_chinese_title("千億併購律師給職涯上升期年輕人的中肯建議 ft. 黃日燦【超真實商談】")
+    assert not enrich._is_chinese_title("Pick Problems That Survive When AI Solves Coding - Ara Khan, Cline")

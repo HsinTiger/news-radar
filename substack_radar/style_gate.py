@@ -38,6 +38,50 @@ _EN_RUN = re.compile(r"(?<![A-Za-z（(「“\"'])([a-z][a-z'\-]+(?:\s+[a-z][a-z'
 _EN_OK = {"open source", "machine learning", "deep learning", "fine tuning", "prompt engineering"}
 
 
+# Hsin選觀點：素材只是引子，不能寫成讀後心得（主編 2026-11-13）。用「轉述句比例」量：
+# 全文有幾成的句子是「他／來賓／節目／主要受訪者 說、認為、提到…」。2026-11-16 回頭量：
+# 寫手看不到逐字稿的那幾篇 0–3%，看得到之後 11%、18%、23%、24%，一路變成重述來源。
+_REPORT_VERB = r"(?:說|說到|提到|認為|表示|指出|舉例|舉了|主張|強調|回答|講|談到|承認|坦言|形容|建議|估計|解釋|回憶|觀察)"
+_REPORT_ROLE = r"(?:他|她|他們|來賓|嘉賓|主持人|節目|影片|訪談|這集|對談|受訪者)"
+_REPORT_NAME = r"(?:[A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+)?|[\u4e00-\u9fff]{2,3}?)"
+_REPORT_ADV = r"(?:也|還|則|又|曾|就|都|接著|後來)?"
+_NOT_A_SPEAKER = re.compile(r"我們?|你們?|研究|報告|數據|資料|這個|這些|有人|作者|他們?|她|讀者|公司|政府|市場")
+RETELLING_LIMIT = 0.15
+
+
+def retelling_ratio(article_md: str) -> tuple[float, str]:
+    """回 (轉述句比例, 主要說話者)。只看正文，不看文末取材。"""
+    body = re.split(r"^-{3,}\s*$", article_md or "", maxsplit=1, flags=re.M)[0]
+    body = re.sub(r"\]\([^)]*\)", "]", body)
+    sents = [x.strip() for x in re.split(r"(?<=[。！？?!])|\n+", body)
+             if len(x.strip()) >= 8 and not x.strip().startswith(("#", ">", "-", "*"))]
+    if len(sents) < 10:
+        return 0.0, ""
+    speakers: dict[str, int] = {}
+    for x in sents:
+        for m in re.finditer(rf"({_REPORT_NAME}){_REPORT_ADV}\s?(?:在[^，。]{{0,10}})?{_REPORT_VERB}", x):
+            name = m.group(1)
+            # 「我傾向認為」「這也說明」不是受訪者在說話
+            if not _NOT_A_SPEAKER.fullmatch(name) and not re.match(r"[我你這那有也都就還是會應可要能才並其另]", name):
+                speakers[name] = speakers.get(name, 0) + 1
+    main = max(speakers.items(), key=lambda kv: kv[1], default=("", 0))
+    who = main[0] if main[1] >= 3 else ""
+    names = f"{_REPORT_ROLE}|{re.escape(who)}" if who else _REPORT_ROLE
+    pat = re.compile(rf"(?:{names}){_REPORT_ADV}\s?(?:在[^，。]{{0,10}})?{_REPORT_VERB}")
+    return sum(1 for x in sents if pat.search(x)) / len(sents), who
+
+
+def retelling_feedback(article_md: str) -> list[dict]:
+    ratio, who = retelling_ratio(article_md)
+    if ratio <= RETELLING_LIMIT:
+        return []
+    return [_item(
+        f"還在轉述原素材：全文 {ratio:.0%} 的句子是「{who or '他'}說／認為／提到…」（上限 {RETELLING_LIMIT:.0%}）",
+        f"{who or '他'}說",
+        "原素材只在開頭當引子交代一次。把主線換成那個問題本身：用取材裡的延伸資料、別的產業或年代的前例、"
+        "反方說法一層一層問下去；受訪者的話全文留五六句最關鍵的就好。小標改成你要問的問題，不是他的論點。")]
+
+
 def _item(problem: str, quote: str, fix: str) -> dict:
     return {"問題": problem, "原句": quote[:80], "建議改法": fix}
 
