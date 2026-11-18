@@ -468,3 +468,16 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-17T14:11:09,,,antigravity_cli,Claude Opus 4.6 (Thinking),N,6.1,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
 2026-11-17T14:12:54,,,gateway,audit→glm-5.3-flash,Y,105.3,6265,664,
 2026-11-17T14:14:00,,,gateway,audit→glm-5.3-flash,Y,65.3,5414,112,
+2026-11-18T04:03:48,2026-11-18 04:00 podcast,,gateway,audit→glm-5.3-flash,Y,39.5,2842,449,
+2026-11-18T04:03:52,2026-11-18 04:00 podcast,EditorialResearchBrief,claude_cli,/Users/hsin/.local/bin/claude,N,1.5,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""335df5c9-7baf-4347-a7d1-6cb22d9ae544"",""total_cost_usd"":0,"
+2026-11-18T04:04:13,2026-11-18 04:00 podcast,EditorialResearchBrief,antigravity_cli,Claude Opus 4.6 (Thinking),N,20.8,,,"agy exit 3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-18T04:06:26,2026-11-18 04:00 podcast,EditorialResearchBrief,gateway,writer→glm-5.3-flash,Y,132.3,8880,2754,
+2026-11-18T04:07:14,2026-11-18 04:00 podcast,SubstackDraft,claude_cli,/Users/hsin/.local/bin/claude,N,1.7,,,"claude CLI exit=1; stderr=''; stdout='{""duration_api_ms"":0,""stop_reason"":""stop_sequence"",""session_id"":""cdbbc30e-824f-493a-af57-73caa3c5ea02"",""total_cost_usd"":0,"
+2026-11-18T04:07:14,2026-11-18 04:00 podcast,SubstackDraft,antigravity_cli,,N,0.0,,,agy 各家額度都已用完（本行程先前已確認），跳過
+2026-11-18T04:10:45,2026-11-18 04:00 podcast,SubstackDraft,gateway,deepseek-v4.1-flash→glm-5.3-flash,Y,211.5,31385,4131,
+2026-11-18T04:11:08,2026-11-18 04:00 podcast,,gateway,gemini-2.5-flash,Y,22.9,18704,4942,
+2026-11-18T04:12:23,2026-11-18 04:00 podcast,,gateway,gemini-3.5-flash,Y,97.2,19226,1558,
+2026-11-18T04:12:24,2026-11-18 04:00 podcast,,claude_cli,haiku,N,1.5,,,claude 失敗：Failed to authenticate: OAuth session expired and could not be refreshed
+2026-11-18T04:12:54,2026-11-18 04:00 podcast,,gateway,writer→glm-5.3-flash,Y,29.6,3837,545,
+2026-11-18T04:13:36,2026-11-18 04:00 podcast,,gateway,audit→glm-5.3-flash,Y,30.7,5060,460,
+2026-11-18T07:30:33,,,gateway,audit→glm-5.3-flash,Y,29.2,4151,263,
