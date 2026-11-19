@@ -35,3 +35,5 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-16,16:14,2026-11-16 16:00 morning,Hsin選觀點,老闆進電梯，整臺瞬間清空｜Hsin選觀點,14.2,gateway · 模型 writer→glm-5.3-flash,glm-5.3-flash,3,1,Y,225147322,0,1
 2026-11-17,04:32,2026-11-17 04:00 podcast/ai,智取未來,迪士尼撤回 10 億美元投資｜智取未來,32.2,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,glm-5.3-flash＋gemini-2.5-flash,3,2,N,225250872,1,0
 2026-11-18,04:13,2026-11-18 04:00 podcast,吹牛免稅,高盛說沒事，卻叫你買保險｜吹牛免稅,13.4,gateway · 模型 deepseek-v4.1-flash→glm-5.3-flash,gemini-2.5-flash＋gemini-3.5-flash,1,0,Y,225403333,0,0
+2026-11-19,04:10,2026-11-19 04:00 podcast/ai,智取未來,能做不代表該做，改壞了誰負責｜智取未來,9.9,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,gemini-2.5-flash＋glm-5.3-flash,3,0,Y,225557945,0,7
+2026-11-19,22:32,2026-11-19 22:24 morning,Hsin選觀點,輝達押二十年，遠見還是運氣｜Hsin選觀點,8.4,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,gemini-2.5-flash,2,0,Y,225659109,0,4
