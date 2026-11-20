@@ -58,6 +58,11 @@ def test_daily_prompt_is_compact_human_and_writing_only() -> None:
         # normalise_tags() 併回既有詞彙，避免 263 個 tag 繼續分裂。
         "tags",
         "body_markdown",
+        # 2026-09-20：FB 版跟 Substack 同一次輸出（fb_follow.post_with_draft），零額外寫手呼叫
+        "fb_hook",
+        "fb_point",
+        "fb_figure",
+        "fb_post",
     }
 
 
@@ -375,11 +380,12 @@ def test_success_notification_uses_editorial_profile_not_obsolete_metadata() -> 
 
 
 def test_legacy_runtime_prompt_fragments_are_removed() -> None:
+    # manny_skills/ 自 2026-08-10 起刻意載入（分析與文風框架），不再列為遺留物；
+    # 提示詞裡不得出現對標來源名稱，由 test_daily_prompt_is_compact_human_and_writing_only 守著。
     for relative in (
         "substack_radar/config/substack_soul.md",
         "substack_radar/config/substack_voice_anchor.md",
         "substack_radar/config/company_analysis_soul.md",
-        "substack_radar/config/manny_skills",
         "scripts/launchd/com.newsradar.substack_company.plist",
     ):
         assert not (REPO / relative).exists(), relative

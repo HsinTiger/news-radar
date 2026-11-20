@@ -75,9 +75,10 @@ def test_process_talk_and_repeated_show_prefix_are_flagged():
 def test_subheads_are_swapped_only_when_safe():
     from substack_radar.headline_desk import apply_subheads, polish
 
+    # 2026-11-20：小標不再接受「那」「所以」開頭硬接上一個（主編範本的小標都是能單獨讀的一句話）
     body = "開場提到 4%。\n\n## 「被設局」這條線，證據最薄\n\n內文一。\n\n## 節目裡的其他線索\n\n內文二。\n"
-    new, n = apply_subheads(body, ["那是不是有人設局", "有人說他像國王一樣管公司"])
-    assert n == 2 and "## 那是不是有人設局" in new and "內文一。" in new and "內文二。" in new
+    new, n = apply_subheads(body, ["是不是有人在設局", "有人說他像國王一樣管公司"])
+    assert n == 2 and "## 是不是有人在設局" in new and "內文一。" in new and "內文二。" in new
 
     # 數量對不上：整批不換
     assert apply_subheads(body, ["只有一個小標而已"]) == (body, 0)
@@ -89,8 +90,8 @@ def test_subheads_are_swapped_only_when_safe():
 
     out = polish(title="舊標題", subtitle="", body=body, column="吹牛免稅",
                  chat=lambda p: '{"titles": ["新標題在這裡"], "best": 1, "key_points": [], "note": "",'
-                                ' "subheads": ["那是不是有人設局", "有人說他像國王一樣管公司"]}')
-    assert out["subheads_changed"] == 2 and "## 那是不是有人設局" in out["body"]
+                                ' "subheads": ["是不是有人在設局", "有人說他像國王一樣管公司"]}')
+    assert out["subheads_changed"] == 2 and "## 是不是有人在設局" in out["body"]
 
 
 def test_rewrite_uses_same_order_as_first_writer(monkeypatch):

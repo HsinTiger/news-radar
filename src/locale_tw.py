@@ -132,7 +132,36 @@ def to_traditional(text: str) -> str:
     if not text:
         return text
     cc = _cc()
-    return cc.convert(text) if cc else text
+    if not cc:
+        return text
+    out = cc.convert(text)
+    # 2026-11-20：s2tw 對「已經是繁體」的字也會動手——「不是只在談」→「不是隻在談」、「平台」→「平臺」、
+    # 「台灣」→「臺灣」。11/11「隻買第一」、11/19「不是隻在談 AI」都是這樣進了正式文章。
+    # 這兩個字在台灣繁體本來就這樣寫；原文以繁體為主時，把它們換回原字（簡體為主的稿子照常全轉，
+    # 「一只猫」仍會變「一隻貓」）。s2tw 是逐字對應、長度不變，才能逐字比對。
+    if len(out) == len(text) and _mostly_traditional(text, out):
+        out = "".join(src if src in _KEEP_IN_TRADITIONAL else dst for src, dst in zip(text, out))
+    return out
+
+
+_KEEP_IN_TRADITIONAL = frozenset("只台")
+_T2S = None
+
+
+def _mostly_traditional(text: str, converted: str) -> bool:
+    """繁體專用字比簡體專用字多＝原文以繁體為主。"""
+    global _T2S
+    if _T2S is None:
+        try:
+            import opencc  # type: ignore
+            _T2S = opencc.OpenCC("t2s")
+        except Exception:  # noqa: BLE001
+            _T2S = False
+    if not _T2S:
+        return False
+    simplified_only = sum(1 for a, b in zip(text, converted) if a != b and a not in _KEEP_IN_TRADITIONAL)
+    traditional_only = sum(1 for a, b in zip(text, _T2S.convert(text)) if a != b)
+    return traditional_only > simplified_only
 
 
 def fix_mainland_text(text: str) -> Tuple[str, List[str]]:

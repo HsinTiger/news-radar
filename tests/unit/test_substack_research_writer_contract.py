@@ -45,15 +45,18 @@ def _sources(count: int = 5) -> list[editorial_research.ResearchSource]:
     ]
 
 
-def test_deep_profiles_have_type_specific_length_and_structure() -> None:
+def test_deep_profiles_have_type_specific_length_and_structure(monkeypatch) -> None:
+    for key in ("SUBSTACK_WORD_CAP", "SUBSTACK_DAILY_WORD_CAP", "SUBSTACK_WEEKLY_WORD_CAP"):
+        monkeypatch.delenv(key, raising=False)   # .env 的緊急上限只管一般稿，不該讓這個測試看機器
     podcast = composer.resolve_editorial_profile("podcast")
     company = composer.resolve_editorial_profile("company")
     daily = composer.resolve_editorial_profile("morning")
 
     assert podcast.name == "weekly" and podcast.article_kind == "podcast"
     assert company.name == "weekly" and company.article_kind == "company"
-    assert composer.word_range_for(podcast) == (4200, 6500)
-    assert composer.word_range_for(company) == (3800, 6000)
+    # 2026-10-19 信哥定案：podcast／智取未來 3000–4000、賺錢有道 4000–5500（見 composer 的 PROFILE 註解）
+    assert composer.word_range_for(podcast) == (3000, 4000)
+    assert composer.word_range_for(company) == (4000, 5500)
     assert composer.word_range_for(daily) == (1800, 2800)
 
 
