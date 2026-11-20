@@ -636,6 +636,8 @@ NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）�
 - **FB 點名檢查放寬**：`fb_follow.show_named` 允許省略中間名縮寫，以及 Podcast／Show 這類通用字。原本節目「Peter H. Diamandis」、貼文寫「Peter Diamandis」就被擋，整篇 FB 沒發。
 - **對帳審稿**：問題寫成「素材沒說 X，而是說 Y」時算矛盾、保留，不再當成「素材沒有」丟掉（`fact_audit._CONTRADICTION`）。
 - **讀者數據每天更新**：`daily_publish.refresh_reader_data` 發完文就重算一次 `reader_calibration.json`、`title_arms.json`，標題實驗不用等週一。
+- **選題看得到最近一週寫過什麼**：`compose._recent_block` 附上取材節目的原標題。試跑時關卡挑了第三集黃仁勳，同一件事除非有全新問題，score 給 4 分以下；讀者問題也不准寫成個股買賣建議。
+- **小標只換有毛病的**：`apply_subheads` 不再重寫原本合格的小標。試跑時「他說中國在表演，卻把中國當頭號對手」被改成「他前後的說法並不一致」，跟內文矛盾。
 
 ## 7. Case studies — failures that forced doc updates
 
