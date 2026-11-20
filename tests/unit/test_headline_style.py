@@ -19,7 +19,8 @@ def test_headline_desk_failure_keeps_original():
     def boom(p):
         raise RuntimeError("gateway down")
     assert headline_desk.polish(title="t", subtitle="", body="b", column="c", chat=boom) == \
-        {"title": None, "key_points": [], "note": "", "body": "b", "subheads_changed": 0}   # 正文原樣
+        {"title": None, "key_points": [], "note": "", "body": "b", "subheads_changed": 0,
+         "title_arm": None, "title_style": None}   # 正文原樣
 
 
 def test_style_feedback_flags_stock_phrases_and_untranslated_english():

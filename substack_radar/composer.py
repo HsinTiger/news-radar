@@ -1145,6 +1145,8 @@ def _build_research_brief_prompt(
             "先完成 Podcast 理解，再提出網路調研方向。用 300–800 字寫出"
             "引人入勝的摘要：讀者要能看見主持人的追問、來賓的主張、"
             "兩者真正的分歧與為何值得繼續追。不要按時間軸摘要整集。"
+            + (f"\n{editor_brief}。延伸調研至少一條查詢要能回答這個問題在台灣的樣子"
+               "（台灣的產業、數據、法規或生活），用中文關鍵字。" if editor_brief else "")
         )
     else:
         source_contract = (

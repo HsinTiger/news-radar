@@ -658,18 +658,50 @@ _EDITOR_PICK_PROMPT = """你是一份中文電子報的總編輯。讀者是台�
 他們訂閱是為了「讀完能做更好的判斷」——投資、職涯、工作方法、科技與商業趨勢。
 {column_rule}
 
-下面是候選的節目（標題＋開頭逐字稿）。替每一集打 0–10 分：讀者讀完一篇根據它寫的文章，
-能不能帶走一個跟自己工作、錢或判斷有關的東西？純娛樂、名人八卦、宣傳新書新片、
-跟讀者生活無關的冷知識，給 3 分以下。
+{buzz}{calibration}
+下面是候選的節目（標題＋開頭逐字稿）。每一集評三件事：
+1. tw_question：台灣上班族看到這個題目，心裡會冒出的那一句問題（關於他的錢、工作、生活，或台灣的產業）。
+   要寫得出一句自然的問句才算；只能硬套的（例如美國地方選舉、別國的教育政策）留空字串。
+2. tw_score（0–10）：台灣讀者有沒有感——跟上面「台灣這兩天在討論的事」，或台灣人的錢、工作、生活有沒有直接關係。
+3. score（0–10）：讀者讀完一篇根據它寫的文章，能不能帶走一個跟自己工作、錢或判斷有關的東西？
+   純娛樂、名人八卦、宣傳新書新片、跟讀者生活無關的冷知識，給 3 分以下。
 
 {items}
 
-只輸出 JSON：{{"scores": [{{"n": 1, "score": 0, "reader_takeaway": "一句話：讀者能帶走什麼"}}]}}"""
+只輸出 JSON：{{"scores": [{{"n": 1, "tw_question": "", "tw_score": 0, "score": 0, "reader_takeaway": "一句話：讀者能帶走什麼"}}]}}"""
+
+# 「台灣讀者有沒有感」關卡（2026-11-20 主編同意）：tw_question 寫得出來、tw_score 與 score 都到這個分數才算通過。
+TW_GATE_MIN = 5.0
+# 最近一次選題的評分，按 news id 存。run() 拿它把「台灣讀者的問題」交給調研與寫手，也寫進 metadata 供每週報表對照。
+LAST_PICK_META: dict = {}
+
+
+def _buzz_block() -> str:
+    try:
+        from substack_radar.reader_signals import taiwan_buzz
+        items = taiwan_buzz()
+    except Exception as exc:
+        print(f"[EditorPick] ⚠️ 台灣熱度抓不到，這次只看題目本身：{str(exc)[:80]}")
+        items = []
+    if not items:
+        return ""
+    return ("【台灣這兩天在討論什麼】（Google 搜尋趨勢、PTT、台灣媒體標題）\n"
+            + "\n".join(f"- {x}" for x in items[:50]) + "\n\n")
+
+
+def _reader_question_mandate(question: str) -> str:
+    return ("台灣讀者的問題（選題時寫下的）：「" + question + "」。開場從這個問題起手；正文至少一處把機制連回"
+            "台灣讀者的處境（他的工作、錢，或台灣的產業與生活）。台灣的事實只能用素材與研究資料裡有的，"
+            "沒有就用「假設你是……」的情境說明，不要自己補數字或事件；連不自然就不要硬套。")
 
 
 def _editor_pick(rows: list, *, ai: bool = False):
-    """前幾名候選交給模型評「讀者讀完能帶走什麼」，挑最高分；全部不到 6 分或模型掛了就回 None，
-    讓呼叫端照原本的分數挑（選題把關不能害整天沒稿）。"""
+    """前幾名候選交給模型評三件事：台灣讀者會問什麼、有沒有感、讀完能帶走什麼。
+    先過「台灣讀者有沒有感」這關（2026-11-20），再從通過的裡面挑兩項平均最高的。
+    沒有一集過關時退回只看「能帶走什麼」（至少 6 分）；模型掛了或都不夠就回 None，讓呼叫端照原本的分數挑
+    （選題把關不能害整天沒稿）。評分的依據：台灣熱度（reader_signals.taiwan_buzz）與我們讀者的
+    真實成績（reader_signals.calibration_block）——只靠模型的感覺挑題，準度接近丟銅板。"""
+    LAST_PICK_META.clear()
     if len(rows) < 2 or os.getenv("SUBSTACK_EDITOR_PICK", "1") != "1":
         return None
     items = "\n\n".join(f"[{i}] {r[1]}\n" + re.sub(r"\s+", " ", (r[2] or "")[:1200])
@@ -679,24 +711,45 @@ def _editor_pick(rows: list, *, ai: bool = False):
                    "純哲學、純新聞、跑分給 4 分以下（2026-11-13 信哥：題目太技術，讀者跟不上）。"
                    if ai else "這是思想專欄：一場對談帶出值得想的觀點，但觀點要能連回讀者的工作、錢或判斷。")
     try:
+        from substack_radar.reader_signals import calibration_block
+        calibration = calibration_block()
+    except Exception:
+        calibration = ""
+    try:
         from src.llm_brain import _extract_json_blob
         from substack_radar.quality_loop import _oss_chat
-        raw = _oss_chat("audit", _EDITOR_PICK_PROMPT.format(column_rule=column_rule, items=items), 600)
-        scores = {int(x["n"]): (float(x["score"]), str(x.get("reader_takeaway", "")))
-                  for x in json.loads(_extract_json_blob(raw) or "{}").get("scores", [])}
+        raw = _oss_chat("audit", _EDITOR_PICK_PROMPT.format(
+            column_rule=column_rule, buzz=_buzz_block(), calibration=(calibration + "\n\n") if calibration else "",
+            items=items), 900)
+        parsed = {}
+        for x in json.loads(_extract_json_blob(raw) or "{}").get("scores", []):
+            parsed[int(x["n"])] = {"score": float(x.get("score") or 0), "tw_score": float(x.get("tw_score") or 0),
+                                   "tw_question": str(x.get("tw_question") or "").strip(),
+                                   "why": str(x.get("reader_takeaway") or "")}
     except Exception as exc:
         print(f"[EditorPick] ⚠️ 選題評分失敗，照原排序：{str(exc)[:100]}")
         return None
-    if not scores:
+    parsed = {n: p for n, p in parsed.items() if 1 <= n <= len(rows)}
+    if not parsed:
         return None
-    n, (score, why) = max(scores.items(), key=lambda kv: kv[1][0])
+    LAST_PICK_META["by_id"] = {rows[n - 1][0]: p for n, p in parsed.items()}
     for i, r in enumerate(rows, 1):
-        sc, wy = scores.get(i, (None, ""))
-        print(f"[EditorPick] {sc}分 {str(r[1])[:50]}｜{wy[:40]}")
-    if score < 6 or not (1 <= n <= len(rows)):
-        print("[EditorPick] ⚠️ 沒有一集到 6 分，照原排序")
+        p = parsed.get(i) or {}
+        print(f"[EditorPick] 台灣{p.get('tw_score')}／帶走{p.get('score')} {str(r[1])[:46]}｜"
+              f"{(p.get('tw_question') or '（台灣讀者不會問）')[:40]}")
+    passed = {n: p for n, p in parsed.items()
+              if p["tw_question"] and p["tw_score"] >= TW_GATE_MIN and p["score"] >= TW_GATE_MIN}
+    if passed:
+        n, p = max(passed.items(), key=lambda kv: (kv[1]["score"] + kv[1]["tw_score"]) / 2)
+        LAST_PICK_META["gate"] = "passed"
+        print(f"[EditorPick] ✅ 選 [{n}] 台灣{p['tw_score']}／帶走{p['score']}：{p['tw_question'][:50]}")
+        return rows[n - 1]
+    LAST_PICK_META["gate"] = "none_passed"
+    n, p = max(parsed.items(), key=lambda kv: kv[1]["score"])
+    if p["score"] < 6:
+        print("[EditorPick] ⚠️ 沒有一集過台灣關卡、也沒有一集到 6 分，照原排序")
         return None
-    print(f"[EditorPick] ✅ 選 [{n}] {score}分：{why[:60]}")
+    print(f"[EditorPick] ⚠️ 沒有一集過台灣關卡，退回只看「能帶走什麼」：[{n}] {p['score']}分")
     return rows[n - 1]
 
 
@@ -770,7 +823,7 @@ def pick_podcast_interview(window_days: int = 7, feed_name: str = "YouTube Podca
               f"(last {window_days}d). Has the noon harvest run?")
         return None
     scored.sort(key=lambda x: -x[0])
-    best = _editor_pick([r for _, r in scored[:8]], ai=prefer is not None) or best
+    best = _editor_pick([r for _, r in scored[:10]], ai=prefer is not None) or best
     nid, title, body, topic, *_ = best
     _remember_show(title)
     _mark_used(nid)
@@ -2499,6 +2552,16 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "via": "ai_pool" if _is_ai else "podcast_pool",
             **({"column": "ai"} if _is_ai else {}),
         }
+        # 選題時寫下的「台灣讀者的問題」（2026-11-20）：交給調研（多查一條台灣的樣子）與寫手（從這個問題起手），
+        # 也記進 metadata，每週報表才能對照「過關的題目是不是真的比較多人看」。
+        _pm = (LAST_PICK_META.get("by_id") or {}).get(news_id) or {}
+        source["tw_gate"] = LAST_PICK_META.get("gate", "skipped")
+        if _pm.get("tw_question"):
+            source["reader_question"] = _pm["tw_question"]
+            source["tw_score"] = _pm.get("tw_score")
+            args.editorial_note = "\n".join(
+                x for x in ((args.editorial_note or "").strip(), _reader_question_mandate(_pm["tw_question"])) if x)
+            print(f"[EditorPick] 台灣讀者的問題：{_pm['tw_question']}")
     elif mode == "company":
         # 每週公司營運分析（週日 09:00）。第一階段只讀 yfinance
         # 財報事實；消化後再依證據缺口搜 5–10 個延伸來源。
@@ -2662,6 +2725,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
             topic_category=topic_category,
             editorial_profile=profile.name,
             has_deep_bundle=bool(getattr(args, "bundle", None)),
+            editor_brief=(f"台灣讀者會問：「{source['reader_question']}」" if source.get("reader_question") else ""),
         )
         if research_brief is None:
             notify_substack_failure(
@@ -2955,6 +3019,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
             draft.title = apply_column_prefix(desk["title"], "ai" if source.get("column") == "ai" else mode,
                                               topic_category)
         key_points = desk["key_points"]
+        # 標題實驗的分組記進 metadata（2026-11-20）。實際上線的標題才算數：系列文、標題台沒換標題時，
+        # 用最後那個標題自己判斷屬於哪一組。
+        from substack_radar.reader_signals import title_style as _title_style
+        source["title_arm"] = desk.get("title_arm")
+        source["title_style"] = _title_style(split_column_prefix(draft.title)[1])
         if desk.get("subheads_changed") and os.getenv("SUBSTACK_SUBHEAD_DESK", "1") == "1":
             draft.body_markdown = desk["body"]      # 只換小標那幾行，內文不動
         if desk.get("note"):

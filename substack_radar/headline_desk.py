@@ -22,12 +22,15 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
 寫手原本的標題：{title}
 副標：{subtitle}
 
-【一】寫 5 個標題候選，每個 ≤15 個字：
-- 讓讀者對號入座：寫他的處境、他的錢、他的工作會怎樣，或一個違反直覺的反差、一個具體數字。
+【一】寫 6 個標題候選，每個 ≤15 個字：
+- 前 3 個「有張力」：帶一個文章確實支持的張力字（例如卡住、虧、欠、輸、代價、危機、來不及），
+  講出誰會損失什麼、哪裡出了問題。
+- 後 3 個「中性」：不用負面字，靠一個具體數字、一個違反直覺的反差，或讀者的處境讓人想點開。
+- 兩組都要讓讀者對號入座：寫他的處境、他的錢、他的工作會怎樣。
 - 不要冒號、不要「｜」、不要節目名、不要問「你知道嗎」這類空問句；英文詞一律完整，不要截斷。
-- 只能用文章裡有的事實，不誇大。
+- 只能用文章裡有的事實，不誇大、不恐嚇；不要「震驚」「必看」「竟然」「99% 的人」這類標題黨字眼。
 - 標題要講這篇的主線（寫手原本的標題在講的那件事），不能拿文中一個支線案例或細節當標題。
-然後選出你認為點閱率最高的一個（best 填它的序號 1–5）。
+兩組各自把你認為點閱率最高的放在該組第一個；best 填全部 6 個裡你最看好的序號（1–6）。
 
 【二】寫「30 秒看重點」三條，每條 ≤40 字：
 - 只滑到這裡就離開的讀者，也能帶走這篇最重要的三件事。
@@ -48,7 +51,7 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
 - 只能用該段已有的事實，不新增數字。原本就清楚的保留原樣。
 - 文章沒有小標就回空陣列。
 
-只輸出 JSON：{{"titles": ["", "", "", "", ""], "best": 1, "key_points": ["", "", ""], "note": "", "subheads": []}}
+只輸出 JSON：{{"titles": ["", "", "", "", "", ""], "best": 1, "key_points": ["", "", ""], "note": "", "subheads": []}}
 
 【文章】
 {body}"""
@@ -156,8 +159,11 @@ def apply_subheads(body: str, new_heads: list) -> tuple[str, int]:
     return _SUBHEAD.sub(repl, body), changed
 
 
-def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> dict:
-    """回 {"title": 新標題或 None, "key_points": [..]}。chat(prompt)->str 可注入測試。"""
+def polish(*, title: str, subtitle: str, body: str, column: str, chat=None, arm: str | None = None) -> dict:
+    """回 {"title": 新標題或 None, "key_points": [..], "title_arm": .., "title_style": ..}。chat(prompt)->str 可注入測試。
+
+    標題實驗（2026-11-20，主編：張力要多少交給實驗數據決定）：每篇由 reader_signals.title_arm 抽「有張力／中性」
+    其中一組，從那組的候選裡挑；那組沒有合格的才用另一組。title_style 記實際用上的那一組，每週報表拿去比讀者數。"""
     if chat is None:
         # 包裝是寫作的活，跟寫稿同一個順序（Haiku 優先）。原本固定用閘道稽核模型，
         # 2026-11-16 實測一次要 617 秒；Haiku 不到一分鐘。
@@ -175,18 +181,26 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
         data = json.loads(_extract_json_blob(raw) or "{}")
     except Exception as exc:
         print(f"[HeadlineDesk] ⚠️ 標題台失敗，保留原標題、不放重點：{str(exc)[:100]}")
-        return {"title": None, "key_points": [], "note": "", "body": body, "subheads_changed": 0}
+        return {"title": None, "key_points": [], "note": "", "body": body, "subheads_changed": 0,
+                "title_arm": None, "title_style": None}
 
     titles = [pangu(str(t).strip()) for t in data.get("titles") or [] if str(t).strip()]
     try:
         best = int(data.get("best") or 1)
     except (TypeError, ValueError):
         best = 1
+    from substack_radar.reader_signals import ARM_LABEL, is_clickbait, title_arm, title_style
+
+    arm = arm or title_arm(seed=f"{column}|{title}")
     ordered = ([titles[best - 1]] if 1 <= best <= len(titles) else []) + titles
     anchor = f"{title} {subtitle}"
-    chosen = next((t for t in ordered if title_ok(t) and on_topic(t, anchor)), None)
+    usable = [t for t in ordered if title_ok(t) and on_topic(t, anchor) and not is_clickbait(t)]
+    chosen = next((t for t in usable if title_style(t) == arm), None) or next(iter(usable), None)
     for t in titles:
-        print(f"[HeadlineDesk] 候選{'✅' if t == chosen else ('  ' if title_ok(t) else '❌')} {t}")
+        mark = "✅" if t == chosen else ("❌" if not title_ok(t) or is_clickbait(t) else "  ")
+        print(f"[HeadlineDesk] 候選{mark}［{ARM_LABEL[title_style(t)]}］{t}")
+    print(f"[HeadlineDesk] 標題實驗：這篇抽到「{ARM_LABEL[arm]}」組"
+          + ("" if not chosen or title_style(chosen) == arm else f"，但那組沒有合格的，改用「{ARM_LABEL[title_style(chosen)]}」"))
     points = grounded_points(data.get("key_points") or [], body)
     if len(points) < 2:
         points = []
@@ -200,7 +214,8 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None) -> d
         for (_, a), (_, b) in zip(_SUBHEAD.findall(body), _SUBHEAD.findall(new_body)):
             if a != b:
                 print(f"[HeadlineDesk] 小標：{a} → {b}")
-    return {"title": chosen, "key_points": points, "note": note, "body": new_body, "subheads_changed": n_heads}
+    return {"title": chosen, "key_points": points, "note": note, "body": new_body, "subheads_changed": n_heads,
+            "title_arm": arm, "title_style": title_style(chosen) if chosen else None}
 
 
 def key_points_block(points: list) -> str:

@@ -596,6 +596,36 @@ NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）�
 - 測試：`tests/unit/test_human_voice.py`。
 
 
+### 6.9 讀者數據迴圈：選題與標題用數據判斷（2026-11-20）
+
+主編問「是不是題材、YouTube 來源不夠爆，Substack 也不推我們」。數據的答案是：主因在分發，不在題目熱度。
+- 11 月每篇從信箱以外來的瀏覽平均 0.6 次（3 月 12.6）。
+- 有人分享、轉貼、留言或帶進訂閱的文章，從寫稿管線上線前的 48% 掉到 6%。
+- 熱門題目也沒有比較多人開：〈黃仁勳辭職〉28 人，〈誰在乎巴黎評論？〉38 人。
+
+研究（Robertson 2023、Berger & Milkman 2012、LOLA 2025）加上 116 篇去趨勢回歸，決定了三件事：
+
+1. **選題加「台灣讀者有沒有感」關卡**：`compose._editor_pick`。
+   - 評審每集要寫出 `tw_question`（台灣上班族會怎麼問），並打 `tw_score`。
+   - 兩項都 ≥ `TW_GATE_MIN`（5）才算過；從過關的裡面挑「台灣＋帶走」平均最高的。
+   - 沒有一集過關時，退回只看「帶走」（≥6），不會害整天沒稿。結果記在 `source.tw_gate`。
+   - 評審手上有兩份數據，都在 `reader_signals.py`：
+     - `taiwan_buzz()`：Google 搜尋趨勢台灣 RSS、PTT 股票／科技工作／房屋板、新聞庫的台灣媒體標題。一天抓一次，存在 `data/substack_stats/tw_buzz/`。
+     - `calibration_block()`：我們讀者實際多打開、少打開的文章。
+   - 過關那集的 `tw_question` 會交給調研（多查一條台灣的樣子）與寫手（從這個問題起手），並寫進 `source.reader_question`。
+2. **標題張力交給實驗**（主編選的）：`headline_desk.polish`。
+   - 寫 6 個候選：3 個有張力、3 個中性。`reader_signals.title_arm` 用湯普森抽樣決定這篇用哪一組；同一篇重跑會抽到同一組。
+   - 明顯的標題黨（震驚、必看、99% 的人……）不管哪組都擋。
+   - 實際上線的分組記在 `source.title_style`。
+3. **每週報表算去趨勢成績**：`scripts/substack_stats_report.py`，每週一 08:15。
+   - 每篇的成績是「不重複開信人數 ÷ 前後各 7 篇中位數 − 1」，未滿 3 天的不算。
+   - 同時寫出兩個檔：`reader_calibration.json`（給選題評審）、`title_arms.json`（給標題抽樣）。迴圈就這樣接起來。
+   - 開信率只當參考：它會被名單大小和 Apple 自動開信扭曲。
+
+兩條限制：
+- 樣本小。一週約 7 篇，兩組標題要幾週才分得出差 5–10% 的效果，所以抽樣器沒資料時兩組各半。
+- 116 篇裡看了 11 個標題特徵，只有負面字（+4.5%）和冒號（−7.3%）落在 90% 區間外。10 月那次「冒號開信率較高」的結論，是早期名單小、開信率本來就高造成的錯覺。
+
 ## 7. Case studies — failures that forced doc updates
 
 ### 7.1 Gemini 429 × Claude CLI not-in-PATH = silent pipeline stall
