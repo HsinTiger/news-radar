@@ -197,3 +197,11 @@ def test_recent_titles_reach_the_editor_so_hot_topics_are_not_repeated(monkeypat
 
 def test_reader_question_mandate_rules_out_stock_tips():
     assert "不給個股買賣建議" in compose._reader_question_mandate("輝達換人，台積電的訂單會不會受影響？")
+
+
+def test_good_subheads_are_not_rewritten():
+    """模型把合格的小標改寫成跟內文矛盾的說法，不能換進去；只換有毛病的。"""
+    body = ("開場。\n\n## 他說中國在表演，卻把中國當頭號對手\n\n這兩段話不一定衝突。\n\n"
+            "## 節目裡的其他線索\n\n內文二。\n")
+    new, n = headline_desk.apply_subheads(body, ["中國只是在表演嗎？他前後的說法並不一致", "便宜了，大家就會換嗎？"])
+    assert n == 1 and "## 他說中國在表演，卻把中國當頭號對手" in new and "## 便宜了，大家就會換嗎？" in new

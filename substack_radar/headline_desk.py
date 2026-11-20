@@ -142,7 +142,9 @@ def subhead_ok(text: str, body: str) -> bool:
 
 def apply_subheads(body: str, new_heads: list) -> tuple[str, int]:
     """把模型改寫的小標換進正文。數量對不上就整批不換；單一個不合格就保留那一個原樣。
-    回 (新正文, 換掉幾個)。只動 ## / ### 那一行，段落內容一個字都不碰。"""
+    原本就合格的小標也不換（2026-11-20 試跑：「他說中國在表演，卻把中國當頭號對手」被改成
+    「他前後的說法並不一致」，把主編剛改掉的誤讀又寫回去，還跟內文矛盾）。只換有毛病的：報告章節名、冒號、
+    「那／所以」開頭、太長太短。回 (新正文, 換掉幾個)。只動 ## / ### 那一行，段落內容一個字都不碰。"""
     heads = _SUBHEAD.findall(body or "")
     if not heads or not isinstance(new_heads, list) or len(new_heads) != len(heads):
         return body, 0
@@ -152,7 +154,7 @@ def apply_subheads(body: str, new_heads: list) -> tuple[str, int]:
     def repl(m):
         nonlocal changed
         new = pangu(str(next(it) or "").strip().lstrip("#").strip())
-        if new and new != m.group(2) and subhead_ok(new, body):
+        if new and new != m.group(2) and not subhead_ok(m.group(2), body) and subhead_ok(new, body):
             changed += 1
             return f"{m.group(1)} {new}"
         return m.group(0)

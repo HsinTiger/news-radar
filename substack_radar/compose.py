@@ -699,7 +699,18 @@ def _recent_block(days: int = 7) -> str:
     except Exception:
         return ""
     since = (date.today() - timedelta(days=days)).isoformat()
-    titles = [str(v.get("title") or "") for k, v in sorted(ledger.items()) if k[:10] >= since and v.get("post_url")]
+    titles = []
+    for k, v in sorted(ledger.items()):
+        if k[:10] < since or not v.get("post_url"):
+            continue
+        # 附上取材節目的原標題：發布標題常常看不出是同一件事（11/19〈能做不代表該做〉就是「人人都能做軟體」那集）
+        try:
+            meta = json.loads((_REPO_ROOT / "data" / "substack_drafts" / str(v.get("folder") or "") / "metadata.json")
+                              .read_text(encoding="utf-8"))
+            src = str((meta.get("source") or {}).get("title") or "")
+        except Exception:
+            src = ""
+        titles.append(str(v.get("title") or "") + (f"（取材：{src[:70]}）" if src else ""))
     if not titles:
         return ""
     return ("【最近一週已經寫過】\n" + "\n".join(f"- {t}" for t in titles) + "\n"
