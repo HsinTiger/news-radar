@@ -433,6 +433,9 @@ async def test_call_for_json_gemini_fails_no_claude_cli(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_default_quota_circuit_skips_shared_gemini_wrappers(monkeypatch):
+    # 這幾題測的是「LiteLLM 走 Gemini 時，兩者共用額度」。LITELLM_MODEL 在 import 時讀環境變數，
+    # 全套測試裡別的測試先載入 .env 會把它換成閘道模型，這題就變成在測別的事（2026-11-21）。
+    monkeypatch.setattr(llm_brain, "LITELLM_MODEL", "gemini/gemini-2.5-flash")
     expected = _Demo(name="fallback", score=0.9)
     calls = {"litellm": 0, "gemini": 0, "opencode": 0}
 
@@ -480,6 +483,9 @@ async def test_default_quota_circuit_skips_shared_gemini_wrappers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_default_cloud_falls_back_to_github_models(monkeypatch):
+    # 這幾題測的是「LiteLLM 走 Gemini 時，兩者共用額度」。LITELLM_MODEL 在 import 時讀環境變數，
+    # 全套測試裡別的測試先載入 .env 會把它換成閘道模型，這題就變成在測別的事（2026-11-21）。
+    monkeypatch.setattr(llm_brain, "LITELLM_MODEL", "gemini/gemini-2.5-flash")
     expected = _Demo(name="github", score=0.95)
     providers = []
 
@@ -527,6 +533,9 @@ async def test_default_cloud_falls_back_to_github_models(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_github_models_4o_uses_separate_quota_after_4_1_rate_limit(monkeypatch):
+    # 這幾題測的是「LiteLLM 走 Gemini 時，兩者共用額度」。LITELLM_MODEL 在 import 時讀環境變數，
+    # 全套測試裡別的測試先載入 .env 會把它換成閘道模型，這題就變成在測別的事（2026-11-21）。
+    monkeypatch.setattr(llm_brain, "LITELLM_MODEL", "gemini/gemini-2.5-flash")
     expected = _Demo(name="github-4o", score=0.91)
     providers = []
 

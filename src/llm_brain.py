@@ -47,7 +47,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Generic, Optional, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -642,12 +642,16 @@ def _spawnable_cli_command(
     path = shutil.which(configured)
     if not path:
         return None
-    if (platform_name or os.name) == "nt" and Path(path).suffix.lower() in {
+    # Windows 路徑要用 Windows 的規則拆（2026-11-21：在 Mac 上模擬 nt 時，PosixPath 把
+    # 「C:\tools\codex.CMD」整串當一個檔名，stem 變成「c:\tools\codex」，對不到 codex）。
+    win = (platform_name or os.name) == "nt"
+    parsed = PureWindowsPath(path) if win else Path(path)
+    if win and parsed.suffix.lower() in {
         ".cmd",
         ".bat",
     }:
-        stem = Path(path).stem.lower()
-        shim_root = Path(path).parent
+        stem = parsed.stem.lower()
+        shim_root = parsed.parent
         # Codex's npm shim invokes node + codex.js. The WindowsApps codex.exe
         # can be discoverable yet ACL-blocked, so follow the known shim target.
         if stem == "codex":
@@ -660,7 +664,7 @@ def _spawnable_cli_command(
                 / "bin"
                 / "codex.js"
             )
-            if node.is_file() and script.is_file():
+            if Path(str(node)).is_file() and Path(str(script)).is_file():
                 return (str(node), str(script))
         # Claude's npm shim targets its package-local binary. A separate
         # ``claude.exe`` on PATH may be an unrelated multi-call launcher.
@@ -673,7 +677,7 @@ def _spawnable_cli_command(
                 / "bin"
                 / "claude.exe"
             )
-            if bundled.is_file():
+            if Path(str(bundled)).is_file():
                 return (str(bundled),)
         return None
     return (path,)
