@@ -666,11 +666,14 @@ _EDITOR_PICK_PROMPT = """你是一份中文電子報的總編輯。讀者是台�
    （例如「輝達換人，台積電的訂單會不會受影響？」）。
 2. tw_score（0–10）：台灣讀者有沒有感——跟上面「台灣這兩天在討論的事」，或台灣人的錢、工作、生活有沒有直接關係。
 3. score（0–10）：讀者讀完一篇根據它寫的文章，能不能帶走一個跟自己工作、錢或判斷有關的東西？
+   這份電子報的角度是「它實際上怎麼運作？錢最後流到誰手上？」——能用這個角度講出別人沒講的東西才給高分。
    純娛樂、名人八卦、宣傳新書新片、跟讀者生活無關的冷知識，給 3 分以下。
+4. share_to／share_score（0–10）：讀完會想轉給誰？寫一種具體的人（例如「正在考慮買房的同事」），寫不出來留空。
+   會被轉出去的內容通常是：拿去就能用、讓人驚訝或擔心、轉的人會顯得有見識。
 
 {items}
 
-只輸出 JSON：{{"scores": [{{"n": 1, "tw_question": "", "tw_score": 0, "score": 0, "reader_takeaway": "一句話：讀者能帶走什麼"}}]}}"""
+只輸出 JSON：{{"scores": [{{"n": 1, "tw_question": "", "tw_score": 0, "score": 0, "share_to": "", "share_score": 0, "reader_takeaway": "一句話：讀者能帶走什麼"}}]}}"""
 
 # 「台灣讀者有沒有感」關卡（2026-11-20 主編同意）：tw_question 寫得出來、tw_score 與 score 都到這個分數才算通過。
 TW_GATE_MIN = 5.0
@@ -754,6 +757,8 @@ def _editor_pick(rows: list, *, ai: bool = False):
         for x in json.loads(_extract_json_blob(raw) or "{}").get("scores", []):
             parsed[int(x["n"])] = {"score": float(x.get("score") or 0), "tw_score": float(x.get("tw_score") or 0),
                                    "tw_question": str(x.get("tw_question") or "").strip(),
+                                   "share_to": str(x.get("share_to") or "").strip(),
+                                   "share_score": float(x.get("share_score") or 0) if str(x.get("share_to") or "").strip() else 0.0,
                                    "why": str(x.get("reader_takeaway") or "")}
     except Exception as exc:
         print(f"[EditorPick] ⚠️ 選題評分失敗，照原排序：{str(exc)[:100]}")
@@ -764,14 +769,16 @@ def _editor_pick(rows: list, *, ai: bool = False):
     LAST_PICK_META["by_id"] = {rows[n - 1][0]: p for n, p in parsed.items()}
     for i, r in enumerate(rows, 1):
         p = parsed.get(i) or {}
-        print(f"[EditorPick] 台灣{p.get('tw_score')}／帶走{p.get('score')} {str(r[1])[:46]}｜"
-              f"{(p.get('tw_question') or '（台灣讀者不會問）')[:40]}")
+        print(f"[EditorPick] 台灣{p.get('tw_score')}／帶走{p.get('score')}／轉傳{p.get('share_score')} {str(r[1])[:40]}｜"
+              f"{(p.get('tw_question') or '（台灣讀者不會問）')[:36]}")
     passed = {n: p for n, p in parsed.items()
               if p["tw_question"] and p["tw_score"] >= TW_GATE_MIN and p["score"] >= TW_GATE_MIN}
     if passed:
-        n, p = max(passed.items(), key=lambda kv: (kv[1]["score"] + kv[1]["tw_score"]) / 2)
+        # 過關的裡面看三項平均：台灣有感、能帶走、會被轉傳（Berger & Milkman 2012：讓人激動或有用的內容才會被轉傳）
+        n, p = max(passed.items(), key=lambda kv: (kv[1]["score"] + kv[1]["tw_score"] + kv[1]["share_score"]) / 3)
         LAST_PICK_META["gate"] = "passed"
-        print(f"[EditorPick] ✅ 選 [{n}] 台灣{p['tw_score']}／帶走{p['score']}：{p['tw_question'][:50]}")
+        print(f"[EditorPick] ✅ 選 [{n}] 台灣{p['tw_score']}／帶走{p['score']}／轉傳{p['share_score']}："
+              f"{p['tw_question'][:40]}｜會轉給：{p['share_to'][:20]}")
         return rows[n - 1]
     LAST_PICK_META["gate"] = "none_passed"
     n, p = max(parsed.items(), key=lambda kv: kv[1]["score"])

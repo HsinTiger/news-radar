@@ -27,6 +27,8 @@ _PROMPT = """你是一份中文電子報的資深總編輯，替下面這篇已�
   講出誰會損失什麼、哪裡出了問題。
 - 後 3 個「中性」：不用負面字，靠一個具體數字、一個違反直覺的反差，或讀者的處境讓人想點開。
 - 兩組都要讓讀者對號入座：寫他的處境、他的錢、他的工作會怎樣。
+- 用常見的字、短句，不用抽象詞（悖論、範式、本質、維度、賦能、敘事、機制……）：分析三萬多組標題實驗的研究發現，
+  用字越簡單，點的人越多。
 - 不要冒號、不要「｜」、不要節目名、不要問「你知道嗎」這類空問句；英文詞一律完整，不要截斷。
 - 只能用文章裡有的事實，不誇大、不恐嚇；不要「震驚」「必看」「竟然」「99% 的人」這類標題黨字眼。
 - 標題要講這篇的主線（寫手原本的標題在講的那件事），不能拿文中一個支線案例或細節當標題。
@@ -192,13 +194,15 @@ def polish(*, title: str, subtitle: str, body: str, column: str, chat=None, arm:
         best = int(data.get("best") or 1)
     except (TypeError, ValueError):
         best = 1
-    from substack_radar.reader_signals import ARM_LABEL, is_clickbait, title_arm, title_style
+    from substack_radar.reader_signals import ARM_LABEL, is_clickbait, title_arm, title_complexity, title_style
 
     arm = arm or title_arm(seed=f"{column}|{title}")
     ordered = ([titles[best - 1]] if 1 <= best <= len(titles) else []) + titles
     anchor = f"{title} {subtitle}"
     usable = [t for t in ordered if title_ok(t) and on_topic(t, anchor) and not is_clickbait(t)]
-    chosen = next((t for t in usable if title_style(t) == arm), None) or next(iter(usable), None)
+    # 同一組裡挑用字最簡單的；一樣簡單就照總編輯的排序（sorted 是穩定排序）
+    in_arm = sorted((t for t in usable if title_style(t) == arm), key=title_complexity)
+    chosen = next(iter(in_arm), None) or next(iter(sorted(usable, key=title_complexity)), None)
     for t in titles:
         mark = "✅" if t == chosen else ("❌" if not title_ok(t) or is_clickbait(t) else "  ")
         print(f"[HeadlineDesk] 候選{mark}［{ARM_LABEL[title_style(t)]}］{t}")

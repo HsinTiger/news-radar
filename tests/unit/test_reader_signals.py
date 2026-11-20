@@ -205,3 +205,27 @@ def test_good_subheads_are_not_rewritten():
             "## 節目裡的其他線索\n\n內文二。\n")
     new, n = headline_desk.apply_subheads(body, ["中國只是在表演嗎？他前後的說法並不一致", "便宜了，大家就會換嗎？"])
     assert n == 1 and "## 他說中國在表演，卻把中國當頭號對手" in new and "## 便宜了，大家就會換嗎？" in new
+
+
+def test_simpler_titles_win_within_the_assigned_arm():
+    """Shulman et al. 2024（Science Advances，三萬多組標題實驗）：用字簡單的標題點擊較多。"""
+    assert reader_signals.title_complexity("悖論的理性：合作是極致的自私") > reader_signals.title_complexity("醒來就欠世界八小時")
+    assert reader_signals.title_complexity("AI 自己改工具") == 0                 # AI 是常見字
+    body = "家用機器人的時程、成功率 56%、保險。"
+    reply = json.dumps({"titles": ["機器人家務的範式轉移", "機器人進家門還要多久", "家務機器人敘事的本質",
+                                   "保險卡住了機器人", "機器人進家，代價誰付", "成功率 56% 的家務機器人"],
+                        "best": 1, "key_points": [], "note": "", "subheads": []}, ensure_ascii=False)
+    out = headline_desk.polish(title="家用機器人進家門", subtitle="", body=body, column="吹牛免稅",
+                               chat=lambda p: reply, arm="neutral")
+    assert out["title"] == "機器人進家門還要多久"                               # 總編輯排第一的「範式轉移」比較難讀
+
+
+def test_editor_pick_prefers_what_readers_would_forward(monkeypatch):
+    rows = [("a", "A", "x", "o"), ("b", "B", "y", "o")]
+    reply = {"scores": [
+        {"n": 1, "tw_question": "台積電的訂單會受影響嗎？", "tw_score": 7, "score": 7, "share_to": "", "share_score": 9},
+        {"n": 2, "tw_question": "房貸利率會跟著漲嗎？", "tw_score": 7, "score": 6, "share_to": "正在考慮買房的同事", "share_score": 8}]}
+    monkeypatch.setattr(quality_loop, "_oss_chat", lambda role, prompt, timeout: json.dumps(reply, ensure_ascii=False))
+    monkeypatch.setattr(compose, "_buzz_block", lambda: "")
+    assert compose._editor_pick(rows) == rows[1]          # 寫不出會轉給誰，轉傳分數不算數
+    assert compose.LAST_PICK_META["by_id"]["b"]["share_to"] == "正在考慮買房的同事"

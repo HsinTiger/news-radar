@@ -40,6 +40,12 @@ _TENSION = re.compile(r"危險|死|失敗|虧|崩|陷阱|詛咒|焦慮|出局|�
 # 明顯的標題黨：不管實驗結果都擋（CHI 2021：標題黨並不會可靠地讓人更好奇，還傷信任）。
 _CLICKBAIT = re.compile(r"震驚|驚呆|必看|99\s*%\s*的人|絕對不知道|竟然|瘋傳|崩潰了|太狂|嚇死|保證|史上最|"
                         r"一定要看|看完.{0,4}哭|不看會後悔|秒懂|懶人包")
+# 標題用字的複雜度（Shulman, Markowitz & Rogers 2024, Science Advances：華盛頓郵報與 Upworthy 三萬多組標題實驗，
+# 用常見字、短句、少抽象詞的標題點擊較多；記者自己看不出這個差別）。我們 116 篇裡簡單標題比複雜標題多 4.5% 讀者，
+# 但多半跟冒號標題重疊、分不開，所以當成「同組裡挑最簡單的」，不當硬門檻。
+_ABSTRACT = re.compile(r"悖論|理性|範式|典範|本質|維度|賦能|生態系|敘事|結構性|機制|邏輯|解碼|重構|顯化|主權|熵|"
+                       r"神聖|殉道|套利|流動性|幻象|飛輪|底牌|算盤|焚化爐|置換|合法性|不對稱|能動性|心性|解析度|"
+                       r"槓鈴|中間層|後稀缺|異化|深度|框架|架構|系統性|典型|範疇|悖")
 ARMS = ("tension", "neutral")
 ARM_LABEL = {"tension": "有張力", "neutral": "中性"}
 
@@ -164,6 +170,14 @@ def calibration_block(n: int = 6) -> str:
 
 def title_style(title: str) -> str:
     return "tension" if _TENSION.search(title or "") else "neutral"
+
+
+def title_complexity(title: str) -> float:
+    """越大越難讀：抽象詞、英文字（AI 除外）、引號、超過 13 個字。"""
+    t = title or ""
+    english = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9.+-]*", t) if w != "AI"]
+    return (len(_ABSTRACT.findall(t)) + 0.5 * len(english) + (0.5 if re.search(r"[「」『』]", t) else 0)
+            + (0.5 if len(re.sub(r"\s", "", t)) > 13 else 0))
 
 
 def is_clickbait(title: str) -> bool:
