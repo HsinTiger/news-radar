@@ -3106,6 +3106,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
     try:
         _carried = [w for w in warnings if str(w).startswith(("[品質迴圈未通過]", "[跟素材不符"))]
         warnings = _carried + audit_substack_draft(draft, profile=profile, subject_aliases=_aliases)
+        from substack_radar.style_gate import refusal_signals
+        _refusal = refusal_signals(draft.body_markdown)
+        if _refusal:
+            # 標成「品質迴圈未通過」：每日發文、FB 跟發都不會挑它
+            warnings.append(f"[品質迴圈未通過] 寫手沒拿到能寫的素材，寫成了說明信（{'、'.join(_refusal[:3])}）"
+                            "——不要發，查素材為什麼沒送到。")
+            print(f"[Audit] 🛑 這篇是說明信，不是文章：{'、'.join(_refusal[:3])}")
     except Exception as exc:
         print(f"[Audit] ⚠️ 定稿體檢重算失敗，沿用第一稿的結果：{exc}")
     write_article_full_md(

@@ -114,6 +114,21 @@ def _item(problem: str, quote: str, fix: str) -> dict:
     return {"問題": problem, "原句": quote[:80], "建議改法": fix}
 
 
+# 寫手沒拿到能寫的素材，就寫了一封「為什麼不寫」的說明信（2026-11-12〈7,307 字逐字稿沒送到我停筆〉，
+# 553 字，只帶一般警告就進了草稿匣，差點被當備案發出去）。出現兩種以上就算，不能發。
+_REFUSAL = (
+    re.compile(r"寫不出來|寫不下去"), re.compile(r"沒有?(?:送到|傳到|交到)我(?:手上|這)?"),
+    re.compile(r"沒有?(?:拿到|收到)(?:逐字稿|素材|全文|內容)"), re.compile(r"素材包"), re.compile(r"後設資料"),
+    re.compile(r"我(?:選擇)?(?:不寫|停筆)|開天窗"), re.compile(r"(?:內容|逐字稿)(?:完全)?無法取得"),
+)
+
+
+def refusal_signals(article: str) -> list[str]:
+    """回傳命中的說明信句型；兩種以上才算（單一個可能只是在談別人停筆）。"""
+    hits = [m.group(0) for pat in _REFUSAL for m in [pat.search(article or "")] if m]
+    return hits if len(hits) >= 2 else []
+
+
 def style_feedback(article_md: str) -> list[dict]:
     text = article_md or ""
     body = re.split(r"^-{3,}\s*$", text, maxsplit=1, flags=re.M)[0]   # 文末取材區不檢查

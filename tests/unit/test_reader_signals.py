@@ -253,3 +253,22 @@ def test_research_shortfall_has_its_own_exit_code_and_the_weekly_job_retries_onc
     worker = (Path(compose._REPO_ROOT) / "scripts" / "substack_editorial_worker.sh").read_text(encoding="utf-8")
     block = worker.split('if [ "$COMPOSE_EXIT" -eq 11 ]; then', 1)[1].split("fi\nfi", 1)[0]
     assert "pick_company_candidate.py" in block and block.count("compose.py company") == 1   # 只重試一次
+
+
+def test_refusal_letters_are_never_published(tmp_path, monkeypatch):
+    """2026-11-12〈7,307 字逐字稿沒送到我停筆〉：寫手沒拿到素材，寫成說明信，只帶一般警告就進了草稿匣。"""
+    from datetime import date
+    from substack_radar import daily_publish
+    from substack_radar.style_gate import refusal_signals
+    letter = ("這週我必須先坦白：這篇文章寫不出來。7,307 字的逐字稿沒有送到我手上，所以我停筆。"
+              "我手上只有標題這些後設資料。")
+    assert refusal_signals(letter)
+    assert not refusal_signals("他在 2019 年停筆一年，回來後寫出最好的作品。")      # 只有一種句型不算
+    day = date(2026, 11, 12)
+    folder = tmp_path / day.isoformat() / "morning_x"
+    folder.mkdir(parents=True)
+    (folder / "metadata.json").write_text(json.dumps({"title": "停筆｜Hsin選觀點", "substack_draft_id": "1",
+                                                      "audit_warnings": ["[字數低於下限] 553 字"]}, ensure_ascii=False))
+    (folder / "Article_Substack.md").write_text(letter, encoding="utf-8")
+    monkeypatch.setattr(daily_publish, "DRAFTS_DIR", tmp_path)
+    assert daily_publish.candidates(day, "Hsin選觀點", {}) == []

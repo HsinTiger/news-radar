@@ -113,6 +113,14 @@ def candidates(day: date, column: str, ledger: dict) -> list[Candidate]:
         if any(w.startswith(FACT_FAIL_MARK) for w in warnings):
             print(f"[DailyPublish] ⏭️ {cand.rel}：事實稽核沒過，不發")
             continue
+        # 第二道防線：寫手沒拿到素材、寫成「為什麼不寫」的說明信（2026-11-12 那篇只帶一般警告）
+        try:
+            from substack_radar.style_gate import refusal_signals
+            if refusal_signals((cand.folder / "Article_Substack.md").read_text(encoding="utf-8")):
+                print(f"[DailyPublish] ⏭️ {cand.rel}：這篇是說明信，不是文章，不發")
+                continue
+        except OSError:
+            pass
         found.append(cand)
     return found
 
