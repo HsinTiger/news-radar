@@ -272,3 +272,12 @@ def test_refusal_letters_are_never_published(tmp_path, monkeypatch):
     (folder / "Article_Substack.md").write_text(letter, encoding="utf-8")
     monkeypatch.setattr(daily_publish, "DRAFTS_DIR", tmp_path)
     assert daily_publish.candidates(day, "Hsin選觀點", {}) == []
+
+
+def test_company_sources_are_not_dropped_for_missing_legal_suffix():
+    """主題「Apple Inc.」：只寫 Apple 的供應鏈頁被判離題，公司調研常湊不滿 5 個來源。"""
+    from substack_radar.editorial_research import _names_subject
+    page = "Apple supply chain. Apple works with suppliers in Taiwan. Apple services revenue grew."
+    assert _names_subject("Apple Inc.", page) and _names_subject("Procter & Gamble", "Procter & Gamble said " * 3)
+    assert _names_subject("Walt Disney Company (The)", "Walt Disney parks, Walt Disney films, Walt Disney+")
+    assert not _names_subject("Apple Inc.", "pineapple pineapple pineapple")        # 要整個字

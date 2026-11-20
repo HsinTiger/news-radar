@@ -513,10 +513,16 @@ def _names_subject(subject: str, text: str, min_count: int = 3) -> bool:
     """英文主題名（例如 Johnson & Johnson）在全文出現夠多次 → 這篇在講它。"""
     name = re.sub(r"[^a-z0-9 ]+", " ", str(subject or "").lower())
     name = re.sub(r"\s+", " ", name).strip()
+    # 拿掉公司後綴再比（2026-11-21：主題是「Apple Inc.」，蘋果供應鏈頁、「Apple 怎麼賺錢」都只寫 Apple，
+    # 全被判離題；11/14 寶僑調研只收到 3 個來源、整天沒稿，多半也是這個原因）。
+    short = re.sub(r"(?:\s+(?:inc|corp|corporation|co|company|ltd|plc|holdings|group|the|class [a-c]))+$", "",
+                   re.sub(r"^the\s+", "", name)).strip()
+    if len(short) >= 4:
+        name = short
     if len(name) < 4 or not name.isascii():
         return False
     body = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower()))
-    return body.count(name) >= min_count
+    return len(re.findall(rf"\b{re.escape(name)}\b", body)) >= min_count
 
 
 def _relevance_hits(text: str, subject_terms: set[str]) -> int:
