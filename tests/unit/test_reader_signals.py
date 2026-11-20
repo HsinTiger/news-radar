@@ -127,3 +127,73 @@ def test_weekly_report_detrends_and_skips_unsettled_posts():
     scored = {r["title"]: r["res"] for r in ssr.detrend(rows, now=now)}
     assert abs(scored["t10"] - 0.2) < 1e-9 and scored["t3"] == 0
     assert "太新" not in scored and "名單太小" not in scored
+
+
+def test_fb_show_check_accepts_names_without_initials_or_generic_words():
+    """2026-11-20：節目是「Peter H. Diamandis」，FB 貼文寫「Peter Diamandis」被判沒點名，整篇沒發。"""
+    from substack_radar.fb_follow import show_named
+    assert show_named("Peter H. Diamandis", "Peter Diamandis 的節目裡，Figure 創辦人說")
+    assert show_named("Joe Rogan Experience", "在 Joe Rogan 的節目上")
+    assert not show_named("Joe Rogan Experience", "Rogan 說")          # 只寫姓不算點名
+    assert not show_named("Lex Fridman Podcast", "一個播客節目裡")
+
+
+def test_notes_drop_label_and_formula_question():
+    from substack_radar.notes_desk import clean_note
+    note = ("Figure 創辦人說，他希望六個月內機器人能進任何一間家做家事。\n\n"
+            "我的判斷是：家用機器人離你家的距離，比他暗示的遠得多。什麼條件下我會改這個判斷？")
+    out = clean_note(note)
+    assert "我的判斷是" not in out and "什麼條件下" not in out
+    assert "我目前傾向認為，家用機器人離你家的距離" in out
+
+
+def test_company_picker_counts_taiwan_media_by_chinese_name():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("pick", Path(compose._REPO_ROOT) / "scripts" / "pick_company_candidate.py")
+    pick = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pick)
+    heat = pick.taiwan_heat([("AAPL", "Apple Inc."), ("HPQ", "HP Inc."), ("ZZZZ", "Unknown Co")],
+                            "蘋果新機拉貨，台積電受惠。蘋果供應鏈。PHP 與 HPC 都不是公司名。")
+    assert heat["AAPL"] == 2 and heat["HPQ"] == 0 and heat["ZZZZ"] == 0   # 短英文名不算，只數中文名
+
+
+def test_audit_no_longer_demands_a_reply_question():
+    """新口吻的結尾是交出一個讀者用得上的判斷方法；「文末沒有問句就警告」會把寫手推回舊公式。"""
+    import inspect
+    from substack_radar import composer
+    assert "[缺少具體回信問題]" not in inspect.getsource(composer)
+
+
+def test_research_brief_asks_for_the_taiwan_angle():
+    from substack_radar import composer
+    out = composer._build_research_brief_prompt(
+        raw_title="Apple Inc.", raw_content="營收 4000 億美元", mode="company", topic_category="us_stocks",
+        profile=composer.resolve_editorial_profile("company"), editor_brief="台灣讀者會問：「台灣讀者為什麼要在意蘋果？」")
+    assert "台灣讀者為什麼要在意蘋果" in out and "這家公司跟台灣的關係" in out
+    out = composer._build_research_brief_prompt(
+        raw_title="Robotic Deep-Dive", raw_content="humanoid robots", mode="podcast", topic_category="ai",
+        profile=composer.resolve_editorial_profile("podcast"), editor_brief="台灣讀者會問：「機器人熱，台灣供應鏈賺得到嗎？」")
+    assert "這個問題在台灣的樣子" in out
+
+
+def test_recent_titles_reach_the_editor_so_hot_topics_are_not_repeated(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    led = tmp_path / "data" / "substack_drafts"
+    led.mkdir(parents=True)
+    today = date.today()
+    (led / ".daily_published.json").write_text(json.dumps({
+        (today - timedelta(days=4)).isoformat(): {"title": "黃仁勳辭職 收盤只跌 4%｜吹牛免稅", "post_url": "u1"},
+        today.isoformat(): {"title": "黃仁勳回不去？晶片調查卡住了｜吹牛免稅", "post_url": "u2"},
+        (today - timedelta(days=30)).isoformat(): {"title": "很久以前的一篇", "post_url": "u3"},
+        (today - timedelta(days=1)).isoformat(): {"title": "沒發出去的", "post_url": None},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(compose, "_REPO_ROOT", tmp_path)
+    block = compose._recent_block()
+    assert "黃仁勳辭職" in block and "黃仁勳回不去" in block
+    assert "很久以前" not in block and "沒發出去" not in block
+
+
+def test_reader_question_mandate_rules_out_stock_tips():
+    assert "不給個股買賣建議" in compose._reader_question_mandate("輝達換人，台積電的訂單會不會受影響？")

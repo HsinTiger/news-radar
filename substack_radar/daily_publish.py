@@ -451,7 +451,19 @@ def run(day: date, *, dry_run: bool = False) -> int:
         publish_note(cand, url)
     except Exception as exc:
         print(f"[DailyPublish] ⚠️ Notes 失敗（不影響發文）：{exc}")
+    refresh_reader_data()
     return 0
+
+
+def refresh_reader_data() -> None:
+    """發完文順手更新讀者數據（2026-11-20）：選題評審的校準檔與標題實驗的成績每天更新，
+    不用等週一的週報。失敗不影響發文。"""
+    try:
+        subprocess.run([sys.executable, str(REPO / "scripts" / "substack_stats_report.py")], timeout=300,
+                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("[DailyPublish] 讀者數據已更新（reader_calibration／title_arms）")
+    except Exception as exc:
+        print(f"[DailyPublish] ⚠️ 讀者數據沒更新（不影響發文）：{str(exc)[:100]}")
 
 
 def main(argv=None) -> int:

@@ -990,10 +990,10 @@ def audit_substack_draft(
     if any(marker in body for marker in ("🖼 視覺位置", "Path B", "Path C", "chart_prompt")):
         warnings.append("[舊內文視覺標記] writer 仍輸出已移除的生圖／搜尋指令，必須刪除。")
 
-    # 1c. Substack 是 email 關係，不用籠統 CTA 收尾。問題必須留在最後一屏。
+    # 1c. Substack 是 email 關係，不用籠統 CTA 收尾。
+    #     2026-11-20 拿掉「文末沒有問句就警告」：新口吻的結尾是交出一個讀者用得上的判斷方法，
+    #     不固定用回信問題收尾（editorial_voice.md 第 7 條），這條警告會把寫手推回舊公式。
     tail = body.strip()[-400:]
-    if "？" not in tail and "?" not in tail:
-        warnings.append("[缺少具體回信問題] 最後一屏沒有可讓讀者真正回覆的問題。")
     if any(generic in tail for generic in ("歡迎留言", "你怎麼看", "大家怎麼看")):
         warnings.append("[空泛互動問題] 請改問本文特有的取捨、經驗或觀測訊號。")
 
@@ -1152,6 +1152,8 @@ def _build_research_brief_prompt(
         source_contract = (
             "先完成財報理解：分開公司敘事、財報事實、數字間的張力與尚未揭露之處。"
             "若選 self_growth，必須從財報證據導出可檢驗的決策方法，不可寫成心靈鳥湯。"
+            + (f"\n{editor_brief}。延伸調研至少一條查詢要找這家公司跟台灣的關係"
+               "（台灣供應鏈、台灣市場、台股同業），用中文關鍵字。" if editor_brief else "")
         )
     return (
         "=== 階段一：主來源消化 ===\n"

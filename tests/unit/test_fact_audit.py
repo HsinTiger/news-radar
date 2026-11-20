@@ -274,3 +274,11 @@ def test_misheard_name_without_saying_name_and_plural_in_material():
     # 「僅提及…未提及」也是「素材沒有」那一類
     it3 = _item("他從沒手寫過 GPU 運算子。", "I've never handwritten a GP operator.", "研究來源僅提及關閉，未提及具體日期")
     assert fa.verify([it3], art, mat)[0] == []
+
+
+def test_not_x_but_y_is_a_contradiction_not_an_absence():
+    """2026-11-20：「素材沒說 X，而是說 Y，草稿寫反了」被當成「素材沒有」丟掉，一處誤讀差點發出去。"""
+    reversed_answer = _item("這家公司去年整體營收成長了 39%。", "雲端營收成長了 39%，整體營收只成長 12%",
+                            "素材裡沒有說整體成長 39%，而是雲端成長 39%，草稿把兩個數字寫反了")
+    kept, dropped = fa.verify([reversed_answer], DRAFT, MATERIAL)
+    assert kept == [reversed_answer] and not dropped

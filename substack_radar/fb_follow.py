@@ -651,12 +651,26 @@ def card_issues(piece: Piece, article: str, cand: "Candidate", out_dir: Path,
     return issues
 
 
+_GENERIC_SHOW_WORDS = {"podcast", "show", "experience", "the", "daily", "weekly", "radio", "hour", "talk", "live",
+                       "channel", "official", "tv", "news", "with", "and", "film", "pod", "episode"}
+
+
+def show_named(show: str, post: str) -> bool:
+    """貼文有沒有點名節目。省略中間名縮寫、Podcast／Show 這類通用字也算（2026-11-20：節目是
+    「Peter H. Diamandis」，貼文寫「Peter Diamandis」就被擋，整篇 FB 沒發）。"""
+    low = (post or "").lower()
+    if not show or show.lower() in low:
+        return True
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'’&+-]*", show) if len(w) >= 2 and w.lower() not in _GENERIC_SHOW_WORDS]
+    return bool(words) and all(w.lower() in low for w in words)
+
+
 def deterministic_issues(post: str, article: str, source: SourceInfo | None = None) -> list[str]:
     """程式能判斷的先判斷。每一項都寫成給寫手的工單。"""
     from substack_radar.quality_loop import chinese_numerals
 
     issues = []
-    if source and source.kind == "youtube" and source.show and source.show.lower() not in post.lower():
+    if source and source.kind == "youtube" and source.show and not show_named(source.show, post):
         issues.append(f"貼文沒有點名原始節目「{source.show}」。要大方說出處。")
     # 英文人名／機構名要在文章或原始來源裡找得到。FB 版跟 Substack 同一次寫出來，
     # 之後 Substack 會被稽核迴圈改掉假出處，FB 版不會——這一關把那種落差擋下來。

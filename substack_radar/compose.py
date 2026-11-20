@@ -658,10 +658,12 @@ _EDITOR_PICK_PROMPT = """你是一份中文電子報的總編輯。讀者是台�
 他們訂閱是為了「讀完能做更好的判斷」——投資、職涯、工作方法、科技與商業趨勢。
 {column_rule}
 
-{buzz}{calibration}
+{buzz}{calibration}{recent}
 下面是候選的節目（標題＋開頭逐字稿）。每一集評三件事：
 1. tw_question：台灣上班族看到這個題目，心裡會冒出的那一句問題（關於他的錢、工作、生活，或台灣的產業）。
    要寫得出一句自然的問句才算；只能硬套的（例如美國地方選舉、別國的教育政策）留空字串。
+   不要寫成「該不該買、賣、調節某檔股票」的投資建議問句，改問機制或影響
+   （例如「輝達換人，台積電的訂單會不會受影響？」）。
 2. tw_score（0–10）：台灣讀者有沒有感——跟上面「台灣這兩天在討論的事」，或台灣人的錢、工作、生活有沒有直接關係。
 3. score（0–10）：讀者讀完一篇根據它寫的文章，能不能帶走一個跟自己工作、錢或判斷有關的東西？
    純娛樂、名人八卦、宣傳新書新片、跟讀者生活無關的冷知識，給 3 分以下。
@@ -689,10 +691,26 @@ def _buzz_block() -> str:
             + "\n".join(f"- {x}" for x in items[:50]) + "\n\n")
 
 
+def _recent_block(days: int = 7) -> str:
+    """最近一週已經發過的標題（2026-11-20 試跑：黃仁勳辭職這週已經寫了兩篇、讀者數都偏低，
+    選題關卡又挑了第三集黃仁勳）。給評審看，同一件事除非有全新角度就不要再寫。"""
+    try:
+        ledger = json.loads((_REPO_ROOT / "data" / "substack_drafts" / ".daily_published.json").read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    since = (date.today() - timedelta(days=days)).isoformat()
+    titles = [str(v.get("title") or "") for k, v in sorted(ledger.items()) if k[:10] >= since and v.get("post_url")]
+    if not titles:
+        return ""
+    return ("【最近一週已經寫過】\n" + "\n".join(f"- {t}" for t in titles) + "\n"
+            "跟上面同一件事（同一個人物或同一個事件）的節目，除非能帶出全新的問題，score 給 4 分以下。\n\n")
+
+
 def _reader_question_mandate(question: str) -> str:
     return ("台灣讀者的問題（選題時寫下的）：「" + question + "」。開場從這個問題起手；正文至少一處把機制連回"
             "台灣讀者的處境（他的工作、錢，或台灣的產業與生活）。台灣的事實只能用素材與研究資料裡有的，"
-            "沒有就用「假設你是……」的情境說明，不要自己補數字或事件；連不自然就不要硬套。")
+            "沒有就用「假設你是……」的情境說明，不要自己補數字或事件；連不自然就不要硬套。"
+            "不給個股買賣建議：問題如果牽涉持股，回答的是機制與影響，不是該不該買賣。")
 
 
 def _editor_pick(rows: list, *, ai: bool = False):
@@ -720,7 +738,7 @@ def _editor_pick(rows: list, *, ai: bool = False):
         from substack_radar.quality_loop import _oss_chat
         raw = _oss_chat("audit", _EDITOR_PICK_PROMPT.format(
             column_rule=column_rule, buzz=_buzz_block(), calibration=(calibration + "\n\n") if calibration else "",
-            items=items), 900)
+            recent=_recent_block(), items=items), 900)
         parsed = {}
         for x in json.loads(_extract_json_blob(raw) or "{}").get("scores", []):
             parsed[int(x["n"])] = {"score": float(x.get("score") or 0), "tw_score": float(x.get("tw_score") or 0),
@@ -2599,6 +2617,19 @@ async def _run_inner(args: argparse.Namespace) -> int:
             "ticker": ticker,
             "series_part": series_part,
         }
+        # 台灣讀者的切入點（2026-11-20 主編：主題不變，從台灣讀者切入）。公司文沒有選題評審，
+        # 問題用固定句型；調研會多查一條這家公司跟台灣的關係，寫手照這個方向開場。幣圈不套。
+        if topic_category != "crypto":
+            from substack_radar.company_financials import _TITLE_ALIASES
+            _zh = next((a for a in _TITLE_ALIASES.get(ticker.upper().split(".")[0], ())
+                        if re.search(r"[\u4e00-\u9fff]", a)), "")
+            _subject = _zh or re.sub(r",?\s*(Inc\.?|Corporation|Corp\.?|Company \(The\)|Company|Ltd\.?)$", "",
+                                     (raw_title or ticker).strip()) or ticker
+            source["reader_question"] = f"台灣讀者為什麼要在意{_subject}？"
+            args.editorial_note = "\n".join(x for x in ((args.editorial_note or "").strip(), (
+                "開場前先回答：台灣讀者為什麼要在意這家公司？例如台灣供應鏈有沒有它的訂單、台灣人用不用得到它的產品、"
+                "台股有沒有同類公司可以對照。研究資料裡有台灣的事實就從這裡起手；沒有就用讀者處境的假設情境，"
+                "不要自己補數字或事件，連不自然就不要硬套。")) if x)
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
         # ranked) → yaml round-robin fallback. --topic override always wins.

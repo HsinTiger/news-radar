@@ -626,6 +626,17 @@ NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）�
 - 樣本小。一週約 7 篇，兩組標題要幾週才分得出差 5–10% 的效果，所以抽樣器沒資料時兩組各半。
 - 116 篇裡看了 11 個標題特徵，只有負面字（+4.5%）和冒號（−7.3%）落在 90% 區間外。10 月那次「冒號開信率較高」的結論，是早期名單小、開信率本來就高造成的錯覺。
 
+**同日晚間補強**（主編：「用剩下的額度把頻道全面優化」）：
+- **賺錢有道也從台灣讀者切入**：
+  - `pick_company_candidate.py` 的熱度原本只用英文全名去數（「Apple Inc.」數到 0）。現在加上台灣媒體用中文名提到的次數，權重 ×3。中文名表在 `company_financials._TITLE_ALIASES`，補了美光、應材、科林等台灣供應鏈相關的美股。
+  - 加了 `--dry-run`，只印出會挑哪家、不寫檔。
+  - 公司文會帶 `source.reader_question`（「台灣讀者為什麼要在意蘋果？」）。調研多查一條這家公司跟台灣的關係，寫手照這個方向開場。
+- **拿掉 `[缺少具體回信問題]` 警告**：它要求文末一定要有問句，跟新口吻的結尾規則（交出一個讀者用得上的判斷方法）矛盾。
+- **Notes 不再出現 AI 套話**：`notes_desk.clean_note` 把「我的判斷是：」改成「我目前傾向認為，」，整句拿掉「什麼條件下我會改這個判斷？」這類固定反問。標題台的 Notes 提示也禁止這兩種寫法。
+- **FB 點名檢查放寬**：`fb_follow.show_named` 允許省略中間名縮寫，以及 Podcast／Show 這類通用字。原本節目「Peter H. Diamandis」、貼文寫「Peter Diamandis」就被擋，整篇 FB 沒發。
+- **對帳審稿**：問題寫成「素材沒說 X，而是說 Y」時算矛盾、保留，不再當成「素材沒有」丟掉（`fact_audit._CONTRADICTION`）。
+- **讀者數據每天更新**：`daily_publish.refresh_reader_data` 發完文就重算一次 `reader_calibration.json`、`title_arms.json`，標題實驗不用等週一。
+
 ## 7. Case studies — failures that forced doc updates
 
 ### 7.1 Gemini 429 × Claude CLI not-in-PATH = silent pipeline stall

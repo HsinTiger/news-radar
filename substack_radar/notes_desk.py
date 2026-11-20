@@ -67,6 +67,26 @@ def todays_headlines(article: str, *, db_path=None, hours: int = 18, limit: int 
     return [(t, f) for _, t, f in scored[:limit]]
 
 
+_NOTE_FORMULA = re.compile(r"什麼(?:條件|情況)下[^。？！?]{0,8}(?:改|調整|認錯)[^。？！?]*[？?]|最後留一個問題|歡迎訂閱|點擊閱讀")
+
+
+def clean_note(note: str) -> str:
+    """拿掉 Notes 裡的 AI 套話（2026-11-20：機器人那篇的 Notes 寫「我的判斷是：…」，
+    最後用「什麼條件下我會改這個判斷？」收尾——正文早就不准這樣寫，Notes 卻沒人檢查）。
+    標籤式的「我的判斷是：」改成口語的「我目前傾向認為，」；固定反問和其他套話句整句拿掉。"""
+    from substack_radar.style_gate import STOCK_PHRASES, _STOCK_PATTERNS
+
+    text = re.sub(r"我的判斷是[：:]\s*", "我目前傾向認為，", (note or "").strip())
+    out = []
+    for para in text.split("\n"):
+        sentences = re.split(r"(?<=[。！？?])", para)
+        keep = [x for x in sentences if x.strip() and not _NOTE_FORMULA.search(x)
+                and not any(p in x for p in STOCK_PHRASES) and not any(pat.search(x) for pat, _ in _STOCK_PATTERNS)]
+        if "".join(keep).strip():
+            out.append("".join(keep).strip())
+    return "\n\n".join(out)
+
+
 def note_ok(note: str, allowed_text: str) -> bool:
     return (80 <= len(note) <= 360 and not re.search(r"https?://|#\S", note)
             and _numbers(note) <= _numbers(allowed_text))
@@ -74,7 +94,7 @@ def note_ok(note: str, allowed_text: str) -> bool:
 
 def build(*, article: str, base_note: str, headlines: list[tuple[str, str]] | None = None, chat=None) -> dict:
     """回 {"note": 文字, "news": 用到的新聞標題或 ""}。任何失敗都退回 base_note。"""
-    base_note = (base_note or "").strip()
+    base_note = clean_note(base_note or "")
     headlines = todays_headlines(article) if headlines is None else headlines
     if not headlines:
         return {"note": base_note, "news": ""}
@@ -90,7 +110,7 @@ def build(*, article: str, base_note: str, headlines: list[tuple[str, str]] | No
         raw = chat(_PROMPT.format(article=(article or "")[:6000], base=base_note or "（沒有）", headlines=listing))
         data = json.loads(_extract_json_blob(raw) or "{}")
         use = int(data.get("use") or 0)
-        note = pangu(str(data.get("note") or "").strip())
+        note = clean_note(pangu(str(data.get("note") or "").strip()))
     except Exception as exc:
         print(f"[Notes] ⚠️ 時事版本失敗，用原本那則：{str(exc)[:100]}")
         return {"note": base_note, "news": ""}

@@ -8,11 +8,17 @@ same-day：worker 只在今天還沒有通過稽核的公司草稿時才呼叫�
 信哥要指定 → 在排程前改 .company_next 第一行 ticker；要重分析某股 → 從 .company_done 移除該行。
 """
 from __future__ import annotations
-import json, os, sqlite3, subprocess, sys, datetime
+import json, os, re, sqlite3, subprocess, sys, datetime
 from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+# 2026-11-20 主編：主題不變，從台灣讀者切入。熱度原本只用英文公司名去數，台灣媒體寫的是中文名（輝達、美光），
+# 等於完全沒算到台灣讀者在看什麼。台灣媒體提到的次數乘 3 再加進去。
+TW_FEEDS = ("TechNews 科技新報", "中央社 財經", "中央社 國際", "公視新聞 PTS")
+TW_WEIGHT = 3
 POOL_PATH = REPO / "substack_radar" / "config" / "company_pool.txt"
 NEXT_PATH = REPO / "data" / "substack_drafts" / ".company_next"
 DONE_PATH = REPO / "data" / "substack_drafts" / ".company_done"
@@ -84,7 +90,20 @@ def _series_part2(today: str, rows: list[str]) -> tuple[str, str] | None:
     return sat[-1][0].split()[0], sat[-1][1].strip()
 
 
-def main() -> int:
+def taiwan_heat(undone, blob_tw: str) -> Counter:
+    """台灣媒體近 7 天提到這家公司中文名的次數。只算中文別名：短英文名（HP、GE）在中文稿裡會誤中。"""
+    from substack_radar.company_financials import _TITLE_ALIASES
+
+    out: Counter = Counter()
+    for tk, _nm in undone:
+        zh = [a for a in _TITLE_ALIASES.get(tk, ()) if re.search(r"[\u4e00-\u9fff]", a)]
+        if zh:
+            out[tk] = sum(blob_tw.count(a) for a in zh)
+    return out
+
+
+def main(argv=None) -> int:
+    dry_run = "--dry-run" in (argv if argv is not None else sys.argv[1:])
     today = datetime.date.today().isoformat()
     rows = _done_rows()
     # 指定公司重寫：COMPANY_FORCE=JNJ（2026-10-17：嬌生來源夠、是寫稿那段出問題，要重寫同一家，不是換一家）
@@ -136,26 +155,38 @@ def main() -> int:
         print(f"[pick] 整個池（{len(items)} 家）都分析過了——補池或清 .company_done。"); return 3
 
     heat: Counter = Counter()
+    tw: Counter = Counter()
     if DB.exists():
         try:
             conn = sqlite3.connect(str(DB))
             blob = " ".join((t or "") + " " + (b or "") for t, b in conn.execute(
                 "SELECT title, substr(clean_markdown,1,600) FROM news_items "
                 "WHERE julianday('now') - julianday(fetched_at) < 7").fetchall()).lower()
+            marks = ",".join("?" * len(TW_FEEDS))
+            blob_tw = " ".join((t or "") + " " + (b or "") for t, b in conn.execute(
+                "SELECT title, substr(clean_markdown,1,600) FROM news_items "
+                f"WHERE julianday('now') - julianday(fetched_at) < 7 AND feed_name IN ({marks})", TW_FEEDS).fetchall())
             conn.close()
             for tk, nm in undone:
                 key = nm.lower()
                 if len(key) >= 4:
                     heat[tk] = blob.count(key)
+            tw = taiwan_heat(undone, blob_tw)
         except Exception as e:
             print(f"[pick] 熱度略過：{e}")
 
-    hot = [x for x in undone if heat[x[0]] > 0]
-    tk, nm = max(hot, key=lambda x: heat[x[0]]) if hot else undone[0]
+    score = lambda x: heat[x[0]] + TW_WEIGHT * tw[x[0]]
+    hot = [x for x in undone if score(x) > 0]
+    tk, nm = max(hot, key=score) if hot else undone[0]
+    if dry_run:
+        for x in sorted(hot, key=score, reverse=True)[:8]:
+            print(f"[pick] 候選 {x[0]:6s} {x[1][:28]:28s} 英文熱度 {heat[x[0]]:3d}｜台灣媒體 {tw[x[0]]:3d}")
+        print(f"[pick]（試跑，不寫檔）會選：{tk}（{nm}）")
+        return 0
     NEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
     NEXT_PATH.write_text(
         "# 本週公司分析（週日 09:00 自動建草稿）。改第一行 ticker 可指定公司。\n"
-        f"{tk}    # {nm}（近7天新聞熱度 {heat[tk]}）\n", encoding="utf-8")
+        f"{tk}    # {nm}（近7天新聞熱度 {heat[tk]}，台灣媒體 {tw[tk]}）\n", encoding="utf-8")
     with open(DONE_PATH, "a", encoding="utf-8") as f:
         f.write(f"{tk}\t{nm}\t{today}\n")
     print(f"[pick] 今日：{tk}（{nm}）熱度 {heat[tk]} | 池 {len(items)}・已分析 {len(done)+1}・剩 {len(undone)-1}")

@@ -156,6 +156,9 @@ def coverage(quote: str, haystack_norm: str) -> float:
 _ABSENCE = re.compile(r"(素材|原文|來源|逐字稿|節目)[^，。｜]{0,12}(沒有|未|並無|無)(提|說|出現|記載|見|引用|包含)|"
                       r"(未|並未|沒有|沒)(提及|提到|說到|記載)|"
                       r"找不到|無出處|無來源|未經證實|無法(查證|核對|確認)|不在(素材|原文|事實表)")
+# 「素材沒說 X，而是說 Y」是矛盾，不是「素材沒有」（2026-11-20 機器人那篇：審稿指出「他沒有說『不太有』，
+# 而是明確回答中國是最接近的對手，草稿把他的回答寫反了」，被當成「素材沒有」丟掉；主編發布前人工對逐字稿才改掉）。
+_CONTRADICTION = re.compile(r"寫反|說反|相反|顛倒|誤讀|曲解|扭曲|張冠李戴|而是|其實是|實際上是|說的是|講的是|寫的是")
 
 
 _NAME_ISSUE = re.compile(r"人名|公司名|名稱|專有名詞|拼|寫法|縮寫|講者名|來賓名|名字")
@@ -195,7 +198,7 @@ def verify(items: list[dict], article: str, material: str) -> tuple[list[dict], 
         sentence = str(it.get("原句") or "").strip()
         evidence = str(it.get("素材原文") or "").strip()
         problem = str(it.get("問題") or "")
-        if _ABSENCE.search(problem):
+        if _ABSENCE.search(problem) and not _CONTRADICTION.search(problem):
             dropped.append((it, "講的是「素材沒有」，不是矛盾"))
             continue
         # 問題講的是名字，或者兩邊的英文詞長得像（模型不一定會說「名字寫錯」，2026-11-17 那條寫的是
