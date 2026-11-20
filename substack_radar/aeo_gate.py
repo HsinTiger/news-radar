@@ -71,6 +71,12 @@ _LEAD_LABEL = re.compile(
 )
 
 
+# 開場裡作者表態的句子。2026-11-20 新口吻要先寫讀者的問題、再讓主角帶著答案登場，最後才說作者的傾向，
+# 開場常常超過 12 句（機器人那篇剛好 10 句）。有表態就放寬到 16 句；沒表態又太長才擋。
+_LEANING = re.compile(r"我(?:目前|現在)?(?:比較)?傾向|我認為|我的看法|我會說|我目前的看法|"
+                      r"答案(?:是|可能是|其實是)|關鍵(?:在|是)|真正的問題(?:是|在)")
+
+
 def check(article_md: str, *, lead_max_sentences: int = 10) -> list[AeoIssue]:
     issues: list[AeoIssue] = []
     text = article_md or ""
@@ -81,7 +87,9 @@ def check(article_md: str, *, lead_max_sentences: int = 10) -> list[AeoIssue]:
     body_after_title = re.sub(r"^\*.+?\*$", "", body_after_title, flags=re.M)  # 副標
     lead = re.split(r"^#{2,4}\s+", body_after_title, maxsplit=1, flags=re.M)[0]
     lead_sentences = [s for s in _SENTENCE_END.split(lead) if len(s.strip()) > 8]
-    if len(lead_sentences) > lead_max_sentences + 2:
+    leaning_early = any(_LEANING.search(x) for x in lead_sentences[:lead_max_sentences + 2])
+    too_long = len(lead_sentences) > (lead_max_sentences + 6 if leaning_early else lead_max_sentences + 2)
+    if too_long:
         issues.append(AeoIssue(
             rule="A1 開場沒有答案先行",
             detail=f"第一個小標之前有 {len(lead_sentences)} 句才進入正文；"

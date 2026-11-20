@@ -153,6 +153,41 @@ _TOPIC_STOPWORDS = {"根據", "數據", "機構", "研究", "顯示", "預估", 
                     "我們", "可以", "已經", "並且", "然而", "因此", "所以"}
 
 
+_SCALE = {"trillion": 1e12, "tn": 1e12, "t": 1e12, "billion": 1e9, "bn": 1e9, "b": 1e9,
+          "million": 1e6, "mn": 1e6, "m": 1e6, "兆": 1e12, "億": 1e8, "萬": 1e4}
+_SCALED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(trillion|billion|million|tn|bn|mn|[tbm](?![a-z])|兆|億|萬)", re.I)
+
+
+def _scaled_values(text: str) -> list[tuple[float, int]]:
+    """文字裡所有「數字＋規模單位」換成實際數值：「63,625M」→ 6.3625e10，「$214 billion」→ 2.14e11。"""
+    out = []
+    for m in _SCALED.finditer(text or ""):
+        before = text[max(0, m.start() - 1):m.start()]
+        if before and (before.isdigit() or before == "."):
+            continue
+        try:
+            out.append((float(m.group(1).replace(",", "")) * _SCALE[m.group(2).lower()], m.start()))
+        except (ValueError, KeyError):
+            continue
+    return out
+
+
+def _scaled_hit(value: str, unit: str, text: str, tolerance: float = 0.006) -> int:
+    """「636.25 億」對「63,625M」：換成實際數值比，容許四捨五入（0.6%）。回命中位置，沒有回 -1。
+    2026-11-15 Pfizer 那篇：來源寫「63,625M」，稿子寫「636.25 億美元」（換算正確），
+    但比對只準備了「$63625m」這種帶錢號的寫法，判成找不到出處，退稿三次後整篇沒發。"""
+    if unit not in ("億", "兆"):
+        return -1
+    try:
+        target = float(value) * _SCALE[unit]
+    except ValueError:
+        return -1
+    for v, pos in _scaled_values(text):
+        if v and abs(v - target) <= max(v, target) * tolerance:
+            return pos
+    return -1
+
+
 def locate(value: str, unit: str, sources: list[dict], fact_block: str,
            topic: str = "") -> str | None:
     """在來源摘錄或事實表裡找這個「數字＋單位」，回傳可讀的定位字串。
@@ -177,10 +212,11 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
         if pos < 0 and en_needles:
             low = folded.lower()
             pos = next((low.find(n) for n in en_needles if low.find(n) >= 0), -1)
-        if pos < 0:
+        scaled_pos = _scaled_hit(value, unit, excerpt) if pos < 0 else -1
+        if pos < 0 and scaled_pos < 0:
             continue
-        raw_pos = next((excerpt.find(f"{value}{u}") for u in unit_variants
-                        if excerpt.find(f"{value}{u}") >= 0), -1)
+        raw_pos = scaled_pos if scaled_pos >= 0 else next(
+            (excerpt.find(f"{value}{u}") for u in unit_variants if excerpt.find(f"{value}{u}") >= 0), -1)
         if raw_pos < 0:
             # 命中的是去空白後的字串（「$214 billion」→「$214billion」），回原文找真正的位置，
             # 不然後面取的上下文會偏掉一大段
@@ -216,7 +252,8 @@ def locate(value: str, unit: str, sources: list[dict], fact_block: str,
     if best:
         return best[1]
     folded_facts = _norm(fact_block)
-    if any(n and n in folded_facts for n in needles) or any(n in folded_facts.lower() for n in en_needles):
+    if (any(n and n in folded_facts for n in needles) or any(n in folded_facts.lower() for n in en_needles)
+            or _scaled_hit(value, unit, fact_block) >= 0):
         return "管線事實表"
     return None
 

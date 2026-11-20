@@ -1574,6 +1574,9 @@ def render_substack_cover(
 SUBSTACK_AUTH_MARKER = _REPO_ROOT / "data" / "substack_drafts" / ".substack_auth_failed"
 EXIT_SUBSTACK_AUTH_BLOCKED = 9
 EXIT_NO_MATERIAL = 10   # 主編投稿但素材沒抓到：已通知，drain 不要重試（重試只會重寄通知）
+# 延伸調研找不到 5 個可用來源（2026-11-21）：還沒動筆就停，排程可以換一家公司再試。原本跟「草稿已建好、
+# 紀錄待對帳」共用 6，排程分不出來，不敢重試——11/14 寶僑就這樣整天沒有賺錢有道。
+EXIT_RESEARCH_SHORT = 11
 
 
 def _cookie_fingerprint() -> str:
@@ -2806,7 +2809,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     "research_queries": research_brief.research_queries,
                 },
             )
-            return 6
+            return EXIT_RESEARCH_SHORT
         used_reports = [source_item.model_dump() for source_item in research_sources]
     elif os.getenv("SUBSTACK_COLUMN") == "hsin" and os.getenv("SUBSTACK_HSIN_RESEARCH", "1") == "1":
         # Hsin選觀點的延伸調研（2026-11-16）。跟上面不同的是：失敗不擋稿——主編投了稿就要有草稿，

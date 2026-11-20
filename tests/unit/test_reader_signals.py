@@ -229,3 +229,27 @@ def test_editor_pick_prefers_what_readers_would_forward(monkeypatch):
     monkeypatch.setattr(compose, "_buzz_block", lambda: "")
     assert compose._editor_pick(rows) == rows[1]          # 寫不出會轉給誰，轉傳分數不算數
     assert compose.LAST_PICK_META["by_id"]["b"]["share_to"] == "正在考慮買房的同事"
+
+
+def test_long_opening_passes_when_the_author_states_a_view_early():
+    """新口吻：讀者的問題 → 主角帶著答案登場 → 作者傾向，開場常超過 12 句。前 12 句有表態就放寬到 16 句。"""
+    from substack_radar import aeo_gate
+    filler = "".join(f"這是開場第 {i} 句，講讀者的處境和主角的選擇。" for i in range(1, 9))
+    lean = "我目前傾向認為，它離你家的距離比他暗示的遠得多。"
+    more = "".join(f"這是補充的第 {i} 句，說明這個判斷成立的條件。" for i in range(1, 7))
+    md = f"# 標題\n\n{filler}{lean}{more}\n\n## 第一個小標\n\n內文。"
+    assert not [i for i in aeo_gate.check(md) if i.rule.startswith("A1 ")]            # 15 句、有表態：過
+    md_no = f"# 標題\n\n{filler}{more}{filler[:40]}。\n\n## 第一個小標\n\n內文。"
+    assert [i for i in aeo_gate.check(md_no) if i.rule.startswith("A1 ")]             # 沒表態又長：擋
+    md_long = f"# 標題\n\n{filler}{lean}{more}{more}\n\n## 第一個小標\n\n內文。"
+    assert [i for i in aeo_gate.check(md_long) if i.rule.startswith("A1 ")]           # 21 句：再長也擋
+
+
+def test_research_shortfall_has_its_own_exit_code_and_the_weekly_job_retries_once():
+    """11/14 寶僑：調研只找到 3 個來源，跟「草稿已建好」共用 exit 6，排程不敢重試，整天沒稿。"""
+    import inspect
+    from pathlib import Path
+    assert compose.EXIT_RESEARCH_SHORT == 11 and "return EXIT_RESEARCH_SHORT" in inspect.getsource(compose)
+    worker = (Path(compose._REPO_ROOT) / "scripts" / "substack_editorial_worker.sh").read_text(encoding="utf-8")
+    block = worker.split('if [ "$COMPOSE_EXIT" -eq 11 ]; then', 1)[1].split("fi\nfi", 1)[0]
+    assert "pick_company_candidate.py" in block and block.count("compose.py company") == 1   # 只重試一次

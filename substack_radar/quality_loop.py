@@ -140,7 +140,13 @@ def evaluate(article_md: str, *, fact_values: dict[str, float] | None = None,
         out.append(Violation(kind=issue.rule, detail=issue.detail,
                              fix_hint=f"原句：{issue.sentence.strip()[:80]}"))
 
+    from substack_radar.evidence_gate import locate as _locate
+
     for issue in reconcile(article_md, fact_values or {}, base_currency):
+        # 數字本來就出自外部來源（例如同業合計營收），只是剛好約等於某個事實的 10 倍，不是寫錯量級
+        # （2026-11-15 Pfizer：「同業合計營收 6,210.87 億」被配到輝瑞自己的營收，報成 10 倍誤植）。
+        if sources and _locate(f"{issue.written:g}", issue.unit, sources, "", topic=issue.context):
+            continue
         out.append(Violation(
             kind="數字量級",
             detail=str(issue),

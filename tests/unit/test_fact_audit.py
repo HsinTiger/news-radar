@@ -282,3 +282,25 @@ def test_not_x_but_y_is_a_contradiction_not_an_absence():
                             "素材裡沒有說整體成長 39%，而是雲端成長 39%，草稿把兩個數字寫反了")
     kept, dropped = fa.verify([reversed_answer], DRAFT, MATERIAL)
     assert kept == [reversed_answer] and not dropped
+
+
+def test_scaled_numbers_match_across_units_and_rounding():
+    """2026-11-15 Pfizer：來源寫「63,625M」，稿子寫「636.25 億美元」，換算正確卻被判找不到出處，退稿三次整篇沒發。"""
+    from substack_radar.evidence_gate import locate
+    src = [{"excerpt": "Pfizer's TTM revenue was 63,625M, while its competitors' combined revenue was 621,087M.",
+            "publisher": "CSIMarket", "url": "u"}]
+    topic = "CSIMarket 指出輝瑞營收為 63,625M（即 636.25 億美元），同業合計營收為 621,087M（即 6,210.87 億美元）。"
+    assert locate("636.25", "億", src, "", topic=topic) and locate("636.3", "億", src, "", topic=topic)
+    assert locate("6210.87", "億", src, "", topic=topic)
+    assert locate("700", "億", src, "", topic=topic) is None            # 真的找不到的還是擋
+    assert locate("1.2", "兆", [], "營收 USD 1,200B") == "管線事實表"   # 事實表也換算
+
+
+def test_magnitude_check_skips_numbers_quoted_from_sources():
+    from substack_radar.quality_loop import evaluate
+    art = ("## 營收\n\n根據 [CSIMarket](https://csimarket.com/x) 的比較頁，輝瑞的同業合計營收為 621,087M"
+           "（即 6,210.87 億美元），輝瑞自己的 2025 營收是 625.8 億美元。\n")
+    src = [{"excerpt": "competitors' combined revenue was 621,087M", "publisher": "CSIMarket",
+            "url": "https://csimarket.com/x"}]
+    kinds = [v.kind for v in evaluate(art, fact_values={"2025 營收": 6.258e10}, sources=src, base_currency="USD")]
+    assert "數字量級" not in kinds

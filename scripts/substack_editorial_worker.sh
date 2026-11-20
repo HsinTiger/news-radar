@@ -203,6 +203,17 @@ PYCHECK
   fi
   "$PY" -u substack_radar/compose.py company --editorial-profile weekly --require-substack-draft
   COMPOSE_EXIT=$?
+  # 2026-11-21：延伸調研找不到 5 個可用來源（exit 11）時還沒動筆、成本很低，當場換一家再試一次
+  # （picker 會把今天失敗的那家記到 .company_failed、改挑下一家）。仍然一天只寫一篇。
+  # 11/14 寶僑就是這樣整天沒有賺錢有道。
+  if [ "$COMPOSE_EXIT" -eq 11 ]; then
+    echo "[editorial] 延伸調研不足，換一家公司再試一次"
+    "$PY" scripts/pick_company_candidate.py
+    if [ $? -eq 0 ]; then
+      "$PY" -u substack_radar/compose.py company --editorial-profile weekly --require-substack-draft
+      COMPOSE_EXIT=$?
+    fi
+  fi
 fi
 
 # Push even after a compose failure: a remote draft may exist while its durable
