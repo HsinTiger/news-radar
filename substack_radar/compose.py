@@ -2669,6 +2669,31 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     _FILINGS_SOURCES[:] = filings_desk.as_research_sources(_pack)
             except Exception as exc:
                 print(f"[Filings] ⚠️ 文件組失敗，照舊只用網路調研：{type(exc).__name__}: {str(exc)[:120]}")
+        # 台股文件組（2026-11-21）：證交所／櫃買中心公開資料，零 token；truth 帶台幣供隱藏抽查。
+        if topic_category == "tw_stocks" and os.getenv("SUBSTACK_FILINGS_DESK", "1") == "1":
+            try:
+                from substack_radar import tw_filings
+                _twp = tw_filings.build_pack(ticker)
+                if _twp:
+                    raw_content += tw_filings.pack_md(_twp)
+                    source["sec_truth"] = _twp.truth
+                    source["filings"] = _twp.filings
+                    _FILINGS_SOURCES[:] = tw_filings.as_research_sources(_twp)
+            except Exception as exc:
+                print(f"[TWFilings] ⚠️ 台股文件組失敗，照舊只用網路調研：{type(exc).__name__}: {str(exc)[:120]}")
+        # 調研小組（2026-11-21）：聲音組／反方組／時間線組，程式驗證過的卡才給寫手；依週次快取，週日下篇重用。
+        if topic_category != "crypto" and os.getenv("SUBSTACK_RESEARCH_TEAMS", "1") == "1":
+            try:
+                from substack_radar import research_teams
+                _subj = re.sub(r",?\s*(Inc\.?|Corporation|Corp\.?|Company|Ltd\.?|Holdings)$", "",
+                               (raw_title or ticker).strip()) or ticker
+                _teams = research_teams.run_teams(_subj)
+                raw_content += "\n\n" + research_teams.teams_md(_teams)
+                source["teams"] = {k: {"met": r.met, "cards": len(r.cards)} for k, r in _teams.items()}
+                _FILINGS_SOURCES.extend(research_teams.as_research_sources(_teams)[:4])   # 研究包上限 10，留位置給網路調研
+                print("[Teams] " + "、".join(f"{k} {len(r.cards)} 張{'✓' if r.met else '（不足）'}" for k, r in _teams.items()))
+            except Exception as exc:
+                print(f"[Teams] ⚠️ 調研小組失敗，照舊：{type(exc).__name__}: {str(exc)[:120]}")
         # 週末旗艦寫稿用 agy 上最強的 Gemini（信哥 2026-11-21：Gemini 系優先，依任務適配）。
         # AGY_MODEL 每次組模型鏈時讀環境，會排到鏈首；不可用時照常往下備援。
         _flagship = os.getenv("SUBSTACK_FLAGSHIP_AGY_MODEL", "Gemini 4 Neon (XHigh)").strip()

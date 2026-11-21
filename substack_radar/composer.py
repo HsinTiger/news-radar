@@ -1298,6 +1298,14 @@ def _build_user_prompt(**kwargs) -> str:
         block = prompt_block("podcast/ai" if os.getenv("SUBSTACK_COLUMN") == "ai" and mode == "podcast" else mode)
     except Exception:
         block = ""
+    try:
+        # 每週學習迴圈採用的教訓（2026-11-21，scripts/weekly_learning.py 寫入；最多 12 條）
+        from substack_radar.lessons import load_lessons
+        learned = load_lessons("writer")
+        if learned:
+            block = (block + "\n\n" if block else "") + "=== 每週學到的教訓（寫完自查）===\n" + learned + "\n\n"
+    except Exception:
+        pass
     if not block:
         return prompt
     marker = "=== 輸出格式"

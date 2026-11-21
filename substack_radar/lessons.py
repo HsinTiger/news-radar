@@ -151,6 +151,8 @@ ACTION_WORDS = ("核對", "標出", "換算", "寫出", "不要", "改成", "附
 # 禁用詞（比對時不分大小寫）
 BANNED_WORDS = ("曼報", "Manny", "Claude", "Gemini", "GPT", "Opus", "Sonnet", "Haiku", "agy", "DeepSeek",
                 "產文路線")
+# 跟口吻規則衝突的寫法（2026-11-21 試跑抓到）：查證留在幕後，不叫寫手把原文、取材清單、比對過程寫進稿子
+CONFLICT_PHRASES = ("附上原文", "附上取材", "在稿中附上", "附上原始", "附上連結", "標註出處於文中", "寫出查證")
 
 
 def _case_id(source: str, kind_text: str, quote: str) -> str:
@@ -243,10 +245,9 @@ def role_of(category: str) -> str:
 
 
 def _default_chat(prompt: str) -> tuple[str, str]:
-    """便宜模型（閘道 fast 角色），比照 filings_desk._default_chat。"""
-    from substack_radar.quality_loop import _LAST_USAGE, _oss_chat
-    text = _oss_chat("fast", prompt, 600)
-    return text, str(_LAST_USAGE.get("model") or "fast")
+    """共用文件組的讀卡函式：agy Gemini 3.8 Flash 優先，閘道 fast 後備。"""
+    from substack_radar.filings_desk import _default_chat as shared
+    return shared(prompt)
 
 
 PROPOSE_PROMPT = """你是編輯部的學習員。下面是「{category}」這類錯誤，這一週在我們的稿子裡出現了 {n} 件，附幾個例句：
@@ -289,7 +290,7 @@ def propose_lessons(groups: dict[str, list[dict]], *, chat=None, min_count: int 
     chat = chat or _default_chat
     out: list[dict] = []
     for category, cases in groups.items():
-        if len(cases) < min_count:
+        if len(cases) < min_count or category == "其他":    # 「其他」湊不出具體教訓（試跑 122 件只得到空話）
             continue
         examples = _example_lines(cases)
         prompt = PROPOSE_PROMPT.format(category=category, n=len(cases), limit=MAX_LESSON_CHARS,
@@ -327,6 +328,9 @@ def accept(lesson, existing: list[str]) -> tuple[bool, str]:
     for word in BANNED_WORDS:
         if word.lower() in low:
             return False, f"含禁用詞「{word}」"
+    for phrase in CONFLICT_PHRASES:
+        if phrase in text:
+            return False, f"跟口吻規則衝突（查證留在幕後）：含「{phrase}」"
     for old in existing or []:
         old_text = _lesson_text(old)
         ratio = SequenceMatcher(None, text, old_text).ratio()
