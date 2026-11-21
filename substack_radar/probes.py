@@ -2,6 +2,7 @@
 
 這裡的規則不寫進寫手或調研員的指令，它們不知道哪些地方會被查：
 1. truth_probe：稿子裡的年度營收、毛利、營業利益、淨利，跟 SEC 結構化資料比對。
+   台股（證交所／櫃買中心）的累計損益用台幣另外比對：truth 的列有 "twd" 才查，只認「X 億元」「X 億新台幣」。
 2. citation_probe：隨機抽幾句「帶連結又帶數字」的句子，重抓那個網頁，看數字是不是真的在上面。
    抓的是「張冠李戴」：數字是真的，卻掛在沒寫這個數字的來源底下。
    2026-11-21 蘋果那篇的「49% 毛利率」掛在一篇只講到 FY2024 的文章底下，就是這種。
@@ -27,6 +28,18 @@ _YEAR = re.compile(r"(?:FY\s?|會計年度\s?|財年\s?)?(20\d{2})\s*(?:年|財�
 _AMOUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(億|兆)\s*美元")
 _LINKED = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
 _NEAR_AMOUNT = re.compile(r"[^，。；、,;\d]{0,10}?(\d[\d,]*(?:\.\d+)?)\s*(億|兆)\s*美元")
+# 台幣：稿子寫「X 億元」「X 億新台幣」才算（億美元不算）
+_TWD_AMOUNT = re.compile(r"[^，。；、,;\d]{0,10}?(\d[\d,]*(?:\.\d+)?)\s*(億|兆)\s*(?:元|新台幣|新臺幣)")
+_TWD_END = re.compile(r"(\d{4})Q([1-4])")
+_RNG = r"\s*[–—~～至到\-]\s*"
+# 累計到第幾季的各種寫法；對不上的句子不判
+_TWD_PERIOD = {
+    1: re.compile(r"第一季|第\s*1\s*季|首季|Q1|1" + _RNG + r"3\s*月|前三個月|前\s*3\s*個月"),
+    2: re.compile(r"上半年|前兩季|前二季|前\s*2\s*季|第二季累計|第\s*2\s*季累計|1" + _RNG + r"6\s*月|前六個月|前\s*6\s*個月"),
+    3: re.compile(r"前三季|前\s*3\s*季|第三季累計|第\s*3\s*季累計|1" + _RNG + r"9\s*月|前九個月|前\s*9\s*個月"),
+    4: re.compile(r"全年|整年|前四季|前\s*4\s*季|第四季累計|第\s*4\s*季累計|1" + _RNG + r"12\s*月|前十二個月|前\s*12\s*個月"),
+}
+_SINGLE_Q = re.compile(r"第\s*[一二三四1-4]\s*季(?!\s*累計)|單季|當季|Q[1-4](?!\s*累計)")
 _SEGMENT = re.compile(r"地區|分部|部門|大中華|中國|歐洲|美洲|日本|亞太|服務|iPhone|Mac|iPad|產品線|業務|事業")
 
 
@@ -35,14 +48,50 @@ def _sentences(article: str) -> list[str]:
     return [s for s in re.split(r"(?<=[。！？\n])", body) if s.strip()]
 
 
+def _twd_probe(sent: str, truth: dict, tolerance: float) -> list[str]:
+    """台幣累計數字抽查：要同一句同時有同年份和對得上的累計期間（前三季、1–9 月……）才判。"""
+    out = []
+    for clause in re.split(r"[；;]", sent):
+        years = {int(y) for y in _YEAR.findall(re.sub(r"\d[\d,]*(?:\.\d+)?\s*(?:億|兆|萬|%)", "", clause))}
+        if len(years) != 1:
+            continue                                      # 沒寫年份或一句講好幾年：不判
+        for label, pat in _LABELS.items():
+            m_label = re.search(pat, clause)
+            if not m_label:
+                continue
+            if _SEGMENT.search(clause[:m_label.start()][-20:]):
+                continue
+            m = _TWD_AMOUNT.match(clause[m_label.end():])
+            if not m:
+                continue
+            value = float(m.group(1).replace(",", "")) * (1e8 if m.group(2) == "億" else 1e12)
+            for row in truth.get(label) or []:
+                if row.get("twd") is None:
+                    continue
+                e = _TWD_END.search(str(row.get("end", "")))
+                if not e or int(e.group(1)) not in years:
+                    continue
+                q = int(e.group(2))
+                if not _TWD_PERIOD[q].search(clause) or (q != 1 and _SINGLE_Q.search(clause)):
+                    continue                              # 期間對不上（或混了單季數字）：不判
+                twd = row["twd"]
+                if abs(value - twd) > twd * tolerance:
+                    out.append(f"{FLAG} 隱藏抽查：{label} {row['end']} "
+                               f"稿子寫 {m.group(1)} {m.group(2)}元，證交所／櫃買中心公開資料是 {twd / 1e8:,.1f} 億元"
+                               f"（原句：{sent.strip()[:60]}）")
+                break
+    return out
+
+
 def truth_probe(article: str, truth: dict, tolerance: float = 0.015) -> list[str]:
     out = []
     for sent in _sentences(article):
+        out.extend(_twd_probe(sent, truth, tolerance))
         if not _ANNUAL.search(sent) or _QUARTER.search(sent):
             continue
         years = {int(y) for y in _YEAR.findall(sent)}
         for label, pat in _LABELS.items():
-            rows = truth.get(label) or []
+            rows = [r for r in (truth.get(label) or []) if r.get("usd") is not None]   # 只比美元列
             m_label = re.search(pat, sent)
             if not rows or not m_label:
                 continue
