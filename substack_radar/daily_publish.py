@@ -443,7 +443,32 @@ def run(day: date, *, dry_run: bool = False) -> int:
         print("[DailyPublish] （試跑，不發）")
         return 0
 
+    # 糾錯台（2026-11-21）：審稿標了「跟素材不符」就先派糾錯模型核對原始網頁、改好再發；
+    # 修不乾淨的這篇不發，換下一篇候選。每次都把工作紀錄寄給信哥。
+    from substack_radar import fix_desk
+
+    fix_report = None
+    while fix_desk.flagged(cand.warnings):
+        print(f"[DailyPublish] 🛠️ 「{cand.headline}」有 {len(fix_desk.flagged(cand.warnings))} 處跟素材不符，派糾錯台")
+        fix_report = fix_desk.run(cand.folder, cand.meta, api, cand.draft_id)
+        cand.warnings = [str(w) for w in cand.meta.get("audit_warnings") or []]
+        if fix_report.ok:
+            print(f"[DailyPublish] ✅ 糾錯完成：改 {fix_report.changed} 處")
+            break
+        pool = [c for c in pool if c is not cand]
+        nxt = "，改發下一篇候選" if pool else "，今天沒有其他候選"
+        fix_desk.send_work_log(cand.headline, fix_report, f"沒修乾淨，這篇不發{nxt}")
+        fix_report = None
+        if not pool:
+            notify("今天沒有自動發文", "糾錯台沒能修好今天的稿子，紀錄已寄到信箱")
+            return 0
+        cand, reason = pick(pool)
+        print(f"[DailyPublish] 改選：{cand.meta.get('title')}（{reason}）")
+
     url = publish(api, cand, ledger, key, reason)
+    if fix_report is not None:
+        fix_desk.send_work_log(cand.headline, fix_report,
+                               f"已改好並發布：{url}" if url else "已改好並送出發布，但還查不到公開網址")
     if not url:
         print("[DailyPublish] ⚠️ 已送出發布，但還查不到公開網址")
         notify("每日發文需要你看一下", f"「{cand.headline}」已送出，但還查不到公開網址")
