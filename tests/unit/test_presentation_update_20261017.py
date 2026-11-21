@@ -10,7 +10,7 @@ from substack_radar.daily_publish import send_arm, slot_now
 def test_podcast_and_company_lengths_ignore_global_cap(monkeypatch):
     monkeypatch.setenv("SUBSTACK_WORD_CAP", "3500")
     assert composer.word_range_for(composer.PODCAST_PROFILE) == (3000, 4000)   # 2026-10-19 加長
-    assert composer.word_range_for(composer.COMPANY_PROFILE) == (4000, 5500)
+    assert composer.word_range_for(composer.COMPANY_PROFILE) == (3000, 4000)
     floor, cap = composer.word_range_for(composer.WEEKLY_PROFILE)   # 主編精選照舊吃全域上限
     assert cap == 3500
 

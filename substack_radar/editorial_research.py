@@ -846,6 +846,12 @@ def _age_note(url: str, excerpt: str) -> str:
             "只能當歷史敘述，不可寫成現況）")
 
 
+def _tier_label(url: str) -> str:
+    """來源等級（2026-11-21）：D 級整理站只能當線索，數字要找 A/B 級出處。"""
+    from substack_radar.source_tier import LABEL, tier
+    return LABEL[tier(url)]
+
+
 def prompt_block(sources: Sequence[ResearchSource]) -> str:
     """Render a compact, attributable evidence pack for the final writer."""
     validated = validate_research_sources(sources)
@@ -854,7 +860,7 @@ def prompt_block(sources: Sequence[ResearchSource]) -> str:
         blocks.append(
             f"[{index}] {source.title} {_age_note(source.url, source.excerpt)}\n"
             f"Publisher: {source.publisher}\n"
-            f"Role: {source.evidence_role}\n"
+            f"Role: {source.evidence_role}｜{_tier_label(source.url)}\n"
             f"URL: {source.url}\n"
             f"Readable evidence: {source.excerpt}"
         )

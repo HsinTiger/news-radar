@@ -197,7 +197,11 @@ def _number_in(num: str, text_flat: str) -> bool:
             have.add(round(float(m), 4))
         except ValueError:
             pass
-    return any(round(alt, 4) in have for alt in (v, v / 10, v * 100, v / 1000, v * 10))
+    alts = (v, v / 10, v * 100, v / 1000, v * 10)
+    if any(round(alt, 4) in have for alt in alts):
+        return True
+    # 億↔百萬換算會差在四捨五入（4161.6 億 = 416,160 百萬，年報寫 416,161）：大數字容許萬分之五
+    return any(h >= 1000 and abs(h - alt) <= h * 0.0005 for alt in alts for h in have)
 
 
 def verify(item: dict, article: str, pages: dict[str, str]) -> tuple[str, str, str, str]:

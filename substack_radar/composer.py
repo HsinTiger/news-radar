@@ -418,8 +418,9 @@ WEEKLY_PROFILE = EditorialProfile(
 PODCAST_PROFILE = EditorialProfile(
     "weekly", 3000, 4000, "10–13", PODCAST_EDITORIAL_PATH, "podcast"
 )
+# 2026-11-21 週末旗艦：上下篇合計 6000–8000 字（約 20–25 分鐘），一篇 3000–4000 字，通勤讀得完。
 COMPANY_PROFILE = EditorialProfile(
-    "weekly", 4000, 5500, "13–18", COMPANY_EDITORIAL_PATH, "company"
+    "weekly", 3000, 4000, "10–13", COMPANY_EDITORIAL_PATH, "company"
 )
 # 週二、四的 AI 專欄（2026-10-18）：寫稿流程跟 podcast 一樣（一集訪談＋延伸研究），
 # 只換寫作框架。article_kind 維持 "podcast"，所有 podcast 的提示與閘門照用。

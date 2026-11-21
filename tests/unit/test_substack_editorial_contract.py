@@ -105,7 +105,7 @@ def test_weekly_prompt_requires_synthesis_countercase_and_watch_signal() -> None
     )
     combined = system + prompt
 
-    assert "4000–5500" in combined   # 2026-10-19 起公司拆解 4000–5500 字
+    assert "3000–4000" in combined   # 2026-11-21 週末旗艦：一篇 3000–4000、上下篇合計 6000–8000
     assert "最強反方" in combined
     assert "後續訊號" in combined
     assert "財報事實" in combined

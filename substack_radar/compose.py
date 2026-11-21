@@ -1043,10 +1043,11 @@ def company_series_brief(part: int, today: date | None = None) -> str:
     """附在公司財報事實後面的系列說明。下篇會帶上篇的標題、副標、開場與網址。"""
     if part == 1:
         return (
-            "\n\n## 本篇定位：週末兩篇系列的上篇（商業模式地圖）\n"
-            "- 只寫這門生意怎麼運作：價值鏈（從拿到需求或原料到交付收錢）、上下游與議價力、市場與競爭、"
-            "生產方式與成本結構、商業模式的可取之處與弱點。\n"
-            "- 財務品質、資本報酬、估值與五級評價留給明天的下篇；本篇只用到說明商業模式所需的數字。\n"
+            "\n\n## 本篇定位：週末旗艦的上篇（光環）\n"
+            "- 先定一個貫穿上下篇的核心矛盾，開場拋出來。\n"
+            "- 寫這門生意怎麼賺錢：用一筆真實交易把錢怎麼流走一圈、誰有議價力；再挑 2～3 個轉折點寫成場景，"
+            "說明它怎麼走到今天、為什麼贏。\n"
+            "- 依賴、風險、獲利品質、估值與五級評價留給明天的下篇（另一面）；本篇只用到說明生意所需的數字。\n"
             "- 標題是一句自然的話、公司名寫進句子裡，不用冒號；不用自己寫（上），系統會在標題結尾加。"
             "結尾最後一句預告明天下篇要回答的問題。\n"
         )
@@ -1083,10 +1084,11 @@ def company_series_brief(part: int, today: date | None = None) -> str:
         recap = (f"- 上篇〈{prev.get('title')}〉{('（' + url + '）') if url else ''}："
                  f"{prev.get('subtitle') or ''}\n- 上篇開場：{prev.get('lead')}\n")
     focus = (prev.get("focus") if prev else None) or (
-        "上篇已經講完價值鏈，不要重講；專注獲利品質（一次性項目先查清楚）、資本報酬與再投資機會、"
-        "五級評價與三個理由、風險分等級、目前估值隱含的市場預期。")
+        "上篇已經講完光環（錢怎麼流、轉折點），不要重講；這篇寫另一面：它依賴誰（大客戶、供應商、地區、通路）、"
+        "公司自己承認的風險、獲利品質（一次性項目先查清楚）、資本報酬、五級評價、估值隱含的預期、跟台灣的關係，"
+        "最後回答上篇開場的核心矛盾。")
     return (
-        "\n\n## 本篇定位：週末兩篇系列的下篇\n"
+        "\n\n## 本篇定位：週末旗艦的下篇（另一面）\n"
         + recap +
         f"- 開頭 2–3 句接住上篇的結論，讓沒讀過上篇的人也跟得上。{focus}\n"
         "- 標題是一句自然的話、公司名寫進句子裡，不用冒號；不用自己寫（下），系統會在標題結尾加。"
@@ -1577,6 +1579,8 @@ EXIT_NO_MATERIAL = 10   # 主編投稿但素材沒抓到：已通知，drain 不
 # 延伸調研找不到 5 個可用來源（2026-11-21）：還沒動筆就停，排程可以換一家公司再試。原本跟「草稿已建好、
 # 紀錄待對帳」共用 6，排程分不出來，不敢重試——11/14 寶僑就這樣整天沒有賺錢有道。
 EXIT_RESEARCH_SHORT = 11
+# 文件組交回的 SEC 一手文件（ResearchSource 格式），排在研究包最前面。
+_FILINGS_SOURCES: list = []
 
 
 def _cookie_fingerprint() -> str:
@@ -2651,6 +2655,27 @@ async def _run_inner(args: argparse.Namespace) -> int:
                 "開場前先回答：台灣讀者為什麼要在意這家公司？例如台灣供應鏈有沒有它的訂單、台灣人用不用得到它的產品、"
                 "台股有沒有同類公司可以對照。研究資料裡有台灣的事實就從這裡起手；沒有就用讀者處境的假設情境，"
                 "不要自己補數字或事件，連不自然就不要硬套。")) if x)
+        # 文件組（2026-11-21 週末旗艦）：美國公司直接讀 SEC 一手文件，交回程式驗證過的證據卡；
+        # 年度數字同時當隱藏抽查的標準答案。依申報文件快取，週日下篇直接重用。
+        if topic_category == "us_stocks" and os.getenv("SUBSTACK_FILINGS_DESK", "1") == "1":
+            try:
+                from substack_radar import filings_desk
+                _pack = filings_desk.build_pack(ticker, source.get("reader_question") or "")
+                if _pack:
+                    raw_content += filings_desk.pack_md(_pack)
+                    source["sec_truth"] = _pack.truth
+                    source["filings"] = _pack.filings
+                    source["filings_cards"] = len(_pack.cards)
+                    _FILINGS_SOURCES[:] = filings_desk.as_research_sources(_pack)
+            except Exception as exc:
+                print(f"[Filings] ⚠️ 文件組失敗，照舊只用網路調研：{type(exc).__name__}: {str(exc)[:120]}")
+        # 週末旗艦寫稿用 Claude 主力模型（信哥 2026-11-21 同意）；調研仍走免費模型。
+        _flagship = os.getenv("SUBSTACK_FLAGSHIP_CLAUDE_MODEL", "opus").strip()
+        if _flagship:
+            os.environ["CLAUDE_MODEL"] = _flagship        # 審稿小修（quality_loop）每次呼叫讀環境
+            import src.llm_brain as _lb
+            _lb.CLAUDE_MODEL = _flagship                  # 第一稿（call_for_json）讀模組常數
+            print(f"[Company] 週末旗艦：寫手改用 Claude {_flagship}")
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
         # ranked) → yaml round-robin fallback. --topic override always wins.
@@ -2799,6 +2824,11 @@ async def _run_inner(args: argparse.Namespace) -> int:
             )
             research_sources = research_bundle.evidence_sources
             social_reach = research_bundle.social_reach
+            if mode == "company" and _FILINGS_SOURCES:
+                from substack_radar.editorial_research import ResearchSource as _RS, validate_research_sources
+                research_sources = validate_research_sources(
+                    [_RS.model_validate(s) for s in _FILINGS_SOURCES] + list(research_sources))
+                print(f"[Filings] 研究包最前面放了 {len(_FILINGS_SOURCES)} 份 SEC 一手文件")
         except InsufficientResearchError as exc:
             print(f"[EditorialResearch] ❌ {exc}")
             notify_substack_failure(
@@ -3113,6 +3143,13 @@ async def _run_inner(args: argparse.Namespace) -> int:
             warnings.append(f"[品質迴圈未通過] 寫手沒拿到能寫的素材，寫成了說明信（{'、'.join(_refusal[:3])}）"
                             "——不要發，查素材為什麼沒送到。")
             print(f"[Audit] 🛑 這篇是說明信，不是文章：{'、'.join(_refusal[:3])}")
+        if mode == "company" and os.getenv("SUBSTACK_PROBES", "1") == "1":
+            # 隱藏抽查（2026-11-21）：寫手不知道會查哪裡；沒過的交給發稿前的糾錯台。
+            from substack_radar.probes import citation_probe, truth_probe
+            _probe = truth_probe(draft.body_markdown, source.get("sec_truth") or {})
+            _probe += citation_probe(draft.body_markdown)
+            warnings += _probe
+            print(f"[Probe] 隱藏抽查：{len(_probe)} 處要糾錯" if _probe else "[Probe] 隱藏抽查通過")
     except Exception as exc:
         print(f"[Audit] ⚠️ 定稿體檢重算失敗，沿用第一稿的結果：{exc}")
     write_article_full_md(
