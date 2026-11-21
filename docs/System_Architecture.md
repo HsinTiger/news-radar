@@ -707,6 +707,29 @@ NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）�
 - **上下篇規格**：上篇寫光環（錢怎麼流、轉折點），下篇寫另一面（依賴、風險、獲利品質、評價、台灣），貫穿一個核心矛盾。詳見 `config/editorial_company.md`。
 - 還沒做（第 2、3 步）：聲音組、反方組、時間線組；每週從失敗案例學習；平日三個專欄改成 2000–3000 字並套用同一套做法。
 
+### 6.12 週末旗艦第 2、3 步：台股文件組、調研小組、每週學習（2026-11-21）
+
+三張工單由 agy 實作：WO-1、WO-3 用 Sonnet 5.5，WO-2 用 Gemini 4 Hydrogen。Claude 寫規格、稽核、串接。稽核另外跑一組隱藏測試，放在 repo 外的 `~/news_radar_hidden_tests/`，agy 看不到。計畫見 `docs/flagship_research_plan.md`。
+
+- **台股文件組** `tw_filings.py`：
+  - 資料來源：證交所／櫃買中心 OpenAPI 的月營收與季累計損益表，零 token。
+  - 淨利取「歸屬於母公司業主」，跟新聞、法說會同一個口徑。
+  - truth 帶台幣金額；`probes.truth_probe` 會比對「億元」寫法，對得上年份和累計期間才判斷。
+- **調研小組** `research_teams.py`：
+  - 三組：聲音組 voices、反方組 counter、時間線組 timeline。
+  - 預算：每組最多 4 個查詢、讀 6 頁、呼叫 6 次模型；達到驗收標準就提早停。
+  - 程式驗證：引句、說話者要在引句附近、年份要在引句附近、數字要在引句裡。
+  - 同一個網域最多 3 張卡；D 級來源不讀。
+  - 依週次快取，週日下篇直接重用。
+  - 在公司模式串接；研究包最多只占 4 個來源，留位置給網路調研。
+- **每週學習**：
+  - 程式：`lessons.py` 加上 `scripts/weekly_learning.py`。
+  - 流程：收集失敗案例 → 分類 → 便宜模型提出教訓 → 程式驗收 → 跑單元測試，沒全綠就還原 → 寄出週報（主旨開頭【每週學習】）。
+  - 程式驗收的條件：80 字以內、不含禁用詞、跟現有教訓不重複、要有具體動作；跟口吻規則衝突的不收（例如叫寫手「附上原文」）。「其他」這一類不提案。
+  - 採用的教訓寫進 `config/lessons/writer.md`、`researcher.md`，各最多 12 條，`composer._build_user_prompt` 會附給寫手。
+  - 排程檔：`scripts/launchd/com.hsin.news-radar.weekly-learning.plist`（每週一 08:45），要由信哥手動註冊。
+- **讀卡模型**：文件組、調研小組、每週學習共用 `filings_desk._default_chat`，優先用 agy Gemini 3.8 Flash，免費閘道當後備。
+
 ## 7. Case studies — failures that forced doc updates
 
 ### 7.1 Gemini 429 × Claude CLI not-in-PATH = silent pipeline stall
