@@ -17,7 +17,7 @@ from datetime import date
 from substack_radar.fix_desk import FLAG, _number_in, page_text
 
 _LABELS = {
-    "營收": r"(總)?營收|營業收入|銷售額",
+    "營收": r"(?:(總)?營收|營業收入|銷售額)(?!成本|占|佔|比重|比例)",   # 「營收成本」是成本，不是營收（MSFT 預演）
     "毛利": r"毛利(?!率)",
     "營業利益": r"營業利益|營益(?!率)|營業利潤",
     "淨利": r"淨利(?!率)|稅後淨利|淨收入",
@@ -40,7 +40,8 @@ _TWD_PERIOD = {
     4: re.compile(r"全年|整年|前四季|前\s*4\s*季|第四季累計|第\s*4\s*季累計|1" + _RNG + r"12\s*月|前十二個月|前\s*12\s*個月"),
 }
 _SINGLE_Q = re.compile(r"第\s*[一二三四1-4]\s*季(?!\s*累計)|單季|當季|Q[1-4](?!\s*累計)")
-_SEGMENT = re.compile(r"地區|分部|部門|大中華|中國|歐洲|美洲|日本|亞太|服務|iPhone|Mac|iPad|產品線|業務|事業")
+_SEGMENT = re.compile(r"地區|分部|部門|大中華|中國|歐洲|美洲|日本|亞太|服務|iPhone|Mac|iPad|產品線|業務|事業|"
+                      r"雲端|Azure|Office|Windows|LinkedIn|Xbox|遊戲|廣告|硬體|軟體|授權|訂閱|資料中心|晶片|AI")
 
 
 def _sentences(article: str) -> list[str]:

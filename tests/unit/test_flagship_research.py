@@ -105,3 +105,9 @@ def test_citation_probe_only_checks_the_linked_clause():
     art = "市值一度摸到 5.1 兆美元；[分析師平均目標價是 343.69 美元，年漲 29%](https://www.tradingview.com/x)。"
     page = "<p>Price target 343.69, up 29% this year</p>"
     assert probes.citation_probe(art, fetch=lambda u: page, seed="x") == []
+
+
+def test_truth_probe_skips_cost_of_revenue_and_cloud_segment():
+    art = ("FY2026 全年微軟雲端營收 2,144 億美元，成長 23%。"
+           "FY2026 全年營收成本多出 26 億美元。")
+    assert probes.truth_probe(art, TRUTH) == []
