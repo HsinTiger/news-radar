@@ -2669,13 +2669,12 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     _FILINGS_SOURCES[:] = filings_desk.as_research_sources(_pack)
             except Exception as exc:
                 print(f"[Filings] ⚠️ 文件組失敗，照舊只用網路調研：{type(exc).__name__}: {str(exc)[:120]}")
-        # 週末旗艦寫稿用 Claude 主力模型（信哥 2026-11-21 同意）；調研仍走免費模型。
-        _flagship = os.getenv("SUBSTACK_FLAGSHIP_CLAUDE_MODEL", "opus").strip()
+        # 週末旗艦寫稿用 agy 上最強的模型（信哥 2026-11-21：產文預設改用 agy；旗艦用 Opus）。
+        # AGY_MODEL 每次組模型鏈時讀環境，會排到鏈首；不可用時照常往下備援。
+        _flagship = os.getenv("SUBSTACK_FLAGSHIP_AGY_MODEL", "Claude Opus 5.5 (High)").strip()
         if _flagship:
-            os.environ["CLAUDE_MODEL"] = _flagship        # 審稿小修（quality_loop）每次呼叫讀環境
-            import src.llm_brain as _lb
-            _lb.CLAUDE_MODEL = _flagship                  # 第一稿（call_for_json）讀模組常數
-            print(f"[Company] 週末旗艦：寫手改用 Claude {_flagship}")
+            os.environ["AGY_MODEL"] = _flagship
+            print(f"[Company] 週末旗艦：寫手改用 agy {_flagship}")
     else:
         # Evening (no --source-file): harvested inspiration pool (token-free,
         # ranked) → yaml round-robin fallback. --topic override always wins.
@@ -3143,8 +3142,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
             warnings.append(f"[品質迴圈未通過] 寫手沒拿到能寫的素材，寫成了說明信（{'、'.join(_refusal[:3])}）"
                             "——不要發，查素材為什麼沒送到。")
             print(f"[Audit] 🛑 這篇是說明信，不是文章：{'、'.join(_refusal[:3])}")
-        if mode == "company" and os.getenv("SUBSTACK_PROBES", "1") == "1":
+        if os.getenv("SUBSTACK_PROBES", "1") == "1":
             # 隱藏抽查（2026-11-21）：寫手不知道會查哪裡；沒過的交給發稿前的糾錯台。
+            # 引用抽查每個專欄都跑；年度數字比對只有公司稿（有 SEC 標準答案）才跑。
             from substack_radar.probes import citation_probe, truth_probe
             _probe = truth_probe(draft.body_markdown, source.get("sec_truth") or {})
             _probe += citation_probe(draft.body_markdown)

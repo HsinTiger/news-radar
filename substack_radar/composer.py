@@ -416,20 +416,21 @@ WEEKLY_PROFILE = EditorialProfile(
 # 這兩個專欄不再吃 .env 的 SUBSTACK_WORD_CAP（見 word_range_for）。
 # 2026-10-19 信哥：1800–2500 字只夠下結論、講不了故事 → 各加 1000–1500 字，要有起承轉合。
 PODCAST_PROFILE = EditorialProfile(
-    "weekly", 3000, 4000, "10–13", PODCAST_EDITORIAL_PATH, "podcast"
+    "weekly", 2000, 3000, "7–10", PODCAST_EDITORIAL_PATH, "podcast"
 )
 # 2026-11-21 週末旗艦：上下篇合計 6000–8000 字（約 20–25 分鐘），一篇 3000–4000 字，通勤讀得完。
 COMPANY_PROFILE = EditorialProfile(
     "weekly", 3000, 4000, "10–13", COMPANY_EDITORIAL_PATH, "company"
 )
+# 2026-11-21 週末旗艦改版：平日三個專欄改成 2000–3000 字（約 7–10 分鐘），調研力氣集中到週末。
 # 週二、四的 AI 專欄（2026-10-18）：寫稿流程跟 podcast 一樣（一集訪談＋延伸研究），
 # 只換寫作框架。article_kind 維持 "podcast"，所有 podcast 的提示與閘門照用。
 AI_PROFILE = EditorialProfile(
-    "weekly", 3000, 4000, "10–13", AI_EDITORIAL_PATH, "podcast"
+    "weekly", 2000, 3000, "7–10", AI_EDITORIAL_PATH, "podcast"
 )
 # Hsin選觀點（主編親自投稿，2026-11-13）：素材只是引子，寫成原創的提問，不是翻譯或摘要。
 HSIN_PROFILE = EditorialProfile(
-    "weekly", 3000, 4000, "10–13", HSIN_EDITORIAL_PATH, "weekly"
+    "weekly", 2000, 3000, "7–10", HSIN_EDITORIAL_PATH, "weekly"
 )
 
 

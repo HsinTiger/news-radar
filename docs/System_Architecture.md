@@ -703,7 +703,7 @@ NIM 上來得及用的開源模型只有 glm-5.3-flash。實測（2026-11-16）�
   - `citation_probe`：依日期當種子，隨機抽 4 個「帶連結又帶數字」的分句，重抓網頁，確認數字在上面；D 級整理站優先抽。
   - 沒過的標成 `[跟素材不符，還沒修]`，交給發稿前的糾錯台（6.10）。
   - 實測：修正後的蘋果稿零誤報；修正前的稿子抓到「49% 掛錯來源」。
-- **寫手**：公司稿改用 Claude `SUBSTACK_FLAGSHIP_CLAUDE_MODEL`（預設 opus），同時設定環境變數和 `src.llm_brain.CLAUDE_MODEL`。
+- **寫手**（11-21 晚改）：每日產文預設改走 agy（`.env` 的 `SUBSTACK_COMPOSER_BACKEND=antigravity_cli,gateway,claude_cli`；鏈為 Sonnet 5.5 → Gemini 4 Neon → Opus 5.5 → 3.8 Flash，`AGY_AUTO_LATEST=0`）。週末旗艦設 `AGY_MODEL=SUBSTACK_FLAGSHIP_AGY_MODEL`（預設 Claude Opus 5.5 (High)）。
 - **上下篇規格**：上篇寫光環（錢怎麼流、轉折點），下篇寫另一面（依賴、風險、獲利品質、評價、台灣），貫穿一個核心矛盾。詳見 `config/editorial_company.md`。
 - 還沒做（第 2、3 步）：聲音組、反方組、時間線組；每週從失敗案例學習；平日三個專欄改成 2000–3000 字並套用同一套做法。
 

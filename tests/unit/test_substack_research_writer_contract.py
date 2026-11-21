@@ -55,7 +55,7 @@ def test_deep_profiles_have_type_specific_length_and_structure(monkeypatch) -> N
     assert podcast.name == "weekly" and podcast.article_kind == "podcast"
     assert company.name == "weekly" and company.article_kind == "company"
     # 2026-10-19 信哥定案：podcast／智取未來 3000–4000、賺錢有道 4000–5500（見 composer 的 PROFILE 註解）
-    assert composer.word_range_for(podcast) == (3000, 4000)
+    assert composer.word_range_for(podcast) == (2000, 3000)
     assert composer.word_range_for(company) == (3000, 4000)
     assert composer.word_range_for(daily) == (1800, 2800)
 
