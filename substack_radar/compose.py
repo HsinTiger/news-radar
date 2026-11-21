@@ -2669,9 +2669,9 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     _FILINGS_SOURCES[:] = filings_desk.as_research_sources(_pack)
             except Exception as exc:
                 print(f"[Filings] ⚠️ 文件組失敗，照舊只用網路調研：{type(exc).__name__}: {str(exc)[:120]}")
-        # 週末旗艦寫稿用 agy 上最強的模型（信哥 2026-11-21：產文預設改用 agy；旗艦用 Opus）。
+        # 週末旗艦寫稿用 agy 上最強的 Gemini（信哥 2026-11-21：Gemini 系優先，依任務適配）。
         # AGY_MODEL 每次組模型鏈時讀環境，會排到鏈首；不可用時照常往下備援。
-        _flagship = os.getenv("SUBSTACK_FLAGSHIP_AGY_MODEL", "Claude Opus 5.5 (High)").strip()
+        _flagship = os.getenv("SUBSTACK_FLAGSHIP_AGY_MODEL", "Gemini 4 Neon (XHigh)").strip()
         if _flagship:
             os.environ["AGY_MODEL"] = _flagship
             print(f"[Company] 週末旗艦：寫手改用 agy {_flagship}")

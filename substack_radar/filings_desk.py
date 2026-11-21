@@ -266,8 +266,18 @@ def verify_card(raw: dict, chunk: str) -> tuple[bool, str]:
     return True, ""
 
 
+EXTRACT_AGY_MODEL = os.getenv("SUBSTACK_EXTRACT_AGY_MODEL", "Gemini 3.8 Flash (Medium)")
+
+
 def _default_chat(prompt: str) -> tuple[str, str]:
-    from substack_radar.quality_loop import _LAST_USAGE, _oss_chat
+    """讀原文交證據卡：大量、機械，用 agy 的 Gemini Flash（信哥 2026-11-21：Gemini 系優先、依任務適配）；
+    不可用時退回免費閘道。調研小組、每週學習也共用這個函式。"""
+    from substack_radar.quality_loop import _LAST_USAGE, _oss_chat, _run_agy_once, agy_family_dead
+    if EXTRACT_AGY_MODEL and not agy_family_dead(EXTRACT_AGY_MODEL):
+        try:
+            return _run_agy_once(prompt, EXTRACT_AGY_MODEL, 600), f"agy {EXTRACT_AGY_MODEL}"
+        except Exception as exc:                   # noqa: BLE001
+            print(f"[Filings] ⚠️ agy {EXTRACT_AGY_MODEL} 不可用，改用閘道：{str(exc)[:80]}")
     text = _oss_chat("fast", prompt, 600)
     return text, str(_LAST_USAGE.get("model") or "fast")
 
