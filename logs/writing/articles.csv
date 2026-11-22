@@ -40,3 +40,5 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-20,04:10,2026-11-20 04:00 podcast,吹牛免稅,黃仁勳回不去？晶片調查卡住了｜吹牛免稅,10.4,原生 Claude 方案 (Claude CLI / Pro·Max) · 模型 claude-haiku-5-5,gemini-2.5-flash＋glm-5.3-flash,2,0,Y,225705659,0,9
 2026-11-20,17:18,2026-11-20 16:23 podcast,吹牛免稅,六個月進你家？成功率還不到六成｜吹牛免稅,55.0,antigravity_cli · 模型 Claude Opus 4.6 (Thinking),gemini-2.5-flash＋glm-5.3-flash,3,0,Y,225770305,0,5
 2026-11-21,02:35,2026-11-21 00:09 company,賺錢有道,蘋果賺的錢，不在你以為的那一段（上）｜賺錢有道,146.1,gateway · 模型 deepseek-v4.1-flash→glm-5.3-flash,gemini-3.5-flash＋gemini-2.5-flash,3,2,Y,225836568,0,0
+2026-11-22,00:14,2026-11-21 23:29 company,賺錢有道,微軟越賺越多，現金卻變少了（上）｜賺錢有道,45.7,antigravity_cli · 模型 Gemini 4 Neon (XHigh),glm-5.3-flash,3,0,Y,,0,7
+2026-11-22,04:58,2026-11-22 04:00 company,賺錢有道,蘋果越賣越貴，毛利卻在縮水（下）｜賺錢有道,58.2,antigravity_cli · 模型 Gemini 4 Neon (XHigh),glm-5.3-flash,3,0,Y,225971697,0,9
