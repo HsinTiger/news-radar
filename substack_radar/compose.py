@@ -93,6 +93,7 @@ from substack_radar.composer import (  # noqa: E402
     audit_substack_draft,
     autofix_cjk_spacing,
     autofix_dashes,
+    autofix_fillers,
     autofix_nominalisation,
     autofix_heading_colons,
     autofix_mainland_terms,
@@ -2983,6 +2984,7 @@ async def _run_inner(args: argparse.Namespace) -> int:
     fixes += autofix_heading_colons(draft)   # 主題：註解 → 擇一
     fixes += autofix_nominalisation(draft)   # 進行評估 → 評估
     fixes += autofix_dashes(draft)  # 破折號 ×N → 逗號（跳過 deterministic blockquotes）
+    fixes += autofix_fillers(draft)  # 正文「其實」只留第一次，其餘自動刪除
     fixes += autofix_cjk_spacing(draft)  # 盤古之白：中英數間補空格 (skip code/quote/URL)
     if fixes:
         print(f"[AutoFix] 🔧 {len(fixes)} 處自動修正：")
@@ -3085,6 +3087,8 @@ async def _run_inner(args: argparse.Namespace) -> int:
                     remaining = _evaluate(body, **_eval_kwargs)
                     print(f"[QualityLoop] 領域稽核後複驗：{len(remaining)} 項違規")
             draft.body_markdown = body
+            for _f in autofix_fillers(draft):
+                print(f"[AutoFix] 🔧 審稿後清理：{_f}")
             for v in remaining:
                 warnings.append(f"[品質迴圈未通過] {v.kind}：{v.detail}")
             if remaining:

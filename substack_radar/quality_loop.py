@@ -903,7 +903,7 @@ def _feedback(violations: list[Violation], items: list[dict] | None) -> str:
 
 def length_feedback(article_md: str, word_range: tuple[int, int] | None) -> list[dict]:
     """字數不在範圍內 → 一條退稿意見（信哥 2026-10-19：寫太短只剩結論、沒有故事）。
-    只用來退稿重寫，不算進通過與否（那只看確定性閘門）。"""
+    略超上限時標「結構=False」，走小修整句刪除；差距太大才標「結構=True」整篇重寫。"""
     if not word_range:
         return []
     from substack_radar.composer import _count_chinese_chars
@@ -912,10 +912,17 @@ def length_feedback(article_md: str, word_range: tuple[int, int] | None) -> list
         return [{"問題": f"篇幅不足：目前約 {n} 字，要寫到 {lo}–{hi} 字",
                  "原句": "（全文）",
                  "建議改法": "回到原始素材，把故事和脈絡說完整：來賓／主角是誰、在什麼處境、事情怎麼一步步發展、"
-                             "他舉的例子與原話、哪裡出現轉折。用段落敘事補，不要加條列、不要重複結論。"}]
+                             "他舉的例子與原話、哪裡出現轉折。用段落敘事補，不要加條列、不要重複結論。",
+                 "結構": True}]
     if n > hi * 1.25:
         return [{"問題": f"篇幅過長：目前約 {n} 字，上限 {hi} 字", "原句": "（全文）",
-                 "建議改法": "刪掉不影響主線的支線與重複的論證，保留故事主線。"}]
+                 "建議改法": "刪掉不影響主線的支線與重複的論證，保留故事主線。",
+                 "結構": True}]
+    if n > hi:
+        return [{"問題": f"篇幅略長：目前約 {n} 字，上限 {hi} 字", "原句": "（全文）",
+                 "建議改法": f"請整句刪掉約 {n - hi} 字（把要刪的原句「改成」留空字串）。"
+                             "優先刪重複的論證和支線，數字、引句、出處連結不能刪。",
+                 "結構": False}]
     return []
 
 
@@ -1109,12 +1116,14 @@ def _lead_round(current: str, violations, pack: str) -> tuple[str, bool]:
 
 
 def _patch_round(current: str, violations, audit_items, style_items, pack: str,
-                 sources: list[dict] | None) -> tuple[str, int]:
+                 sources: list[dict] | None, length_items: list[dict] | None = None) -> tuple[str, int]:
     issues = [f"- [程式檢查] {v.kind}：{v.detail}（{v.fix_hint}）" for v in violations]
     issues += [f"- [跟素材不符] {it.get('問題', '')}｜原句：{it.get('原句', '')}"
                f"｜素材原文：{str(it.get('素材原文', ''))[:300]}｜方向：{it.get('建議改法', '')}" for it in audit_items]
     issues += [f"- [文風] {it.get('問題', '')}｜原句：{it.get('原句', '')}｜方向：{it.get('建議改法', '')}"
                for it in style_items]
+    issues += [f"- [篇幅] {it.get('問題', '')}｜原句：{it.get('原句', '')}｜方向：{it.get('建議改法', '')}"
+               for it in (length_items or [])]
     listed = "\n".join(f"- {s.get('publisher') or ''}｜{s.get('title') or ''}｜{s.get('url') or ''}"
                        for s in (sources or [])[:10]) or "（沒有）"
     prompt = _PATCH_PROMPT.format(issues="\n".join(issues), sources=listed, article=current)
@@ -1174,9 +1183,9 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
         if os.getenv("SUBSTACK_COLUMN") == "hsin" and len(sources or []) >= 3:
             from substack_radar.style_gate import retelling_feedback
             style_items += retelling_feedback(current)      # 有延伸資料卻還在重述來源＝要重寫，不是小修
-        # 整篇重寫只留給「改幾句改不好」的：太短、插了名詞清單、還在轉述原素材。
-        # 開場太長／貼標籤只改開場（_lead_round），其他段落不動。
-        structural = (bool(too_short)
+        # 整篇重寫只留給「改幾句改不好」的：太短／過長（結構=True）、插了名詞清單、還在轉述原素材。
+        # 開場太長／貼標籤只改開場（_lead_round），其他段落不動；篇幅略長（結構=False）走小修。
+        structural = (any(it.get("結構", True) for it in too_short)
                       or any(re.search(r"專有名詞註解|還在轉述原素材", str(i.get("問題", ""))) for i in style_items))
         lead_fix = any(str(v.kind).startswith("A1") for v in violations)
         if attempt == 0:
@@ -1221,8 +1230,10 @@ def _run_review_loop_ledger(article_md: str, *, fact_block: str, eval_kwargs: di
                 if changed:
                     report.patches += 1
             rest_violations = [v for v in violations if not str(v.kind).startswith("A1")]
-            if rest_violations or pending or style_items:
-                revised, applied = _patch_round(current, rest_violations, pending, style_items, pack, sources)
+            length_patches = [it for it in too_short if not it.get("結構", True)]
+            if rest_violations or pending or style_items or length_patches:
+                revised, applied = _patch_round(current, rest_violations, pending, style_items, pack, sources,
+                                                length_items=length_patches)
                 if applied:
                     current, changed = revised, True
                     report.patches += applied

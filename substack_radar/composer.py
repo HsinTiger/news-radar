@@ -771,6 +771,122 @@ def autofix_dashes(draft: "SubstackDraft", keep: int = 1) -> List[str]:
     return []
 
 
+_FILLER_PROTECT = re.compile(
+    r"`[^`\n]*`"
+    r"|「(?:(?!\n\n)[^」])*」"
+    r"|『(?:(?!\n\n)[^』])*』"
+    r"|“(?:(?!\n\n)[^”])*”"
+)
+_FILLER_PUNCT_PRIO = {"，": 1, "、": 2, "；": 3, "：": 3, "。": 4, "！": 4, "？": 4}
+
+
+def _strip_filler_in_gap(gap: str, budget: int) -> tuple[str, int, int]:
+    """Strip excess '其實' from an unprotected prose segment without leaving double punctuation."""
+    if "其實" not in gap:
+        return gap, budget, 0
+    res = ""
+    last = 0
+    removed = 0
+    for m in re.finditer("其實", gap):
+        start, end = m.span()
+        res += gap[last:start]
+        if budget > 0:
+            budget -= 1
+            res += "其實"
+            last = end
+            continue
+        removed += 1
+        if gap[end:end + 1] == "，":
+            end += 1
+        p_left = res[-1:]
+        p_right = gap[end:end + 1]
+        if p_left in _FILLER_PUNCT_PRIO and p_right in _FILLER_PUNCT_PRIO:
+            if _FILLER_PUNCT_PRIO[p_right] > _FILLER_PUNCT_PRIO[p_left]:
+                res = res[:-1]
+            else:
+                end += 1
+        elif p_left == " " and p_right == " ":
+            end += 1
+        last = end
+    res += gap[last:]
+    return res, budget, removed
+
+
+def autofix_fillers(draft: "SubstackDraft", keep: int = 1) -> List[str]:
+    """正文裡的「其實」只保留第一次出現，其餘自動刪除（小標行也算正文）。
+
+    跳過、不算次數、也不改：
+      - 引號內：「」『』“”
+      - 行內程式碼 `...` 與 fenced code block
+      - `>` 開頭的引用行
+      - 第一條單獨一行的 `---` 之後的全部內容（取材區）
+    只動 draft.body_markdown，title 與 subtitle 不動；刪後不留連續標點。"""
+    body = getattr(draft, "body_markdown", None) or ""
+    if not body or "其實" not in body:
+        return []
+
+    lines = body.split("\n")
+    head_lines: List[str] = []
+    tail_lines: List[str] = []
+    in_fence = False
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.strip() == "---":
+            tail_lines = lines[idx:]
+            break
+        head_lines.append(line)
+
+    budget = keep
+    removed = 0
+
+    def _process_prose_chunk(chunk: str) -> str:
+        nonlocal budget, removed
+        if "其實" not in chunk:
+            return chunk
+        parts: List[str] = []
+        pos = 0
+        for pm in _FILLER_PROTECT.finditer(chunk):
+            gap, budget, n = _strip_filler_in_gap(chunk[pos:pm.start()], budget)
+            removed += n
+            parts.append(gap)
+            parts.append(pm.group(0))
+            pos = pm.end()
+        gap, budget, n = _strip_filler_in_gap(chunk[pos:], budget)
+        removed += n
+        parts.append(gap)
+        return "".join(parts)
+
+    out_lines: List[str] = []
+    prose_buf: List[str] = []
+    in_fence = False
+
+    def _flush_prose() -> None:
+        if prose_buf:
+            out_lines.append(_process_prose_chunk("\n".join(prose_buf)))
+            prose_buf.clear()
+
+    for line in head_lines:
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            _flush_prose()
+            in_fence = not in_fence
+            out_lines.append(line)
+            continue
+        if in_fence or stripped.startswith(">"):
+            _flush_prose()
+            out_lines.append(line)
+            continue
+        prose_buf.append(line)
+    _flush_prose()
+
+    if not removed:
+        return []
+    draft.body_markdown = "\n".join(out_lines + tail_lines)
+    return [f"[自動修正:填充詞] 其實 ×{removed} 刪除"]
+
+
 # 盤古之白：中文與半形英數之間補一個空格（借 baoyu-format-markdown 的排版慣例，
 # 不裝 skill）。保護 code span / markdown 連結 / URL / blockquote 不被插空格。
 _CJK = r"一-鿿㐀-䶿"
