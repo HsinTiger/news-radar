@@ -31,6 +31,8 @@ DEFAULT_MAX_PAGES = 6
 DEFAULT_MAX_CHATS = 6
 MAX_PAGES_PER_DOMAIN = 2
 MAX_CARDS_PER_DOMAIN = 3
+MAX_CARDS_PER_SPEAKER_ROLE = 3
+MAX_CARDS_PER_SPEAKER = 2
 MAX_PAGE_CHARS = 12000
 CARDS_PER_PAGE = 5
 MAX_CARDS_FOR_WRITER = 8
@@ -38,9 +40,9 @@ MAX_CARDS_FOR_WRITER = 8
 QUERY_TEMPLATES: dict[str, tuple[str, ...]] = {
     "voices": (
         "{s} CEO interview",
-        "{s} earnings call remarks",
-        "{s} analyst says",
-        "{s} customers switch",
+        "{s} analyst downgrade price target",
+        "{s} critics say",
+        "{s} rival competitor says",
     ),
     "counter": (
         "{s} criticism",
@@ -110,6 +112,10 @@ _NAME_SUFFIXES = frozenset({
     "jr", "sr", "ii", "iii", "iv", "phd", "md", "ceo", "cfo", "cto", "coo", "president",
     "vp", "dr", "mr", "ms", "mrs", "prof", "founder", "chair", "chairman",
 })
+_SPEAKER_TITLES = _NAME_SUFFIXES | frozenset({
+    "chief", "executive", "officer", "chairwoman", "chairperson",
+    "cofounder", "co-founder", "director", "miss", "sir",
+})
 
 _COMMON_RULES = """規則：
 - 「引句」必須從原文一字不差地複製（英文原文，1～3 句，最多 500 字元），不可改寫或拼湊不連續段落。
@@ -119,7 +125,7 @@ _COMMON_RULES = """規則：
 PROMPTS: dict[str, str] = {
     "voices": (
         "你是調研記者助理（聲音組），只讀下面這頁關於「{subject}」的原文，交回最多 {n} 張「公開發言證據卡」。\n"
-        "優先挑管理層、批評者、客戶、競爭對手、分析師或員工的具體發言與評價。\n\n"
+        "優先挑記者轉述的分析師、競爭對手、前員工、監管機關、批評者或客戶的具體發言與評價，比執行長自述優先。\n\n"
         + _COMMON_RULES
         + "\n- 「說話者」填發言者姓名或機構名（照原文英文拼寫，且必須出現在引句前後附近）。\n"
         "- 「說話者角色」只能是：管理層／批評者／客戶／對手／分析師／員工。\n"
@@ -429,6 +435,20 @@ def _normalize_speaker_role(raw_role: str) -> str:
     return _SPEAKER_ROLE_ALIASES.get(cleaned.lower(), _SPEAKER_ROLE_ALIASES.get(cleaned, cleaned))
 
 
+def _normalize_speaker_name(speaker: str) -> str:
+    """正規化說話者名稱（小寫、去括號附註與常見頭銜）以比對同一人。"""
+    raw = re.sub(r"\s+", " ", str(speaker or "")).strip().lower()
+    if not raw:
+        return ""
+    no_paren = re.sub(r"[\(（][^\)）]*[\)）]", " ", raw)
+    base = no_paren.strip() or raw
+    tokens = [
+        tok for tok in re.findall(r"[^\s,，.。;；:：!！?？]+", base)
+        if tok not in _SPEAKER_TITLES
+    ]
+    return " ".join(tokens) if tokens else base
+
+
 def _normalize_severity(raw_sev: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(raw_sev or "")).strip()
     return _SEVERITY_ALIASES.get(cleaned.lower(), _SEVERITY_ALIASES.get(cleaned, cleaned))
@@ -565,6 +585,37 @@ def _parse_cards(raw_out: str) -> list[dict]:
     return [it for it in (items or []) if isinstance(it, dict)]
 
 
+def _order_candidates(role: str, candidates: list[dict]) -> list[dict]:
+    """voices 且候選含 query_index 時依 query 分組輪流取；其餘照分數由高到低排。"""
+    by_score = sorted(candidates, key=lambda c: float(c.get("score") or 0.0), reverse=True)
+    if role != "voices" or not any(c.get("query_index") is not None for c in by_score):
+        return by_score
+
+    groups: dict[tuple[int, int | str], list[dict]] = {}
+    for c in by_score:
+        qi = c.get("query_index")
+        if qi is None:
+            key: tuple[int, int | str] = (1, 0)
+        elif isinstance(qi, int) and not isinstance(qi, bool):
+            key = (0, qi)
+        else:
+            try:
+                key = (0, int(qi))
+            except (TypeError, ValueError):
+                key = (1, str(qi))
+        groups.setdefault(key, []).append(c)
+
+    ordered_groups = [groups[k] for k in sorted(groups)]
+    out: list[dict] = []
+    i = 0
+    while any(i < len(g) for g in ordered_groups):
+        for g in ordered_groups:
+            if i < len(g):
+                out.append(g[i])
+        i += 1
+    return out
+
+
 def run_role(
     role: str,
     subject: str,
@@ -605,7 +656,7 @@ def run_role(
         stats["search_failed"] = True
         return TeamReport(role=role, cards=[], met=False, stats=stats)
 
-    sorted_cands = sorted(candidates, key=lambda c: float(c.get("score") or 0.0), reverse=True)
+    sorted_cands = _order_candidates(role, candidates)
 
     fetch_fn = fetch or _default_fetch
     chat_fn = chat or _default_chat
@@ -616,6 +667,8 @@ def run_role(
     seen_quotes: set[str] = set()
     pages_per_domain: Counter[str] = Counter()
     cards_per_domain: Counter[str] = Counter()
+    cards_per_speaker_role: Counter[str] = Counter()
+    cards_per_speaker: Counter[str] = Counter()
     pages_read = 0
     model_calls = 0
     model_name = ""
@@ -687,6 +740,16 @@ def run_role(
             if q_key in seen_quotes:
                 rejected["重複引句"] += 1
                 continue
+            if role == "voices":
+                if cards_per_speaker_role[card.speaker_role] >= MAX_CARDS_PER_SPEAKER_ROLE:
+                    rejected["同角色超過上限"] += 1
+                    continue
+                speaker_key = _normalize_speaker_name(card.speaker)
+                if cards_per_speaker[speaker_key] >= MAX_CARDS_PER_SPEAKER:
+                    rejected["同一人超過上限"] += 1
+                    continue
+                cards_per_speaker_role[card.speaker_role] += 1
+                cards_per_speaker[speaker_key] += 1
             seen_quotes.add(q_key)
             cards.append(card)
             cards_per_domain[domain] += 1

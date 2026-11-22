@@ -617,6 +617,7 @@ def _search_candidates(
                     "snippet": snippet,
                     # 相關性排在權威度前面：離題的路透不如切題的產業媒體。
                     "score": min(hits, 6) * 1.5 + signal - query_index * 0.2 - rank * 0.02,
+                    "query_index": query_index,
                 }
             )
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
