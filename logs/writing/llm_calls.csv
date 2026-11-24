@@ -637,3 +637,12 @@ time,run,stage,provider,model,ok,seconds,input_tokens,output_tokens,note
 2026-11-23T07:33:17,,,gateway,audit→glm-5.3-flash,Y,6.3,5043,268,
 2026-11-23T08:45:24,,,antigravity_cli,Gemini 3.8 Flash (Medium),Y,18.8,,,
 2026-11-23T08:45:37,,,antigravity_cli,Gemini 3.8 Flash (Medium),Y,13.2,,,
+2026-11-24T04:03:16,2026-11-24 04:00 podcast/ai,,gateway,audit→glm-5.3-flash,Y,44.4,5830,1113,
+2026-11-24T04:04:14,2026-11-24 04:00 podcast/ai,EditorialResearchBrief,antigravity_cli,Gemini 4 Argon (High),Y,56.2,,,
+2026-11-24T04:14:29,2026-11-24 04:00 podcast/ai,SubstackDraft,antigravity_cli,Gemini 4 Argon (High),Y,566.5,,,
+2026-11-24T04:15:01,2026-11-24 04:00 podcast/ai,,gateway,glm-5.3-flash,Y,31.8,9036,1752,
+2026-11-24T04:15:05,2026-11-24 04:00 podcast/ai,小修,antigravity_cli,Gemini 4 Argon (High),N,4.0,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-24T04:18:47,2026-11-24 04:00 podcast/ai,小修,antigravity_cli,Gemini 4 Neon (High),Y,221.4,,,
+2026-11-24T04:18:50,2026-11-24 04:00 podcast/ai,,antigravity_cli,Claude Sonnet 5.5 (High),N,3.5,,,"agy exit=3: error: Your AI credits balance is too low to continue. AGY_ERROR: {""short_error"":""RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. c"
+2026-11-24T04:19:08,2026-11-24 04:00 podcast/ai,,gateway,writer→glm-5.3-flash,Y,17.3,4467,874,
+2026-11-24T07:30:15,,,gateway,audit→glm-5.3-flash,Y,5.5,4235,262,

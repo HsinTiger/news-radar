@@ -43,3 +43,4 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-22,00:14,2026-11-21 23:29 company,賺錢有道,微軟越賺越多，現金卻變少了（上）｜賺錢有道,45.7,antigravity_cli · 模型 Gemini 4 Neon (XHigh),glm-5.3-flash,3,0,Y,,0,7
 2026-11-22,04:58,2026-11-22 04:00 company,賺錢有道,蘋果越賣越貴，毛利卻在縮水（下）｜賺錢有道,58.2,antigravity_cli · 模型 Gemini 4 Neon (XHigh),glm-5.3-flash,3,0,Y,225971697,0,9
 2026-11-23,04:28,2026-11-23 04:00 podcast,吹牛免稅,老股東先套現你買股卻接算力呆帳｜吹牛免稅,28.5,antigravity_cli · 模型 Gemini 4 Argon (High),glm-5.3-flash,3,0,Y,226096147,0,18
+2026-11-24,04:19,2026-11-24 04:00 podcast/ai,智取未來,模型讀超過 40% 就開始變笨｜智取未來,19.2,antigravity_cli · 模型 Gemini 4 Argon (High),glm-5.3-flash,2,0,Y,226248940,0,10
