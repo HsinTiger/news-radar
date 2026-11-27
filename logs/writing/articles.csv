@@ -46,3 +46,5 @@ date,time,run,column,title,minutes,writer,auditor,review_rounds,rewrites,passed,
 2026-11-24,04:19,2026-11-24 04:00 podcast/ai,智取未來,模型讀超過 40% 就開始變笨｜智取未來,19.2,antigravity_cli · 模型 Gemini 4 Argon (High),glm-5.3-flash,2,0,Y,226248940,0,10
 2026-11-25,04:33,2026-11-25 04:00 podcast,吹牛免稅,巨頭加碼百億，你的硬體股等什麼｜吹牛免稅,33.4,antigravity_cli · 模型 Gemini 4 Argon (High),只有程式檢查（查核模型沒回應）,3,0,Y,226406488,0,13
 2026-11-26,04:23,2026-11-26 04:00 podcast/ai,智取未來,九成代理人卡住因開了權限怕出包｜智取未來,23.6,antigravity_cli · 模型 Gemini 4 Argon (High),glm-5.3-flash,3,0,Y,226559842,0,9
+2026-11-27,04:37,2026-11-27 04:00 podcast,吹牛免稅,算力買家沒錢，你的科技股誰先痛｜吹牛免稅,37.4,antigravity_cli · 模型 Gemini 4 Argon (High),glm-5.3-flash,3,0,Y,226701044,0,19
+2026-11-27,09:40,2026-11-27 09:06 morning,Hsin選觀點,客戶沒走，軟體股的成長卻卡住｜Hsin選觀點,34.5,antigravity_cli · 模型 Gemini 4 Neon (High),glm-5.3-flash,3,0,Y,226722955,0,35
